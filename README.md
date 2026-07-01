@@ -1,5 +1,7 @@
 # Musique: The blazing-fast Spotify desktop client
 
+![Musique](public/banner.png)
+
 > **⚠️ Unofficial.** Not affiliated with, endorsed by, or connected to Spotify.
 
 > Uses the reverse-engineered librespot protocol, which is against Spotify's
@@ -9,7 +11,17 @@
 
 
 <!-- TODO replace with a  hero screenshot -->
-<!-- ![Musique](screenshots/hero.png) -->
+<!-- ![Musique](public/banner.png) -->
+
+## Screenshots
+
+![Screenshot 1](public/one.png)
+![Screenshot 2](public/two.png)
+![Screenshot 3](public/three.png)
+![Screenshot 4](public/four.png)
+
+
+
 
 ## Features
 
