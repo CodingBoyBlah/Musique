@@ -1,0 +1,91 @@
+[package]
+name = "spotify"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "spotify_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# macos-private-api: REQUIRED for `transparent: true` to work on macOS.
+# Without it the WKWebView keeps an opaque WHITE background and the
+# NSVisualEffect vibrancy layer behind it never shows → white screen.
+# No-op on Windows/Linux. Must pair with `"macOSPrivateApi": true` in
+# tauri.conf.json (both the Cargo feature and the config flag are needed).
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+# Must match the version Tauri itself pulls in (0.6.x). Two different
+# window-vibrancy versions both compile an NSVisualEffectView ObjC class →
+# duplicate-symbol link failure under LTO on macOS. Same API as 0.7 for the
+# calls we make (apply_mica/apply_acrylic/apply_vibrancy/clear_*).
+window-vibrancy = "0.6"
+souvlaki = "0.7"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "migrate", "macros"] }
+tokio = { version = "1", features = ["full"] }
+thiserror = "1"
+keyring = "2"
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "cookies"], default-features = false }
+base64 = "0.22"
+dotenvy = "0.15"
+rand = "0.8"
+sha2 = "0.10"
+url = "2"
+log = "0.4"
+librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
+librespot-playback = { version = "0.8", default-features = false, features = ["rodio-backend"] }
+# Discord Rich Presence — connects to the local Discord IPC socket. Pure Rust,
+# cross-platform, no system deps. All calls degrade silently if Discord is closed.
+discord-rich-presence = "1.1"
+md5 = "0.7"
+
+# Unix (macOS + Linux): libc powers two crash-safety mechanisms.
+#  • macOS VM detection — read `kern.hv_vmm_present` via sysctl. Apple's
+#    paravirtualized CoreAudio HAL SIGSEGVs the instant cpal opens the output
+#    device (uncatchable) — under a hypervisor we skip the real backend entirely.
+#  • Native crash logger (lib.rs) — a SIGSEGV/SIGBUS/SIGABRT handler that records
+#    the fault to spotify-panic.log before re-raising, so the confirmed macOS
+#    audio crash (a native fault, NOT a Rust panic) finally leaves a breadcrumb.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Vendored librespot-core with `check_catalogue`'s `exit(1)` removed. Upstream
+# kills the whole host process when product-info reports a non-"premium" account
+# type — which fires as a false negative for genuine Premium accounts authed via
+# a generic Web API client_id, taking the app down on launch (warmupPlayback).
+# Same 0.8.0 source, one function patched. See vendor/librespot-core/src/session.rs.
+[patch.crates-io]
+librespot-core = { path = "vendor/librespot-core" }
+# Vendored librespot-audio with the CDN fetch loop patched to fall through to the
+# next mirror on a non-206 response. Upstream 0.8.0 broke on the FIRST CDN URL
+# regardless of status, so one bad regional CDN edge (HTTP 500) killed ALL
+# playback even though storage-resolve returns 3-4 working mirrors. See
+# vendor/librespot-audio/src/fetch/mod.rs.
+librespot-audio = { path = "vendor/librespot-audio" }
+
+[profile.dev]
+incremental = true
+
+[profile.dev.package."librespot-playback"]
+opt-level = 2
+[profile.dev.package."librespot-core"]
+opt-level = 2
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+# `unwind` (not `abort`) so the audio-device-open guard in playback/mod.rs
+# (std::panic::catch_unwind) actually works: on a Mac/box with a broken or
+# missing audio device, opening the output can panic — with `abort` that killed
+# the whole app ("crashes when you play"); with `unwind` it's caught and we fall
+# back to the silent sink so the app stays usable. (A hard CoreAudio SIGSEGV is
+# still uncatchable — that's an environment fault.)
+strip = true

@@ -1,0 +1,92 @@
+name: Build Tauri App
+
+on:
+workflow_dispatch:
+push:
+tags:
+- "v*"
+
+permissions:
+contents: write
+
+jobs:
+build:
+strategy:
+fail-fast: false
+matrix:
+include:
+- platform: windows-latest
+- platform: ubuntu-22.04
+- platform: macos-latest
+
+
+runs-on: ${{ matrix.platform }}
+
+steps:
+  - uses: actions/checkout@v4
+
+  - uses: pnpm/action-setup@v4
+    with:
+      version: 10
+
+  - uses: actions/setup-node@v4
+    with:
+      node-version: 22
+      cache: pnpm
+
+  - uses: dtolnay/rust-toolchain@stable
+
+  - name: Install Linux deps
+    if: matrix.platform == 'ubuntu-22.04'
+    run: |
+      sudo apt update
+      sudo apt install -y \
+        libwebkit2gtk-4.1-dev \
+        build-essential \
+        curl \
+        wget \
+        file \
+        libxdo-dev \
+        libssl-dev \
+        libayatana-appindicator3-dev \
+        librsvg2-dev \
+        libasound2-dev
+
+  - name: Install dependencies
+    run: pnpm install
+
+  - name: Build app
+    run: pnpm tauri build
+
+  - name: Create Linux tarball
+    if: matrix.platform == 'ubuntu-22.04'
+    run: |
+      mkdir tarball
+      cp src-tauri/target/release/spotify tarball/
+      tar -czf spotify-linux-x86_64.tar.gz tarball
+
+  - name: Upload artifacts
+    uses: actions/upload-artifact@v4
+    with:
+      name: ${{ matrix.platform }}
+      path: |
+        src-tauri/target/release/bundle/**
+        spotify-linux-x86_64.tar.gz
+
+
+release:
+needs: build
+runs-on: ubuntu-latest
+
+
+steps:
+  - name: Download all artifacts
+    uses: actions/download-artifact@v4
+    with:
+      path: artifacts
+
+  - name: Create GitHub Release
+    uses: softprops/action-gh-release@v2
+    with:
+      files: artifacts/**/*
+

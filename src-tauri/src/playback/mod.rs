@@ -1,0 +1,392 @@
+use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::AtomicBool;
+
+use librespot_core::{
+    authentication::Credentials,
+    config::SessionConfig,
+    session::Session,
+    SpotifyId,
+    SpotifyUri,
+};
+use librespot_playback::{
+    audio_backend::{self, Sink, SinkResult},
+    config::{AudioFormat, Bitrate, PlayerConfig},
+    convert::Converter,
+    decoder::AudioPacket,
+    mixer::VolumeGetter,
+    player::{Player, PlayerEvent},
+};
+use serde::Serialize;
+use sqlx::SqlitePool;
+use tauri::{AppHandle, Emitter};
+use tokio::sync::RwLock;
+
+use crate::{
+    auth,
+    errors::AppError,
+    state::AuthState,
+};
+
+// shared volume control
+
+struct VolumeState {
+    level: f64,  // 0.0 = silent, 1.0 = full blast
+    muted: bool,
+}
+
+#[derive(Clone)]
+pub struct SharedVolume(Arc<Mutex<VolumeState>>);
+
+impl SharedVolume {
+    pub fn new(level: f64, muted: bool) -> Self {
+        SharedVolume(Arc::new(Mutex::new(VolumeState {
+            level: level.clamp(0.0, 1.0),
+            muted,
+        })))
+    }
+
+    pub fn set_level(&self, level: f64) {
+        self.0.lock().unwrap().level = level.clamp(0.0, 1.0);
+    }
+
+    pub fn set_muted(&self, muted: bool) {
+        self.0.lock().unwrap().muted = muted;
+    }
+
+    pub fn level(&self) -> f64 {
+        self.0.lock().unwrap().level
+    }
+
+    pub fn is_muted(&self) -> bool {
+        self.0.lock().unwrap().muted
+    }
+}
+
+impl VolumeGetter for SharedVolume {
+    fn attenuation_factor(&self) -> f64 {
+        let s = self.0.lock().unwrap();
+        if s.muted { 0.0 } else { s.level }
+    }
+}
+
+// silent fallback sink
+
+// just throws away all audio. used when opening the real output device PANICS (e.g a
+// headless/busted linux box with no alsa/pulse device, or a host with a
+// broken audio stack). without this that panic kills the librespot player thread
+// mid stream, with it playback runs silently and the app stays usable instead
+// of looking like it froze
+//
+// note: only catches unwinding failures. a hard segfault inside a system audio
+// framework (apples coreaudio hal on some virtualized macs) is a SIGSEGV and
+// cant be caught from rust, thats an environment fault not something this
+// guard can do anything about
+struct NullSink;
+
+impl Sink for NullSink {
+    fn write(&mut self, _packet: AudioPacket, _converter: &mut Converter) -> SinkResult<()> {
+        Ok(())
+    }
+}
+
+// macos only: are we running inside a hypervisor (a vm)?
+//
+// apples paravirtualized coreaudio hal (AppleParavirtGPU / VirtualMac2,1)
+// segfaults inside AudioObjectGetPropertyData the second cpal opens the default
+// output device. thats a SIGSEGV in a system framework, rusts catch_unwind
+// cant catch it so it took the whole app down a few secs after launch
+// ("crashes a lot on startup on macos", see the crash log: Thread 30 in
+// HALC_ProxyIOContext::GetPropertyData). theres no real audio device to open in
+// that env anyway so when we spot a vm we skip the real backend
+// entirely and run the silent sink, playback "works" (silently) and the app
+// never crashes. on real mac hardware kern.hv_vmm_present is 0 and the real
+// audio backend is used like normal
+#[cfg(target_os = "macos")]
+fn running_under_hypervisor() -> bool {
+    let name = match std::ffi::CString::new("kern.hv_vmm_present") {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let mut val: i32 = 0;
+    let mut size = std::mem::size_of::<i32>();
+    let rc = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            &mut val as *mut _ as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    rc == 0 && val != 0
+}
+
+// is opening the real audio output device even safe on this machine?
+//
+// librespot opens the device EAGERLY when the player is built, not lazily on
+// play, and its rodio/cpal backend can take the whole process down on a bad
+// audio stack, a native wasapi fault or an internal process::exit that
+// catch_unwind cant catch (the reported exit code was 1 with no panic log). so
+// we open it first in a throwaway child process (--audio-probe), if the child
+// survives the device is safe and we use the real backend here, if the child
+// dies we use a silent sink and the app keeps going. probed once per app run
+// then cached
+fn audio_device_safe() -> bool {
+    static SAFE: OnceLock<bool> = OnceLock::new();
+    *SAFE.get_or_init(|| {
+        let exe = match std::env::current_exe() {
+            Ok(e) => e,
+            Err(e) => { eprintln!("[playback] current_exe failed: {e} - assuming audio ok"); return true; }
+        };
+        match std::process::Command::new(exe).arg("--audio-probe").status() {
+            Ok(s) if s.success() => true,
+            Ok(s) => { eprintln!("[playback] audio device probe failed ({s}) - using silent sink"); false }
+            Err(e) => { eprintln!("[playback] audio probe spawn error: {e} - assuming audio ok"); true }
+        }
+    })
+}
+
+// playbackinner
+
+pub struct PlaybackInner {
+    pub player:  Arc<Player>,
+    pub volume:  SharedVolume,
+    // whether a track has ever been loaded into this session. a freshly warmed
+    // session has a live player but nothing loaded so player.play() would do
+    // nothing, callers gotta load first. set to true on every load
+    pub loaded:  Arc<AtomicBool>,
+    session:     Session,
+    _event_task: tauri::async_runtime::JoinHandle<()>,
+}
+
+impl PlaybackInner {
+    // a dropped/expired librespot session just eats load/play calls so
+    // playback shows as "playing" with no actual audio. callers rebuild when this is
+    // true (see ensure_inner)
+    pub fn session_invalid(&self) -> bool {
+        self.session.is_invalid()
+    }
+}
+
+// event messages n stuff
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PlayerMsg {
+    Playing {
+        track_id:    Option<String>,
+        position_ms: u32,
+    },
+    Paused {
+        track_id:    Option<String>,
+        position_ms: u32,
+    },
+    PositionChanged {
+        track_id:    Option<String>,
+        position_ms: u32,
+    },
+    Stopped {
+        track_id: Option<String>,
+    },
+    EndOfTrack {
+        track_id: Option<String>,
+    },
+    Unavailable {
+        track_id: Option<String>,
+    },
+    TimeToPreloadNextTrack {
+        track_id: Option<String>,
+    },
+}
+
+// session / player init stuff
+
+pub async fn create_inner(
+    app:            AppHandle,
+    pool:           SqlitePool,
+    auth_state:     Arc<RwLock<AuthState>>,
+    initial_volume: f64,
+    initial_muted:  bool,
+    media_tx:       std::sync::mpsc::SyncSender<crate::media_controls::MediaMsg>,
+) -> Result<PlaybackInner, AppError> {
+    let token = auth::get_valid_token(&pool, &auth_state).await
+        .map_err(|e| { eprintln!("[playback] token error: {e}"); e })?;
+
+    // librespots SESSION uses its built in default client_id. spotifys
+    // streaming pipeline (clienttoken -> login5 -> extended-metadata ->
+    // storage-resolve) is locked to first party client identities, a users own
+    // web api "developer" client_id gets rejected by clienttoken.spotify.com
+    // with HTTP 400 so login5 (which NEEDS a client token) fails and EVERY
+    // track comes back Unavailable, basically forcing the users own client_id into
+    // the session breaks playback completely. the users own client_id is still
+    // what mints the oauth token below (web api + auth), only the librespot
+    // streaming session uses the default. this matches the config that streamed
+    // fine before the (reverted) "use the users client_id" change. see
+    // vendor/librespot-audio for the matching cdn-fallthrough fix
+    // (learned this the hard way, do NOT touch this lol)
+    let session = Session::new(SessionConfig::default(), None);
+    eprintln!("[playback] librespot session client_id = {}", session.client_id());
+    session
+        .connect(Credentials::with_access_token(&token), false)
+        .await
+        .map_err(|e| {
+            eprintln!("[playback] session connect failed: {e}");
+            AppError::Auth(e.to_string())
+        })?;
+    eprintln!("[playback] STEP session connected");
+
+    // the access point pushes CountryCode (and ProductInfo) as SEPARATE packets
+    // that show up AFTER connect() resolves. librespots availability filter
+    // (available_for_user) checks each tracks allowed countries whitelist
+    // against session.country() and while thats still empty EVERY track gets
+    // rejected as NotWhitelisted and shows up as PlayerEvent::Unavailable ->
+    // "content may not be available in your region". a play fired right after a
+    // fresh connect (e.g play_track rebuilding a dead session) races those
+    // packets and fails. so wait a sec for the country to land so availability is
+    // figured out against the real region
+    for _ in 0..50 {
+        if !session.country().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    eprintln!("[playback] STEP country = {:?}", session.country());
+
+    let volume    = SharedVolume::new(initial_volume, initial_muted);
+    let vol_clone = volume.clone();
+
+    let backend      = audio_backend::find(None)
+        .ok_or_else(|| { eprintln!("[playback] no audio backend"); AppError::Network("No audio backend available".into()) })?;
+    let audio_format = AudioFormat::default();
+    eprintln!("[playback] STEP backend resolved");
+
+    // decide up front whether to even touch the real audio device. two guards:
+    //  1) macos-in-a-vm: coreaudio hal SIGSEGVs on device open (sysctl probe)
+    //  2) any os: a child process probe that actually opens the device, if it
+    //     cant open without hard faulting the process we fall back to silence
+    //     instead of crashing the whole app
+    #[cfg(target_os = "macos")]
+    let force_null_sink = running_under_hypervisor() || !audio_device_safe();
+    #[cfg(not(target_os = "macos"))]
+    let force_null_sink = !audio_device_safe();
+    if force_null_sink {
+        eprintln!("[playback] audio device unavailable/unsafe - using silent sink");
+    }
+
+    let player = Player::new(
+        PlayerConfig {
+            bitrate: Bitrate::Bitrate320,
+            gapless: true,
+            ..Default::default()
+        },
+        session.clone(),
+        Box::new(vol_clone),
+        // opening the output device can panic on systems with no/broken audio.
+        // catch it and fall back to a silent sink so the player thread survives
+        // and the app stays usable instead of dying mid track
+        move || {
+            // in a vm never touch the real device, the open SIGSEGVs (cant be
+            // caught) and would crash the whole app. just go straight to silence
+            if force_null_sink {
+                return Box::new(NullSink) as Box<dyn Sink>;
+            }
+            eprintln!("[playback] STEP opening audio device");
+            let sink = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (backend)(None, audio_format)))
+                .unwrap_or_else(|_| {
+                    eprintln!("[playback] audio device open panicked - using silent sink");
+                    Box::new(NullSink) as Box<dyn Sink>
+                });
+            eprintln!("[playback] STEP audio device opened");
+            sink
+        },
+    );
+    eprintln!("[playback] STEP player built");
+
+    let mut event_rx = player.get_player_event_channel();
+    let event_app    = app.clone();
+    let event_task   = tauri::async_runtime::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            // pass the playback state along to the os media controls
+            match &event {
+                PlayerEvent::Playing { position_ms, .. } => {
+                    let _ = media_tx.try_send(
+                        crate::media_controls::MediaMsg::Playing { position_ms: *position_ms as u64 }
+                    );
+                }
+                PlayerEvent::Paused { position_ms, .. } => {
+                    let _ = media_tx.try_send(
+                        crate::media_controls::MediaMsg::Paused { position_ms: *position_ms as u64 }
+                    );
+                }
+                PlayerEvent::Stopped { .. }
+                | PlayerEvent::EndOfTrack { .. }
+                | PlayerEvent::Unavailable { .. } => {
+                    let _ = media_tx.try_send(crate::media_controls::MediaMsg::Stopped);
+                }
+                _ => {}
+            }
+
+            let msg = match event {
+                PlayerEvent::Playing { track_id, position_ms, .. } =>
+                    Some(PlayerMsg::Playing {
+                        track_id:    track_id.to_id().ok(),
+                        position_ms,
+                    }),
+                PlayerEvent::Paused { track_id, position_ms, .. } =>
+                    Some(PlayerMsg::Paused {
+                        track_id:    track_id.to_id().ok(),
+                        position_ms,
+                    }),
+                PlayerEvent::PositionChanged { track_id, position_ms, .. } =>
+                    Some(PlayerMsg::PositionChanged {
+                        track_id:    track_id.to_id().ok(),
+                        position_ms,
+                    }),
+                PlayerEvent::Stopped { track_id, .. } =>
+                    Some(PlayerMsg::Stopped { track_id: track_id.to_id().ok() }),
+                PlayerEvent::EndOfTrack { track_id, .. } =>
+                    Some(PlayerMsg::EndOfTrack { track_id: track_id.to_id().ok() }),
+                PlayerEvent::Unavailable { track_id, .. } =>
+                    Some(PlayerMsg::Unavailable { track_id: track_id.to_id().ok() }),
+                PlayerEvent::TimeToPreloadNextTrack { track_id, .. } =>
+                    Some(PlayerMsg::TimeToPreloadNextTrack { track_id: track_id.to_id().ok() }),
+                _ => None,
+            };
+
+            if let Some(payload) = msg {
+                if let Err(e) = event_app.emit("player:event", payload) {
+                    eprintln!("[playback] emit failed: {e}");
+                }
+            }
+        }
+    });
+
+    Ok(PlaybackInner {
+        player,
+        volume,
+        loaded:      Arc::new(AtomicBool::new(false)),
+        session,
+        _event_task: event_task,
+    })
+}
+
+// track id parsing stuff
+
+pub fn parse_track_id(raw: &str) -> Result<SpotifyUri, AppError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::InvalidInput("Track id is required".into()));
+    }
+
+    let id = if let Some(v) = trimmed.strip_prefix("spotify:track:") {
+        v
+    } else if let Some((_, rest)) = trimmed.split_once("open.spotify.com/track/") {
+        rest.split('?').next().unwrap_or(rest)
+    } else {
+        trimmed
+    };
+
+    let spotify_id = SpotifyId::from_base62(id)
+        .map_err(|_| AppError::InvalidInput(format!("Invalid Spotify track id: {trimmed}")))?;
+    Ok(SpotifyUri::Track { id: spotify_id })
+}

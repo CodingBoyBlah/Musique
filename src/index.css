@@ -1,0 +1,196 @@
+@import "tailwindcss";
+
+/*
+ * Mica-first token system.
+ * The window itself is TRANSPARENT — the OS Mica material (applied in Rust
+ * via window-vibrancy) is the background. Every surface here is a subtle
+ * neutral overlay with low alpha so the Mica/wallpaper shows through.
+ * No tints — Mica picks up the wallpaper color on its own.
+ */
+@theme {
+    /* Base — let Mica be the background */
+    --color-window: transparent;
+    --color-content: transparent;
+    --color-sidebar: rgba(0, 0, 0, 0.06);
+    /* Solid app background for platforms with no native backdrop material
+       (Linux). Windows Mica / macOS vibrancy keep the window transparent. */
+    --color-base: #0b0b0f;
+
+    /* Frosted surfaces stacked on Mica */
+    --color-glass: rgba(255, 255, 255, 0.05);
+    --color-glass-border: rgba(255, 255, 255, 0.09);
+    --color-surface: rgba(255, 255, 255, 0.035);
+    --color-surface-2: rgba(255, 255, 255, 0.06);
+    --color-surface-elevated: rgba(255, 255, 255, 0.06);
+
+    /* Interaction layers */
+    --color-hover: rgba(255, 255, 255, 0.06);
+    --color-surface-hover: rgba(255, 255, 255, 0.06);
+    --color-active: rgba(255, 255, 255, 0.11);
+
+    /* Structure */
+    --color-border: rgba(255, 255, 255, 0.08);
+    --color-divider: rgba(255, 255, 255, 0.06);
+
+    /* Text — white-forward, high contrast on dark Mica */
+    --color-text: rgba(255, 255, 255, 0.82);
+    --color-text-hi: rgba(255, 255, 255, 0.97);
+    --color-text-dim: rgba(255, 255, 255, 0.46);
+    --color-text-muted: rgba(255, 255, 255, 0.46);
+
+    /* Accent — Apple Music / Cider red-pink */
+    --color-accent: #5873D8;
+    --color-accent-hover: #819af1;
+    --color-accent-dim: rgba(88, 115, 216, 0.16);
+    --color-accent-text: #ffffff;
+
+    /* Player bar — anchored but still lets Mica/wallpaper breathe. Kept very
+       low so the Mica material reads through the bottom bar (Mica itself has
+       no opacity knob — translucency comes from stacking nothing on top). */
+    --color-player: rgba(16, 16, 18, 0.07);
+
+    --color-danger: #ff453a;
+}
+
+/* ─── Reset ───────────────────────────────────────────────────────── */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+    background: transparent;
+    color: var(--color-text);
+    font-family:
+        "Inter",
+        "Inter Variable",
+        "Segoe UI Variable",
+        "Segoe UI",
+        system-ui,
+        -apple-system,
+        sans-serif;
+    font-size: 14px;
+    font-weight: 400;
+    font-feature-settings: "cv11", "ss01";
+    letter-spacing: -0.011em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    user-select: none;
+    overflow: hidden;
+}
+
+main,
+input,
+textarea,
+[data-selectable] {
+    user-select: text;
+}
+
+/* ─── Scrollbar ───────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+    width: 8px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 99px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+    background-clip: padding-box;
+}
+
+/* ─── Range slider ────────────────────────────────────────────────── */
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.16);
+}
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    margin-top: -4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+input[type="range"]:hover::-webkit-slider-thumb {
+    opacity: 1;
+}
+
+/* Volume slider: paint a colored fill up to --vol, matching the song
+   progress bar (same warm-white). Fixes the "grey bar, circle-only-on-hover"
+   look — now the level is always visible. */
+input[type="range"].vol::-webkit-slider-runnable-track {
+    background: linear-gradient(
+        to right,
+        rgba(242, 238, 233, 0.85) var(--vol, 0%),
+        rgba(255, 255, 255, 0.16) var(--vol, 0%)
+    );
+}
+input[type="range"].vol::-webkit-slider-thumb {
+    transform: scale(0.85);
+    transition:
+        opacity 0.15s ease-out,
+        transform 0.15s ease-out;
+}
+input[type="range"].vol:hover::-webkit-slider-thumb {
+    transform: scale(1);
+}
+
+/* ─── Row hover actions ───────────────────────────────────────────── */
+.queue-btn {
+    opacity: 0;
+}
+.group:hover .queue-btn {
+    opacity: 1 !important;
+}
+
+/* Track row: number by default, play button swaps in on hover (same slot). */
+.row-idx {
+    transition: opacity 0.12s ease-out;
+}
+.group:hover .row-idx {
+    opacity: 0;
+}
+.row-play {
+    opacity: 0;
+    transition: opacity 0.12s ease-out;
+}
+.group:hover .row-play {
+    opacity: 1;
+}
+
+/* Card hover play button (Home recommendations) */
+.group:hover .rec-play {
+    opacity: 1 !important;
+    transform: translateY(0) !important;
+}
+
+/* ─── Keyframes ───────────────────────────────────────────────────── */
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
