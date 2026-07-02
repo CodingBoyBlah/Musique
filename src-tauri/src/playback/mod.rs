@@ -71,36 +71,58 @@ impl VolumeGetter for SharedVolume {
 }
 
 // silent fallback sink
-
-// just throws away all audio. used when opening the real output device PANICS (e.g a
-// headless/busted linux box with no alsa/pulse device, or a host with a
-// broken audio stack). without this that panic kills the librespot player thread
-// mid stream, with it playback runs silently and the app stays usable instead
-// of looking like it froze
 //
-// note: only catches unwinding failures. a hard segfault inside a system audio
-// framework (apples coreaudio hal on some virtualized macs) is a SIGSEGV and
-// cant be caught from rust, thats an environment fault not something this
-// guard can do anything about
+// throws away all audio. used when opening the real output device panics (a
+// headless/busted linux box with no alsa/pulse device, or a broken audio stack)
+// and in a macos vm. only catches unwinding failures; a hard SIGSEGV inside a
+// system audio framework is an environment fault we cant catch.
 struct NullSink;
 
 impl Sink for NullSink {
     fn write(&mut self, packet: AudioPacket, _converter: &mut Converter) -> SinkResult<()> {
- 
-
-
-if let Ok(samples) = packet.samples() {
-let frames = samples.len() / NUM_CHANNELS as usize;
-if frames> 0 {
-let secs = frames as f64 / SAMPLE_RATE as f64;
-std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+        // throw the audio away BUT pace at real time. librespot's player thread
+        // calls write() as fast as we return, so returning instantly makes the
+        // decoder race through the whole track in a few ms -> EndOfTrack fires
+        // almost immediately -> the frontend auto-advances -> EVERY track
+        // "insta-skips". sleeping for the packet's real duration makes silent
+        // playback advance at 1x, same backpressure the real rodio sink applies.
+        if let Ok(samples) = packet.samples() {
+            let frames = samples.len() / NUM_CHANNELS as usize;
+            if frames > 0 {
+                let secs = frames as f64 / SAMPLE_RATE as f64;
+                std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+            }
+        }
+        Ok(())
+    }
 }
-}
-Ok(())
-}
-}
 
-
+// macos only: are we running inside a hypervisor (a vm)?
+//
+// apples paravirtualized coreaudio hal segfaults inside AudioObjectGetPropertyData
+// the second cpal opens the default output device. thats a SIGSEGV in a system
+// framework, rusts catch_unwind cant catch it. theres no real audio device in a vm
+// anyway, so when we spot one we skip the real backend and run the silent sink. on
+// real mac hardware kern.hv_vmm_present is 0 and the real backend is used normally.
+#[cfg(target_os = "macos")]
+fn running_under_hypervisor() -> bool {
+    let name = match std::ffi::CString::new("kern.hv_vmm_present") {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let mut val: i32 = 0;
+    let mut size = std::mem::size_of::<i32>();
+    let rc = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            &mut val as *mut _ as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    rc == 0 && val != 0
+}
 
 // playbackinner
 
@@ -216,11 +238,14 @@ pub async fn create_inner(
     let audio_format = AudioFormat::default();
     eprintln!("[playback] STEP backend resolved");
 
-    // decide up front whether to even touch the real audio device. two guards:
-    //  1) macos-in-a-vm: coreaudio hal SIGSEGVs on device open (sysctl probe)
-    //  2) any os: a child process probe that actually opens the device, if it
-    //     cant open without hard faulting the process we fall back to silence
-    //     instead of crashing the whole app
+    // ONLY force silence for the macos-in-a-vm case: apples paravirt coreaudio hal
+    // SIGSEGVs on device open and thats uncatchable, so we must never reach the
+    // open there. on real hardware (mac/win/linux) we DO open the real device; the
+    // catch_unwind below turns any *unwinding* open failure into a (real-time-paced)
+    // silent sink so the app stays usable. no more child-process --audio-probe: a
+    // bare helper process has no run loop and coreaudios hal proxy faulted when
+    // opened without one, so the probe crashed healthy macs then wrongly forced
+    // NullSink -> no audio + insta-skip.
     #[cfg(target_os = "macos")]
     let force_null_sink = running_under_hypervisor();
     #[cfg(not(target_os = "macos"))]
