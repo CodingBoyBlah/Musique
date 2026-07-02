@@ -9,8 +9,8 @@ use librespot_core::{
     SpotifyUri,
 };
 use librespot_playback::{
-    audio_backend::{self, Sink, SinkResult},
-    config::{AudioFormat, Bitrate, PlayerConfig},
+    audio_backend::{Sink, SinkError, SinkResult},
+    config::{Bitrate, PlayerConfig},
     convert::Converter,
     decoder::AudioPacket,
     mixer::VolumeGetter,
@@ -96,6 +96,45 @@ impl Sink for NullSink {
         Ok(())
     }
 }
+
+pub(crate) struct DeviceSink {
+    sink: rodio::Sink,
+    _stream: rodio::OutputStream,
+}
+
+impl DeviceSink {
+    pub(crate) fn open() -> Result<DeviceSink, String> {
+        let mut stream = rodio::OutputStreamBuilder::from_default_device().map_err(|e| e.to_string())?
+        .open_stream()
+        .map_err(|e| e.to_string())?;
+    stream.log_on_drop(false);
+    let sink = rodio::Sink::connect_new(stream.mixer());
+    Ok(DeviceSink { sink, _stream: stream})
+    }
+}
+
+impl Sink for DeviceSink {
+    fn start(&mut self) -> SinkResult<()> {
+        self.sink.play();
+        Ok(())
+    }
+    fn stop(&mut self) -> SinkResult <()> {
+        self.sink.sleep_until_end();
+        self.sink.pause();
+        Ok(())
+}
+    fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
+        let samples = packet.samples().map_err(|e| SinkError::OnWrite(e.to_string()))?;
+        let samples_f32: &[f32] = &converter.f64_to_f32(samples);
+        let source = rodio::buffer::SamplesBuffer::new(NUM_CHANNELS as u16, SAMPLE_RATE, samples_f32);
+        self.sink.append(source);
+        while self.sink.len() > 26{
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Ok(())
+}
+}
+    
 
 // macos only: are we running inside a hypervisor (a vm)?
 //
@@ -250,10 +289,7 @@ pub async fn create_inner(
     let volume    = SharedVolume::new(initial_volume, initial_muted);
     let vol_clone = volume.clone();
 
-    let backend      = audio_backend::find(None)
-        .ok_or_else(|| { eprintln!("[playback] no audio backend"); AppError::Network("No audio backend available".into()) })?;
-    let audio_format = AudioFormat::default();
-    eprintln!("[playback] STEP backend resolved");
+   ;
 
     // ONLY force silence for the macos-in-a-vm case: apples paravirt coreaudio hal
     // SIGSEGVs on device open and thats uncatchable, so we must never reach the
@@ -288,14 +324,12 @@ pub async fn create_inner(
             if force_null_sink {
                 return Box::new(NullSink) as Box<dyn Sink>;
             }
-            eprintln!("[playback] STEP opening audio device");
-            let sink = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (backend)(None, audio_format)))
-                .unwrap_or_else(|_| {
-                    eprintln!("[playback] audio device open panicked - using silent sink");
-                    Box::new(NullSink) as Box<dyn Sink>
-                });
-            eprintln!("[playback] STEP audio device opened");
-            sink
+            eprintln!("[playback] STEP opening audio device (native rate)");
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(DeviceSink::open)) {
+                Ok(Ok(s)) => { eprintln!("[playback] STEP audio device opened"); Box::new(s) as Box<dyn Sink> }
+                Ok(Err(e)) => { eprintln!("[playback] device open failed: {e} - using silent sink"); Box::new(NullSink) as Box<dyn Sink> }
+                Err(_) => { eprintln!("[playback] device open panicked, using silent sink"); Box::new(NullSink) as Box<dyn Sink> }            
+}
         },
     );
     eprintln!("[playback] STEP player built");

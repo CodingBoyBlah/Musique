@@ -41,6 +41,7 @@ url = "2"
 log = "0.4"
 librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
 librespot-playback = { version = "0.8", default-features = false, features = ["rodio-backend"] }
+rodio = "0.21"
 # Discord Rich Presence — connects to the local Discord IPC socket. Pure Rust,
 # cross-platform, no system deps. All calls degrade silently if Discord is closed.
 discord-rich-presence = "1.1"

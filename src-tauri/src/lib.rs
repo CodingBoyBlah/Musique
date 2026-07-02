@@ -202,10 +202,10 @@ pub fn playback_probe() -> i32 {
     })
 }
 
-
 pub fn audio_probe() -> i32 {
-    use librespot_playback::config::AudioFormat;
-
+    // catch the uncatchable: exit cleanly instead of crash-dialoging on a native
+    // audio fault. async-signal-safe (only _exit). unix = macOS + Linux.
+    // MUST be installed BEFORE we open the device below.
     #[cfg(unix)]
     {
         extern "C" fn bail(_sig: i32) {
@@ -220,11 +220,11 @@ pub fn audio_probe() -> i32 {
         }
     }
 
-    let Some(backend) = librespot_playback::audio_backend::find(None) else {
-        return 2; //no backend compiled so just treat as unsafe
-    };
-    //opening the sink is risky, dropping closes it gaain
-    let _sink = backend(None, AudioFormat::default());
+    // open EXACTLY the way the app will: default device at its NATIVE rate via
+    // DeviceSink. that path avoids cpal's set_sample_rate() bug, so this returns 0
+    // and the app uses the real device. a graceful Err is fine (parent -> NullSink);
+    // a hard fault hits the handler above -> clean _exit(70), no crash dialog.
+    let _ = crate::playback::DeviceSink::open();
     0
 }
 
