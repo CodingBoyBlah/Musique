@@ -3,7 +3,9 @@
 
 fn main() {
    
-    
+    if std::env::args().any(|a| a == "--audio-probe"){
+        std::process::exit(spotify_lib::audio_probe());
+    }
     if std::env::args().any(|a| a == "--connect-probe") {
         std::process::exit(spotify_lib::connect_probe());
     }

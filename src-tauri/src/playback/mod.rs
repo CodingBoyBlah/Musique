@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::AtomicBool;
 
 use librespot_core::{
@@ -124,6 +124,23 @@ fn running_under_hypervisor() -> bool {
     rc == 0 && val != 0
 }
 
+
+fn audio_device_safe() -> bool {
+    static SAFE: OnceLock<bool> = OnceLock::new();
+    *SAFE.get_or_init(|| {
+        let exe = match std::env::current_exe() {
+            Ok(e) => e,
+            Err(e) => { eprintln!("[playback] current_exe failed: {e} - assuming audio ok");
+return true; }
+        };
+        match std::process::Command::new(exe).arg("--audio-probe").status(){
+            Ok(s) if s.success() => true,
+            Ok(s) => {eprintln!("[playback] audio device probe failed ({s}) - using silent sink"); false}
+            Err(e) => {eprintln!("[playback] audio probe spawn error: {e} - assuming audio ok"); true}
+        }
+})
+}
+
 // playbackinner
 
 pub struct PlaybackInner {
@@ -247,9 +264,9 @@ pub async fn create_inner(
     // opened without one, so the probe crashed healthy macs then wrongly forced
     // NullSink -> no audio + insta-skip.
     #[cfg(target_os = "macos")]
-    let force_null_sink = running_under_hypervisor();
+    let force_null_sink = running_under_hypervisor() || !audio_device_safe();
     #[cfg(not(target_os = "macos"))]
-    let force_null_sink = false;
+    let force_null_sink = !audio_device_safe();
     if force_null_sink {
         eprintln!("[playback] audio device unavailable/unsafe - using silent sink");
     }

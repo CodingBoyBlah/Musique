@@ -203,6 +203,30 @@ pub fn playback_probe() -> i32 {
 }
 
 
+pub fn audio_probe() -> i32 {
+    use librespot_playback::config::AudioFormat;
+
+    #[cfg(unix)]
+    {
+        extern "C" fn bail(_sig: i32) {
+            unsafe { libc::_exit(70) };
+        }
+        unsafe {
+            for sig in [
+                libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE, libc::SIGABRT,
+            ] {
+                libc::signal(sig, bail as libc::sighandler_t);
+            }
+        }
+    }
+
+    let Some(backend) = librespot_playback::audio_backend::find(None) else {
+        return 2; //no backend compiled so just treat as unsafe
+    };
+    //opening the sink is risky, dropping closes it gaain
+    let _sink = backend(None, AudioFormat::default());
+    0
+}
 
 mod db;
 mod discord;
