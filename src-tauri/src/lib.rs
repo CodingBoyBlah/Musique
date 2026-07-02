@@ -203,15 +203,7 @@ pub fn playback_probe() -> i32 {
 }
 
 
-pub fn audio_probe() -> i32 {
-    use librespot_playback::config::AudioFormat;
-    let Some(backend) = librespot_playback::audio_backend::find(None) else {
-        return 2; // no backend compiled in so just treat it as unsafe
-    };
-    // the sink we get back holds the live output stream, dropping it just closes it again
-    let _sink = backend(None, AudioFormat::default());
-    0
-}
+
 mod db;
 mod discord;
 mod errors;

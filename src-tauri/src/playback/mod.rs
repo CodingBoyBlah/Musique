@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 
 use librespot_core::{
@@ -15,6 +15,7 @@ use librespot_playback::{
     decoder::AudioPacket,
     mixer::VolumeGetter,
     player::{Player, PlayerEvent},
+    NUM_CHANNELS, SAMPLE_RATE,
 };
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -84,67 +85,22 @@ impl VolumeGetter for SharedVolume {
 struct NullSink;
 
 impl Sink for NullSink {
-    fn write(&mut self, _packet: AudioPacket, _converter: &mut Converter) -> SinkResult<()> {
-        Ok(())
-    }
+    fn write(&mut self, packet: AudioPacket, _converter: &mut Converter) -> SinkResult<()> {
+ 
+
+
+if let Ok(samples) = packet.samples() {
+let frames = samples.len() / NUM_CHANNELS as usize;
+if frames> 0 {
+let secs = frames as f64 / SAMPLE_RATE as f64;
+std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+}
+}
+Ok(())
+}
 }
 
-// macos only: are we running inside a hypervisor (a vm)?
-//
-// apples paravirtualized coreaudio hal (AppleParavirtGPU / VirtualMac2,1)
-// segfaults inside AudioObjectGetPropertyData the second cpal opens the default
-// output device. thats a SIGSEGV in a system framework, rusts catch_unwind
-// cant catch it so it took the whole app down a few secs after launch
-// ("crashes a lot on startup on macos", see the crash log: Thread 30 in
-// HALC_ProxyIOContext::GetPropertyData). theres no real audio device to open in
-// that env anyway so when we spot a vm we skip the real backend
-// entirely and run the silent sink, playback "works" (silently) and the app
-// never crashes. on real mac hardware kern.hv_vmm_present is 0 and the real
-// audio backend is used like normal
-#[cfg(target_os = "macos")]
-fn running_under_hypervisor() -> bool {
-    let name = match std::ffi::CString::new("kern.hv_vmm_present") {
-        Ok(n) => n,
-        Err(_) => return false,
-    };
-    let mut val: i32 = 0;
-    let mut size = std::mem::size_of::<i32>();
-    let rc = unsafe {
-        libc::sysctlbyname(
-            name.as_ptr(),
-            &mut val as *mut _ as *mut libc::c_void,
-            &mut size,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    rc == 0 && val != 0
-}
 
-// is opening the real audio output device even safe on this machine?
-//
-// librespot opens the device EAGERLY when the player is built, not lazily on
-// play, and its rodio/cpal backend can take the whole process down on a bad
-// audio stack, a native wasapi fault or an internal process::exit that
-// catch_unwind cant catch (the reported exit code was 1 with no panic log). so
-// we open it first in a throwaway child process (--audio-probe), if the child
-// survives the device is safe and we use the real backend here, if the child
-// dies we use a silent sink and the app keeps going. probed once per app run
-// then cached
-fn audio_device_safe() -> bool {
-    static SAFE: OnceLock<bool> = OnceLock::new();
-    *SAFE.get_or_init(|| {
-        let exe = match std::env::current_exe() {
-            Ok(e) => e,
-            Err(e) => { eprintln!("[playback] current_exe failed: {e} - assuming audio ok"); return true; }
-        };
-        match std::process::Command::new(exe).arg("--audio-probe").status() {
-            Ok(s) if s.success() => true,
-            Ok(s) => { eprintln!("[playback] audio device probe failed ({s}) - using silent sink"); false }
-            Err(e) => { eprintln!("[playback] audio probe spawn error: {e} - assuming audio ok"); true }
-        }
-    })
-}
 
 // playbackinner
 
@@ -266,9 +222,9 @@ pub async fn create_inner(
     //     cant open without hard faulting the process we fall back to silence
     //     instead of crashing the whole app
     #[cfg(target_os = "macos")]
-    let force_null_sink = running_under_hypervisor() || !audio_device_safe();
+    let force_null_sink = running_under_hypervisor();
     #[cfg(not(target_os = "macos"))]
-    let force_null_sink = !audio_device_safe();
+    let force_null_sink = false;
     if force_null_sink {
         eprintln!("[playback] audio device unavailable/unsafe - using silent sink");
     }
