@@ -22,7 +22,7 @@ import { useReflowPulse } from "../hooks/useReflowPulse";
 import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
 
-const TILE_MIN = 158;
+const TILE_MIN = 200;
 
 // grid reflow spring - tiles glide to new columns (lyrics panel en / resize) instead of snapping. positiononly so artwork never squishes midmove.
 const REFLOW = { type: "spring" as const, stiffness: 520, damping: 44 };

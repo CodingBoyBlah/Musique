@@ -52,6 +52,10 @@
     --color-danger: #ff453a;
 }
 
+:root {
+    --content-max: 1760px;
+}
+
 /* ─── Reset ───────────────────────────────────────────────────────── */
 * {
     box-sizing: border-box;

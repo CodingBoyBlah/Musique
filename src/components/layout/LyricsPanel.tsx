@@ -41,7 +41,7 @@ function CoverBg({ url }: { url: string | null | undefined }) {
         style={{
           position: "absolute",
           inset: 0,
-          background: "#0a0a12",
+          background: "rgba(10,10,18,0.30)",
           zIndex: 0,
         }}
       />
@@ -76,13 +76,13 @@ function CoverBg({ url }: { url: string | null | undefined }) {
         initial={false}
         animate={reduceMotion ? { scale: 1.45 } : { scale: 1.45, x: [0, 54, -38, 0], y: [0, -42, 32, 0], rotate: [0, 6, -5, 0] }}
         transition={{ duration: 26, repeat: Infinity, ease: "easeInOut" }}
-        style={layer(0.5)}
+        style={layer(0.28)}
       />
       <motion.div
         initial={false}
         animate={reduceMotion ? { scale: 1.7 } : { scale: 1.7, x: [0, -48, 40, 0], y: [0, 36, -30, 0], rotate: [0, -7, 5, 0] }}
         transition={{ duration: 38, repeat: Infinity, ease: "easeInOut" }}
-        style={layer(0.34)}
+        style={layer(0.26)}
       />
       {/* legibility scrim = darken header + bottom for text contrast; middle
           stays light so the moving colour appears through clearly */}
@@ -212,7 +212,9 @@ export function LyricsPanel() {
         overflow: "hidden",
         borderLeft: "1px solid var(--color-border)",
         
-        background: "transparent",
+        background: "rgba(18,18,26,0.30)",
+        backdropFilter: "blur(40px) saturate(1.7)",
+        WebkitBackdropFilter: "blur(40px) saturate(1.7)",
       }}
     >
       <div
