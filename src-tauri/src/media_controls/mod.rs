@@ -42,8 +42,8 @@ pub fn start(app: AppHandle, hwnd_raw: Option<isize>) -> mpsc::SyncSender<MediaM
                 hwnd_raw.map(|v| v as *mut std::ffi::c_void);
 
             let config = PlatformConfig {
-                dbus_name: "dev.boyblah.spotify",
-                display_name: "Spotify Client",
+                dbus_name: "dev.boyblah.musique",
+                display_name: "Musique",
                 hwnd,
             };
 

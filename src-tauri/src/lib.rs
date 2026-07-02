@@ -27,7 +27,7 @@ pub fn connect_probe() -> i32 {
 
     let rt = match tokio::runtime::Runtime::new() { Ok(r) => r, Err(_) => return 10 };
     rt.block_on(async {
-        let token = match keyring::Entry::new("spotify-client", "access_token")
+        let token = match keyring::Entry::new("musique", "access_token")
             .and_then(|e| e.get_password())
         {
             Ok(t) => t,
@@ -37,7 +37,7 @@ pub fn connect_probe() -> i32 {
             Ok(v) => v,
             Err(_) => { eprintln!("[connect-probe] no APPDATA"); return 12; }
         };
-        let db_url = format!("sqlite:{}/dev.boyblah.spotify/spotify-client.db", appdata.replace('\\', "/"));
+        let db_url = format!("sqlite:{}/dev.boyblah.musique/musique.db", appdata.replace('\\', "/"));
         let pool = match sqlx::SqlitePool::connect(&db_url).await {
             Ok(p) => p,
             Err(e) => { eprintln!("[connect-probe] db open failed: {e}"); return 13; }
@@ -94,7 +94,7 @@ pub fn playback_probe() -> i32 {
     let rt = match tokio::runtime::Runtime::new() { Ok(r) => r, Err(_) => return 10 };
     rt.block_on(async {
         let appdata = match std::env::var("APPDATA") { Ok(v) => v, Err(_) => { eprintln!("[playback-probe] no APPDATA"); return 12; } };
-        let db_url = format!("sqlite:{}/dev.boyblah.spotify/spotify-client.db", appdata.replace('\\', "/"));
+        let db_url = format!("sqlite:{}/dev.boyblah.musique/musique.db", appdata.replace('\\', "/"));
         let pool = match sqlx::SqlitePool::connect(&db_url).await { Ok(p) => p, Err(e) => { eprintln!("[playback-probe] db open failed: {e}"); return 13; } };
         let cid: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key='spotify_client_id'").fetch_optional(&pool).await.ok().flatten();
         let Some((client_id,)) = cid else { eprintln!("[playback-probe] no client_id in settings"); return 14; };

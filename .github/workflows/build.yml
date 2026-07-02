@@ -61,7 +61,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           mkdir tarball
-          cp src-tauri/target/release/spotify tarball/
+          cp src-tauri/target/release/musique tarball/
           tar -czf spotify-linux-x86_64.tar.gz tarball
 
       - name: Upload artifacts

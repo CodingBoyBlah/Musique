@@ -90,6 +90,8 @@ license under src-tauri/vendor/
 ### Credits:
 - [Anirudh](https://github.com/techwithanirudh) - macOS testing
 
+- [Laura](https://github.com/lauragarden) - macOS testing
+
 - [Luiggi](
 https://github.com/luiggineedsabreak) - Linux and Windows testing
 

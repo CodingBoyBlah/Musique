@@ -3,6 +3,36 @@
 version = 4
 
 [[package]]
+name = "Musique"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "discord-rich-presence",
+ "dotenvy",
+ "keyring",
+ "libc",
+ "librespot-core",
+ "librespot-playback",
+ "log",
+ "md5",
+ "rand 0.8.6",
+ "reqwest 0.12.28",
+ "rodio",
+ "serde",
+ "serde_json",
+ "sha2",
+ "souvlaki",
+ "sqlx",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "window-vibrancy",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5114,36 +5144,6 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der",
-]
-
-[[package]]
-name = "spotify"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "discord-rich-presence",
- "dotenvy",
- "keyring",
- "libc",
- "librespot-core",
- "librespot-playback",
- "log",
- "md5",
- "rand 0.8.6",
- "reqwest 0.12.28",
- "rodio",
- "serde",
- "serde_json",
- "sha2",
- "souvlaki",
- "sqlx",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "thiserror 1.0.69",
- "tokio",
- "url",
- "window-vibrancy",
 ]
 
 [[package]]

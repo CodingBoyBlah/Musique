@@ -9,7 +9,7 @@ const SUCCESS_HTML: &str = concat!(
     "<body style='font-family:system-ui,sans-serif;max-width:420px;margin:80px auto;",
     "text-align:center;background:#121212;color:#fff;padding:2rem;border-radius:12px'>",
     "<h2 style='color:#1db954'>Login Successful</h2>",
-    "<p style='color:#b3b3b3'>You can close this tab and return to Spotify Client.</p>",
+    "<p style='color:#b3b3b3'>You can close this tab and return to Musique.</p>",
     "</body></html>",
 );
 
