@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/layout/Layout";
 import { Loader } from "./components/ui/Loader";
+import { ThemeEngine } from "./components/ThemeEngine";
 
 /* route level code splitting,  each page loads on first visit instead of all of  it landing in the initial bundle. cuts startup load on older machines
 and keeps the heavy stuff (kuromoji/romanize via lyrics, charts, etc) off the
@@ -303,6 +304,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AppInit />
+      <ThemeEngine />
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Home />} />

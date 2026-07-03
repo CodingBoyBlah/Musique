@@ -19,7 +19,9 @@ import {
   lastfmDisconnect, lastfmClear,
 } from "../api/lastfm";
 import { setWindowEffect as applyWindowEffect, type WindowEffect } from "../api/window";
-import { isWindows } from "../lib/platform";
+import { isWindows, isMac } from "../lib/platform";
+import { useThemeStore, type ThemeSource} from "../store/theme.store";
+
 
 const STATUS_CONFIG: Record<ConnectionStatus, { dot: string; label: string }> = {
   unconfigured: { dot: "rgba(255,255,255,0.30)", label: "Not configured" },
@@ -178,6 +180,41 @@ const VIBRANCY_OPTS: { value: WindowEffect; label: string }[] = [
   { value: "none",    label: "None" },
 ];
 
+const MAC_MATERIAL_OPTS: { value: WindowEffect; label: string }[] = [
+  { value:"mica",   label: "Vibrancy" },
+  { value:"none",   label: "No material" },
+];
+
+
+const THEME_OPTS: { value: ThemeSource; label: string }[] = [
+  { value: "default", label: "Default" },
+  { value: "wallpaper", label: "Wallpaper Colors" },
+  ...(isMac ? [{ value: "system" as ThemeSource, label: "System Accent Color" }] : [])
+];
+
+function AppearanceCard() {
+  const source = useThemeStore((s) => s.source);
+  const setSource = useThemeStore((s) => s.setSource);
+  const albumColors = useThemeStore((s) => s.albumColors);
+  const setAlbumColors = useThemeStore((s) => s.setAlbumColors);
+
+  return (
+    <Card title="Appearance">
+      <SettingRow
+        label="Accent Color Source"
+        hint={isMac ? "Default blue, sampled from your desktop wallpaper, or your system accent color." : "Default blue, sampled from your desktop wallpaper."}
+        control={<Segmented value={source} options={THEME_OPTS} onChange={setSource} />}
+      />
+      <Divider />
+      <SettingRow
+        label="Album Colors"
+        hint="Use the dominant color of the currently playing album as the accent color."
+        control={<Switch checked={albumColors} onChange={setAlbumColors} />}
+      />
+    </Card>
+  );
+}
+
 function GeneralCard() {
   const notifyOnTrack    = usePrefsStore((s) => s.notifyOnTrack);
   const setNotifyOnTrack = usePrefsStore((s) => s.setNotifyOnTrack);
@@ -217,6 +254,8 @@ function GeneralCard() {
 function VisualCard() {
   const windowEffect    = useUIStore((s) => s.windowEffect);
   const setWindowEffect = useUIStore((s) => s.setWindowEffect);
+  const macValue: WindowEffect = windowEffect === "none" ? "none" : "mica";
+
 
   function choose(e: WindowEffect) {
     setWindowEffect(e);            // persist + drive the CSS scrim
@@ -229,10 +268,14 @@ function VisualCard() {
         label="Background material"
         hint={isWindows
           ? "Mica tints with your wallpaper, Acrylic is a darker blur, None is a solid background."
-          : "Translucent window materials are a Windows-only feature."}
+          : isMac
+            ? "Vibrancy shows the desktop through the window; No material paints a solid background."
+            : "Translucent window materials aren't available on this platform."}
         control={isWindows
           ? <Segmented value={windowEffect} options={VIBRANCY_OPTS} onChange={choose} />
-          : <span style={{ fontSize: 12.5, color: "var(--color-text-dim)" }}>Windows only</span>}
+          : isMac
+            ? <Segmented value={macValue} options={MAC_MATERIAL_OPTS} onChange={choose} />
+            : <span style={{ fontSize: 12.5, color: "var(--color-text-dim)" }}>Not available</span>}
       />
     </Card>
   );
@@ -515,6 +558,7 @@ export default function Settings() {
       </section>
 
       <GeneralCard />
+      <AppearanceCard />
       <VisualCard />
       <LastfmCard />
     </div>

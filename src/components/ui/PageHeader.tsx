@@ -3,6 +3,9 @@ import { motion } from "framer-motion";
 import { CoverArt } from "./CoverArt";
 import { useUIStore } from "../../store/ui.store";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
+import { useThemeStore } from "../../store/theme.store";
+import { loadCoverAccent, applyAccent } from "../../lib/color";
+
 
 interface Props {
   imageUrl: string | null | undefined;
@@ -16,12 +19,26 @@ interface Props {
  behind the whole content area, so it stays put while the page scrolls. */
 export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
   const setPageTint = useUIStore((s) => s.setPageTint);
+  const albumColors = useThemeStore((s) => s.albumColors);
   useReflowPulse(); // re-render on resize / panel toggle so the header layout glides DONE
 
   useEffect(() => {
     setPageTint(imageUrl ?? null);
     return () => setPageTint(null);
   }, [imageUrl, setPageTint]);
+
+    useEffect(() => {
+    if (!albumColors || !imageUrl) return;
+    let cancelled = false;
+    loadCoverAccent(imageUrl).then((hex) => {
+      if (!cancelled && hex) applyAccent(hex);
+    });
+    return () => {
+      cancelled = true;
+      applyAccent(useThemeStore.getState().baseAccent);
+    };
+  }, [albumColors, imageUrl]);
+
 
   return (
     <motion.div

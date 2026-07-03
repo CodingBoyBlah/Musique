@@ -1,7 +1,7 @@
 use crate::errors::AppError;
 use crate::state::AppState;
 use tauri::{AppHandle, State};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use tauri::Manager;
 
 /// whether a native backdrop material (mica/acrylic/vibrancy) is on. the
@@ -47,7 +47,40 @@ pub async fn set_window_effect(app: AppHandle, mode: String) -> Result<(), AppEr
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    // macOS: the two options are Vibrancy (any non-"none" value) and No material.
+    #[cfg(target_os = "macos")]
+    {
+        use window_vibrancy::{
+            apply_vibrancy, clear_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+        };
+
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| AppError::NotFound("main window".into()))?;
+
+        match mode.as_str() {
+            "none" => {
+                // frontend paints its own solid base (see backdropScrim)
+                let _ = clear_vibrancy(&window);
+            }
+            _ => {
+                // vibrancy on — try materials in order, keep the first that applies
+                for material in [
+                    NSVisualEffectMaterial::HudWindow,
+                    NSVisualEffectMaterial::UnderWindowBackground,
+                    NSVisualEffectMaterial::WindowBackground,
+                ] {
+                    if apply_vibrancy(&window, material, Some(NSVisualEffectState::Active), None)
+                        .is_ok()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (&app, &mode);
     }

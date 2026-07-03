@@ -9,3 +9,4 @@ pub mod settings;
 pub mod share;
 pub mod spotify;
 pub mod window;
+pub mod theme; 

@@ -577,6 +577,8 @@ pub fn run() {
             commands::lastfm::lastfm_clear,
             commands::lastfm::lastfm_now_playing,
             commands::lastfm::lastfm_scrobble,
+            commands::theme::get_wallpaper_data_url,
+            commands::theme::get_system_accent,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
