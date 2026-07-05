@@ -36,6 +36,8 @@
 
 - **Discord Rich Presence** - Discord rich presence compatabilty, to show what you're listening to.
 - **LastFM integration** - Auto scrobbling, and statistics in-app.
+- **Dynamic Accent Colors** - Based on the album/playlist, your wallpaper, or your system accent color.
+- **Customizable Transparency** 
 
 
 ## Tech Stack
@@ -71,20 +73,20 @@
 
 ### Security
 Tokens and the client secret live only in the OS keyring (Windows Credential
-Manager / MacOS Keychain / Secret Service).
+Manager / MacOS Keychain / Secret Service)
 
  Nothing sensitive crosses the IPC
 boundary to the frontend, and no credentials are committed to the repo
 
 ### Acknowledgements
 
-- librespot — the open Spotify protocol client this is built on (MIT)
-- LRCLIB — synced lyrics
-- Cider — the inspiration
+- librespot: the open Spotify protocol client this is built on (MIT)
+- LRCLIB: synced lyrics
+- Cider: the inspiration
 
 ### License
 
-MIT — see the license file. Vendored librespot retains its own MIT
+MIT: see the license file. Vendored librespot retains its own MIT
 license under src-tauri/vendor/
 
 ### Credits:
