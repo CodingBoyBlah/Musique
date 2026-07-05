@@ -14,11 +14,13 @@ import { usePlayerStore } from "../../store/player.store";
 import { useUIStore } from "../../store/ui.store";
 import { getBackdropActive } from "../../api/window";
 import { backdropScrim } from "../../lib/backdrop";
+import { isMac } from "../../lib/platform";
 
 export default function Layout() {
   const queueOpen = usePlayerStore((s) => s.queueOpen);
   const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
   const effect = useUIStore((s) => s.windowEffect);
+  const materialTransparency = useUIStore((s) => s.materialTransparency);
   const pageTint = useUIStore((s) => s.pageTint);
   const backdropActive = useUIStore((s) => s.backdropActive);
   const setBackdropActive = useUIStore((s) => s.setBackdropActive);
@@ -37,7 +39,7 @@ export default function Layout() {
   //    bg, otherwise the transparent window shows white (or the desktop)
   //  - windows acrylic -> OS ignores the tint, so darken with a CSS scrim
   //  - windows Mica / macOS vibrancy -> stay transparent, OS material shows
-  const scrim = backdropScrim(backdropActive, effect);
+  const scrim = backdropScrim(backdropActive, effect,  materialTransparency, isMac);
 
   return (
     /*

@@ -20,7 +20,7 @@ const AlbumPage    = lazy(() => import("./pages/AlbumPage"));
 import { getCredentials, validateCredentials } from "./api/credentials";
 import { getAuthStatus } from "./api/auth";
 import {
-  getVolume, setVolume, setMuted,
+  setVolume, setMuted,
   pausePlayback, resumePlayback, stopPlayback, playTrack,
   warmupPlayback, preloadTrack, seekPlayback, retryPlayTrack,
 } from "./api/playback";
@@ -48,8 +48,7 @@ function AppInit() {
   const setFromStatus      = useAuthStore((s) => s.setFromStatus);
   const isLoggedIn         = useAuthStore((s) => s.loggedIn);
   const onEvent            = usePlayerStore((s) => s.onEvent);
-  const storeSetVolume     = usePlayerStore((s) => s.setVolume);
-  const storeSetMuted      = usePlayerStore((s) => s.setMuted);
+  
   const invalidateLibrary  = useInvalidateLibrary();
   const queryClient        = useQueryClient();
   const currentTrack       = usePlayerStore((s) => s.currentTrack);
@@ -113,11 +112,8 @@ native backdrop but blows away react state, so sync hereto keep the os material 
     const { volume, muted } = usePlayerStore.getState();
     setVolume(volume).catch(() => {});
     setMuted(muted).catch(() => {});
-    getVolume().then((vs) => {
-      storeSetVolume(vs.level);
-      storeSetMuted(vs.muted);
-    }).catch(() => {});
-  }, [setFromCredentials, setCredStatus, setFromStatus, storeSetVolume, storeSetMuted]);
+    
+  }, [setFromCredentials, setCredStatus, setFromStatus]);
 
   /* pewarm the librespot session after login so the first play is instant, and prefetch 
 Home recs so they're cached before the user gets there

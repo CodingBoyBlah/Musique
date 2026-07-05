@@ -16,11 +16,14 @@ transparent window show through.
 export function backdropScrim(
   backdropActive: boolean,
   effect: WindowEffect,
+  transparency = 0.4,
+  isMac = false,
 ): string {
   if (!backdropActive) return "var(--color-base)";
   // material turned off -> paint the solid base so the now-transparent window
   // doesn't show white/the desktop behind it
   if (effect === "none") return "var(--color-base)";
-  if (effect === "acrylic") return "rgba(8, 8, 10, 0.6)";
+  if (effect === "acrylic") return `rgba(8, 8, 10, ${(1 - transparency).toFixed(3)})`;
+  if (effect === "mica" && isMac) return `rgba(10,10,14, ${(1 - transparency).toFixed(3)})`;
   return "transparent";
 }

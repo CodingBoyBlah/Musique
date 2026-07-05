@@ -254,7 +254,11 @@ function GeneralCard() {
 function VisualCard() {
   const windowEffect    = useUIStore((s) => s.windowEffect);
   const setWindowEffect = useUIStore((s) => s.setWindowEffect);
+  const transparency = useUIStore((s) => s.materialTransparency);
+  const setTransparency = useUIStore((s) => s.setMaterialTransparency);
   const macValue: WindowEffect = windowEffect === "none" ? "none" : "mica";
+
+  const showTransparency = (isWindows && windowEffect === "acrylic") || (isMac && windowEffect === "mica");
 
 
   function choose(e: WindowEffect) {
@@ -277,6 +281,34 @@ function VisualCard() {
             ? <Segmented value={macValue} options={MAC_MATERIAL_OPTS} onChange={choose} />
             : <span style={{ fontSize: 12.5, color: "var(--color-text-dim)" }}>Not available</span>}
       />
+            {showTransparency && (
+        <>
+          <Divider />
+          <SettingRow
+            label="Transparency"
+            hint="How much the desktop shows through the material."
+            control={
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 168 }}>
+                <input
+                  className="vol"
+                  type="range"
+                  min={10}   // NOT 0-100: capped so the window can't go invisible
+                  max={70}
+                  step={1}
+                  value={Math.round(transparency * 100)}
+                  onChange={(e) => setTransparency(Number(e.target.value) / 100)}
+                  aria-label="Material transparency"
+                  style={{ flex: 1, ["---vol" as string]: `${Math.round(((transparency * 100 - 10) / 60) * 100)}%` } as React.CSSProperties}
+                />
+                <span style={{ fontSize: 12, fontVariantNumeric: "tabular-nums", color: "var(--color-text-dim)", width: 34, textAlign: "right" }}>
+                  {Math.round(transparency * 100)}%
+                </span>
+              </div>
+            }
+          />
+        </>
+      )}
+
     </Card>
   );
 }

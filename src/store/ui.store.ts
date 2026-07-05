@@ -8,6 +8,9 @@ interface UIState {
   windowEffect: WindowEffect;
   setWindowEffect: (e: WindowEffect) => void;
 
+  materialTransparency: number;
+  setMaterialTransparency: (v: number) => void;
+
   pageTint: string | null;
   setPageTint: (url: string | null) => void;
   
@@ -26,6 +29,8 @@ export const useUIStore = create<UIState>()(
         set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
       windowEffect: "mica",
       setWindowEffect: (e) => set({ windowEffect: e }),
+      materialTransparency: 0.4,
+      setMaterialTransparency: (v) => set({ materialTransparency: Math.max(0.1, Math.min(0.7, v))}),
       pageTint: null,
       setPageTint: (url) => set({ pageTint: url }),
       backdropActive: false,
@@ -39,6 +44,7 @@ export const useUIStore = create<UIState>()(
       partialize: (s) => ({
         windowEffect:     s.windowEffect,
         sidebarCollapsed: s.sidebarCollapsed,
+        materialTransparency: s.materialTransparency,
       }),
     },
   ),
