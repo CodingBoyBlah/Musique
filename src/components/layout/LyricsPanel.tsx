@@ -41,7 +41,7 @@ function CoverBg({ url }: { url: string | null | undefined }) {
         style={{
           position: "absolute",
           inset: 0,
-          background: "rgba(10,10,18,0.30)",
+          background: "#0a0a12",
           zIndex: 0,
         }}
       />
@@ -55,7 +55,7 @@ function CoverBg({ url }: { url: string | null | undefined }) {
    no transform here, framer owns it scale goes through framer (constant) so
    the blur rasterizes once and only translate/rotate composite per frame */
 
-/* UPDATE REUSED IN IMMERSIVE LYRICS PANEL TOO, TODO DONE */
+  /* UPDATE REUSED IN IMMERSIVE LYRICS PANEL TOO, TODO DONE */
   const layer = (opacity: number): React.CSSProperties => ({
     position: "absolute",
     inset: "-35%",
@@ -74,15 +74,33 @@ function CoverBg({ url }: { url: string | null | undefined }) {
     >
       <motion.div
         initial={false}
-        animate={reduceMotion ? { scale: 1.45 } : { scale: 1.45, x: [0, 54, -38, 0], y: [0, -42, 32, 0], rotate: [0, 6, -5, 0] }}
+        animate={
+          reduceMotion
+            ? { scale: 1.45 }
+            : {
+                scale: 1.45,
+                x: [0, 54, -38, 0],
+                y: [0, -42, 32, 0],
+                rotate: [0, 6, -5, 0],
+              }
+        }
         transition={{ duration: 26, repeat: Infinity, ease: "easeInOut" }}
-        style={layer(0.28)}
+        style={layer(0.5)}
       />
       <motion.div
         initial={false}
-        animate={reduceMotion ? { scale: 1.7 } : { scale: 1.7, x: [0, -48, 40, 0], y: [0, 36, -30, 0], rotate: [0, -7, 5, 0] }}
+        animate={
+          reduceMotion
+            ? { scale: 1.7 }
+            : {
+                scale: 1.7,
+                x: [0, -48, 40, 0],
+                y: [0, 36, -30, 0],
+                rotate: [0, -7, 5, 0],
+              }
+        }
         transition={{ duration: 38, repeat: Infinity, ease: "easeInOut" }}
-        style={layer(0.26)}
+        style={layer(0.34)}
       />
       {/* legibility scrim = darken header + bottom for text contrast; middle
           stays light so the moving colour appears through clearly */}
@@ -198,23 +216,28 @@ export function LyricsPanel() {
 
   return (
     <motion.div
-      initial={{ width: 0, opacity: 0 }}
-      animate={{ width: WIDTH, opacity: 1 }}
-      exit={{ width: 0, opacity: 0 }}
+      // Absolute OVERLAY that slides in/out via a transform (x). The layout space
+      // is reserved by an in-flow spacer in Layout.tsx (which toggles instantly on
+      // open AND close), so the grid reflows in one step and the cards glide via
+      // framer `layout` both ways. This panel just slides over that region — its
+      // width never animates, so nothing reflows per-frame.
+      initial={{ x: WIDTH, opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: WIDTH, opacity: 0 }}
       transition={{
-        type: "spring",
-        stiffness: 360,
-        damping: 38,
-        opacity: { duration: 0.18 },
+        x: { duration: 0.34, ease: [0.32, 0.72, 0, 1] },
+        opacity: { duration: 0.2 },
       }}
       style={{
-        flexShrink: 0,
+        position: "absolute",
+        top: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 5,
+        width: WIDTH,
         overflow: "hidden",
         borderLeft: "1px solid var(--color-border)",
-        
-        background: "rgba(18,18,26,0.30)",
-        backdropFilter: "blur(40px) saturate(1.7)",
-        WebkitBackdropFilter: "blur(40px) saturate(1.7)",
+        background: "transparent",
       }}
     >
       <div

@@ -9,13 +9,7 @@ use std::path::PathBuf;
 #[tauri::command]
 pub async fn get_wallpaper_data_url() -> Result<Option<String>, AppError> {
     let Some(path) = wallpaper_path() else { return Ok(None); };
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("[theme] wallpaper read failed ({}): {e}", path.display());
-            return Ok(None);
-        }
-    };
+    
     let mime = match path
         .extension()
         .and_then(|e| e.to_str())
@@ -29,8 +23,15 @@ pub async fn get_wallpaper_data_url() -> Result<Option<String>, AppError> {
         // Windows' TranscodedWallpaper has no extension and is always JPEG
         _ => "image/jpeg",
     };
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    Ok(Some(format!("data:{mime};base64,{b64}")))
+    let b64 = tokio::task::spawn_blocking(move || {
+        std::fs::read(&path)
+            .ok()
+            .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
+    })
+    .await
+    .ok()
+    .flatten();
+    Ok(b64.map(|b64| format!("data:{mime}; base64, {b64}")))
 }
 
 // macOS system accent color as a hex string. None on every other OS. This is the

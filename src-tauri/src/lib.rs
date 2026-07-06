@@ -14,7 +14,7 @@ mod commands;
 pub fn connect_probe() -> i32 {
     use librespot_core::{authentication::Credentials, config::SessionConfig, session::Session};
 
-  
+
     struct StderrLog;
     impl log::Log for StderrLog {
         fn enabled(&self, _: &log::Metadata) -> bool { true }
@@ -100,7 +100,7 @@ pub fn playback_probe() -> i32 {
         let Some((client_id,)) = cid else { eprintln!("[playback-probe] no client_id in settings"); return 14; };
         let client_id = client_id.trim().to_string();
 
-        
+
         let token = if let Ok(t) = std::env::var("SPOTIFY_TOKEN") {
             if !t.trim().is_empty() {
                 eprintln!("[playback-probe] using SPOTIFY_TOKEN from env");
@@ -145,7 +145,7 @@ pub fn playback_probe() -> i32 {
         eprintln!("[playback-probe] token ready; client_id={client_id}");
 
         let mut cfg = SessionConfig::default();
-       
+
         let session_cid = std::env::var("SPOTIFY_SESSION_CLIENT_ID").ok().filter(|s| !s.trim().is_empty());
         cfg.client_id = session_cid.clone().unwrap_or(client_id);
         eprintln!("[playback-probe] session client_id override = {session_cid:?}");
@@ -156,7 +156,7 @@ pub fn playback_probe() -> i32 {
         }
         eprintln!("[playback-probe] session connected (check_catalogue did NOT kill us -> patch works)");
 
-       
+
         for _ in 0..50 {
             if !session.country().is_empty() { break; }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -298,7 +298,7 @@ mod native_crash {
                 }
             }
         }
-        
+
         unsafe {
             libc::signal(sig, libc::SIG_DFL);
             libc::raise(sig);
@@ -346,41 +346,43 @@ static PLAYBACK_LOG: PlaybackLog = PlaybackLog;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-   
+
     let _ = log::set_logger(&PLAYBACK_LOG);
     log::set_max_level(log::LevelFilter::Info);
 
- 
+
     install_panic_logger();
 
-   
+
     // catches native crashes that a rust panic doesnt, leaves a breadcrumb in the same log
     #[cfg(unix)]
     native_crash::install();
 
-    
+
     #[cfg(target_os = "linux")]
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
-    
+
     let _ = dotenvy::from_filename("../.env");
     let _ = dotenvy::from_filename(".env");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            
+
             let mut backdrop_active = false;
-            
+
             let mut main_hwnd: Option<isize> = None;
             if let Some(window) = app.get_webview_window("main") {
-                
+
                 #[cfg(not(target_os = "macos"))]
                 let _ = window.set_decorations(false);
 
-                
+
                 let _ = window.set_theme(Some(tauri::Theme::Dark));
 
                 // win11 gets mica, older builds fall back to acrylic
@@ -391,7 +393,7 @@ pub fn run() {
                         || apply_acrylic(&window, Some((18, 18, 18, 110))).is_ok();
                 }
 
-                
+
                 #[cfg(target_os = "macos")]
                 {
                     use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};

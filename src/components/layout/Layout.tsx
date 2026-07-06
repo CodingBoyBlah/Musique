@@ -31,7 +31,9 @@ export default function Layout() {
   // answers (and anywhere it didn't - Linux, or a failed Mica/vibrancy) the
   // root stays opaque dark so we never get white-on-white.
   useEffect(() => {
-    getBackdropActive().then(setBackdropActive).catch(() => setBackdropActive(false));
+    getBackdropActive()
+      .then(setBackdropActive)
+      .catch(() => setBackdropActive(false));
   }, [setBackdropActive]);
 
   // backdrop strategy:
@@ -39,7 +41,12 @@ export default function Layout() {
   //    bg, otherwise the transparent window shows white (or the desktop)
   //  - windows acrylic -> OS ignores the tint, so darken with a CSS scrim
   //  - windows Mica / macOS vibrancy -> stay transparent, OS material shows
-  const scrim = backdropScrim(backdropActive, effect,  materialTransparency, isMac);
+  const scrim = backdropScrim(
+    backdropActive,
+    effect,
+    materialTransparency,
+    isMac,
+  );
 
   return (
     /*
@@ -57,7 +64,14 @@ export default function Layout() {
         transition: "background 0.2s",
       }}
     >
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <div
+        style={{
+          display: "flex",
+          flex: 1,
+          overflow: "hidden",
+          position: "relative",
+        }}
+      >
         <Sidebar />
 
         <div
@@ -149,7 +163,14 @@ export default function Layout() {
 
             {/* main region wrapper - lyrics view overlays this area (below the
                 title bar, above the player bar) */}
-            <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <div
+              style={{
+                position: "relative",
+                flex: 1,
+                minHeight: 0,
+                overflow: "hidden",
+              }}
+            >
               <main
                 data-selectable
                 style={{
@@ -157,7 +178,8 @@ export default function Layout() {
                   inset: 0,
                   overflowY: "auto",
                   overflowX: "hidden",
-                  padding: "clamp(6px, 1.4vw, 12px) clamp(14px, 3vw, 32px) clamp(16px, 3vw, 32px)",
+                  padding:
+                    "clamp(6px, 1.4vw, 12px) clamp(14px, 3vw, 32px) clamp(16px, 3vw, 32px)",
                 }}
               >
                 {/* page-load motion: content rises gently from below on each
@@ -167,7 +189,11 @@ export default function Layout() {
                   initial={reduceMotion ? false : { opacity: 0, y: 14 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.34, ease: [0.23, 1, 0.32, 1] }}
-                  style={{ width: "100%", maxWidth: "var(--content-max)", marginInline: "auto" }}
+                  style={{
+                    width: "100%",
+                    maxWidth: "var(--content-max)",
+                    marginInline: "auto",
+                  }}
                 >
                   <Outlet />
                 </motion.div>
@@ -177,6 +203,13 @@ export default function Layout() {
         </div>
 
         {/* right rail - lyrics or queue, mutually exclusive */}
+        <div
+          aria-hidden
+          style={{
+            width: lyricsOpen ? 336 : queueOpen ? 272 : 0,
+            flexShrink: 0,
+          }}
+        />
         <AnimatePresence initial={false}>
           {lyricsOpen && <LyricsPanel key="lyrics" />}
         </AnimatePresence>

@@ -8,6 +8,7 @@ import { applyAccent, dataUrlAccent, loadCoverAccent } from "../lib/color";
 export function ThemeEngine() {
   const source      = useThemeStore((s) => s.source);
   const albumColors = useThemeStore((s) => s.albumColors);
+  const refreshKey = useThemeStore((s) => s.refreshKey);
   const pageTint    = useUIStore((s) => s.pageTint);
 
   
@@ -41,7 +42,7 @@ export function ThemeEngine() {
       };
     }
     return () => { cancelled = true; };
-  }, [source]);
+  }, [source, refreshKey]);
 
   
   useEffect(() => {

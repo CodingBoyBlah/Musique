@@ -6,6 +6,7 @@ import {
   Volume2, Volume1, VolumeX,
   ListMusic, Captions, Maximize2,
 } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import {
@@ -261,7 +262,16 @@ export function PlayerBar() {
   const setPlaying      = usePlayerStore((s) => s.setPlaying);
   const sessionReady    = usePlayerStore((s) => s.sessionReady);
   const setImmersiveOpen = usePlayerStore((s) => s.setImmersiveOpen);
-  const { shuffle, repeat, advance, previous, toggleShuffle, cycleRepeat } = useQueueStore();
+  const { shuffle, repeat, advance, previous, toggleShuffle, cycleRepeat } = useQueueStore(
+    useShallow((s) => ({
+      shuffle: s.shuffle,
+      repeat:  s.repeat,
+      advance: s.advance,
+      previous: s.previous,
+      toggleShuffle: s.toggleShuffle,
+      cycleRepeat:   s.cycleRepeat,
+    }))
+  );
 
   useEffect(() => {
     if (!isPlaying) return;

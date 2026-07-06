@@ -15,6 +15,9 @@ interface ThemeStore {
   
   baseAccent: string | null;
   setBaseAccent: (hex: string | null) => void;
+
+  refreshKey: number;
+  refreshTheme: () => void;
 }
 
 export const useThemeStore = create<ThemeStore>()(
@@ -26,7 +29,10 @@ export const useThemeStore = create<ThemeStore>()(
       setAlbumColors: (v) => set({ albumColors: v }),
       baseAccent: null,
       setBaseAccent: (hex) => set({ baseAccent: hex }),
+      refreshKey: 0,
+      refreshTheme: () => set((s) => ({ refreshKey: s.refreshKey + 1})),
     }),
+    
     {
       name: "musique-theme",
       

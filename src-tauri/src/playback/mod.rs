@@ -337,6 +337,10 @@ pub async fn create_inner(
     let mut event_rx = player.get_player_event_channel();
     let event_app    = app.clone();
     let event_task   = tauri::async_runtime::spawn(async move {
+        let mut last_pos_emit = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(1))
+            .unwrap_or_else(std::time::Instant::now);
+        let mut last_pos_ms: u32 = 0;
         while let Some(event) = event_rx.recv().await {
             // pass the playback state along to the os media controls
             match &event {
@@ -369,11 +373,20 @@ pub async fn create_inner(
                         track_id:    track_id.to_id().ok(),
                         position_ms,
                     }),
-                PlayerEvent::PositionChanged { track_id, position_ms, .. } =>
-                    Some(PlayerMsg::PositionChanged {
-                        track_id:    track_id.to_id().ok(),
-                        position_ms,
-                    }),
+                 PlayerEvent::PositionChanged { track_id, position_ms, .. } => {
+                    let due   = last_pos_emit.elapsed() >= std::time::Duration::from_millis(250);
+                    let moved = position_ms.abs_diff(last_pos_ms) >= 250;
+                    if due || moved {
+                        last_pos_emit = std::time::Instant::now();
+                        last_pos_ms   = position_ms;
+                       Some(PlayerMsg::PositionChanged {
+                           track_id:    track_id.to_id().ok(),
+                          position_ms,
+                        })
+                    } else {
+                        None
+                    }
+                }
                 PlayerEvent::Stopped { track_id, .. } =>
                     Some(PlayerMsg::Stopped { track_id: track_id.to_id().ok() }),
                 PlayerEvent::EndOfTrack { track_id, .. } =>

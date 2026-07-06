@@ -135,7 +135,7 @@ function TrackRowImpl({
 
       {showCover && (
         cover ? (
-          <img src={cover} alt="" style={{ width: 42, height: 42, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
+          <img src={cover} alt="" loading="lazy" decoding="async" style={{ width: 42, height: 42, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
         ) : (
           <div style={{ width: 42, height: 42, borderRadius: 6, background: "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <Music size={16} style={{ color: "var(--color-text-dim)" }} />

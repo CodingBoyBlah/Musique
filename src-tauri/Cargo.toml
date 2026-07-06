@@ -26,6 +26,8 @@ tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 window-vibrancy = "0.6"
 souvlaki = "0.7"
 tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "migrate", "macros"] }

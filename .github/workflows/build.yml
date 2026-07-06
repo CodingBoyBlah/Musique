@@ -1,23 +1,31 @@
-name: Build Tauri App
+name: Release
 
+# Cut a release + auto-updater feed by pushing a version tag, e.g.:
+#   git tag v0.1.1 && git push origin v0.1.1
+# (Keep the tag in sync with `version` in src-tauri/tauri.conf.json.)
 on:
-  workflow_dispatch:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: windows-latest
+          - platform: macos-latest # Apple Silicon
+            target: aarch64-apple-darwin
+          - platform: macos-latest # Intel
+            target: x86_64-apple-darwin
           - platform: ubuntu-22.04
-          - platform: macos-latest
+            target: ""
+          - platform: windows-latest
+            target: ""
 
     runs-on: ${{ matrix.platform }}
 
@@ -34,6 +42,8 @@ jobs:
           cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Install Linux deps
         if: matrix.platform == 'ubuntu-22.04'
@@ -51,38 +61,23 @@ jobs:
             librsvg2-dev \
             libasound2-dev
 
-      - name: Install dependencies
+      - name: Install frontend dependencies
         run: pnpm install
 
-      - name: Build app
-        run: pnpm tauri build
-
-      - name: Create Linux tarball
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          mkdir tarball
-          cp src-tauri/target/release/musique tarball/
-          tar -czf spotify-linux-x86_64.tar.gz tarball
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      # tauri-action builds the app, creates/updates the GitHub Release for this
+      # tag, SIGNS the updater artifacts, generates `latest.json`, and uploads ONLY
+      # the final installers + updater bundles + latest.json (no bundle folders).
+      # Every matrix job targets the same release (keyed by tagName) and the action
+      # merges each platform's entry into the one latest.json.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          name: ${{ matrix.platform }}
-          path: |
-            src-tauri/target/release/bundle/**
-            spotify-linux-x86_64.tar.gz
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/*
+          tagName: ${{ github.ref_name }}
+          releaseName: "Musique ${{ github.ref_name }}"
+          releaseBody: "Install once from the assets below — Musique auto-updates itself from here on."
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}

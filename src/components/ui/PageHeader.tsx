@@ -4,8 +4,6 @@ import { CoverArt } from "./CoverArt";
 import { useUIStore } from "../../store/ui.store";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
 
-
-
 interface Props {
   imageUrl: string | null | undefined;
   eyebrow: string;
@@ -14,7 +12,7 @@ interface Props {
 }
 
 /*album/playlist header    note: the blurred artwork tint isnt drawn here -- it
- gets pushed to the UI store and Layout paints it as a fixed faint backdrop 
+ gets pushed to the UI store and Layout paints it as a fixed faint backdrop
  behind the whole content area, so it stays put while the page scrolls. */
 export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
   const setPageTint = useUIStore((s) => s.setPageTint);
@@ -25,16 +23,13 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
     return () => setPageTint(null);
   }, [imageUrl, setPageTint]);
 
-    
-
-
   return (
     <motion.div
       layout
       style={{
         display: "flex",
         alignItems: "flex-end",
-        gap: "clamp(14px, 2.4vw, 24px)",
+        gap: "clamp(14px, 2.4cqi, 24px)",
         minWidth: 0,
         padding: "clamp(8px, 1.4vw, 12px) 0 clamp(14px, 2vw, 20px)",
         /* only wrap (cover on top, text below) at the extreme narrow end. before  that the cover just shrinks instead of crushing the text column. */
@@ -53,7 +48,11 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
         initial={{ opacity: 0, scale: 0.94 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.45, ease: [0.23, 1, 0.32, 1] }}
-        style={{ flex: "0 1 clamp(150px, 28%, 282px)", minWidth: 150, maxWidth: 282 }}
+        style={{
+          flex: "0 1 clamp(178px, 34cqi, 300px)",
+          minWidth: 178,
+          maxWidth: 300,
+        }}
       >
         <div style={{ width: "100%", aspectRatio: "1 / 1" }}>
           <CoverArt
@@ -66,7 +65,10 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
         </div>
       </motion.div>
 
-      <div className="flex flex-col gap-2 min-w-0" style={{ flex: "1 1 220px", paddingBottom: 4 }}>
+      <div
+        className="flex flex-col gap-2 min-w-0"
+        style={{ flex: "1 1 220px", paddingBottom: 4 }}
+      >
         <p
           className="text-[10px] font-bold uppercase tracking-widest"
           style={{ color: "var(--color-text-dim)" }}
@@ -82,7 +84,11 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
         <h1
           className="font-black line-clamp-2 break-words"
           title={title}
-          style={{ fontSize: "clamp(26px, 4.2vw, 44px)", lineHeight: 1.05, letterSpacing: "-0.02em" }}
+          style={{
+            fontSize: "clamp(22px, 7cqi, 44px)",
+            lineHeight: 1.05,
+            letterSpacing: "-0.02em",
+          }}
         >
           {title}
         </h1>

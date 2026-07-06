@@ -9,9 +9,11 @@ interface Props {
   className?: string;
   // overrides merged last - eg width/height 100% to fill a flexible box
   style?:    CSSProperties;
+  loading?: "lazy" | "eager";
+  decoding?: "async" | "sync" | "auto";
 }
 
-export function CoverArt({ url, alt, size, rounded, className = "", style }: Props) {
+export function CoverArt({ url, alt, size, rounded, className = "", style, loading, decoding }: Props) {
   const radius  = rounded ? "50%" : 6;
   const baseStyle = { width: size, height: size, borderRadius: radius, flexShrink: 0 as const };
 
@@ -23,6 +25,8 @@ export function CoverArt({ url, alt, size, rounded, className = "", style }: Pro
         referrerPolicy="no-referrer"
         className={className}
         style={{ ...baseStyle, objectFit: "cover" as const, ...style }}
+        loading={loading}
+        decoding={decoding}
       />
     );
   }
