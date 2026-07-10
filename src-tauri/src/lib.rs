@@ -1,31 +1,35 @@
 use std::sync::Arc;
 use tauri::{
-    Manager,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter,
+    Emitter, Manager,
 };
 use tokio::sync::RwLock;
 
 mod auth;
 mod commands;
 
-
 pub fn connect_probe() -> i32 {
     use librespot_core::{authentication::Credentials, config::SessionConfig, session::Session};
 
-
     struct StderrLog;
     impl log::Log for StderrLog {
-        fn enabled(&self, _: &log::Metadata) -> bool { true }
-        fn log(&self, r: &log::Record) { eprintln!("[{}] {}: {}", r.level(), r.target(), r.args()); }
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, r: &log::Record) {
+            eprintln!("[{}] {}: {}", r.level(), r.target(), r.args());
+        }
         fn flush(&self) {}
     }
     static LOGGER: StderrLog = StderrLog;
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Trace);
 
-    let rt = match tokio::runtime::Runtime::new() { Ok(r) => r, Err(_) => return 10 };
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(r) => r,
+        Err(_) => return 10,
+    };
     rt.block_on(async {
         let token = match keyring::Entry::new("musique", "access_token")
             .and_then(|e| e.get_password())
@@ -61,9 +65,10 @@ pub fn connect_probe() -> i32 {
     })
 }
 
-
 pub fn playback_probe() -> i32 {
-    use librespot_core::{authentication::Credentials, config::SessionConfig, session::Session, SpotifyId, SpotifyUri};
+    use librespot_core::{
+        authentication::Credentials, config::SessionConfig, session::Session, SpotifyId, SpotifyUri,
+    };
     use librespot_playback::audio_backend::{Sink, SinkResult};
     use librespot_playback::config::{Bitrate, PlayerConfig};
     use librespot_playback::convert::Converter;
@@ -73,17 +78,27 @@ pub fn playback_probe() -> i32 {
 
     struct NullSink;
     impl Sink for NullSink {
-        fn write(&mut self, _p: AudioPacket, _c: &mut Converter) -> SinkResult<()> { Ok(()) }
+        fn write(&mut self, _p: AudioPacket, _c: &mut Converter) -> SinkResult<()> {
+            Ok(())
+        }
     }
     struct FullVol;
-    impl VolumeGetter for FullVol { fn attenuation_factor(&self) -> f64 { 1.0 } }
+    impl VolumeGetter for FullVol {
+        fn attenuation_factor(&self) -> f64 {
+            1.0
+        }
+    }
 
     struct StderrLog;
     impl log::Log for StderrLog {
-        fn enabled(&self, _: &log::Metadata) -> bool { true }
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
         fn log(&self, r: &log::Record) {
             let t = r.target();
-            if t.starts_with("librespot") { eprintln!("[{}] {}: {}", r.level(), t, r.args()); }
+            if t.starts_with("librespot") {
+                eprintln!("[{}] {}: {}", r.level(), t, r.args());
+            }
         }
         fn flush(&self) {}
     }
@@ -91,7 +106,10 @@ pub fn playback_probe() -> i32 {
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Debug);
 
-    let rt = match tokio::runtime::Runtime::new() { Ok(r) => r, Err(_) => return 10 };
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(r) => r,
+        Err(_) => return 10,
+    };
     rt.block_on(async {
         let appdata = match std::env::var("APPDATA") { Ok(v) => v, Err(_) => { eprintln!("[playback-probe] no APPDATA"); return 12; } };
         let db_url = format!("sqlite:{}/dev.boyblah.musique/musique.db", appdata.replace('\\', "/"));
@@ -181,15 +199,15 @@ pub fn playback_probe() -> i32 {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() { eprintln!("[playback-probe] TIMEOUT — no decisive event"); return 6; }
+            if remaining.is_zero() { eprintln!("[playback-probe] TIMEOUT - no decisive event"); return 6; }
             match tokio::time::timeout(remaining, rx.recv()).await {
                 Ok(Some(ev)) => match ev {
                     PlayerEvent::Playing { .. } | PlayerEvent::TrackChanged { .. } => {
-                        eprintln!("[playback-probe] SUCCESS — audio keys granted, track is PLAYING. Region/unavailable error is GONE.");
+                        eprintln!("[playback-probe] SUCCESS - audio keys granted, track is PLAYING. Region/unavailable error is GONE.");
                         return 0;
                     }
                     PlayerEvent::Unavailable { track_id, .. } => {
-                        eprintln!("[playback-probe] BLOCKED — track {track_id:?} reported Unavailable (region/availability/relink). check_catalogue survived but the track itself is blocked.");
+                        eprintln!("[playback-probe] BLOCKED - track {track_id:?} reported Unavailable (region/availability/relink). check_catalogue survived but the track itself is blocked.");
                         return 5;
                     }
                     PlayerEvent::EndOfTrack { .. } => { eprintln!("[playback-probe] EndOfTrack before Playing"); return 6; }
@@ -213,7 +231,11 @@ pub fn audio_probe() -> i32 {
         }
         unsafe {
             for sig in [
-                libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE, libc::SIGABRT,
+                libc::SIGSEGV,
+                libc::SIGBUS,
+                libc::SIGILL,
+                libc::SIGFPE,
+                libc::SIGABRT,
             ] {
                 libc::signal(sig, bail as libc::sighandler_t);
             }
@@ -239,7 +261,6 @@ mod playback;
 mod spotify;
 mod state;
 
-
 fn install_panic_logger() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -249,10 +270,17 @@ fn install_panic_logger() {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let thread = std::thread::current().name().unwrap_or("<unnamed>").to_string();
+        let thread = std::thread::current()
+            .name()
+            .unwrap_or("<unnamed>")
+            .to_string();
         let bt = std::backtrace::Backtrace::force_capture();
         let entry = format!("\n===== PANIC @unix={secs} thread={thread} =====\n{info}\n{bt}\n");
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             use std::io::Write;
             let _ = f.write_all(entry.as_bytes());
         }
@@ -270,11 +298,11 @@ mod native_crash {
     fn sig_name(sig: i32) -> &'static [u8] {
         match sig {
             libc::SIGSEGV => b"SIGSEGV",
-            libc::SIGBUS  => b"SIGBUS",
-            libc::SIGILL  => b"SIGILL",
-            libc::SIGFPE  => b"SIGFPE",
+            libc::SIGBUS => b"SIGBUS",
+            libc::SIGILL => b"SIGILL",
+            libc::SIGFPE => b"SIGFPE",
             libc::SIGABRT => b"SIGABRT",
-            _             => b"SIGNAL",
+            _ => b"SIGNAL",
         }
     }
 
@@ -313,14 +341,17 @@ mod native_crash {
         }
         unsafe {
             for sig in [
-                libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE, libc::SIGABRT,
+                libc::SIGSEGV,
+                libc::SIGBUS,
+                libc::SIGILL,
+                libc::SIGFPE,
+                libc::SIGABRT,
             ] {
                 libc::signal(sig, handler as libc::sighandler_t);
             }
         }
     }
 }
-
 
 struct PlaybackLog;
 impl log::Log for PlaybackLog {
@@ -335,7 +366,11 @@ impl log::Log for PlaybackLog {
         eprint!("{line}");
         let mut p = std::env::temp_dir();
         p.push("spotify-playback.log");
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&p)
+        {
             use std::io::Write;
             let _ = f.write_all(line.as_bytes());
         }
@@ -346,24 +381,19 @@ static PLAYBACK_LOG: PlaybackLog = PlaybackLog;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-
     let _ = log::set_logger(&PLAYBACK_LOG);
     log::set_max_level(log::LevelFilter::Info);
 
-
     install_panic_logger();
-
 
     // catches native crashes that a rust panic doesnt, leaves a breadcrumb in the same log
     #[cfg(unix)]
     native_crash::install();
 
-
     #[cfg(target_os = "linux")]
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
-
 
     let _ = dotenvy::from_filename("../.env");
     let _ = dotenvy::from_filename(".env");
@@ -373,30 +403,28 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-
             let mut backdrop_active = false;
 
             let mut main_hwnd: Option<isize> = None;
             if let Some(window) = app.get_webview_window("main") {
-
                 #[cfg(not(target_os = "macos"))]
                 let _ = window.set_decorations(false);
-
 
                 let _ = window.set_theme(Some(tauri::Theme::Dark));
 
                 // win11 gets mica, older builds fall back to acrylic
                 #[cfg(target_os = "windows")]
                 {
-                    use window_vibrancy::{apply_mica, apply_acrylic};
+                    use window_vibrancy::{apply_acrylic, apply_mica};
                     backdrop_active = apply_mica(&window, Some(true)).is_ok()
                         || apply_acrylic(&window, Some((18, 18, 18, 110))).is_ok();
                 }
 
-
                 #[cfg(target_os = "macos")]
                 {
-                    use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+                    use window_vibrancy::{
+                        apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+                    };
                     for material in [
                         NSVisualEffectMaterial::HudWindow,
                         NSVisualEffectMaterial::UnderWindowBackground,
@@ -435,13 +463,13 @@ pub fn run() {
             // database + auth setup
             let handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
-                let pool       = db::connection::create_pool(&handle).await;
+                let pool = db::connection::create_pool(&handle).await;
                 // seed spotify creds from .env on first run, does nothing if theyre already set
                 commands::credentials::seed_credentials_from_env(&pool).await;
                 let auth_state = auth::init_auth_state(&pool).await;
                 handle.manage(state::AppState {
-                    db:       pool,
-                    auth:     Arc::new(RwLock::new(auth_state)),
+                    db: pool,
+                    auth: Arc::new(RwLock::new(auth_state)),
                     playback: Arc::new(tokio::sync::Mutex::new(None)),
                     media_tx,
                     backdrop_active,
@@ -458,58 +486,71 @@ pub fn run() {
 
             // system tray item - wrapped so a menu build failure is logged and skipped
             let tray_setup = (|| -> Result<(), Box<dyn std::error::Error>> {
-            let show_item   = MenuItem::with_id(app, "show",   "Show",         true, None::<&str>)?;
-            let sep1        = PredefinedMenuItem::separator(app)?;
-            // plain text labels, the U+23EE/EF/ED media glyphs turn into tofu boxes in minimal
-            // gtk menu fonts on linux and arent guaranteed in every macos menu
-            // either, text always renders so we just use that
-            let prev_item   = MenuItem::with_id(app, "prev",   "Previous",   true, None::<&str>)?;
-            let toggle_item = MenuItem::with_id(app, "toggle", "Play / Pause", true, None::<&str>)?;
-            let next_item   = MenuItem::with_id(app, "next",   "Next",       true, None::<&str>)?;
-            let sep2        = PredefinedMenuItem::separator(app)?;
-            let quit_item   = MenuItem::with_id(app, "quit",   "Quit",         true, None::<&str>)?;
+                let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+                let sep1 = PredefinedMenuItem::separator(app)?;
+                // plain text labels, the U+23EE/EF/ED media glyphs turn into tofu boxes in minimal
+                // gtk menu fonts on linux and arent guaranteed in every macos menu
+                // either, text always renders so we just use that
+                let prev_item = MenuItem::with_id(app, "prev", "Previous", true, None::<&str>)?;
+                let toggle_item =
+                    MenuItem::with_id(app, "toggle", "Play / Pause", true, None::<&str>)?;
+                let next_item = MenuItem::with_id(app, "next", "Next", true, None::<&str>)?;
+                let sep2 = PredefinedMenuItem::separator(app)?;
+                let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
-            let menu = Menu::with_items(app, &[
-                &show_item, &sep1,
-                &prev_item, &toggle_item, &next_item,
-                &sep2, &quit_item,
-            ])?;
+                let menu = Menu::with_items(
+                    app,
+                    &[
+                        &show_item,
+                        &sep1,
+                        &prev_item,
+                        &toggle_item,
+                        &next_item,
+                        &sep2,
+                        &quit_item,
+                    ],
+                )?;
 
-            let mut tray = TrayIconBuilder::new()
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| {
-                    match event.id.as_ref() {
+                let mut tray = TrayIconBuilder::new()
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
                         "show" => {
                             if let Some(w) = app.get_webview_window("main") {
                                 w.show().ok();
                                 w.set_focus().ok();
                             }
                         }
-                        "quit"   => app.exit(0),
-                        "toggle" => { app.emit("media:toggle", ()).ok(); }
-                        "next"   => { app.emit("media:next",   ()).ok(); }
-                        "prev"   => { app.emit("media:prev",   ()).ok(); }
+                        "quit" => app.exit(0),
+                        "toggle" => {
+                            app.emit("media:toggle", ()).ok();
+                        }
+                        "next" => {
+                            app.emit("media:next", ()).ok();
+                        }
+                        "prev" => {
+                            app.emit("media:prev", ()).ok();
+                        }
                         _ => {}
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button:       MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event {
-                        let app = tray.app_handle();
-                        if let Some(w) = app.get_webview_window("main") {
-                            if w.is_visible().unwrap_or(false) {
-                                w.hide().ok();
-                            } else {
-                                w.show().ok();
-                                w.set_focus().ok();
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            let app = tray.app_handle();
+                            if let Some(w) = app.get_webview_window("main") {
+                                if w.is_visible().unwrap_or(false) {
+                                    w.hide().ok();
+                                } else {
+                                    w.show().ok();
+                                    w.set_focus().ok();
+                                }
                             }
                         }
-                    }
-                });
+                    });
 
                 if let Some(icon) = app.default_window_icon().cloned() {
                     tray = tray.icon(icon);
@@ -518,15 +559,14 @@ pub fn run() {
                     eprintln!("[setup] tray build failed (non fatal): {e}");
                 }
 
+                Ok(())
+            })();
+            if let Err(e) = tray_setup {
+                eprintln!("[setu[] tray/menu setup failed (non-fatal): {e}]");
+            }
+
             Ok(())
-        })();
-        if let Err(e) = tray_setup {
-            eprintln!("[setu[] tray/menu setup failed (non-fatal): {e}]");
-        }
-
-        Ok(())
-
-    })
+        })
         .invoke_handler(tauri::generate_handler![
             commands::settings::get_setting,
             commands::settings::set_setting,

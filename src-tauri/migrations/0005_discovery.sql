@@ -17,14 +17,14 @@ CREATE TABLE IF NOT EXISTS top_artists (
     PRIMARY KEY (time_range, artist_id)
 );
 
--- Recently played — a rolling log; (track_id, played_at) is unique per play.
+-- Recently played - a rolling log; (track_id, played_at) is unique per play.
 CREATE TABLE IF NOT EXISTS recently_played (
     track_id  TEXT    NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
     played_at INTEGER NOT NULL,
     PRIMARY KEY (track_id, played_at)
 );
 
--- New releases — an ordered album list straight from /browse/new-releases.
+-- New releases - an ordered album list straight from /browse/new-releases.
 CREATE TABLE IF NOT EXISTS new_releases (
     album_id TEXT    NOT NULL PRIMARY KEY REFERENCES albums(id) ON DELETE CASCADE,
     position INTEGER NOT NULL

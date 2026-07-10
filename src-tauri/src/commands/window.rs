@@ -1,8 +1,8 @@
 use crate::errors::AppError;
 use crate::state::AppState;
-use tauri::{AppHandle, State};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use tauri::Manager;
+use tauri::{AppHandle, State};
 
 /// whether a native backdrop material (mica/acrylic/vibrancy) is on. the
 /// frontend stays transparent when true, otherwise it paints an opaque dark fallback
@@ -64,7 +64,7 @@ pub async fn set_window_effect(app: AppHandle, mode: String) -> Result<(), AppEr
                 let _ = clear_vibrancy(&window);
             }
             _ => {
-                // vibrancy on — try materials in order, keep the first that applies
+                // vibrancy on - try materials in order, keep the first that applies
                 for material in [
                     NSVisualEffectMaterial::HudWindow,
                     NSVisualEffectMaterial::UnderWindowBackground,

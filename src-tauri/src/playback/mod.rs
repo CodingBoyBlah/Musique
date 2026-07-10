@@ -80,7 +80,7 @@ impl VolumeGetter for SharedVolume {
 // to the same SharedVolume means: (a) the volume Spotify shows for this device
 // matches what's actually playing, and (b) a remote volume change from another
 // Spotify client (phone/web) moves OUR real volume too. `open()` is never called
-// (we construct it directly with the live SharedVolume) — it only exists to
+// (we construct it directly with the live SharedVolume) - it only exists to
 // satisfy the trait.
 #[derive(Clone)]
 struct SharedMixer(SharedVolume);
@@ -134,7 +134,7 @@ impl Sink for NullSink {
     }
 }
 
-// real output sink — opens the default device at ITS OWN native sample rate.
+// real output sink - opens the default device at ITS OWN native sample rate.
 //
 // this is deliberately NOT librespot's built-in rodio backend. that backend
 // forces a 44100 Hz stream, and cpal 0.16's macOS set_sample_rate() has a bug:
@@ -271,7 +271,7 @@ pub struct PlaybackInner {
     // Spotify Connect controller. ALL playback control (load/play/pause/seek/
     // volume) goes through this instead of straight to `player` so that every
     // action is reflected in the connect-state Spirc PUTs to Spotify's backend
-    // — that's what makes plays land in "recently played" and shows Musique as
+    // - that's what makes plays land in "recently played" and shows Musique as
     // the active device. `player` is still held for preload() (pure audio
     // pre-cache, no state change) and for the event channel.
     spirc:       Spirc,
@@ -394,7 +394,7 @@ pub async fn create_inner(
     // fine before the (reverted) "use the users client_id" change. see
     // vendor/librespot-audio for the matching cdn-fallthrough fix
     // (learned this the hard way, do NOT touch this lol)
-    // client_id stays the librespot default (keymaster) — see the big comment
+    // client_id stays the librespot default (keymaster) - see the big comment
     // above; only `autoplay` is overridden. With Spirc driving playback we load a
     // one-track context per play and let the FRONTEND own queue advancement. If
     // autoplay were on, Spirc would resolve a recommended-radio "next" track for
@@ -409,7 +409,7 @@ pub async fn create_inner(
     eprintln!("[playback] librespot session client_id = {}", session.client_id());
     // NOTE: we deliberately do NOT session.connect() here anymore. Spirc::new()
     // below registers its dealer listeners (connection-id / cluster / player
-    // commands) FIRST and then connects the session itself — that ordering is
+    // commands) FIRST and then connects the session itself - that ordering is
     // required for the connect-state machinery, and connecting here too would be
     // redundant and could race those listeners. The client_id stays the librespot
     // default (see the big comment above): Spirc reuses THIS session so the
@@ -471,7 +471,7 @@ pub async fn create_inner(
     // Register Musique as a Spotify Connect device and route ALL playback control
     // through it (see PlaybackInner helpers). Spirc::new() connects the session
     // (after wiring its dealer listeners) and starts a state machine that PUTs
-    // connect-state to Spotify on every change — this is the whole point: it makes
+    // connect-state to Spotify on every change - this is the whole point: it makes
     // plays appear in Spotify's "recently played", drives now-playing, and lets
     // other Spotify clients see/control this device.
     let mixer: Arc<dyn Mixer> = Arc::new(SharedMixer(volume.clone()));

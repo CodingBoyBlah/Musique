@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 // opens sqlite db, runs migrations, hands back the pool
-// recreate db (everything is resyncable cache, so its safe {notes db/struct/ all notes}) 
+// recreate db (everything is resyncable cache, so its safe {notes db/struct/ all notes})
 // RENAME corrupt files instead of deleting
 
 pub async fn create_pool(app: &AppHandle) -> SqlitePool {
@@ -21,7 +21,7 @@ pub async fn create_pool(app: &AppHandle) -> SqlitePool {
 
 // Try the real on-disk db. On the first failure we assume corruption, move the
 // bad files aside, and try once more on a clean file. Returns Err only if BOTH
-// attempts fail (or the data dir itself is unusable) — the caller then drops to
+// attempts fail (or the data dir itself is unusable) - the caller then drops to
 // in-memory.
 async fn open_file_db(app: &AppHandle) -> Result<SqlitePool, Box<dyn std::error::Error>> {
     use tauri::Manager;
@@ -68,7 +68,7 @@ async fn try_open(db_path: &Path) -> Result<SqlitePool, Box<dyn std::error::Erro
 // created. Renaming (not deleting) keeps the corrupt data recoverable. If a
 // rename fails because a stale process still holds the file open (common on
 // Windows), fall back to deleting; if THAT fails too, the follow-up open will
-// error and we drop to in-memory — either way the app launches.
+// error and we drop to in-memory - either way the app launches.
 fn quarantine(db_path: &Path) {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

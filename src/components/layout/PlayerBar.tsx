@@ -126,7 +126,7 @@ function ProgressBar({
   // hover scrub preview + drag-scrub. while dragging the bar follows the cursor until release, when we commit the seek.
 
 
-  // (AND shows the wouldbe time) 
+  // (AND shows the wouldbe time)
   const [hoverFrac, setHoverFrac] = useState<number | null>(null);
   const [dragFrac,  setDragFrac]  = useState<number | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -203,7 +203,7 @@ function ProgressBar({
             transition={{ opacity: { duration: 0.12 }, scale: { duration: 0.12 }, left: { duration: dragging ? 0 : 0.16 } }}
           />
         </div>
-        
+
         <AnimatePresence>
           {showBubble && (
             <motion.span
@@ -374,7 +374,7 @@ export function PlayerBar() {
             {currentTrack?.name ?? "Not playing"}
           </p>
           <p style={{ margin: 0, fontSize: 12, fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-dim)" }}>
-            {currentTrack?.artists.map((a) => a.name).join(", ") ?? "—"}
+            {currentTrack?.artists.map((a) => a.name).join(", ") ?? "-"}
           </p>
         </div>
       </div>

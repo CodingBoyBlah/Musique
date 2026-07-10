@@ -11,25 +11,23 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PlaylistSummary {
-    pub id:           String,
-    pub name:         String,
-    pub description:  Option<String>,
-    pub image_url:    Option<String>,
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub image_url: Option<String>,
     pub total_tracks: i64,
-    pub snapshot_id:  Option<String>,
+    pub snapshot_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LibraryStatus {
     pub last_synced: Option<i64>,
-    pub is_syncing:  bool,
+    pub is_syncing: bool,
 }
-
-
 
 #[tauri::command]
 pub async fn sync_library(app: AppHandle) -> Result<SyncResult, AppError> {
-    let s    = app.state::<AppState>();
+    let s = app.state::<AppState>();
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
@@ -40,8 +38,8 @@ pub async fn sync_library(app: AppHandle) -> Result<SyncResult, AppError> {
 
 #[tauri::command]
 pub async fn get_liked_songs(
-    app:    AppHandle,
-    limit:  i64,
+    app: AppHandle,
+    limit: i64,
     offset: i64,
 ) -> Result<Vec<TrackItem>, AppError> {
     let pool = app.state::<AppState>().db.clone();
@@ -74,20 +72,28 @@ pub async fn get_liked_songs(
         .await?;
 
         result.push(TrackItem {
-            id:          row.id,
-            name:        row.name,
+            id: row.id,
+            name: row.name,
             duration_ms: row.duration_ms,
-            explicit:    row.explicit,
-            popularity:  row.popularity,
-            artists:     artist_rows.into_iter().map(|a| ArtistItem { id: a.id, name: a.name, image_url: a.image_url, popularity: a.popularity }).collect(),
-            album:       row.album_id.map(|aid| AlbumItem {
-                id:           aid,
-                name:         row.album_name.unwrap_or_default(),
-                album_type:   row.album_type.unwrap_or_default(),
-                image_url:    row.album_image,
+            explicit: row.explicit,
+            popularity: row.popularity,
+            artists: artist_rows
+                .into_iter()
+                .map(|a| ArtistItem {
+                    id: a.id,
+                    name: a.name,
+                    image_url: a.image_url,
+                    popularity: a.popularity,
+                })
+                .collect(),
+            album: row.album_id.map(|aid| AlbumItem {
+                id: aid,
+                name: row.album_name.unwrap_or_default(),
+                album_type: row.album_type.unwrap_or_default(),
+                image_url: row.album_image,
                 release_date: row.release_date,
-                artists:      vec![],
-                popularity:   None,
+                artists: vec![],
+                popularity: None,
             }),
         });
     }
@@ -118,12 +124,12 @@ pub async fn get_my_playlists(app: AppHandle) -> Result<Vec<PlaylistSummary>, Ap
     Ok(rows
         .into_iter()
         .map(|r| PlaylistSummary {
-            id:           r.id,
-            name:         r.name,
-            description:  r.description,
-            image_url:    r.image_url,
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            image_url: r.image_url,
             total_tracks: r.total_tracks,
-            snapshot_id:  r.snapshot_id,
+            snapshot_id: r.snapshot_id,
         })
         .collect())
 }
@@ -143,13 +149,13 @@ pub async fn get_saved_albums(app: AppHandle) -> Result<Vec<AlbumItem>, AppError
     Ok(rows
         .into_iter()
         .map(|r| AlbumItem {
-            id:           r.id,
-            name:         r.name,
-            album_type:   r.album_type,
-            image_url:    r.image_url,
+            id: r.id,
+            name: r.name,
+            album_type: r.album_type,
+            image_url: r.image_url,
             release_date: r.release_date,
-            artists:      vec![],
-            popularity:   r.popularity,
+            artists: vec![],
+            popularity: r.popularity,
         })
         .collect())
 }
@@ -168,7 +174,12 @@ pub async fn get_followed_artists(app: AppHandle) -> Result<Vec<ArtistItem>, App
 
     Ok(rows
         .into_iter()
-        .map(|r| ArtistItem { id: r.id, name: r.name, image_url: r.image_url, popularity: r.popularity })
+        .map(|r| ArtistItem {
+            id: r.id,
+            name: r.name,
+            image_url: r.image_url,
+            popularity: r.popularity,
+        })
         .collect())
 }
 
@@ -184,7 +195,7 @@ fn now_ms() -> i64 {
 /// like a track, save it on spotify + show it in the local cache right away
 #[tauri::command]
 pub async fn save_track(app: AppHandle, id: String) -> Result<(), AppError> {
-    let s    = app.state::<AppState>();
+    let s = app.state::<AppState>();
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
@@ -210,7 +221,7 @@ pub async fn save_track(app: AppHandle, id: String) -> Result<(), AppError> {
 /// unlike a track.
 #[tauri::command]
 pub async fn unsave_track(app: AppHandle, id: String) -> Result<(), AppError> {
-    let s    = app.state::<AppState>();
+    let s = app.state::<AppState>();
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
@@ -234,7 +245,7 @@ pub async fn unsave_track(app: AppHandle, id: String) -> Result<(), AppError> {
 /// follow an artist, follow on spotify + mirror it locally
 #[tauri::command]
 pub async fn follow_artist(app: AppHandle, id: String) -> Result<(), AppError> {
-    let s    = app.state::<AppState>();
+    let s = app.state::<AppState>();
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
@@ -247,11 +258,13 @@ pub async fn follow_artist(app: AppHandle, id: String) -> Result<(), AppError> {
     )
     .await?;
 
-    let _ = sqlx::query("INSERT OR IGNORE INTO followed_artists (artist_id, followed_at) VALUES (?, ?)")
-        .bind(&id)
-        .bind(now_ms())
-        .execute(&pool)
-        .await;
+    let _ = sqlx::query(
+        "INSERT OR IGNORE INTO followed_artists (artist_id, followed_at) VALUES (?, ?)",
+    )
+    .bind(&id)
+    .bind(now_ms())
+    .execute(&pool)
+    .await;
 
     Ok(())
 }
@@ -259,7 +272,7 @@ pub async fn follow_artist(app: AppHandle, id: String) -> Result<(), AppError> {
 /// unfollow an artist.
 #[tauri::command]
 pub async fn unfollow_artist(app: AppHandle, id: String) -> Result<(), AppError> {
-    let s    = app.state::<AppState>();
+    let s = app.state::<AppState>();
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
@@ -284,10 +297,11 @@ pub async fn unfollow_artist(app: AppHandle, id: String) -> Result<(), AppError>
 #[tauri::command]
 pub async fn is_artist_followed(app: AppHandle, id: String) -> Result<bool, AppError> {
     let pool = app.state::<AppState>().db.clone();
-    let row: Option<(String,)> = sqlx::query_as("SELECT artist_id FROM followed_artists WHERE artist_id = ?")
-        .bind(&id)
-        .fetch_optional(&pool)
-        .await?;
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT artist_id FROM followed_artists WHERE artist_id = ?")
+            .bind(&id)
+            .fetch_optional(&pool)
+            .await?;
     Ok(row.is_some())
 }
 
@@ -298,12 +312,19 @@ pub async fn get_saved_track_ids(
     ids: Vec<String>,
 ) -> Result<Vec<String>, AppError> {
     let pool = app.state::<AppState>().db.clone();
-    if ids.is_empty() { return Ok(vec![]); }
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
 
-    let placeholders = std::iter::repeat("?").take(ids.len()).collect::<Vec<_>>().join(",");
+    let placeholders = std::iter::repeat("?")
+        .take(ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
     let sql = format!("SELECT track_id FROM saved_tracks WHERE track_id IN ({placeholders})");
     let mut q = sqlx::query_as::<_, (String,)>(&sql);
-    for id in &ids { q = q.bind(id); }
+    for id in &ids {
+        q = q.bind(id);
+    }
 
     let rows = q.fetch_all(&pool).await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
@@ -314,11 +335,11 @@ pub async fn get_saved_track_ids(
 /// add a track to a playlist on spotify. pass a bare track id, we build the uri
 #[tauri::command]
 pub async fn add_track_to_playlist(
-    app:         AppHandle,
+    app: AppHandle,
     playlist_id: String,
-    track_id:    String,
+    track_id: String,
 ) -> Result<(), AppError> {
-    let s    = app.state::<AppState>();
+    let s = app.state::<AppState>();
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
@@ -337,11 +358,11 @@ pub async fn add_track_to_playlist(
 /// yeet every occurrence of a track from a playlist on spotify
 #[tauri::command]
 pub async fn remove_track_from_playlist(
-    app:         AppHandle,
+    app: AppHandle,
     playlist_id: String,
-    track_id:    String,
+    track_id: String,
 ) -> Result<(), AppError> {
-    let s    = app.state::<AppState>();
+    let s = app.state::<AppState>();
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
@@ -368,12 +389,12 @@ pub async fn remove_track_from_playlist(
 /// make a new playlist for the current user, hands back its id
 #[tauri::command]
 pub async fn create_playlist(
-    app:         AppHandle,
-    name:        String,
+    app: AppHandle,
+    name: String,
     description: Option<String>,
-    public:      bool,
+    public: bool,
 ) -> Result<String, AppError> {
-    let s    = app.state::<AppState>();
+    let s = app.state::<AppState>();
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
@@ -385,7 +406,7 @@ pub async fn create_playlist(
 
     let user_id = crate::auth::get_setting_value(&pool, "spotify_user_id")
         .await?
-        .ok_or_else(|| AppError::Auth("No user id — log in first".into()))?;
+        .ok_or_else(|| AppError::Auth("No user id - log in first".into()))?;
 
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     let resp = crate::spotify::spotify_write_json(
@@ -409,16 +430,17 @@ pub async fn create_playlist(
 #[tauri::command]
 pub async fn get_library_status(app: AppHandle) -> Result<LibraryStatus, AppError> {
     let pool = app.state::<AppState>().db.clone();
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT value FROM settings WHERE key = 'library_last_synced'",
-    )
-    .fetch_optional(&pool)
-    .await?;
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT value FROM settings WHERE key = 'library_last_synced'")
+            .fetch_optional(&pool)
+            .await?;
 
-    let last_synced = row
-        .and_then(|(v,)| v.parse::<i64>().ok());
+    let last_synced = row.and_then(|(v,)| v.parse::<i64>().ok());
 
-    Ok(LibraryStatus { last_synced, is_syncing: false })
+    Ok(LibraryStatus {
+        last_synced,
+        is_syncing: false,
+    })
 }
 
 // ─── cache first helpers, shared with the spotify command module ─────────────
@@ -426,7 +448,7 @@ pub async fn get_library_status(app: AppHandle) -> Result<LibraryStatus, AppErro
 /// build a full `TrackItem` outta the local cache (track + album + artists)
 pub(crate) async fn load_track_item(
     pool: &SqlitePool,
-    id:   &str,
+    id: &str,
 ) -> Result<Option<TrackItem>, AppError> {
     let row = sqlx::query_as::<_, LikedTrackRow>(
         "SELECT t.id, t.name, t.duration_ms, t.explicit, t.popularity, t.preview_url,
@@ -454,20 +476,28 @@ pub(crate) async fn load_track_item(
     .await?;
 
     Ok(Some(TrackItem {
-        id:          row.id,
-        name:        row.name,
+        id: row.id,
+        name: row.name,
         duration_ms: row.duration_ms,
-        explicit:    row.explicit,
-        popularity:  row.popularity,
-        artists:     artist_rows.into_iter().map(|a| ArtistItem { id: a.id, name: a.name, image_url: a.image_url, popularity: a.popularity }).collect(),
-        album:       row.album_id.map(|aid| AlbumItem {
-            id:           aid,
-            name:         row.album_name.unwrap_or_default(),
-            album_type:   row.album_type.unwrap_or_default(),
-            image_url:    row.album_image,
+        explicit: row.explicit,
+        popularity: row.popularity,
+        artists: artist_rows
+            .into_iter()
+            .map(|a| ArtistItem {
+                id: a.id,
+                name: a.name,
+                image_url: a.image_url,
+                popularity: a.popularity,
+            })
+            .collect(),
+        album: row.album_id.map(|aid| AlbumItem {
+            id: aid,
+            name: row.album_name.unwrap_or_default(),
+            album_type: row.album_type.unwrap_or_default(),
+            image_url: row.album_image,
             release_date: row.release_date,
-            artists:      vec![],
-            popularity:   None,
+            artists: vec![],
+            popularity: None,
         }),
     }))
 }
@@ -475,16 +505,22 @@ pub(crate) async fn load_track_item(
 /// the whole playlist (meta + ordered tracks) from the local cache, or `None`
 pub(crate) async fn load_cached_playlist(
     pool: &SqlitePool,
-    id:   &str,
+    id: &str,
 ) -> Result<Option<PlaylistDetail>, AppError> {
-    let meta: Option<(String, String, Option<String>, Option<String>, i64, Option<String>)> =
-        sqlx::query_as(
-            "SELECT id, name, description, image_url, total_tracks, owner_id
+    let meta: Option<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        i64,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT id, name, description, image_url, total_tracks, owner_id
              FROM playlists WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
 
     let Some((pid, name, description, image_url, total_tracks, owner_id)) = meta else {
         return Ok(None);
@@ -509,11 +545,11 @@ pub(crate) async fn load_cached_playlist(
     }
 
     Ok(Some(PlaylistDetail {
-        id:           pid,
+        id: pid,
         name,
-        description:  description.filter(|s| !s.is_empty()),
+        description: description.filter(|s| !s.is_empty()),
         image_url,
-        owner_name:   owner_id.filter(|s| !s.is_empty()),
+        owner_name: owner_id.filter(|s| !s.is_empty()),
         total_tracks,
         tracks,
     }))
@@ -523,17 +559,16 @@ pub(crate) async fn load_cached_playlist(
 
 #[tauri::command]
 pub async fn get_top_tracks(
-    app:        AppHandle,
+    app: AppHandle,
     time_range: Option<String>,
 ) -> Result<Vec<TrackItem>, AppError> {
-    let pool  = app.state::<AppState>().db.clone();
+    let pool = app.state::<AppState>().db.clone();
     let range = time_range.unwrap_or_else(|| "medium_term".into());
-    let ids: Vec<(String,)> = sqlx::query_as(
-        "SELECT track_id FROM top_tracks WHERE time_range = ? ORDER BY position",
-    )
-    .bind(&range)
-    .fetch_all(&pool)
-    .await?;
+    let ids: Vec<(String,)> =
+        sqlx::query_as("SELECT track_id FROM top_tracks WHERE time_range = ? ORDER BY position")
+            .bind(&range)
+            .fetch_all(&pool)
+            .await?;
 
     let mut out = Vec::with_capacity(ids.len());
     for (id,) in ids {
@@ -546,10 +581,10 @@ pub async fn get_top_tracks(
 
 #[tauri::command]
 pub async fn get_top_artists(
-    app:        AppHandle,
+    app: AppHandle,
     time_range: Option<String>,
 ) -> Result<Vec<ArtistItem>, AppError> {
-    let pool  = app.state::<AppState>().db.clone();
+    let pool = app.state::<AppState>().db.clone();
     let range = time_range.unwrap_or_else(|| "medium_term".into());
     let rows = sqlx::query_as::<_, ArtistRow>(
         "SELECT a.id, a.name, a.image_url, a.popularity
@@ -564,7 +599,12 @@ pub async fn get_top_artists(
 
     Ok(rows
         .into_iter()
-        .map(|r| ArtistItem { id: r.id, name: r.name, image_url: r.image_url, popularity: r.popularity })
+        .map(|r| ArtistItem {
+            id: r.id,
+            name: r.name,
+            image_url: r.image_url,
+            popularity: r.popularity,
+        })
         .collect())
 }
 
@@ -616,13 +656,21 @@ pub async fn get_new_releases(app: AppHandle) -> Result<Vec<AlbumItem>, AppError
         .await?;
 
         out.push(AlbumItem {
-            id:           r.id,
-            name:         r.name,
-            album_type:   r.album_type,
-            image_url:    r.image_url,
+            id: r.id,
+            name: r.name,
+            album_type: r.album_type,
+            image_url: r.image_url,
             release_date: r.release_date,
-            artists:      artist_rows.into_iter().map(|a| ArtistItem { id: a.id, name: a.name, image_url: a.image_url, popularity: a.popularity }).collect(),
-            popularity:   r.popularity,
+            artists: artist_rows
+                .into_iter()
+                .map(|a| ArtistItem {
+                    id: a.id,
+                    name: a.name,
+                    image_url: a.image_url,
+                    popularity: a.popularity,
+                })
+                .collect(),
+            popularity: r.popularity,
         });
     }
     Ok(out)
@@ -632,54 +680,52 @@ pub async fn get_new_releases(app: AppHandle) -> Result<Vec<AlbumItem>, AppError
 #[tauri::command]
 pub async fn get_cached_playlist(
     app: AppHandle,
-    id:  String,
+    id: String,
 ) -> Result<Option<PlaylistDetail>, AppError> {
     let pool = app.state::<AppState>().db.clone();
     load_cached_playlist(&pool, &id).await
 }
 
-
-
 #[derive(sqlx::FromRow)]
 struct LikedTrackRow {
-    id:           String,
-    name:         String,
-    duration_ms:  i64,
-    explicit:     bool,
-    popularity:   Option<i64>,
+    id: String,
+    name: String,
+    duration_ms: i64,
+    explicit: bool,
+    popularity: Option<i64>,
     #[allow(dead_code)]
-    preview_url:  Option<String>,
-    album_id:     Option<String>,
-    album_name:   Option<String>,
-    album_type:   Option<String>,
-    album_image:  Option<String>,
+    preview_url: Option<String>,
+    album_id: Option<String>,
+    album_name: Option<String>,
+    album_type: Option<String>,
+    album_image: Option<String>,
     release_date: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
 struct ArtistRow {
-    id:         String,
-    name:       String,
-    image_url:  Option<String>,
+    id: String,
+    name: String,
+    image_url: Option<String>,
     popularity: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
 struct SavedAlbumRow {
-    id:           String,
-    name:         String,
-    album_type:   String,
-    image_url:    Option<String>,
+    id: String,
+    name: String,
+    album_type: String,
+    image_url: Option<String>,
     release_date: Option<String>,
-    popularity:   Option<i64>,
+    popularity: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
 struct PlaylistRow {
-    id:           String,
-    name:         String,
-    description:  Option<String>,
-    image_url:    Option<String>,
+    id: String,
+    name: String,
+    description: Option<String>,
+    image_url: Option<String>,
     total_tracks: i64,
-    snapshot_id:  Option<String>,
+    snapshot_id: Option<String>,
 }

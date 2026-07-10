@@ -31,7 +31,6 @@ pub struct ValidationResult {
     pub error: Option<String>,
 }
 
-
 pub async fn seed_credentials_from_env(pool: &SqlitePool) {
     if let Ok(id) = std::env::var("SPOTIFY_CLIENT_ID") {
         let id = id.trim();
@@ -72,7 +71,9 @@ pub async fn save_credentials(
         return Err(AppError::InvalidInput("Client ID cannot be empty".into()));
     }
     if client_secret.trim().is_empty() {
-        return Err(AppError::InvalidInput("Client secret cannot be empty".into()));
+        return Err(AppError::InvalidInput(
+            "Client secret cannot be empty".into(),
+        ));
     }
 
     sqlx::query(
@@ -91,9 +92,7 @@ pub async fn save_credentials(
 }
 
 #[tauri::command]
-pub async fn get_credentials(
-    state: State<'_, AppState>,
-) -> Result<Option<Credentials>, AppError> {
+pub async fn get_credentials(state: State<'_, AppState>) -> Result<Option<Credentials>, AppError> {
     let row = sqlx::query("SELECT value FROM settings WHERE key = 'spotify_client_id'")
         .fetch_optional(&state.db)
         .await?;
@@ -109,7 +108,10 @@ pub async fn get_credentials(
         Err(e) => return Err(AppError::Keyring(e.to_string())),
     };
 
-    Ok(Some(Credentials { client_id, has_secret }))
+    Ok(Some(Credentials {
+        client_id,
+        has_secret,
+    }))
 }
 
 #[tauri::command]
@@ -152,15 +154,21 @@ pub async fn validate_credentials(
         .map_err(|e| AppError::Network(e.to_string()))?;
 
     if res.status().is_success() {
-        Ok(ValidationResult { valid: true, error: None })
+        Ok(ValidationResult {
+            valid: true,
+            error: None,
+        })
     } else {
         let status = res.status().as_u16();
         let msg = match status {
-            400 => "Invalid request — check your client ID".into(),
-            401 => "Unauthorized — invalid client ID or secret".into(),
+            400 => "Invalid request - check your client ID".into(),
+            401 => "Unauthorized - invalid client ID or secret".into(),
             _ => format!("Spotify returned HTTP {}", status),
         };
-        Ok(ValidationResult { valid: false, error: Some(msg) })
+        Ok(ValidationResult {
+            valid: false,
+            error: Some(msg),
+        })
     }
 }
 

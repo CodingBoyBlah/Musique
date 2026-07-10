@@ -2,13 +2,13 @@
 
 /*
  * Mica-first token system.
- * The window itself is TRANSPARENT — the OS Mica material (applied in Rust
+ * The window itself is TRANSPARENT - the OS Mica material (applied in Rust
  * via window-vibrancy) is the background. Every surface here is a subtle
  * neutral overlay with low alpha so the Mica/wallpaper shows through.
- * No tints — Mica picks up the wallpaper color on its own.
+ * No tints - Mica picks up the wallpaper color on its own.
  */
 @theme {
-    /* Base — let Mica be the background */
+    /* Base - let Mica be the background */
     --color-window: transparent;
     --color-content: transparent;
     --color-sidebar: rgba(0, 0, 0, 0.06);
@@ -32,28 +32,28 @@
     --color-border: rgba(255, 255, 255, 0.08);
     --color-divider: rgba(255, 255, 255, 0.06);
 
-    /* Text — white-forward, high contrast on dark Mica */
+    /* Text - white-forward, high contrast on dark Mica */
     --color-text: rgba(255, 255, 255, 0.82);
     --color-text-hi: rgba(255, 255, 255, 0.97);
     --color-text-dim: rgba(255, 255, 255, 0.46);
     --color-text-muted: rgba(255, 255, 255, 0.46);
 
-    /* Accent — Apple Music / Cider red-pink */
+    /* Accent - Apple Music / Cider red-pink */
     --color-accent: #5873D8;
     --color-accent-hover: #819af1;
     --color-accent-dim: rgba(88, 115, 216, 0.16);
     --color-accent-text: #ffffff;
 
-    /* Player bar — anchored but still lets Mica/wallpaper breathe. Kept very
+    /* Player bar - anchored but still lets Mica/wallpaper breathe. Kept very
        low so the Mica material reads through the bottom bar (Mica itself has
-       no opacity knob — translucency comes from stacking nothing on top). */
+       no opacity knob - translucency comes from stacking nothing on top). */
     --color-player: rgba(16, 16, 18, 0.07);
 
     --color-danger: #ff453a;
 }
 
 :root {
-    --content-max: 1760px; 
+    --content-max: 1760px;
 }
 
 /* ─── Reset ───────────────────────────────────────────────────────── */
@@ -142,7 +142,7 @@ input[type="range"]:hover::-webkit-slider-thumb {
 
 /* Volume slider: paint a colored fill up to --vol, matching the song
    progress bar (same warm-white). Fixes the "grey bar, circle-only-on-hover"
-   look — now the level is always visible. */
+   look - now the level is always visible. */
 input[type="range"].vol::-webkit-slider-runnable-track {
     background: linear-gradient(
         to right,

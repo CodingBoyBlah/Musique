@@ -5,7 +5,7 @@ use bytes::Bytes;
 use thiserror::Error;
 use tokio::sync::oneshot;
 
-use crate::{Error, FileId, SpotifyId, packet::PacketType, util::SeqGenerator};
+use crate::{packet::PacketType, util::SeqGenerator, Error, FileId, SpotifyId};
 
 #[derive(Debug, Hash, PartialEq, Eq, Copy, Clone)]
 pub struct AudioKey(pub [u8; 16]);
@@ -93,7 +93,7 @@ impl AudioKeyManager {
         //   • slow AP  → we simply keep waiting; a late response still resolves.
         //   • dropped packet → a nudge re-asks; any matching response resolves.
         // A genuinely unanswered key (restricted/wedged session) still fails
-        // after the budget — the app then rebuilds a fresh session and retries
+        // after the budget - the app then rebuilds a fresh session and retries
         // (see commands::playback::retry_play_track).
         const NUDGE_INTERVAL: Duration = Duration::from_millis(2000);
         const MAX_NUDGES: usize = 5; // ~10s total budget
@@ -117,13 +117,13 @@ impl AudioKeyManager {
                 Ok(Ok(Ok(key))) => return Ok(key),
                 Ok(Ok(Err(e))) => return Err(e), // server AesKeyError: definitive
                 Ok(Err(_recv)) => {
-                    // Sender dropped by dispatch — can't recover this seq.
+                    // Sender dropped by dispatch - can't recover this seq.
                     self.lock(|inner| inner.pending.remove(&seq));
                     return Err(AudioKeyError::Channel.into());
                 }
                 Err(_) => {
                     if nudge < MAX_NUDGES {
-                        // Still pending — re-ask on the SAME seq and keep waiting.
+                        // Still pending - re-ask on the SAME seq and keep waiting.
                         let _ = self.send_key_request(seq, track, file);
                     }
                 }

@@ -219,7 +219,7 @@ export function LyricsPanel() {
       // Absolute OVERLAY that slides in/out via a transform (x). The layout space
       // is reserved by an in-flow spacer in Layout.tsx (which toggles instantly on
       // open AND close), so the grid reflows in one step and the cards glide via
-      // framer `layout` both ways. This panel just slides over that region — its
+      // framer `layout` both ways. This panel just slides over that region - its
       // width never animates, so nothing reflows per-frame.
       initial={{ x: WIDTH, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}

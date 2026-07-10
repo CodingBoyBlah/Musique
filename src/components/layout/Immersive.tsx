@@ -20,13 +20,13 @@ import {
   useLyricClock,
 } from "../../lib/lyrics";
 
-// animated gradient bg derived from the cover art like apple music mobile 
+// animated gradient bg derived from the cover art like apple music mobile
 
 // {arc browser onboarindg graident inspo too}
 
 function GradientBg({ url }: { url: string | null | undefined }) {
   const reduceMotion = useReducedMotion();
-  // isolation:isolate + an opaque base = nothing behind ever bleeds through 
+  // isolation:isolate + an opaque base = nothing behind ever bleeds through
 
 
 // TODO done
@@ -110,7 +110,7 @@ function ImmersiveLyrics() {
   }
 
   if (isLoading) return <Centered>Finding lyrics…</Centered>;
-  if (data?.instrumental) return <Centered>Instrumental — no lyrics.</Centered>;
+  if (data?.instrumental) return <Centered>Instrumental - no lyrics.</Centered>;
   if (rows.length === 0) return <Centered>No lyrics found for this track.</Centered>;
 
   return (

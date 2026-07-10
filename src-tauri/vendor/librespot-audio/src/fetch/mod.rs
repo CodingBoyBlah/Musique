@@ -5,22 +5,22 @@ use std::{
     fs,
     io::{self, Read, Seek, SeekFrom},
     sync::{
-        Arc, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, OnceLock,
     },
     sync::{Condvar, Mutex},
     time::Duration,
 };
 
-use futures_util::{StreamExt, TryFutureExt, future::IntoStream};
-use hyper::{Response, StatusCode, body::Incoming, header::CONTENT_RANGE};
+use futures_util::{future::IntoStream, StreamExt, TryFutureExt};
+use hyper::{body::Incoming, header::CONTENT_RANGE, Response, StatusCode};
 use hyper_util::client::legacy::ResponseFuture;
 
 use tempfile::NamedTempFile;
 use thiserror::Error;
-use tokio::sync::{Semaphore, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Semaphore};
 
-use librespot_core::{Error, FileId, Session, cdn_url::CdnUrl};
+use librespot_core::{cdn_url::CdnUrl, Error, FileId, Session};
 
 use self::receive::audio_file_fetch;
 
@@ -469,7 +469,7 @@ impl AudioFileStreaming {
             match streamer_result {
                 // PATCHED (spotify-client vendor): upstream broke on the FIRST
                 // response regardless of status, then rejected a non-206 AFTER the
-                // loop — so a single broken CDN edge (e.g. a regional mirror
+                // loop - so a single broken CDN edge (e.g. a regional mirror
                 // returning HTTP 500) killed playback even though the other
                 // mirrors served the file fine (confirmed: storage-resolve hands
                 // back 3-4 URLs, only the first 500s). Validate the status INSIDE
@@ -479,10 +479,7 @@ impl AudioFileStreaming {
                     response_streamer_url = Some((r, streamer, url));
                     break;
                 }
-                Ok(r) => warn!(
-                    "Fetching {url} returned {}, trying next mirror",
-                    r.status()
-                ),
+                Ok(r) => warn!("Fetching {url} returned {}, trying next mirror", r.status()),
                 Err(e) => warn!("Fetching {url} failed with error {e:?}, trying next"),
             }
         }

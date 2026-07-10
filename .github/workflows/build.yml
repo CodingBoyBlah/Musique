@@ -77,7 +77,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Musique ${{ github.ref_name }}"
-          releaseBody: "Install once from the assets below — Musique auto-updates itself from here on."
+          releaseBody: "Install once from the assets below - Musique auto-updates itself from here on."
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}

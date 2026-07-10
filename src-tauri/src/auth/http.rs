@@ -75,13 +75,13 @@ fn parse_callback(
 
     let query = path.find('?').map(|i| &path[i + 1..]).unwrap_or("");
 
-    let mut code  = None;
+    let mut code = None;
     let mut state = None;
     let mut error = None;
 
     for (k, v) in url::form_urlencoded::parse(query.as_bytes()) {
         match k.as_ref() {
-            "code"  => code  = Some(v.into_owned()),
+            "code" => code = Some(v.into_owned()),
             "state" => state = Some(v.into_owned()),
             "error" => error = Some(v.into_owned()),
             _ => {}
@@ -89,14 +89,17 @@ fn parse_callback(
     }
 
     if let Some(err) = error {
-        return (ERROR_HTML, Err(AppError::Auth(format!("Spotify denied: {err}"))));
+        return (
+            ERROR_HTML,
+            Err(AppError::Auth(format!("Spotify denied: {err}"))),
+        );
     }
 
     match (code, state) {
         (Some(c), Some(s)) if s == expected_state => (SUCCESS_HTML, Ok(c)),
         (Some(_), Some(_)) => (
             ERROR_HTML,
-            Err(AppError::Auth("State mismatch — possible CSRF".into())),
+            Err(AppError::Auth("State mismatch - possible CSRF".into())),
         ),
         _ => (
             ERROR_HTML,

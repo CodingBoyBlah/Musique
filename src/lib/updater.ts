@@ -6,8 +6,8 @@ import { useUpdaterStore } from "../store/updater.store";
 // a live native handle + methods and isn't serializable.
 let pending: Update | null = null;
 
-// ONE silent check per startup. No polling, no interval. If there's no update —
-// or we're in dev / offline / the endpoint isn't reachable — it stays completely
+// ONE silent check per startup. No polling, no interval. If there's no update -
+// or we're in dev / offline / the endpoint isn't reachable - it stays completely
 // silent (no dialog, no toast), which is exactly the "do nothing" requirement.
 export async function runUpdateCheck(): Promise<void> {
   try {

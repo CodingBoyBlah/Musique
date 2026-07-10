@@ -50,22 +50,22 @@ librespot-playback = { version = "0.8", default-features = false, features = ["r
 # backend forces 44100, which trips a SIGSEGV bug in cpal 0.16's macOS
 # set_sample_rate() when the device runs at 48000. Same version librespot pulls.
 rodio = "0.21"
-# Discord Rich Presence — connects to the local Discord IPC socket. Pure Rust,
+# Discord Rich Presence - connects to the local Discord IPC socket. Pure Rust,
 # cross-platform, no system deps. All calls degrade silently if Discord is closed.
 discord-rich-presence = "1.1"
 md5 = "0.7"
 # Spotify Connect (Spirc). Makes Musique register as a real Connect device and
 # report player state to Spotify's backend over the dealer websocket + the
-# /connect-state PUT — this is what makes plays show up in Spotify's "recently
+# /connect-state PUT - this is what makes plays show up in Spotify's "recently
 # played", now-playing, and the device list. rustls to match the rest of the
 # librespot stack (no native-tls / OpenSSL dep).
 librespot-connect = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
 
 # Unix (macOS + Linux): libc powers two crash-safety mechanisms.
-#  • macOS VM detection — read `kern.hv_vmm_present` via sysctl. Apple's
+#  • macOS VM detection - read `kern.hv_vmm_present` via sysctl. Apple's
 #    paravirtualized CoreAudio HAL SIGSEGVs the instant cpal opens the output
-#    device (uncatchable) — under a hypervisor we skip the real backend entirely.
-#  • Native crash logger (lib.rs) — a SIGSEGV/SIGBUS/SIGABRT handler that records
+#    device (uncatchable) - under a hypervisor we skip the real backend entirely.
+#  • Native crash logger (lib.rs) - a SIGSEGV/SIGBUS/SIGABRT handler that records
 #    the fault to spotify-panic.log before re-raising, so the confirmed macOS
 #    audio crash (a native fault, NOT a Rust panic) finally leaves a breadcrumb.
 [target.'cfg(unix)'.dependencies]
@@ -73,7 +73,7 @@ libc = "0.2"
 
 # Vendored librespot-core with `check_catalogue`'s `exit(1)` removed. Upstream
 # kills the whole host process when product-info reports a non-"premium" account
-# type — which fires as a false negative for genuine Premium accounts authed via
+# type - which fires as a false negative for genuine Premium accounts authed via
 # a generic Web API client_id, taking the app down on launch (warmupPlayback).
 # Same 0.8.0 source, one function patched. See vendor/librespot-core/src/session.rs.
 [patch.crates-io]
@@ -99,8 +99,8 @@ lto = true
 opt-level = "s"
 # `unwind` (not `abort`) so the audio-device-open guard in playback/mod.rs
 # (std::panic::catch_unwind) actually works: on a Mac/box with a broken or
-# missing audio device, opening the output can panic — with `abort` that killed
+# missing audio device, opening the output can panic - with `abort` that killed
 # the whole app ("crashes when you play"); with `unwind` it's caught and we fall
 # back to the silent sink so the app stays usable. (A hard CoreAudio SIGSEGV is
-# still uncatchable — that's an environment fault.)
+# still uncatchable - that's an environment fault.)
 strip = true

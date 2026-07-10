@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-// state machine for the in-app updater UI. Not persisted — it's per-launch.
+// state machine for the in-app updater UI. Not persisted - it's per-launch.
 //   idle        -> no update (or not checked yet); prompt hidden
 //   available   -> an update exists; show version + notes + Later/Update
 //   downloading -> streaming the update; show progress %

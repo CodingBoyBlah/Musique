@@ -123,7 +123,7 @@ export function UpdatePrompt() {
               <>
                 <h2 style={titleStyle}>Downloading update…</h2>
                 <p style={subStyle}>
-                  Musique {version} — please keep the app open.
+                  Musique {version} - please keep the app open.
                 </p>
                 <div style={{ marginTop: 18 }}>
                   <div

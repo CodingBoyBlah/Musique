@@ -684,7 +684,7 @@ export default function Home() {
               color: "var(--color-text-dim)",
             }}
           >
-            Complete login in your browser — the app listens on port 8888 for
+            Complete login in your browser - the app listens on port 8888 for
             the callback.
           </p>
         )}

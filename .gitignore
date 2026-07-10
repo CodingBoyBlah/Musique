@@ -12,7 +12,7 @@ dist
 dist-ssr
 *.local
 
-# Secrets — never commit. .env holds your Spotify client_id/secret.
+# Secrets - never commit. .env holds your Spotify client_id/secret.
 .env
 .env.*
 !.env.example

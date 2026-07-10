@@ -4,12 +4,14 @@ use std::path::PathBuf;
 
 // desktop wallpaper as a `data:` URL (base64) so the frontend can sample its
 // colors for the "Wallpaper colors" theme. Returns None when the OS wallpaper
-// can't be located (unsupported DE, missing file, etc) — the frontend then just
+// can't be located (unsupported DE, missing file, etc) - the frontend then just
 // keeps the current accent.
 #[tauri::command]
 pub async fn get_wallpaper_data_url() -> Result<Option<String>, AppError> {
-    let Some(path) = wallpaper_path() else { return Ok(None); };
-    
+    let Some(path) = wallpaper_path() else {
+        return Ok(None);
+};
+
     let mime = match path
         .extension()
         .and_then(|e| e.to_str())
@@ -35,7 +37,7 @@ pub async fn get_wallpaper_data_url() -> Result<Option<String>, AppError> {
 }
 
 // macOS system accent color as a hex string. None on every other OS. This is the
-// ONLY color the engine does not brightness-normalize — the user asked for their
+// ONLY color the engine does not brightness-normalize - the user asked for their
 // actual system color.
 #[tauri::command]
 pub fn get_system_accent() -> Result<Option<String>, AppError> {
@@ -52,7 +54,7 @@ pub fn get_system_accent() -> Result<Option<String>, AppError> {
 #[cfg(target_os = "windows")]
 fn wallpaper_path() -> Option<PathBuf> {
     // The current wallpaper is always cached here as a JPEG regardless of the
-    // source format — no registry read / winapi needed.
+    // source format - no registry read / winapi needed.
     let appdata = std::env::var_os("APPDATA")?;
     let p = PathBuf::from(appdata)
         .join("Microsoft")

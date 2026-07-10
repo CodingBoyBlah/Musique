@@ -32,7 +32,7 @@ import { useThemeStore, type ThemeSource } from "../store/theme.store";
 const STATUS_CONFIG: Record<ConnectionStatus, { dot: string; label: string }> =
   {
     unconfigured: { dot: "rgba(255,255,255,0.30)", label: "Not configured" },
-    configured: { dot: "#f5a623", label: "Saved — not tested" },
+    configured: { dot: "#f5a623", label: "Saved - not tested" },
     validating: { dot: "#fa2d48", label: "Validating…" },
     valid: { dot: "#34d399", label: "Connected" },
     invalid: { dot: "#ff453a", label: "Invalid credentials" },
@@ -719,7 +719,7 @@ function LastfmCard() {
                 color: "var(--color-text-dim)",
               }}
             >
-              Authorize the app in your browser — waiting for confirmation…
+              Authorize the app in your browser - waiting for confirmation…
             </p>
           )}
           <div style={{ display: "flex", gap: 10, paddingTop: 4 }}>

@@ -1,21 +1,27 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
-use souvlaki::{MediaControls, MediaControlEvent, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig};
+use souvlaki::{
+    MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
+};
 use tauri::{AppHandle, Emitter};
 
 pub enum MediaMsg {
     NowPlaying {
-        title:       String,
-        artist:      String,
-        album:       String,
-        cover_url:   Option<String>,
-        track_url:   Option<String>,
+        title: String,
+        artist: String,
+        album: String,
+        cover_url: Option<String>,
+        track_url: Option<String>,
         duration_ms: u64,
         position_ms: u64,
     },
-    Playing  { position_ms: u64 },
-    Paused   { position_ms: u64 },
+    Playing {
+        position_ms: u64,
+    },
+    Paused {
+        position_ms: u64,
+    },
     Stopped,
     /// user flipped discord rich presence in settings
     SetDiscordEnabled(bool),
@@ -38,8 +44,7 @@ pub fn start(app: AppHandle, hwnd_raw: Option<isize>) -> mpsc::SyncSender<MediaM
             // launch. the handle gets grabbed on the main thread (lib.rs) and
             // passed in as an `isize` (Send), we rebuild the pointer here. on
             // macos (MPNowPlayingInfoCenter) and linux (MPRIS/D-Bus) its None
-            let hwnd: Option<*mut std::ffi::c_void> =
-                hwnd_raw.map(|v| v as *mut std::ffi::c_void);
+            let hwnd: Option<*mut std::ffi::c_void> = hwnd_raw.map(|v| v as *mut std::ffi::c_void);
 
             let config = PlatformConfig {
                 dbus_name: "dev.boyblah.musique",
@@ -55,17 +60,19 @@ pub fn start(app: AppHandle, hwnd_raw: Option<isize>) -> mpsc::SyncSender<MediaM
             // release uses panic=unwind) turns a panic into a clean `None`
             let ev_app = app.clone();
             let mut controls = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut c = MediaControls::new(config).map_err(|e| {
-                    eprintln!("[media-ctrl] init failed: {e:?}");
-                }).ok()?;
+                let mut c = MediaControls::new(config)
+                    .map_err(|e| {
+                        eprintln!("[media-ctrl] init failed: {e:?}");
+                    })
+                    .ok()?;
                 if let Err(e) = c.attach(move |event: MediaControlEvent| {
                     let _ = match event {
-                        MediaControlEvent::Play     => ev_app.emit("media:play",   ()),
-                        MediaControlEvent::Pause    => ev_app.emit("media:pause",  ()),
-                        MediaControlEvent::Toggle   => ev_app.emit("media:toggle", ()),
-                        MediaControlEvent::Next     => ev_app.emit("media:next",   ()),
-                        MediaControlEvent::Previous => ev_app.emit("media:prev",   ()),
-                        MediaControlEvent::Stop     => ev_app.emit("media:stop",   ()),
+                        MediaControlEvent::Play => ev_app.emit("media:play", ()),
+                        MediaControlEvent::Pause => ev_app.emit("media:pause", ()),
+                        MediaControlEvent::Toggle => ev_app.emit("media:toggle", ()),
+                        MediaControlEvent::Next => ev_app.emit("media:next", ()),
+                        MediaControlEvent::Previous => ev_app.emit("media:prev", ()),
+                        MediaControlEvent::Stop => ev_app.emit("media:stop", ()),
                         _ => Ok(()),
                     };
                 }) {
@@ -75,7 +82,9 @@ pub fn start(app: AppHandle, hwnd_raw: Option<isize>) -> mpsc::SyncSender<MediaM
                 Some(c)
             }))
             .unwrap_or_else(|_| {
-                eprintln!("[media-ctrl] init panicked — OS media controls disabled, Discord still active");
+                eprintln!(
+                    "[media-ctrl] init panicked - OS media controls disabled, Discord still active"
+                );
                 None
             });
 
@@ -103,16 +112,21 @@ pub fn start(app: AppHandle, hwnd_raw: Option<isize>) -> mpsc::SyncSender<MediaM
                 };
                 match msg {
                     MediaMsg::NowPlaying {
-                        ref title, ref artist, ref album,
-                        ref cover_url, ref track_url, duration_ms, position_ms,
+                        ref title,
+                        ref artist,
+                        ref album,
+                        ref cover_url,
+                        ref track_url,
+                        duration_ms,
+                        position_ms,
                     } => {
                         if let Some(c) = controls.as_mut() {
                             let _ = c.set_metadata(MediaMetadata {
-                                title:     Some(title),
-                                artist:    Some(artist),
-                                album:     Some(album),
+                                title: Some(title),
+                                artist: Some(artist),
+                                album: Some(album),
                                 cover_url: cover_url.as_deref(),
-                                duration:  Some(Duration::from_millis(duration_ms)),
+                                duration: Some(Duration::from_millis(duration_ms)),
                             });
                             let _ = c.set_playback(MediaPlayback::Playing {
                                 progress: Some(MediaPosition(Duration::from_millis(position_ms))),
@@ -121,8 +135,14 @@ pub fn start(app: AppHandle, hwnd_raw: Option<isize>) -> mpsc::SyncSender<MediaM
                         last_pos = position_ms;
                         last_playing = true;
                         discord.now_playing(
-                            title.clone(), artist.clone(), album.clone(),
-                            cover_url.clone(), track_url.clone(), duration_ms, position_ms, true,
+                            title.clone(),
+                            artist.clone(),
+                            album.clone(),
+                            cover_url.clone(),
+                            track_url.clone(),
+                            duration_ms,
+                            position_ms,
+                            true,
                         );
                     }
                     MediaMsg::Playing { position_ms } => {
@@ -149,8 +169,11 @@ pub fn start(app: AppHandle, hwnd_raw: Option<isize>) -> mpsc::SyncSender<MediaM
                         if let Some(c) = controls.as_mut() {
                             let _ = c.set_playback(MediaPlayback::Stopped);
                             let _ = c.set_metadata(MediaMetadata {
-                                title: None, artist: None, album: None,
-                                cover_url: None, duration: None,
+                                title: None,
+                                artist: None,
+                                album: None,
+                                cover_url: None,
+                                duration: None,
                             });
                         }
                         last_playing = false;
