@@ -30,14 +30,15 @@
 - **Share links** - Cross-platform song link sharing via odesli (example: song.link, album.link)
 - **Library Sync + offline cache** - playlists, saved tracks, new releases (reads are cache-first for offline compatability)
 - **Native window chrome/tint** - Windows 11 Mica/Acrylic, and MacOS vibrancy.
+- **Dynamic Accent Colors** - Based on the album/playlist, your wallpaper, or your system accent color.
+- **Customizable Transparency** 
 - **OS media controls integration** 
 
 ### ⚠️ In progress:
 
 - **Discord Rich Presence** - Discord rich presence compatabilty, to show what you're listening to.
 - **LastFM integration** - Auto scrobbling, and statistics in-app.
-- **Dynamic Accent Colors** - Based on the album/playlist, your wallpaper, or your system accent color.
-- **Customizable Transparency** 
+
 
 
 ## Tech Stack
