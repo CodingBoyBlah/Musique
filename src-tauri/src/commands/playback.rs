@@ -85,12 +85,11 @@ pub async fn warmup_playback(app: AppHandle) -> Result<(), AppError> {
 pub async fn play_track(app: AppHandle, id: String) -> Result<(), AppError> {
     ensure_inner(&app).await?;
 
-    let track_id = crate::playback::parse_track_id(&id)?;
+    let uri      = crate::playback::track_uri(&id)?;
     let playback = app.state::<AppState>().playback.clone();
     let guard    = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
-        inner.player.load(track_id, true, 0);
-        inner.loaded.store(true, Ordering::Relaxed);
+        inner.play_uri(uri, 0)?;
     }
     Ok(())
 }
@@ -114,12 +113,11 @@ pub async fn retry_play_track(app: AppHandle, id: String) -> Result<(), AppError
     }
     ensure_inner(&app).await?;
 
-    let track_id = crate::playback::parse_track_id(&id)?;
+    let uri      = crate::playback::track_uri(&id)?;
     let playback = app.state::<AppState>().playback.clone();
     let guard    = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
-        inner.player.load(track_id, true, 0);
-        inner.loaded.store(true, Ordering::Relaxed);
+        inner.play_uri(uri, 0)?;
     }
     Ok(())
 }
@@ -129,7 +127,7 @@ pub async fn pause_playback(app: AppHandle) -> Result<(), AppError> {
     let playback = app.state::<AppState>().playback.clone();
     let guard    = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
-        inner.player.pause();
+        inner.pause()?;
     }
     Ok(())
 }
@@ -139,7 +137,7 @@ pub async fn resume_playback(app: AppHandle) -> Result<(), AppError> {
     let playback = app.state::<AppState>().playback.clone();
     let guard    = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
-        inner.player.play();
+        inner.resume()?;
     }
     Ok(())
 }
@@ -154,15 +152,14 @@ pub async fn resume_or_play(app: AppHandle, id: String, position_ms: u32) -> Res
     // so we fall thru to a real load below instead of a silent resume)
     ensure_inner(&app).await?;
 
-    let track_id = crate::playback::parse_track_id(&id)?;
+    let uri      = crate::playback::track_uri(&id)?;
     let playback = app.state::<AppState>().playback.clone();
     let guard    = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
         if inner.loaded.load(Ordering::Relaxed) {
-            inner.player.play();                       // track already loaded so just resume
+            inner.resume()?;                 // track already loaded so just resume
         } else {
-            inner.player.load(track_id, true, position_ms);  // fresh session so load it
-            inner.loaded.store(true, Ordering::Relaxed);
+            inner.play_uri(uri, position_ms)?;  // fresh session so load it
         }
     }
     Ok(())
@@ -173,7 +170,10 @@ pub async fn stop_playback(app: AppHandle) -> Result<(), AppError> {
     let playback = app.state::<AppState>().playback.clone();
     let guard    = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
-        inner.player.stop();
+        // Spirc has no hard "stop"; pause keeps the connect-state consistent
+        // (device stays active/paused) instead of desyncing by poking the player
+        // directly. The frontend uses this rarely (mostly pause is what's wanted).
+        inner.pause()?;
     }
     Ok(())
 }
@@ -183,7 +183,7 @@ pub async fn seek_playback(app: AppHandle, position_ms: u32) -> Result<(), AppEr
     let playback = app.state::<AppState>().playback.clone();
     let guard    = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
-        inner.player.seek(position_ms);
+        inner.seek(position_ms)?;
     }
     Ok(())
 }
@@ -212,6 +212,8 @@ pub async fn set_volume(app: AppHandle, level: u8) -> Result<(), AppError> {
     let guard = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
         inner.volume.set_level(level_f);
+        // keep Spotify's reported device volume in sync with ours
+        inner.report_volume(level_f);
     }
     drop(guard);
 

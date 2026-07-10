@@ -17,6 +17,8 @@ pub enum AppError {
     InvalidInput(String),
     #[error("auth error: {0}")]
     Auth(String),
+    #[error("playback error: {0}")]
+    Playback(String),
 }
 
 impl From<sqlx::Error> for AppError {

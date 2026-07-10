@@ -1,7 +1,7 @@
 [package]
-name = "Musique"
+name = "spotify"
 version = "0.1.0"
-description = "A blazing fast unofficial Spotify client"
+description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
 
@@ -26,6 +26,8 @@ tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 window-vibrancy = "0.6"
 souvlaki = "0.7"
 tauri-plugin-opener = "2"
+# In-app auto-updater (OTA from GitHub Releases) + process control for the
+# post-install relaunch. Both are official Tauri v2 plugins, no extra deps.
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
@@ -43,11 +45,21 @@ url = "2"
 log = "0.4"
 librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
 librespot-playback = { version = "0.8", default-features = false, features = ["rodio-backend"] }
+# Direct rodio dep so playback/mod.rs can build its OWN output sink (DeviceSink)
+# that opens the device at its NATIVE sample rate. librespot's built-in rodio
+# backend forces 44100, which trips a SIGSEGV bug in cpal 0.16's macOS
+# set_sample_rate() when the device runs at 48000. Same version librespot pulls.
 rodio = "0.21"
 # Discord Rich Presence — connects to the local Discord IPC socket. Pure Rust,
 # cross-platform, no system deps. All calls degrade silently if Discord is closed.
 discord-rich-presence = "1.1"
 md5 = "0.7"
+# Spotify Connect (Spirc). Makes Musique register as a real Connect device and
+# report player state to Spotify's backend over the dealer websocket + the
+# /connect-state PUT — this is what makes plays show up in Spotify's "recently
+# played", now-playing, and the device list. rustls to match the rest of the
+# librespot stack (no native-tls / OpenSSL dep).
+librespot-connect = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
 
 # Unix (macOS + Linux): libc powers two crash-safety mechanisms.
 #  • macOS VM detection — read `kern.hv_vmm_present` via sysctl. Apple's

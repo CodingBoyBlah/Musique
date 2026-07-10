@@ -435,7 +435,7 @@ pub fn run() {
             // database + auth setup
             let handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
-                let pool       = db::connection::create_pool(&handle).await?;
+                let pool       = db::connection::create_pool(&handle).await;
                 // seed spotify creds from .env on first run, does nothing if theyre already set
                 commands::credentials::seed_credentials_from_env(&pool).await;
                 let auth_state = auth::init_auth_state(&pool).await;
@@ -456,7 +456,8 @@ pub fn run() {
             let handle3 = app.handle().clone();
             tauri::async_runtime::spawn(library::library_sync_loop(handle3));
 
-            // system tray stuff
+            // system tray item - wrapped so a menu build failure is logged and skipped
+            let tray_setup = (|| -> Result<(), Box<dyn std::error::Error>> {
             let show_item   = MenuItem::with_id(app, "show",   "Show",         true, None::<&str>)?;
             let sep1        = PredefinedMenuItem::separator(app)?;
             // plain text labels, the U+23EE/EF/ED media glyphs turn into tofu boxes in minimal
@@ -518,7 +519,14 @@ pub fn run() {
                 }
 
             Ok(())
-        })
+        })();
+        if let Err(e) = tray_setup {
+            eprintln!("[setu[] tray/menu setup failed (non-fatal): {e}]");
+        }
+
+        Ok(())
+
+    })
         .invoke_handler(tauri::generate_handler![
             commands::settings::get_setting,
             commands::settings::set_setting,
