@@ -6,10 +6,19 @@ use sqlx::{Row, SqlitePool};
 use tauri::State;
 
 const SERVICE: &str = "spotify-client";
-const ACCOUNT: &str = "client_secret";
+const ACCOUNT_SECRET: &str = "client_secret";
+const ACCOUNT_ID: &str = "client_id";
 
-fn entry() -> Result<Entry, AppError> {
-    Entry::new(SERVICE, ACCOUNT).map_err(AppError::from)
+/* client id is mirrored into the keytring now,
+ *
+db is resynacble cache - quarantined and recreated on launch */
+
+fn entry(account: &str) -> Result<Entry, AppError> {
+    Entry::new(SERVICE, account).map_err(AppError::from)
+}
+
+fn keyring_client_id() -> Option<String> {
+    entry(ACCOUNT_ID).ok().and_then(|e| e.get_password().ok())
 }
 
 fn now_ms() -> i64 {
@@ -86,7 +95,8 @@ pub async fn save_credentials(
     .execute(&state.db)
     .await?;
 
-    entry()?.set_password(&client_secret)?;
+    let _ = entry(ACCOUNT_ID).and_then(|e| e.set_password(&client_id).map_err(AppError::from));
+    entry(ACCOUNT_SECRET)?.set_password(&client_secret)?;
 
     Ok(())
 }
@@ -99,10 +109,25 @@ pub async fn get_credentials(state: State<'_, AppState>) -> Result<Option<Creden
 
     let client_id = match row {
         Some(r) => r.get::<String, _>("value"),
-        None => return Ok(None),
+        // db row gone (fresh cache) - recover from keyring mirror and write it back
+        None => match keyring_client_id() {
+            Some(id) => {
+                let _ = sqlx::query(
+                  "INSERT INTO settings (key, value, updated_at) VALUES ('spotify_client_id', ?, ?)
+                  ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+
+              )
+            .bind(&id)
+            .bind(now_ms())
+            .execute(&state.db)
+            .await;
+                id
+            }
+            None => return Ok(None),
+        },
     };
 
-    let has_secret = match entry()?.get_password() {
+    let has_secret = match entry(ACCOUNT_SECRET)?.get_password() {
         Ok(_) => true,
         Err(keyring::Error::NoEntry) => false,
         Err(e) => return Err(AppError::Keyring(e.to_string())),
@@ -122,8 +147,11 @@ pub async fn validate_credentials(
         .fetch_optional(&state.db)
         .await?;
 
-    let client_id = match row {
-        Some(r) => r.get::<String, _>("value"),
+    let client_id = match row
+        .map(|r| r.get::<String, _>("value"))
+        .or_else(keyring_client_id)
+    {
+        Some(id) => id,
         None => {
             return Ok(ValidationResult {
                 valid: false,
@@ -132,7 +160,7 @@ pub async fn validate_credentials(
         }
     };
 
-    let client_secret = match entry()?.get_password() {
+    let client_secret = match entry(ACCOUNT_SECRET)?.get_password() {
         Ok(s) => s,
         Err(_) => {
             return Ok(ValidationResult {
@@ -178,9 +206,11 @@ pub async fn clear_credentials(state: State<'_, AppState>) -> Result<(), AppErro
         .execute(&state.db)
         .await?;
 
-    match entry()?.delete_password() {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
-        Err(e) => return Err(AppError::Keyring(e.to_string())),
+    for account in [ACCOUNT_SECRET, ACCOUNT_ID] {
+        match entry(account)?.delete_password() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(AppError::Keyring(e.to_string())),
+        }
     }
 
     Ok(())

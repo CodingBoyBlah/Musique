@@ -97,3 +97,5 @@ async fn in_memory() -> SqlitePool {
     let _ = sqlx::migrate!("./migrations").run(&pool).await;
     pool
 }
+
+
