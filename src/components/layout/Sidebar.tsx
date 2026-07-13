@@ -3,13 +3,10 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Home, ListMusic,
-  Music, Disc3, Users, User,
-  Pin, PinOff, Plus, Settings,
-  Wifi, WifiOff, Loader2,
+  Music, Disc3, Users,
+  Pin, PinOff, Plus,
   Search, ChevronDown, X,
 } from "lucide-react";
-import { useCredentialsStore, type ConnectionStatus } from "../../store/credentials.store";
-import { useAuthStore } from "../../store/auth.store";
 import { usePinsStore } from "../../store/pins.store";
 import { useContextMenu } from "../ui/ContextMenu";
 import { gpuLayer, zTransform } from "../../lib/motion";
@@ -30,23 +27,6 @@ const glassPill: React.CSSProperties = {
   gap:          9,
   padding:      "0 11px",
   flexShrink:   0,
-};
-
-// status
-
-const STATUS_ICON: Record<ConnectionStatus, React.ReactNode> = {
-  unconfigured: <WifiOff  size={11} />,
-  configured:   <Wifi     size={11} />,
-  validating:   <Loader2  size={11} style={{ animation: "spin 1s linear infinite" }} />,
-  valid:        <Wifi     size={11} />,
-  invalid:      <WifiOff  size={11} />,
-};
-const STATUS_COLOR: Record<ConnectionStatus, string> = {
-  unconfigured: "rgba(255,255,255,0.30)",
-  configured:   "#f5a623",
-  validating:   "#fa2d48",
-  valid:        "#34d399",
-  invalid:      "#ff453a",
 };
 
 // nav item. active state passed in explicitly so we don't get multi highlight
@@ -143,9 +123,6 @@ function Section({
 // sidebar
 
 export default function Sidebar() {
-  const status      = useCredentialsStore((s) => s.status);
-  const displayName = useAuthStore((s) => s.displayName);
-  const imageUrl    = useAuthStore((s) => s.imageUrl);
   const navigate    = useNavigate();
   const location    = useLocation();
   const pins        = usePinsStore((s) => s.pins);
@@ -173,9 +150,6 @@ export default function Sidebar() {
   const [query,       setQuery]       = useState(
     () => new URLSearchParams(location.search).get("q") ?? "",
   );
-
-  const settingsActive = path === "/settings";
-  const profileActive  = path === "/profile";
 
   function runSearch(value: string) {
     setQuery(value);
@@ -307,54 +281,6 @@ export default function Sidebar() {
         </div>
       </div>
       {menuEl}
-
-      {/* account bar -- opens the profile; the gear opens api settings ( client id and secret, validate)*/}
-      <div style={{ padding: "6px 8px 10px", flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
-        <button
-          onClick={() => navigate("/profile")}
-          title="Your profile"
-          style={{
-            ...glassPill,
-            flex:       1,
-            width:      "auto",
-            minWidth:   0,
-            background: profileActive ? "var(--color-surface-2)" : "var(--color-glass)",
-            cursor:     "pointer",
-          }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--color-surface-2)"; }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = profileActive ? "var(--color-surface-2)" : "var(--color-glass)";
-          }}
-        >
-          {imageUrl ? (
-            <img src={imageUrl} alt={displayName ?? ""} style={{ width: 22, height: 22, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
-          ) : (
-            <User size={16} strokeWidth={2} style={{ flexShrink: 0, color: "var(--color-text)" }} />
-          )}
-          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13.5, fontWeight: 500, color: "var(--color-text-hi)", textAlign: "left" }}>
-            {displayName ?? "Account"}
-          </span>
-          <span style={{ color: STATUS_COLOR[status], flexShrink: 0, display: "flex", alignItems: "center" }}>
-            {STATUS_ICON[status]}
-          </span>
-        </button>
-        <button
-          onClick={() => navigate("/settings")}
-          title="Spotify API settings"
-          style={{
-            width: 36, height: 36, flexShrink: 0, borderRadius: 8,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            background: settingsActive ? "var(--color-surface-2)" : "var(--color-glass)",
-            border: "1px solid var(--color-glass-border)",
-            color: settingsActive ? "var(--color-text-hi)" : "var(--color-text)", cursor: "pointer",
-            transition: "background 0.12s",
-          }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--color-surface-2)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = settingsActive ? "var(--color-surface-2)" : "var(--color-glass)"; }}
-        >
-          <Settings size={15} strokeWidth={2} />
-        </button>
-      </div>
     </nav>
   );
 }

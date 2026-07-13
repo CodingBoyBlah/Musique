@@ -7,16 +7,14 @@ use tauri::State;
 
 const SERVICE: &str = "spotify-client";
 const ACCOUNT_SECRET: &str = "client_secret";
-const ACCOUNT_ID: &str = "client_id";
 
-/* client id is mirrored into the keytring now,
- *
-db is resynacble cache - quarantined and recreated on launch */
+const ACCOUNT_ID: &str = "client_id";
 
 fn entry(account: &str) -> Result<Entry, AppError> {
     Entry::new(SERVICE, account).map_err(AppError::from)
 }
 
+// read the client_id keyring mirror, if any (None on NoEntry or any error)
 fn keyring_client_id() -> Option<String> {
     entry(ACCOUNT_ID).ok().and_then(|e| e.get_password().ok())
 }
@@ -40,6 +38,7 @@ pub struct ValidationResult {
     pub error: Option<String>,
 }
 
+
 pub async fn seed_credentials_from_env(pool: &SqlitePool) {
     if let Ok(id) = std::env::var("SPOTIFY_CLIENT_ID") {
         let id = id.trim();
@@ -60,7 +59,7 @@ pub async fn seed_credentials_from_env(pool: &SqlitePool) {
     if let Ok(secret) = std::env::var("SPOTIFY_CLIENT_SECRET") {
         let secret = secret.trim();
         if !secret.is_empty() {
-            if let Ok(e) = entry() {
+            if let Ok(e) = entry(ACCOUNT_SECRET) {
                 // only write it if the keyring doesnt already have a secret
                 if matches!(e.get_password(), Err(keyring::Error::NoEntry)) {
                     let _ = e.set_password(secret);
@@ -80,9 +79,7 @@ pub async fn save_credentials(
         return Err(AppError::InvalidInput("Client ID cannot be empty".into()));
     }
     if client_secret.trim().is_empty() {
-        return Err(AppError::InvalidInput(
-            "Client secret cannot be empty".into(),
-        ));
+        return Err(AppError::InvalidInput("Client secret cannot be empty".into()));
     }
 
     sqlx::query(
@@ -95,6 +92,7 @@ pub async fn save_credentials(
     .execute(&state.db)
     .await?;
 
+    
     let _ = entry(ACCOUNT_ID).and_then(|e| e.set_password(&client_id).map_err(AppError::from));
     entry(ACCOUNT_SECRET)?.set_password(&client_secret)?;
 
@@ -102,25 +100,26 @@ pub async fn save_credentials(
 }
 
 #[tauri::command]
-pub async fn get_credentials(state: State<'_, AppState>) -> Result<Option<Credentials>, AppError> {
+pub async fn get_credentials(
+    state: State<'_, AppState>,
+) -> Result<Option<Credentials>, AppError> {
     let row = sqlx::query("SELECT value FROM settings WHERE key = 'spotify_client_id'")
         .fetch_optional(&state.db)
         .await?;
 
     let client_id = match row {
         Some(r) => r.get::<String, _>("value"),
-        // db row gone (fresh cache) - recover from keyring mirror and write it back
+        
         None => match keyring_client_id() {
             Some(id) => {
                 let _ = sqlx::query(
-                  "INSERT INTO settings (key, value, updated_at) VALUES ('spotify_client_id', ?, ?)
-                  ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-
-              )
-            .bind(&id)
-            .bind(now_ms())
-            .execute(&state.db)
-            .await;
+                    "INSERT INTO settings (key, value, updated_at) VALUES ('spotify_client_id', ?, ?)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                )
+                .bind(&id)
+                .bind(now_ms())
+                .execute(&state.db)
+                .await;
                 id
             }
             None => return Ok(None),
@@ -133,10 +132,7 @@ pub async fn get_credentials(state: State<'_, AppState>) -> Result<Option<Creden
         Err(e) => return Err(AppError::Keyring(e.to_string())),
     };
 
-    Ok(Some(Credentials {
-        client_id,
-        has_secret,
-    }))
+    Ok(Some(Credentials { client_id, has_secret }))
 }
 
 #[tauri::command]
@@ -147,10 +143,7 @@ pub async fn validate_credentials(
         .fetch_optional(&state.db)
         .await?;
 
-    let client_id = match row
-        .map(|r| r.get::<String, _>("value"))
-        .or_else(keyring_client_id)
-    {
+    let client_id = match row.map(|r| r.get::<String, _>("value")).or_else(keyring_client_id) {
         Some(id) => id,
         None => {
             return Ok(ValidationResult {
@@ -182,21 +175,15 @@ pub async fn validate_credentials(
         .map_err(|e| AppError::Network(e.to_string()))?;
 
     if res.status().is_success() {
-        Ok(ValidationResult {
-            valid: true,
-            error: None,
-        })
+        Ok(ValidationResult { valid: true, error: None })
     } else {
         let status = res.status().as_u16();
         let msg = match status {
-            400 => "Invalid request - check your client ID".into(),
-            401 => "Unauthorized - invalid client ID or secret".into(),
+            400 => "Invalid request, check your client ID".into(),
+            401 => "Unauthorized, invalid client ID or secret".into(),
             _ => format!("Spotify returned HTTP {}", status),
         };
-        Ok(ValidationResult {
-            valid: false,
-            error: Some(msg),
-        })
+        Ok(ValidationResult { valid: false, error: Some(msg) })
     }
 }
 
@@ -206,6 +193,7 @@ pub async fn clear_credentials(state: State<'_, AppState>) -> Result<(), AppErro
         .execute(&state.db)
         .await?;
 
+    // clear both keyring mirrors (secret + the id we now stash there)
     for account in [ACCOUNT_SECRET, ACCOUNT_ID] {
         match entry(account)?.delete_password() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
