@@ -361,14 +361,7 @@ export default function App() {
               </Suspense>
             }
           />
-          <Route
-            path="radio"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Search />
-              </Suspense>
-            }
-          />
+
           <Route
             path="library"
             element={

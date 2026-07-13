@@ -31,9 +31,7 @@ export default function Layout() {
   // answers (and anywhere it didn't - Linux, or a failed Mica/vibrancy) the
   // root stays opaque dark so we never get white-on-white.
   useEffect(() => {
-    getBackdropActive()
-      .then(setBackdropActive)
-      .catch(() => setBackdropActive(false));
+    getBackdropActive().then(setBackdropActive).catch(() => setBackdropActive(false));
   }, [setBackdropActive]);
 
   // backdrop strategy:
@@ -41,12 +39,7 @@ export default function Layout() {
   //    bg, otherwise the transparent window shows white (or the desktop)
   //  - windows acrylic -> OS ignores the tint, so darken with a CSS scrim
   //  - windows Mica / macOS vibrancy -> stay transparent, OS material shows
-  const scrim = backdropScrim(
-    backdropActive,
-    effect,
-    materialTransparency,
-    isMac,
-  );
+  const scrim = backdropScrim(backdropActive, effect, materialTransparency, isMac);
 
   return (
     /*
@@ -64,14 +57,7 @@ export default function Layout() {
         transition: "background 0.2s",
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          flex: 1,
-          overflow: "hidden",
-          position: "relative",
-        }}
-      >
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
         <Sidebar />
 
         <div
@@ -161,61 +147,52 @@ export default function Layout() {
           >
             <TitleBar />
 
-            {/* main region wrapper - lyrics view overlays this area (below the
-                title bar, above the player bar) */}
-            <div
-              style={{
-                position: "relative",
-                flex: 1,
-                minHeight: 0,
-                overflow: "hidden",
-              }}
-            >
-              <main
-                data-selectable
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  overflowY: "auto",
-                  overflowX: "hidden",
-                  padding:
-                    "clamp(6px, 1.4vw, 12px) clamp(14px, 3vw, 32px) clamp(16px, 3vw, 32px)",
-                }}
-              >
-                {/* page-load motion: content rises gently from below on each
-                  nav. subtle (14px / 0.34s), respects reduced-motion. */}
-                <motion.div
-                  key={location.pathname}
-                  initial={reduceMotion ? false : { opacity: 0, y: 14 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.34, ease: [0.23, 1, 0.32, 1] }}
+            {/* main region + right rail sit in ONE horizontal row BELOW the title
+                bar, so the rail (lyrics/queue) can never cover the window's
+                caption/close buttons. The rail is a real sibling of <main>: an
+                in-flow spacer reserves its width (instantly, no transition) so
+                the content grid reflows in one step on open AND close, and the
+                panel just slides into that reserved slot. */}
+            <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
+              <div style={{ position: "relative", flex: 1, minWidth: 0, overflow: "hidden" }}>
+                <main
+                  data-selectable
                   style={{
-                    width: "100%",
-                    maxWidth: "var(--content-max)",
-                    marginInline: "auto",
+                    position: "absolute",
+                    inset: 0,
+                    overflowY: "auto",
+                    overflowX: "hidden",
+                    padding: "clamp(6px, 1.4vw, 12px) clamp(14px, 3vw, 32px) clamp(16px, 3vw, 32px)",
                   }}
                 >
-                  <Outlet />
-                </motion.div>
-              </main>
+                  {/* page-load motion: content rises gently from below on each
+                    nav. subtle (14px / 0.34s), respects reduced-motion. */}
+                  <motion.div
+                    key={location.pathname}
+                    initial={reduceMotion ? false : { opacity: 0, y: 14 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.34, ease: [0.23, 1, 0.32, 1] }}
+                  >
+                    <Outlet />
+                  </motion.div>
+                </main>
+              </div>
+
+              {/* reserves the rail's width instantly (no transition) so the grid
+                  reflows once; the panel below slides over this exact slot. */}
+              <div aria-hidden style={{ width: lyricsOpen ? 366 : queueOpen ? 272 : 0, flexShrink: 0 }} />
+
+              {/* right rail - lyrics or queue, mutually exclusive. positioned
+                  against THIS row (below the title bar), sliding in via a transform. */}
+              <AnimatePresence initial={false}>
+                {lyricsOpen && <LyricsPanel key="lyrics" />}
+              </AnimatePresence>
+              <AnimatePresence initial={false}>
+                {queueOpen && <QueuePanel key="queue" />}
+              </AnimatePresence>
             </div>
           </div>
         </div>
-
-        {/* right rail - lyrics or queue, mutually exclusive */}
-        <div
-          aria-hidden
-          style={{
-            width: lyricsOpen ? 336 : queueOpen ? 272 : 0,
-            flexShrink: 0,
-          }}
-        />
-        <AnimatePresence initial={false}>
-          {lyricsOpen && <LyricsPanel key="lyrics" />}
-        </AnimatePresence>
-        <AnimatePresence initial={false}>
-          {queueOpen && <QueuePanel key="queue" />}
-        </AnimatePresence>
       </div>
 
       <PlayerBar />
