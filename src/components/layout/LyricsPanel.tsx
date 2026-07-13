@@ -55,7 +55,7 @@ function CoverBg({ url }: { url: string | null | undefined }) {
    no transform here, framer owns it scale goes through framer (constant) so
    the blur rasterizes once and only translate/rotate composite per frame */
 
-  /* UPDATE REUSED IN IMMERSIVE LYRICS PANEL TOO, TODO DONE */
+/* UPDATE REUSED IN IMMERSIVE LYRICS PANEL TOO, TODO DONE */
   const layer = (opacity: number): React.CSSProperties => ({
     position: "absolute",
     inset: "-35%",
@@ -74,31 +74,13 @@ function CoverBg({ url }: { url: string | null | undefined }) {
     >
       <motion.div
         initial={false}
-        animate={
-          reduceMotion
-            ? { scale: 1.45 }
-            : {
-                scale: 1.45,
-                x: [0, 54, -38, 0],
-                y: [0, -42, 32, 0],
-                rotate: [0, 6, -5, 0],
-              }
-        }
+        animate={reduceMotion ? { scale: 1.45 } : { scale: 1.45, x: [0, 54, -38, 0], y: [0, -42, 32, 0], rotate: [0, 6, -5, 0] }}
         transition={{ duration: 26, repeat: Infinity, ease: "easeInOut" }}
         style={layer(0.5)}
       />
       <motion.div
         initial={false}
-        animate={
-          reduceMotion
-            ? { scale: 1.7 }
-            : {
-                scale: 1.7,
-                x: [0, -48, 40, 0],
-                y: [0, 36, -30, 0],
-                rotate: [0, -7, 5, 0],
-              }
-        }
+        animate={reduceMotion ? { scale: 1.7 } : { scale: 1.7, x: [0, -48, 40, 0], y: [0, 36, -30, 0], rotate: [0, -7, 5, 0] }}
         transition={{ duration: 38, repeat: Infinity, ease: "easeInOut" }}
         style={layer(0.34)}
       />
@@ -216,11 +198,7 @@ export function LyricsPanel() {
 
   return (
     <motion.div
-      // Absolute OVERLAY that slides in/out via a transform (x). The layout space
-      // is reserved by an in-flow spacer in Layout.tsx (which toggles instantly on
-      // open AND close), so the grid reflows in one step and the cards glide via
-      // framer `layout` both ways. This panel just slides over that region - its
-      // width never animates, so nothing reflows per-frame.
+
       initial={{ x: WIDTH, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: WIDTH, opacity: 0 }}
@@ -229,11 +207,7 @@ export function LyricsPanel() {
         opacity: { duration: 0.2 },
       }}
       style={{
-        position: "absolute",
-        top: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 5,
+        position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH,
         overflow: "hidden",
         borderLeft: "1px solid var(--color-border)",
@@ -275,6 +249,38 @@ export function LyricsPanel() {
           >
             Lyrics
           </span>
+          {synced && (
+            <button
+              onClick={() => setSyncOpen((v) => !v)}
+              title="Adjust sync"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 26,
+                height: 26,
+                borderRadius: 6,
+                border: "none",
+                background: syncOpen ? "rgba(255,255,255,0.12)" : "transparent",
+                color: syncOpen ? "var(--color-text-hi)" : "var(--color-text)",
+                cursor: "pointer",
+                flexShrink: 0,
+                marginLeft: 4,
+              }}
+              onMouseEnter={(e) => {
+                if (!syncOpen)
+                  (e.currentTarget as HTMLButtonElement).style.background =
+                    "rgba(255,255,255,0.08)";
+              }}
+              onMouseLeave={(e) => {
+                if (!syncOpen)
+                  (e.currentTarget as HTMLButtonElement).style.background =
+                    "transparent";
+              }}
+            >
+              <Clock size={14} strokeWidth={2.2} />
+            </button>
+          )}
           <div style={{ flex: 1 }} />
           {canPron && (
             <button
@@ -302,64 +308,6 @@ export function LyricsPanel() {
               <Languages size={13} strokeWidth={2.2} /> {scriptLabel(script)}
             </button>
           )}
-          {synced && (
-            <button
-              onClick={() => setSyncOpen((v) => !v)}
-              title="Adjust sync"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 26,
-                height: 26,
-                borderRadius: 6,
-                border: "none",
-                background: syncOpen ? "rgba(255,255,255,0.12)" : "transparent",
-                color: syncOpen ? "var(--color-text-hi)" : "var(--color-text)",
-                cursor: "pointer",
-                flexShrink: 0,
-              }}
-              onMouseEnter={(e) => {
-                if (!syncOpen)
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    "rgba(255,255,255,0.08)";
-              }}
-              onMouseLeave={(e) => {
-                if (!syncOpen)
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    "transparent";
-              }}
-            >
-              <Clock size={14} strokeWidth={2.2} />
-            </button>
-          )}
-          <button
-            onClick={() => setLyricsOpen(false)}
-            title="Close"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 26,
-              height: 26,
-              borderRadius: 6,
-              border: "none",
-              background: "transparent",
-              color: "var(--color-text)",
-              cursor: "pointer",
-              flexShrink: 0,
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "rgba(255,255,255,0.08)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "transparent";
-            }}
-          >
-            <X size={14} strokeWidth={2.2} />
-          </button>
         </div>
 
         {/* sync calibration popover (off the clock icon) */}
@@ -401,6 +349,7 @@ export function LyricsPanel() {
         <div
           ref={scrollRef}
           data-selectable
+          className="scroll-y"
           style={{
             position: "relative",
             zIndex: 1,

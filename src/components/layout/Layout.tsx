@@ -34,19 +34,11 @@ export default function Layout() {
     getBackdropActive().then(setBackdropActive).catch(() => setBackdropActive(false));
   }, [setBackdropActive]);
 
-  // backdrop strategy:
-  //  - no live material (Linux, or Mica/vibrancy failed) -> paint the solid app
-  //    bg, otherwise the transparent window shows white (or the desktop)
-  //  - windows acrylic -> OS ignores the tint, so darken with a CSS scrim
-  //  - windows Mica / macOS vibrancy -> stay transparent, OS material shows
+  
   const scrim = backdropScrim(backdropActive, effect, materialTransparency, isMac);
 
   return (
-    /*
-     * window root is fully transparent - the OS Mica material (applied in rust)
-     * is the background. no backdrop-filter here, that'd blur the desktop a
-     * second time and fight Mica. win11 rounds the frame.
-     */
+    
     <div
       style={{
         display: "flex",
@@ -63,10 +55,7 @@ export default function Layout() {
         <div
           style={{
             flex: 1,
-            // minWidth:0 lets this column shrink below its content's intrinsic
-            // width instead of overflowing, so it stays responsive as side
-            // panels (queue/lyrics/whatever) open and the window narrows. no
-            // visual change while there's room.
+            
             minWidth: 0,
             display: "flex",
             flexDirection: "column",
@@ -75,11 +64,7 @@ export default function Layout() {
             position: "relative",
           }}
         >
-          {/* fixed artwork tint behind the content (not the sidebar). lives in
-              the non-scrolling column so it stays put while <main> scrolls. an
-              inverse-vignette radial mask blooms the colour out of the cover
-              (top-left) and fades it to nothing - no hard edges, no top/bottom
-              gradient cuts. */}
+          
           <AnimatePresence>
             {pageTint && (
               <motion.div
@@ -96,9 +81,7 @@ export default function Layout() {
                   pointerEvents: "none",
                 }}
               >
-                {/* blurred artwork bloom, centred horizontally, emerging from
-                    the top-centre. scale pushes the blurred edges off-frame so
-                    no visible seams; saturate keeps the colour alive. */}
+                
                 <div
                   style={{
                     position: "absolute",
@@ -115,9 +98,7 @@ export default function Layout() {
                       "radial-gradient(75% 70% at 50% 0%, #000 0%, rgba(0,0,0,0.5) 42%, transparent 78%)",
                   }}
                 />
-                {/* fine fractal-noise dither over the bloom. a smooth blurred
-                    gradient bands into visible steps on flat panels; a faint
-                    noise layer breaks them up so the falloff stays clean. */}
+                
                 <div
                   style={{
                     position: "absolute",
@@ -141,32 +122,32 @@ export default function Layout() {
               minHeight: 0,
               minWidth: 0,
               display: "flex",
-              flexDirection: "column",
               overflow: "hidden",
             }}
           >
-            <TitleBar />
-
-            {/* main region + right rail sit in ONE horizontal row BELOW the title
-                bar, so the rail (lyrics/queue) can never cover the window's
-                caption/close buttons. The rail is a real sibling of <main>: an
-                in-flow spacer reserves its width (instantly, no transition) so
-                the content grid reflows in one step on open AND close, and the
-                panel just slides into that reserved slot. */}
+            
+            <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 50, pointerEvents: "none" }}>
+              <TitleBar />
+            </div>
+            {/* main region + right rail sit in ONE horizontal row */}
             <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
-              <div style={{ position: "relative", flex: 1, minWidth: 0, overflow: "hidden" }}>
+              <div style={{ position: "relative", flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                {/* Spacer blocks main scrolling content but lets page tint through */}
+                <div style={{ height: 48, flexShrink: 0 }} />
                 <main
                   data-selectable
                   style={{
-                    position: "absolute",
-                    inset: 0,
+                    position: "relative",
+                    flex: 1,
                     overflowY: "auto",
                     overflowX: "hidden",
-                    padding: "clamp(6px, 1.4vw, 12px) clamp(14px, 3vw, 32px) clamp(16px, 3vw, 32px)",
+                    paddingTop: "clamp(10px, 1.4vw, 16px)",
+                    paddingLeft: "clamp(14px, 3vw, 32px)",
+                    paddingRight: "clamp(16px, 3vw, 32px)",
+                    paddingBottom: "clamp(16px, 3vw, 32px)",
                   }}
                 >
-                  {/* page-load motion: content rises gently from below on each
-                    nav. subtle (14px / 0.34s), respects reduced-motion. */}
+                  
                   <motion.div
                     key={location.pathname}
                     initial={reduceMotion ? false : { opacity: 0, y: 14 }}
@@ -178,12 +159,10 @@ export default function Layout() {
                 </main>
               </div>
 
-              {/* reserves the rail's width instantly (no transition) so the grid
-                  reflows once; the panel below slides over this exact slot. */}
+              
               <div aria-hidden style={{ width: lyricsOpen ? 366 : queueOpen ? 272 : 0, flexShrink: 0 }} />
 
-              {/* right rail - lyrics or queue, mutually exclusive. positioned
-                  against THIS row (below the title bar), sliding in via a transform. */}
+              
               <AnimatePresence initial={false}>
                 {lyricsOpen && <LyricsPanel key="lyrics" />}
               </AnimatePresence>

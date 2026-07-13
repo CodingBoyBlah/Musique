@@ -111,7 +111,7 @@ const STATUS_DOT: Record<ConnectionStatus, string> = {
 };
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   unconfigured: "API not configured",
-  configured:   "Saved not tested",
+  configured:   "Saved, not tested",
   validating:   "Connecting…",
   valid:        "Connected",
   invalid:      "Check your API keys",
@@ -252,9 +252,7 @@ export function TitleBar() {
 
   return (
     <>
-      {/* macOS: full-width draggable strip above the bar, matching the sidebar
-          one, so the native traffic lights get clean vertical space and the
-          whole top row stays aligned across both columns */}
+      
       {isMac && <div data-tauri-drag-region style={{ height: 30, flexShrink: 0 }} />}
       <div
         style={{
@@ -264,11 +262,9 @@ export function TitleBar() {
           alignItems:  "center",
         }}
       >
-      {/* left controls: menu + back/forward. no mac inset needed, the traffic
-          lights sit over the sidebar column not here */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", flexShrink: 0 }}>
-        {/* account + settings + log out live here now (window material moved to
-            Settings → Window). shown on every platform. */}
+      
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", flexShrink: 0, pointerEvents: "auto" }}>
+        
         <AccountMenu />
         <Tooltip label="Back" side="bottom">
           <PillBtn onClick={() => navigate(-1)} nudge="left">
@@ -283,12 +279,11 @@ export function TitleBar() {
       </div>
 
       {/* drag region */}
-      <div data-tauri-drag-region style={{ flex: 1, height: "100%", cursor: "default" }} />
+      <div data-tauri-drag-region style={{ flex: 1, height: "100%", cursor: "default", pointerEvents: "auto" }} />
 
-      {/* custom caption buttons - windows/linux only. macOS uses its native
-          traffic lights so we render nothing on that side there. */}
+      
       {!isMac && (
-      <div style={{ display: "flex", alignItems: "stretch", height: "100%", flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "stretch", height: "100%", flexShrink: 0, pointerEvents: "auto" }}>
         <Tooltip label="Minimize" side="bottom">
           <CaptionBtn onClick={() => win.minimize()}>
             <Minus size={15} strokeWidth={1.8} />

@@ -99,14 +99,19 @@ function TrackRowImpl({
 
   return (
     <>
-    <div
+    <motion.div
+      layout
       style={{
         display: "flex", alignItems: "center", gap: 12,
         padding: "9px 12px", borderRadius: 8, transition: "background 0.1s",
         background: baseBg,
         
         contentVisibility: "auto",
-        containIntrinsicSize: "60px",
+        /*
+        aiuto lets the browser remember each rows REAL rendered hight and REUSES it instead of snapping evrery offscreen row to a guessed height
+        */
+       
+        containIntrinsicSize: "auto 60px",
       } as React.CSSProperties}
       onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--color-surface-hover)"; }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = baseBg; }}
@@ -205,7 +210,7 @@ function TrackRowImpl({
       <span style={{ fontSize: 12.5, flexShrink: 0, color: "rgba(255,255,255,0.35)", fontVariantNumeric: "tabular-nums" }}>
         {fmtMs(track.duration_ms)}
       </span>
-    </div>
+    </motion.div>
     {menuEl}
     </>
   );
