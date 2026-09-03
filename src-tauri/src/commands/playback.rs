@@ -264,3 +264,42 @@ pub async fn get_volume(app: AppHandle) -> Result<VolumeState, AppError> {
     let muted = read_muted(&pool).await;
     Ok(VolumeState { level, muted })
 }
+
+#[tauri::command]
+pub async fn get_audio_quality(app: AppHandle) -> Result<String, AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    drop(s);
+
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = 'audio_quality'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+
+    Ok(row.map(|(v,)| v).unwrap_or_else(|| "320".to_string()))
+}
+
+#[tauri::command]
+pub async fn set_audio_quality(app: AppHandle, quality: String) -> Result<(), AppError> {
+    let val = match quality.as_str() {
+        "96" => "96",
+        "160" => "160",
+        _ => "320",
+    };
+
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    let playback = s.playback.clone();
+    drop(s);
+
+    save_setting(&pool, "audio_quality", val).await?;
+
+    // Reset playback session so the new bitrate takes effect on next playback
+    let mut guard = playback.lock().await;
+    *guard = None;
+
+    Ok(())
+}

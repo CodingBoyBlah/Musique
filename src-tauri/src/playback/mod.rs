@@ -460,8 +460,23 @@ pub async fn create_inner(
         )) as Box<dyn Sink>
     };
 
+    let bitrate_setting: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = 'audio_quality'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+
+    let bitrate = match bitrate_setting.as_ref().map(|(v,)| v.as_str()) {
+        Some("96") => Bitrate::Bitrate96,
+        Some("160") => Bitrate::Bitrate160,
+        _ => Bitrate::Bitrate320,
+    };
+    eprintln!("[playback] configured bitrate = {bitrate:?}");
+
     let player_config = PlayerConfig {
-        bitrate: Bitrate::Bitrate320,
+        bitrate,
         gapless: true,
         ..Default::default()
     };

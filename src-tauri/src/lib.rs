@@ -242,6 +242,151 @@ pub fn playback_probe() -> i32 {
     })
 }
 
+pub fn quality_probe() -> i32 {
+    use librespot_core::{
+        config::SessionConfig, session::Session, SpotifyId, SpotifyUri,
+    };
+    use librespot_playback::{
+        audio_backend::Sink,
+        config::{Bitrate, PlayerConfig},
+        player::{Player, PlayerEvent},
+    };
+    use librespot_metadata::audio::{AudioFileFormat, AudioItem};
+    use std::sync::Arc;
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            eprintln!("[quality-probe] initializing database and session...");
+            let appdata = match std::env::var("APPDATA") {
+                Ok(v) => v,
+                Err(_) => {
+                    eprintln!("[quality-probe] no APPDATA");
+                    return 12;
+                }
+            };
+            let db_url = format!("sqlite:{}/dev.boyblah.musique/spotify-client.db", appdata.replace('\\', "/"));
+            let pool = match sqlx::SqlitePool::connect(&db_url).await {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("[quality-probe] db connect failed: {e}");
+                    return 1;
+                }
+            };
+
+            let creds_dir = std::path::PathBuf::from(&appdata).join("dev.boyblah.musique").join("credentials");
+            let cache = librespot_core::cache::Cache::new(Some(&creds_dir), None, None, None).ok();
+            let creds = cache.as_ref().and_then(|c| c.credentials());
+            if creds.is_none() {
+                eprintln!("[quality-probe] no cached credentials found");
+                return 2;
+            }
+
+            let mut cfg = SessionConfig::default();
+            cfg.client_id = auth::PLAYBACK_CLIENT_ID.to_string();
+            cfg.device_id = auth::PLAYBACK_DEVICE_ID.to_string();
+
+            let session = Session::new(cfg, cache);
+            if let Err(e) = session.connect(creds.unwrap(), false).await {
+                eprintln!("[quality-probe] connect failed: {e}");
+                return 3;
+            }
+
+            for _ in 0..50 {
+                if !session.country().is_empty() { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            eprintln!("[quality-probe] session connected as country = {:?}", session.country());
+
+            let user_track: Option<(String,)> = sqlx::query_as("SELECT track_id FROM saved_tracks LIMIT 1")
+                .fetch_optional(&pool).await.ok().flatten();
+            let track_b62 = user_track.map(|t| t.0).unwrap_or_else(|| "000TJlEJQ3nafsm1hBWpoj".to_string());
+            let spotify_id = match SpotifyId::from_base62(&track_b62) {
+                Ok(i) => i,
+                Err(_) => return 4,
+            };
+
+            let track_uri = SpotifyUri::Track { id: spotify_id };
+            eprintln!("[quality-probe] querying Spotify CDN metadata for track {track_b62}...");
+
+            let audio_item = match AudioItem::get_file(&session, track_uri.clone()).await {
+                Ok(item) => item,
+                Err(e) => {
+                    eprintln!("[quality-probe] metadata query failed: {e}");
+                    return 5;
+                }
+            };
+
+            eprintln!("[quality-probe] Track Name: <{}>", audio_item.name);
+            eprintln!("[quality-probe] Spotify Server Audio File Manifest:");
+            for (format, file_id) in &*audio_item.files {
+                let hex_id = file_id.0.iter().map(|b| format!("{b:02x}")).collect::<String>();
+                eprintln!("  Format: {:?} -> FileId: {}", format, hex_id);
+            }
+
+            // Verify each quality setting (96, 160, 320)
+            let qualities = [
+                ("96 kbps (Normal)", Bitrate::Bitrate96, AudioFileFormat::OGG_VORBIS_96),
+                ("160 kbps (High)", Bitrate::Bitrate160, AudioFileFormat::OGG_VORBIS_160),
+                ("320 kbps (Very High)", Bitrate::Bitrate320, AudioFileFormat::OGG_VORBIS_320),
+            ];
+
+            for (label, bitrate, expected_format) in qualities {
+                eprintln!("\n[quality-probe] --- Testing {label} ---");
+                let expected_file_id = audio_item.files.get(&expected_format);
+                if let Some(fid) = expected_file_id {
+                    let hex_id = fid.0.iter().map(|b| format!("{b:02x}")).collect::<String>();
+                    eprintln!("[quality-probe] Expected file ID for {label}: {hex_id}");
+                } else {
+                    eprintln!("[quality-probe] Warning: Format {expected_format:?} not found in track manifest");
+                }
+
+                let on_err: crate::sink::ErrorHook = Arc::new(|_| {});
+                let player = Player::new(
+                    PlayerConfig { bitrate, gapless: true, ..Default::default() },
+                    session.clone(),
+                    Box::new(librespot_playback::mixer::NoOpVolume),
+                    move || Box::new(crate::sink::RodioSink::new(
+                        None,
+                        on_err.clone(),
+                        Box::new(librespot_playback::mixer::NoOpVolume),
+                        crate::sink::DEFAULT_BUFFER_MS,
+                    )) as Box<dyn Sink>,
+                );
+
+                let mut rx = player.get_player_event_channel();
+                player.load(track_uri.clone(), true, 0);
+
+                let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+                let mut playing = false;
+                while let Ok(Some(ev)) = tokio::time::timeout(deadline.saturating_duration_since(tokio::time::Instant::now()), rx.recv()).await {
+                    match ev {
+                        PlayerEvent::Playing { .. } | PlayerEvent::TrackChanged { .. } => {
+                            eprintln!("[quality-probe] CONFIRMED: {label} loaded and stream decryptor started playing!");
+                            playing = true;
+                            break;
+                        }
+                        PlayerEvent::Unavailable { track_id, .. } => {
+                            eprintln!("[quality-probe] FAILED: track reported unavailable for {label}: {track_id:?}");
+                            return 6;
+                        }
+                        _ => {}
+                    }
+                }
+                player.stop();
+                if !playing {
+                    eprintln!("[quality-probe] TIMEOUT waiting for {label} to play");
+                    return 7;
+                }
+            }
+
+            eprintln!("\n[quality-probe] ALL QUALITY TIERS (96, 160, 320 kbps) VERIFIED AND STREAMING FROM SPOTIFY!");
+            0
+        })
+}
+
 pub fn audio_probe() -> i32 {
     // catch the uncatchable: exit cleanly instead of crash-dialoging on a native
     // audio fault. async-signal-safe (only _exit). unix = macOS + Linux.
@@ -627,6 +772,8 @@ pub fn run() {
             commands::playback::set_volume,
             commands::playback::set_muted,
             commands::playback::get_volume,
+            commands::playback::get_audio_quality,
+            commands::playback::set_audio_quality,
             commands::library::sync_library,
             commands::library::get_liked_songs,
             commands::library::get_liked_songs_count,

@@ -12,6 +12,7 @@ import {
   type ConnectionStatus,
 } from "../store/credentials.store";
 import { usePrefsStore } from "../store/prefs.store";
+import { type AudioQuality } from "../api/playback";
 import { useUIStore } from "../store/ui.store";
 import { setDiscordEnabled } from "../api/media";
 import {
@@ -393,6 +394,64 @@ function AppearanceCard() {
         label="Album colors"
         hint="Recolor album & playlist pages from their cover art."
         control={<Switch checked={albumColors} onChange={setAlbumColors} />}
+      />
+    </Card>
+  );
+}
+
+const QUALITY_OPTIONS: { value: AudioQuality; label: string }[] = [
+  { value: "96", label: "Normal · 96 kbps" },
+  { value: "160", label: "High · 160 kbps" },
+  { value: "320", label: "Very high · 320 kbps" },
+];
+
+function PlaybackCard() {
+  const audioQuality = usePrefsStore((s) => s.audioQuality);
+  const setAudioQuality = usePrefsStore((s) => s.setAudioQuality);
+
+  return (
+    <Card title="Playback">
+      <SettingRow
+        label="Audio quality"
+        hint="Higher bitrates use more data and cache space."
+        control={
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {QUALITY_OPTIONS.map((opt) => {
+              const active = audioQuality === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => setAudioQuality(opt.value)}
+                  style={{
+                    height: 32,
+                    padding: "0 14px",
+                    borderRadius: 9999,
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: 12.5,
+                    fontWeight: active ? 600 : 500,
+                    fontFamily: "inherit",
+                    background: active ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
+                    color: active ? "#0f1114" : "var(--color-text)",
+                    transition: "background 0.12s, color 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!active)
+                      e.currentTarget.style.background =
+                        "rgba(255, 255, 255, 0.14)";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!active)
+                      e.currentTarget.style.background =
+                        "rgba(255, 255, 255, 0.08)";
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        }
       />
     </Card>
   );
@@ -1012,6 +1071,7 @@ export default function Settings() {
         </div>
       </section>
 
+      <PlaybackCard />
       <GeneralCard />
       <AppearanceCard />
       <VisualCard />

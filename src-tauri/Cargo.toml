@@ -44,6 +44,7 @@ sha2 = "0.10"
 url = "2"
 log = "0.4"
 librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
+librespot-metadata = { version = "0.8", default-features = false }
 librespot-playback = { version = "0.8", default-features = false, features = ["rodio-backend"] }
 # Direct rodio dep so playback/mod.rs can build its OWN output sink (DeviceSink)
 # that opens the device at its NATIVE sample rate. librespot's built-in rodio
