@@ -16,6 +16,8 @@ import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { playTrack, pausePlayback, resumePlayback } from "../api/playback";
 import { Loader } from "../components/ui/Loader";
+import { EmptyState } from "../components/ui/EmptyState";
+import { MusiqueLogo } from "../components/ui/MusiqueLogo";
 import { ArtistCard } from "../components/ui/ArtistCard";
 import { AlbumCard } from "../components/ui/AlbumCard";
 import { EvenGrid, EvenGridSkeleton } from "../components/ui/EvenGrid";
@@ -694,36 +696,49 @@ export default function Home() {
 
   if (!loggedIn) {
     return (
-      <div
-        style={{
-          position: "relative", maxWidth: 560, marginTop: "6vh",
-          padding: "clamp(28px, 4vw, 44px)", borderRadius: 24, overflow: "hidden",
-          color: "#fff", ...meshGradient("welcome-musique"),
-          outline: "1px solid rgba(255,255,255,0.1)", outlineOffset: -1,
-        }}
-      >
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.12), rgba(0,0,0,0.5))" }} />
-        <div style={{ position: "relative" }}>
-          <h1 style={{ margin: "0 0 10px", fontSize: "clamp(28px, 5vw, 40px)", fontWeight: 800, letterSpacing: "-0.03em", textWrap: "balance", textShadow: "0 2px 20px rgba(0,0,0,0.4)" } as React.CSSProperties}>{hello}</h1>
-          <p style={{ margin: "0 0 26px", fontSize: 15, color: "rgba(255,255,255,0.86)", maxWidth: 380 }}>Connect your Spotify account to bring your library, playlists, and listening here.</p>
-          <button
-            onClick={() => login()}
-            disabled={loggingIn}
-            style={{
-              height: 46, padding: "0 28px", borderRadius: 99, border: "none",
-              background: "#fff", color: "#0a0a0c",
-              fontSize: 14.5, fontWeight: 700, cursor: loggingIn ? "default" : "pointer", opacity: loggingIn ? 0.6 : 1,
-              transition: "opacity 0.15s, transform 0.12s",
-            }}
-          >
-            {loggingIn ? "Waiting for browser…" : "Log in with Spotify"}
-          </button>
-          {loggingIn && (
-            <p style={{ margin: "16px 0 0", fontSize: 12, color: "rgba(255,255,255,0.72)" }}>
-              Finish signing in in your browser. The app is listening on port 8989.
-            </p>
-          )}
+      <div style={{ display: "flex", flexDirection: "column", gap: "clamp(24px, 3vw, 36px)" }}>
+        <div>
+          <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 600, letterSpacing: "0.02em", color: "var(--color-text-dim)" }}>{hello}</p>
+          <h1 style={{ margin: 0, fontSize: "clamp(26px, 3.8vw, 34px)", fontWeight: 800, letterSpacing: "-0.03em", color: "var(--color-text-hi)" }}>
+            Welcome
+          </h1>
         </div>
+
+        <EmptyState
+          icon={
+            <MusiqueLogo
+              size={56}
+              style={{
+                filter: "drop-shadow(0 8px 24px rgba(88, 115, 216, 0.32))",
+              }}
+            />
+          }
+          iconContainerStyle={{ opacity: 1, marginBottom: 8 }}
+          title="Sign in with Spotify"
+          description="Connect your account to listen to your music, playlists, and recommendations."
+          action={
+            <button
+              onClick={() => login()}
+              disabled={loggingIn}
+              style={{
+                height: 38,
+                padding: "0 24px",
+                borderRadius: 99,
+                border: "none",
+                background: "var(--color-accent)",
+                color: "#ffffff",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: loggingIn ? "default" : "pointer",
+                opacity: loggingIn ? 0.6 : 1,
+                transition: "opacity 0.15s ease",
+              }}
+            >
+              {loggingIn ? "Waiting for browser…" : "Log in with Spotify"}
+            </button>
+          }
+          hint={loggingIn ? "Finish signing in in your browser. The app is listening on port 8989." : undefined}
+        />
       </div>
     );
   }

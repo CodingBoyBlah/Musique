@@ -3,7 +3,9 @@ import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useSearch } from "../hooks/useSearch";
 import { useReflowPulse } from "../hooks/useReflowPulse";
-import { useAuthStore } from "../store/auth.store";
+import { useAuth } from "../hooks/useAuth";
+import { EmptyState } from "../components/ui/EmptyState";
+import { MusiqueLogo } from "../components/ui/MusiqueLogo";
 import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
 import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
 import { CoverArt } from "../components/ui/CoverArt";
@@ -56,7 +58,7 @@ function PlaylistResultCard({ playlist }: { playlist: PlaylistCardType }) {
 
 export default function Search() {
   useReflowPulse();
-  const loggedIn        = useAuthStore((s) => s.loggedIn);
+  const { loggedIn, login, loggingIn } = useAuth();
   const [params]        = useSearchParams();
   const query           = (params.get("q") ?? "").trim();
   const [cat, setCat]   = useState<Category>("all");
@@ -72,12 +74,45 @@ export default function Search() {
 
   if (!loggedIn) {
     return (
-      <div>
-        <h1 style={{ margin: "0 0 12px", fontSize: 26, fontWeight: 700, color: "var(--color-text-hi)" }}>Search</h1>
-        <p style={{ color: "var(--color-text-dim)" }}>
-          <Link to="/" style={{ color: "var(--color-accent)", textDecoration: "none" }}>Login</Link>{" "}
-          to search Spotify.
-        </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>
+          Search
+        </h1>
+        <EmptyState
+          icon={
+            <MusiqueLogo
+              size={56}
+              style={{
+                filter: "drop-shadow(0 8px 24px rgba(88, 115, 216, 0.32))",
+              }}
+            />
+          }
+          iconContainerStyle={{ opacity: 1, marginBottom: 8 }}
+          title="Sign in to search Spotify"
+          description="Log in with your Spotify account to search for songs, albums, and artists."
+          action={
+            <button
+              onClick={() => login()}
+              disabled={loggingIn}
+              style={{
+                height: 38,
+                padding: "0 24px",
+                borderRadius: 99,
+                border: "none",
+                background: "var(--color-accent)",
+                color: "#fff",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: loggingIn ? "default" : "pointer",
+                opacity: loggingIn ? 0.6 : 1,
+                transition: "opacity 0.15s ease",
+              }}
+            >
+              {loggingIn ? "Waiting for browser…" : "Log in with Spotify"}
+            </button>
+          }
+          hint={loggingIn ? "Finish signing in in your browser. The app is listening on port 8989." : undefined}
+        />
       </div>
     );
   }

@@ -1,7 +1,9 @@
 import { Link, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Heart, Users, RefreshCw, Disc3 } from "lucide-react";
-import { useAuthStore } from "../store/auth.store";
+import { useAuth } from "../hooks/useAuth";
+import { EmptyState } from "../components/ui/EmptyState";
+import { MusiqueLogo } from "../components/ui/MusiqueLogo";
 import {
   useLikedSongs,
   useLikedSongsCount,
@@ -67,21 +69,6 @@ function SyncButton() {
         <RefreshCw size={12} strokeWidth={2} style={{ animation: isPending ? "spin 1s linear infinite" : "none" }} />
         {isPending ? "Syncing…" : "Sync"}
       </button>
-    </div>
-  );
-}
-
-// empty state
-
-function EmptyState({ icon, title, hint, action }: {
-  icon: React.ReactNode; title: string; hint: string; action?: React.ReactNode;
-}) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", paddingTop: 80, gap: 12 }}>
-      {icon}
-      <p style={{ margin: 0, fontSize: 15, fontWeight: 600, color: "rgba(255,255,255,0.75)" }}>{title}</p>
-      {action}
-      <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.28)" }}>{hint}</p>
     </div>
   );
 }
@@ -221,7 +208,7 @@ function ArtistsTab() {
 // library page
 
 export default function Library() {
-  const loggedIn = useAuthStore((s) => s.loggedIn);
+  const { loggedIn, login, loggingIn } = useAuth();
   const [params, setParams] = useSearchParams();
   const tab = (params.get("tab") as TabKey) || "songs";
 
@@ -231,12 +218,45 @@ export default function Library() {
 
   if (!loggedIn) {
     return (
-      <div>
-        <h1 style={{ margin: "0 0 12px", fontSize: 26, fontWeight: 700 }}>Your Library</h1>
-        <p style={{ color: "var(--color-text-dim)" }}>
-          <Link to="/" style={{ color: "var(--color-accent)", textDecoration: "none" }}>Login</Link>{" "}
-          to view your library.
-        </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>
+          Your Library
+        </h1>
+        <EmptyState
+          icon={
+            <MusiqueLogo
+              size={56}
+              style={{
+                filter: "drop-shadow(0 8px 24px rgba(88, 115, 216, 0.32))",
+              }}
+            />
+          }
+          iconContainerStyle={{ opacity: 1, marginBottom: 8 }}
+          title="Sign in to view your library"
+          description="Log in with Spotify to access your saved playlists, albums, and tracks."
+          action={
+            <button
+              onClick={() => login()}
+              disabled={loggingIn}
+              style={{
+                height: 38,
+                padding: "0 24px",
+                borderRadius: 99,
+                border: "none",
+                background: "var(--color-accent)",
+                color: "#fff",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: loggingIn ? "default" : "pointer",
+                opacity: loggingIn ? 0.6 : 1,
+                transition: "opacity 0.15s ease",
+              }}
+            >
+              {loggingIn ? "Waiting for browser…" : "Log in with Spotify"}
+            </button>
+          }
+          hint={loggingIn ? "Finish signing in in your browser. The app is listening on port 8989." : undefined}
+        />
       </div>
     );
   }
