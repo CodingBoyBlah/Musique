@@ -9,12 +9,22 @@ export const CONCURRENT_TOL_MS = 60;
 
 export type Row = { startMs: number; endMs: number; voices: LyricLine[] };
 
+const cleanSpaces = (s: string) => (s || "").replace(/[\u00A0\u200B\u202F\uFEFF]/g, " ");
+
 /* group near-simultaneous synced lines into rows of concurrent voices, or one
 row per plain (untimed) line. same logic for every consumer. */
 export function buildRows(data: Lyrics | undefined): Row[] {
   if (data?.lines.length) {
     const out: Row[] = [];
-    for (const l of data.lines) {
+    for (const rawLine of data.lines) {
+      const l: LyricLine = {
+        ...rawLine,
+        text: cleanSpaces(rawLine.text),
+        words: (rawLine.words || []).map((w) => ({
+          ...w,
+          text: cleanSpaces(w.text),
+        })),
+      };
       const last = out[out.length - 1];
       if (last && Math.abs(l.time_ms - last.startMs) <= CONCURRENT_TOL_MS) {
         last.voices.push(l);
@@ -31,7 +41,7 @@ export function buildRows(data: Lyrics | undefined): Row[] {
     return data.plain.split(/\r?\n/).map((t) => ({
       startMs: -1,
       endMs: -1,
-      voices: [{ time_ms: -1, text: t, words: [] }],
+      voices: [{ time_ms: -1, text: cleanSpaces(t), words: [] }],
     }));
   }
   return [];
@@ -46,7 +56,7 @@ no word data just yields nothing word-by-word. */
 export function mapWords(line: LyricLine): RenderWord[] {
   const ws = line.words;
   return ws.map((w, i) => ({
-    text: w.text,
+    text: cleanSpaces(w.text),
     startMs: w.time_ms,
     endMs: w.end_ms > w.time_ms ? w.end_ms : (ws[i + 1]?.time_ms ?? w.time_ms + 400),
   }));
@@ -183,6 +193,9 @@ export function ActiveLine({
         letterSpacing: "-0.01em",
         fontWeight: weight,
         textShadow: `0 0 18px rgba(255,255,255,${halo})`,
+        whiteSpace: "normal",
+        wordBreak: "break-word",
+        overflowWrap: "break-word",
       }}
     >
       {words.map((w, i) => (
@@ -193,7 +206,9 @@ export function ActiveLine({
           }}
           style={{
             display: "inline-block",
-            whiteSpace: "pre",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            overflowWrap: "break-word",
             color: "transparent",
             backgroundImage: `linear-gradient(90deg, rgba(255,255,255,0.98) var(--a,-30%), rgba(255,255,255,${dim}) var(--b,-16%))`,
             WebkitBackgroundClip: "text",

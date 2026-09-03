@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Home, ListMusic,
   Music, Disc3, Users,
-  Pin, PinOff, Plus,
+  Pin, PinOff,
   Search, ChevronDown, X,
   Sparkles,
 } from "lucide-react";
@@ -14,6 +14,7 @@ import { gpuLayer, zTransform } from "../../lib/motion";
 import { isMac } from "../../lib/platform";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchPlaylist, prefetchAlbum } from "../../lib/prefetch";
+import { Tooltip } from "../ui/Tooltip";
 
 // frosted glass pill -- (search bar / account bar)
 
@@ -190,13 +191,14 @@ export default function Sidebar() {
             }}
           />
           {query && (
-            <button
-              onClick={() => runSearch("")}
-              title="Clear"
-              style={{ display: "flex", border: "none", background: "transparent", color: "var(--color-text-dim)", cursor: "pointer", padding: 0, flexShrink: 0 }}
-            >
-              <X size={13} strokeWidth={2.4} />
-            </button>
+            <Tooltip label="Clear search" side="top">
+              <button
+                onClick={() => runSearch("")}
+                style={{ display: "flex", border: "none", background: "transparent", color: "var(--color-text-dim)", cursor: "pointer", padding: 0, flexShrink: 0 }}
+              >
+                <X size={13} strokeWidth={2.4} />
+              </button>
+            </Tooltip>
           )}
         </div>
       </div>
@@ -277,10 +279,6 @@ export default function Sidebar() {
             })
           )}
         </Section>
-
-        <div style={{ padding: "2px 0" }}>
-          <NavItem icon={<Plus size={16} strokeWidth={2.5} />} label="All Playlists" active={false} onClick={() => navigate("/playlists")} />
-        </div>
       </div>
       {menuEl}
     </nav>

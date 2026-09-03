@@ -198,9 +198,13 @@ export default function Layout() {
                 </main>
               </div>
 
-              {/* reserves the rail's width instantly (no transition) so the grid
-                  reflows once; the panel below slides over this exact slot. */}
-              <div aria-hidden style={{ width: lyricsOpen ? 366 : queueOpen ? 272 : 0, flexShrink: 0 }} />
+              {/* reserves the rail width with fluid spring physics, matching the panel entrance */}
+              <motion.div
+                aria-hidden
+                animate={{ width: lyricsOpen ? 366 : queueOpen ? 272 : 0 }}
+                transition={{ type: "spring", stiffness: 340, damping: 34 }}
+                style={{ flexShrink: 0, overflow: "hidden" }}
+              />
 
               {/* right rail - lyrics or queue, mutually exclusive. positioned
                   against THIS row (below the title bar), sliding in via a transform. */}

@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { CoverArt } from "./CoverArt";
 import { useUIStore } from "../../store/ui.store";
-import { useReflowPulse } from "../../hooks/useReflowPulse";
+import { usePlayerStore } from "../../store/player.store";
 
 interface Props {
   imageUrl: string | null | undefined;
@@ -11,83 +11,92 @@ interface Props {
   children: ReactNode; // meta lines + PlayActions
 }
 
-/* Album/playlist header note: the blurred artwork tint is not drawn here.
-   It gets pushed to the UI store and Layout paints it as a fixed faint backdrop 
-   behind the whole content area, so it stays put while the page scrolls. */
+/* Album/playlist header with coordinated spring scale when lyrics or queue rail opens */
 export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
   const setPageTint = useUIStore((s) => s.setPageTint);
-  useReflowPulse(); // re-render on resize and panel toggle so the header layout glides
+  const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
+  const queueOpen = usePlayerStore((s) => s.queueOpen);
+  const isCompact = lyricsOpen || queueOpen;
 
-  // publish this page's cover to the UI store. ThemeEngine reacts to it and
-  // applies the per-album accent LIVE (when the Album colors toggle is on).
+  // publish this page's cover to the UI store for live accent tinting
   useEffect(() => {
     setPageTint(imageUrl ?? null);
     return () => setPageTint(null);
   }, [imageUrl, setPageTint]);
 
   return (
-    <motion.div
-      layout
+    <div
       style={{
-        // size container: everything inside scales with the HEADER's width (which
-        // shrinks when the lyrics/queue panel opens) via `cqi` units — NOT the
-        // viewport, which never changed and left the title huge while the column
-        // narrowed. This is what fixes the "text takes over, cover tiny" cramming.
-        containerType: "inline-size",
         display: "flex",
         alignItems: "flex-end",
-        gap: "clamp(14px, 2.4cqi, 24px)",
+        gap: isCompact ? 16 : 24,
         minWidth: 0,
-        padding: "clamp(8px, 1.4vw, 12px) 0 clamp(14px, 2vw, 20px)",
-        /* only wrap (cover on top, text below) at the extreme narrow end. before  that the cover just shrinks instead of crushing the text column. */
-        flexWrap: "wrap",
-        rowGap: "clamp(12px, 1.6vw, 16px)",
+        padding: isCompact ? "8px 0 16px" : "12px 0 22px",
+        transition: "gap 0.35s cubic-bezier(0.23, 1, 0.32, 1), padding 0.35s cubic-bezier(0.23, 1, 0.32, 1)",
       }}
     >
-      {/* cover is fluid and tracks the content box, not the viewport  basis is
-          a % of the flex container (clamped in px) so when a side panel
-          (lyrics/queue) opens and this column shrinks the cover scales down with
-          it, instead of staying viewport-pinned and shoving text onto a new
-          line. flex-shrink:1 + the small min keep it shrinking, wrap only kicks
-          in at a true extreme. layout animates the resize. */}
+      {/* Fluid spring scaling album cover */}
       <motion.div
-        layout
-        initial={{ opacity: 0, scale: 0.94 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.45, ease: [0.23, 1, 0.32, 1] }}
-        style={{ flex: "0 1 clamp(178px, 34cqi, 300px)", minWidth: 178, maxWidth: 300 }}
+        initial={false}
+        animate={{
+          width: isCompact ? 160 : 240,
+          height: isCompact ? 160 : 240,
+        }}
+        transition={{ type: "spring", stiffness: 340, damping: 34 }}
+        style={{
+          width: isCompact ? 160 : 240,
+          height: isCompact ? 160 : 240,
+          flexShrink: 0,
+          borderRadius: isCompact ? 10 : 14,
+          overflow: "hidden",
+          boxShadow: isCompact
+            ? "0 10px 24px rgba(0, 0, 0, 0.42)"
+            : "0 20px 48px rgba(0, 0, 0, 0.58)",
+          transition: "box-shadow 0.35s ease, border-radius 0.35s ease",
+        }}
       >
-        <div style={{ width: "100%", aspectRatio: "1 / 1" }}>
+        <div style={{ width: "100%", height: "100%" }}>
           <CoverArt
             url={imageUrl}
             alt={title}
-            size={282}
-            className="shadow-xl shadow-black/50 border border-[#FFFFFF14]"
-            style={{ width: "100%", height: "100%" }}
+            size={240}
+            className="border border-[#FFFFFF14]"
+            style={{ width: "100%", height: "100%", borderRadius: "inherit" }}
           />
         </div>
       </motion.div>
 
-      <motion.div layout className="flex flex-col gap-2 min-w-0" style={{ flex: "1 1 220px", paddingBottom: 4 }}>
+      <div
+        className="flex flex-col gap-2 min-w-0"
+        style={{ flex: 1, paddingBottom: 4 }}
+      >
         <p
-          className="text-[10px] font-bold uppercase tracking-widest"
+          className="text-[10.5px] font-bold uppercase tracking-widest"
           style={{ color: "var(--color-text-dim)" }}
         >
           {eyebrow}
         </p>
-        {/* Clamp to 2 lines with ellipsis. A long album/playlist name used to
-            balloon this column and crush the cover when a side panel opened;
-            now it truncates. break-words handles a long unbroken word too.
-            title attr shows the full name on hover. */}
-        <h1
+
+        <motion.h1
+          initial={false}
+          animate={{
+            fontSize: isCompact ? 26 : 40,
+          }}
+          transition={{ type: "spring", stiffness: 340, damping: 34 }}
           className="font-black line-clamp-2 break-words"
           title={title}
-          style={{ fontSize: "clamp(22px, 7cqi, 44px)", lineHeight: 1.05, letterSpacing: "-0.02em" }}
+          style={{
+            fontSize: isCompact ? 26 : 40,
+            lineHeight: 1.06,
+            letterSpacing: "-0.025em",
+            color: "#ffffff",
+          }}
         >
           {title}
-        </h1>
+        </motion.h1>
+
         {children}
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   );
 }

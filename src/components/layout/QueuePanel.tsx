@@ -8,6 +8,7 @@ import { fmtMs } from "../../utils/fmt";
 import { meshGradient } from "../../lib/mesh";
 import type { TrackItem } from "../../types/spotify";
 import { isMac } from "../../lib/platform";
+import { Tooltip } from "../ui/Tooltip";
 
 const WIDTH = 272;
 
@@ -73,21 +74,22 @@ function QueueTrackRow({
         </p>
       </div>
       {onRemove ? (
-        <button
-          onClick={(e) => { e.stopPropagation(); onRemove(); }}
-          className="queue-btn"
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            width: 22, height: 22, borderRadius: 6, border: "none",
-            background: "transparent", color: "rgba(255,255,255,0.35)",
-            cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
-          }}
-          title="Remove"
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#fff"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.1)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.35)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-        >
-          <X size={12} strokeWidth={2.5} />
-        </button>
+        <Tooltip label="Remove from queue" side="top">
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            className="queue-btn"
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 22, height: 22, borderRadius: 6, border: "none",
+              background: "transparent", color: "rgba(255,255,255,0.35)",
+              cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#fff"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.1)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.35)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+          >
+            <X size={12} strokeWidth={2.5} />
+          </button>
+        </Tooltip>
       ) : (
         <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
           {fmtMs(track.duration_ms)}
@@ -144,14 +146,16 @@ function SectionHead({ label, onClear }: { label: string; onClear?: () => void }
         {label}
       </p>
       {onClear && (
-        <button
-          onClick={onClear}
-          style={{ background: "none", border: "none", fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", cursor: "pointer", padding: "0 2px" }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-hi)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.4)"; }}
-        >
-          Clear
-        </button>
+        <Tooltip label={`Clear ${label.toLowerCase()}`} side="top">
+          <button
+            onClick={onClear}
+            style={{ background: "none", border: "none", fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", cursor: "pointer", padding: "0 2px" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-hi)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.4)"; }}
+          >
+            Clear
+          </button>
+        </Tooltip>
       )}
     </div>
   );
@@ -181,10 +185,10 @@ export function QueuePanel() {
     <motion.div
       // in-flow rail below the title bar; slides via transform. width is reserved
       // by the spacer in Layout.tsx so the grid reflows once, both ways.
-      initial={{ x: WIDTH, opacity: 0 }}
+      initial={{ x: WIDTH, opacity: 0.8 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: WIDTH, opacity: 0 }}
-      transition={{ x: { duration: 0.34, ease: [0.32, 0.72, 0, 1] }, opacity: { duration: 0.2 } }}
+      transition={{ type: "spring", stiffness: 340, damping: 34 }}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH, display: "flex", flexDirection: "column", overflow: "hidden",
@@ -195,19 +199,21 @@ export function QueuePanel() {
         {/* header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMac ? "0 12px" : "0 146px 0 14px", height: 48, flexShrink: 0, borderBottom: "1px solid var(--color-border)" }}>
           <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>Queue</span>
-          <button
-            onClick={toggleQueue}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: 26, height: 26, borderRadius: 7, border: "none",
-              background: "transparent", color: "rgba(255,255,255,0.45)", cursor: "pointer",
-              transition: "color 0.12s, background 0.12s",
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#fff"; (e.currentTarget as HTMLButtonElement).style.background = "var(--color-surface-hover)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.45)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-          >
-            <X size={14} strokeWidth={2.2} />
-          </button>
+          <Tooltip label="Close queue" side="bottom" align="end">
+            <button
+              onClick={toggleQueue}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                width: 26, height: 26, borderRadius: 7, border: "none",
+                background: "transparent", color: "rgba(255,255,255,0.45)", cursor: "pointer",
+                transition: "color 0.12s, background 0.12s",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#fff"; (e.currentTarget as HTMLButtonElement).style.background = "var(--color-surface-hover)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.45)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+            >
+              <X size={14} strokeWidth={2.2} />
+            </button>
+          </Tooltip>
         </div>
 
         <div className="scroll-y" style={{ flex: 1, overflowY: "auto", paddingBottom: 12 }}>
