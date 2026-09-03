@@ -12,6 +12,7 @@ import { useCredentialsStore, type ConnectionStatus } from "../../store/credenti
 import { Tooltip } from "../ui/Tooltip";
 import { isMac } from "../../lib/platform";
 import { gpuLayer, zTransform } from "../../lib/motion";
+import { usePlayerStore } from "../../store/player.store";
 
 // win11 caption button (transparent and full-height)
 
@@ -238,6 +239,9 @@ function AccountMenu() {
 export function TitleBar() {
   const navigate = useNavigate();
   const [maximized, setMaximized] = useState(false);
+  const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
+  const queueOpen = usePlayerStore((s) => s.queueOpen);
+  const railWidth = lyricsOpen ? 366 : queueOpen ? 272 : 0;
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -252,7 +256,6 @@ export function TitleBar() {
 
   return (
     <>
-      
       {isMac && <div data-tauri-drag-region style={{ height: 30, flexShrink: 0 }} />}
       <div
         style={{
@@ -260,50 +263,64 @@ export function TitleBar() {
           flexShrink:  0,
           display:     "flex",
           alignItems:  "center",
+          width:       "100%",
         }}
       >
-      
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", flexShrink: 0, pointerEvents: "auto" }}>
-        
-        <AccountMenu />
-        <Tooltip label="Back" side="bottom">
-          <PillBtn onClick={() => navigate(-1)} nudge="left">
-            <ChevronLeft size={15} strokeWidth={2.5} />
-          </PillBtn>
-        </Tooltip>
-        <Tooltip label="Forward" side="bottom">
-          <PillBtn onClick={() => navigate(1)} nudge="right">
-            <ChevronRight size={15} strokeWidth={2.5} />
-          </PillBtn>
-        </Tooltip>
-      </div>
+        {/* main scrolling content header area */}
+        <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, height: "100%" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", flexShrink: 0, pointerEvents: "auto" }}>
+            <AccountMenu />
+            <Tooltip label="Back" side="bottom">
+              <PillBtn onClick={() => navigate(-1)} nudge="left">
+                <ChevronLeft size={15} strokeWidth={2.5} />
+              </PillBtn>
+            </Tooltip>
+            <Tooltip label="Forward" side="bottom">
+              <PillBtn onClick={() => navigate(1)} nudge="right">
+                <ChevronRight size={15} strokeWidth={2.5} />
+              </PillBtn>
+            </Tooltip>
+          </div>
 
-      {/* drag region */}
-      <div data-tauri-drag-region style={{ flex: 1, height: "100%", cursor: "default", pointerEvents: "auto" }} />
+          {/* drag region over main content */}
+          <div data-tauri-drag-region style={{ flex: 1, height: "100%", cursor: "default", pointerEvents: "auto" }} />
+        </div>
 
-      
-      {!isMac && (
-      <div style={{ display: "flex", alignItems: "stretch", height: "100%", flexShrink: 0, pointerEvents: "auto" }}>
-        <Tooltip label="Minimize" side="bottom">
-          <CaptionBtn onClick={() => win.minimize()}>
-            <Minus size={15} strokeWidth={1.8} />
-          </CaptionBtn>
-        </Tooltip>
-        <Tooltip label={maximized ? "Restore" : "Maximize"} side="bottom">
-          <CaptionBtn onClick={() => win.toggleMaximize()}>
-            {maximized
-              ? <Copy   size={12} strokeWidth={1.8} style={{ transform: "scaleX(-1)" }} />
-              : <Square size={12} strokeWidth={1.8} />
-            }
-          </CaptionBtn>
-        </Tooltip>
-        <Tooltip label="Close" side="bottom" align="end">
-          <CaptionBtn onClick={() => win.close()} danger>
-            <X size={16} strokeWidth={1.8} />
-          </CaptionBtn>
-        </Tooltip>
-      </div>
-      )}
+        {/* right rail slot (lyrics/queue) with window controls */}
+        <div
+          style={{
+            width: railWidth > 0 ? railWidth : "auto",
+            height: "100%",
+            display: "flex",
+            alignItems: "stretch",
+            justifyContent: "flex-end",
+            flexShrink: 0,
+            pointerEvents: "none",
+          }}
+        >
+          {!isMac && (
+            <div style={{ display: "flex", alignItems: "stretch", height: "100%", flexShrink: 0, pointerEvents: "auto" }}>
+              <Tooltip label="Minimize" side="bottom">
+                <CaptionBtn onClick={() => win.minimize()}>
+                  <Minus size={15} strokeWidth={1.8} />
+                </CaptionBtn>
+              </Tooltip>
+              <Tooltip label={maximized ? "Restore" : "Maximize"} side="bottom">
+                <CaptionBtn onClick={() => win.toggleMaximize()}>
+                  {maximized
+                    ? <Copy   size={12} strokeWidth={1.8} style={{ transform: "scaleX(-1)" }} />
+                    : <Square size={12} strokeWidth={1.8} />
+                  }
+                </CaptionBtn>
+              </Tooltip>
+              <Tooltip label="Close" side="bottom" align="end">
+                <CaptionBtn onClick={() => win.close()} danger>
+                  <X size={16} strokeWidth={1.8} />
+                </CaptionBtn>
+              </Tooltip>
+            </div>
+          )}
+        </div>
       </div>
     </>
   );

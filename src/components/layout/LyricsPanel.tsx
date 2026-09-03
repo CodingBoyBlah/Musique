@@ -13,6 +13,7 @@ import { usePlayerStore } from "../../store/player.store";
 import { useLyrics } from "../../hooks/useLyrics";
 import { seekPlayback } from "../../api/playback";
 import { Loader } from "../ui/Loader";
+import { isMac } from "../../lib/platform";
 import {
   detectLyricScript,
   canRomanize,
@@ -235,7 +236,7 @@ export function LyricsPanel() {
             display: "flex",
             alignItems: "center",
             gap: 10,
-            padding: "0 12px",
+            padding: isMac ? "0 12px" : "0 146px 0 14px",
             height: 48,
             borderBottom: "1px solid rgba(255,255,255,0.08)",
           }}
@@ -324,7 +325,7 @@ export function LyricsPanel() {
               style={{
                 position: "absolute",
                 top: 46,
-                right: 8,
+                right: isMac ? 8 : 144,
                 zIndex: 6,
                 width: 304,
                 padding: "11px 13px 12px",

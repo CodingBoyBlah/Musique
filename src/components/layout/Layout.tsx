@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { TitleBar } from "./TitleBar";
@@ -26,6 +26,11 @@ export default function Layout() {
   const setBackdropActive = useUIStore((s) => s.setBackdropActive);
   const location = useLocation();
   const reduceMotion = useReducedMotion();
+  const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+  }, [location.pathname]);
 
   // ask rust whether a native material actually took this launch. until it
   // answers (and anywhere it didn't - Linux, or a failed Mica/vibrancy) the
@@ -135,16 +140,25 @@ export default function Layout() {
                 {/* Spacer blocks main scrolling content but lets page tint through */}
                 <div style={{ height: 48, flexShrink: 0 }} />
                 <main
+                  ref={mainRef}
                   data-selectable
                   style={{
                     position: "relative",
                     flex: 1,
                     overflowY: "auto",
                     overflowX: "hidden",
+<<<<<<< Updated upstream
                     paddingTop: "clamp(10px, 1.4vw, 16px)",
+=======
+                    paddingTop: "clamp(56px, 2vw, 72px)",
+>>>>>>> Stashed changes
                     paddingLeft: "clamp(14px, 3vw, 32px)",
                     paddingRight: "clamp(16px, 3vw, 32px)",
                     paddingBottom: "clamp(16px, 3vw, 32px)",
+                    WebkitMaskImage:
+                      "linear-gradient(to bottom, transparent 0px, transparent 36px, rgba(0,0,0,0.015) 44px, rgba(0,0,0,0.06) 53px, rgba(0,0,0,0.15) 63px, rgba(0,0,0,0.28) 74px, rgba(0,0,0,0.46) 86px, rgba(0,0,0,0.66) 98px, rgba(0,0,0,0.83) 110px, rgba(0,0,0,0.94) 120px, rgba(0,0,0,0.985) 128px, #000 136px, #000 100%)",
+                    maskImage:
+                      "linear-gradient(to bottom, transparent 0px, transparent 36px, rgba(0,0,0,0.015) 44px, rgba(0,0,0,0.06) 53px, rgba(0,0,0,0.15) 63px, rgba(0,0,0,0.28) 74px, rgba(0,0,0,0.46) 86px, rgba(0,0,0,0.66) 98px, rgba(0,0,0,0.83) 110px, rgba(0,0,0,0.94) 120px, rgba(0,0,0,0.985) 128px, #000 136px, #000 100%)",
                   }}
                 >
                   

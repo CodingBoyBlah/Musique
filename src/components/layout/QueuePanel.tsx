@@ -7,6 +7,7 @@ import { playTrack } from "../../api/playback";
 import { fmtMs } from "../../utils/fmt";
 import { meshGradient } from "../../lib/mesh";
 import type { TrackItem } from "../../types/spotify";
+import { isMac } from "../../lib/platform";
 
 const WIDTH = 272;
 
@@ -191,7 +192,7 @@ export function QueuePanel() {
     >
       <div style={{ width: WIDTH, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {/* header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px", height: 48, flexShrink: 0, borderBottom: "1px solid var(--color-border)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMac ? "0 12px" : "0 146px 0 14px", height: 48, flexShrink: 0, borderBottom: "1px solid var(--color-border)" }}>
           <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>Queue</span>
         </div>
 
