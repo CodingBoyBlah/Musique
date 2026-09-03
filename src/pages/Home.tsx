@@ -1,10 +1,11 @@
 import { useState, useRef, useLayoutEffect, useMemo } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { Play, Heart, Music2 } from "lucide-react";
+import { Heart, Music2 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
-import { getRecommendations } from "../api/spotify";
+import { getRecommendations, getAlbum, getArtist } from "../api/spotify";
+import { getLikedSongs } from "../api/library";
 import {
   useRecentlyPlayed,
   useTopTracks,
@@ -13,11 +14,13 @@ import {
 } from "../hooks/useLibrary";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
-import { playTrack } from "../api/playback";
+import { playTrack, pausePlayback, resumePlayback } from "../api/playback";
 import { Loader } from "../components/ui/Loader";
 import { ArtistCard } from "../components/ui/ArtistCard";
 import { AlbumCard } from "../components/ui/AlbumCard";
 import { EvenGrid, EvenGridSkeleton } from "../components/ui/EvenGrid";
+import { CirclePlayButton } from "../components/ui/CirclePlayButton";
+import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 import { meshGradient } from "../lib/mesh";
 import type { TrackItem, ArtistItem } from "../types/spotify";
@@ -33,38 +36,124 @@ interface QuickItem {
   title: string;
   imageUrl?: string | null;
   to: string;
-  trackId?: string;
+  track?: TrackItem;
+  albumId?: string;
+  artistId?: string;
   isLikedSongs?: boolean;
 }
 
-function QuickActionCard({ item }: { item: QuickItem }) {
+function QuickActionCard({
+  item,
+  recentTracks,
+}: {
+  item: QuickItem;
+  recentTracks: TrackItem[];
+}) {
   const [hover, setHover] = useState(false);
   const navigate = useNavigate();
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const setPlaying = usePlayerStore((s) => s.setPlaying);
+  const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
+  const playContext = useQueueStore((s) => s.playContext);
 
-  function handlePlay(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (item.trackId) {
-      playTrack(item.trackId).catch(() => {});
-    } else if (item.isLikedSongs) {
-      navigate("/library?tab=songs");
-    } else {
-      navigate(item.to);
+  const isThisPlaying = Boolean(
+    isPlaying && (
+      (item.track && currentTrack?.id === item.track.id) ||
+      (item.albumId && currentTrack?.album?.id === item.albumId)
+    )
+  );
+
+  async function handlePlay(e?: React.MouseEvent) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
     }
+
+    if (isThisPlaying) {
+      pausePlayback().then(() => setPlaying(false)).catch(() => {});
+      return;
+    }
+
+    if (item.track && currentTrack?.id === item.track.id && !isPlaying) {
+      resumePlayback().then(() => setPlaying(true)).catch(() => {});
+      return;
+    }
+
+    if (item.isLikedSongs) {
+      try {
+        const tracks = await getLikedSongs(50, 0);
+        if (tracks && tracks.length > 0) {
+          const start = playContext(tracks, 0, "liked-songs");
+          if (start) {
+            setCurrentTrack(start);
+            playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+          }
+          return;
+        }
+      } catch {}
+      navigate("/library?tab=songs");
+      return;
+    }
+
+    if (item.albumId) {
+      try {
+        const full = await getAlbum(item.albumId);
+        const tracks = full?.tracks ?? [];
+        if (tracks.length > 0) {
+          const start = playContext(tracks, 0, item.albumId);
+          if (start) {
+            setCurrentTrack(start);
+            playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+          }
+          return;
+        }
+      } catch {}
+    }
+
+    if (item.artistId) {
+      try {
+        const artist = await getArtist(item.artistId);
+        const tracks = artist?.top_tracks ?? [];
+        if (tracks.length > 0) {
+          const start = playContext(tracks, 0, item.artistId);
+          if (start) {
+            setCurrentTrack(start);
+            playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+          }
+          return;
+        }
+      } catch {}
+    }
+
+    if (item.track) {
+      const contextTracks = recentTracks.length > 0 ? recentTracks : [item.track];
+      const idx = contextTracks.findIndex((t) => t.id === item.track!.id);
+      const start = playContext(contextTracks, idx >= 0 ? idx : 0, "quick-action");
+      const trackToPlay = start || item.track;
+      setCurrentTrack(trackToPlay);
+      playTrack(trackToPlay.id).then(() => setPlaying(true)).catch(() => {});
+      return;
+    }
+
+    navigate(item.to);
   }
 
   return (
-    <Link
-      to={item.to}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => handlePlay()}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handlePlay(); }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
         display: "flex",
         alignItems: "center",
-        height: 56,
+        height: 64,
         borderRadius: 8,
         overflow: "hidden",
-        textDecoration: "none",
+        cursor: "pointer",
         background: hover
           ? "var(--color-surface-hover, rgba(255,255,255,0.12))"
           : "var(--color-surface, rgba(255,255,255,0.06))",
@@ -77,8 +166,8 @@ function QuickActionCard({ item }: { item: QuickItem }) {
       {item.isLikedSongs ? (
         <div
           style={{
-            width: 56,
-            height: 56,
+            width: 64,
+            height: 64,
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
@@ -87,7 +176,7 @@ function QuickActionCard({ item }: { item: QuickItem }) {
             color: "#ffffff",
           }}
         >
-          <Heart size={20} fill="#ffffff" strokeWidth={0} />
+          <Heart size={22} fill="#ffffff" strokeWidth={0} />
         </div>
       ) : item.imageUrl ? (
         <img
@@ -95,8 +184,8 @@ function QuickActionCard({ item }: { item: QuickItem }) {
           alt=""
           loading="lazy"
           style={{
-            width: 56,
-            height: 56,
+            width: 64,
+            height: 64,
             flexShrink: 0,
             objectFit: "cover",
           }}
@@ -104,8 +193,8 @@ function QuickActionCard({ item }: { item: QuickItem }) {
       ) : (
         <div
           style={{
-            width: 56,
-            height: 56,
+            width: 64,
+            height: 64,
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
@@ -114,18 +203,17 @@ function QuickActionCard({ item }: { item: QuickItem }) {
             color: "var(--color-text-dim)",
           }}
         >
-          <Music2 size={20} strokeWidth={1.8} />
+          <Music2 size={22} strokeWidth={1.8} />
         </div>
       )}
 
-      <div style={{ flex: 1, minWidth: 0, padding: "0 12px" }}>
+      <div style={{ flex: 1, minWidth: 0, padding: "0 14px", display: "flex", alignItems: "center", gap: 8 }}>
         <span
           style={{
-            display: "block",
-            fontSize: 13.5,
+            fontSize: 14,
             fontWeight: 700,
             letterSpacing: "-0.01em",
-            color: "var(--color-text-hi)",
+            color: isThisPlaying ? "var(--color-accent)" : "var(--color-text-hi)",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
@@ -133,37 +221,30 @@ function QuickActionCard({ item }: { item: QuickItem }) {
         >
           {item.title}
         </span>
+        {isThisPlaying && (
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 12, width: 12, flexShrink: 0 }}>
+            {[0.4, 1.0, 0.6].map((_, i) => (
+              <motion.div
+                key={i}
+                animate={{ height: ["20%", "100%", "20%"] }}
+                transition={{ repeat: Infinity, duration: 0.55 + i * 0.15, ease: "easeInOut" }}
+                style={{ flex: 1, borderRadius: 1, background: "var(--color-accent)" }}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
-      <motion.button
-        aria-label={`Play ${item.title}`}
-        onClick={handlePlay}
-        initial={false}
-        animate={{
-          opacity: hover ? 1 : 0,
-          scale: hover ? 1 : 0.85,
-        }}
-        transition={{ duration: 0.16, ease: "easeOut" }}
-        style={{
-          width: 34,
-          height: 34,
-          borderRadius: "50%",
-          border: "none",
-          background: "var(--color-accent)",
-          color: "var(--color-accent-text, #fff)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          marginRight: 12,
-          flexShrink: 0,
-          cursor: "pointer",
-          boxShadow: "0 6px 16px rgba(0,0,0,0.38)",
-          pointerEvents: hover ? "auto" : "none",
-        }}
-      >
-        <Play size={15} fill="currentColor" strokeWidth={0} style={{ marginLeft: 2 }} />
-      </motion.button>
-    </Link>
+      <CirclePlayButton
+        isPlaying={isThisPlaying}
+        visible={hover || isThisPlaying}
+        onClick={(e) => handlePlay(e)}
+        size={42}
+        iconSize={17}
+        style={{ marginRight: 12 }}
+        ariaLabel={isThisPlaying ? `Pause ${item.title}` : `Play ${item.title}`}
+      />
+    </div>
   );
 }
 
@@ -225,7 +306,8 @@ function QuickActionsShelf() {
           title: track.album?.name || track.name,
           imageUrl: track.album?.image_url,
           to: track.album?.id ? `/album/${track.album.id}` : "/library?tab=songs",
-          trackId: track.id,
+          track: track,
+          albumId: track.album?.id,
         });
       }
     }
@@ -241,6 +323,7 @@ function QuickActionsShelf() {
           title: artist.name,
           imageUrl: artist.image_url,
           to: `/artist/${artist.id}`,
+          artistId: artist.id,
         });
       }
     }
@@ -256,7 +339,8 @@ function QuickActionsShelf() {
           title: track.name,
           imageUrl: track.album?.image_url,
           to: track.album?.id ? `/album/${track.album.id}` : "/library?tab=songs",
-          trackId: track.id,
+          track: track,
+          albumId: track.album?.id,
         });
       }
     }
@@ -272,6 +356,7 @@ function QuickActionsShelf() {
           title: album.name,
           imageUrl: album.image_url,
           to: `/album/${album.id}`,
+          albumId: album.id,
         });
       }
     }
@@ -312,7 +397,7 @@ function QuickActionsShelf() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ layout: REFLOW, duration: 0.28, delay: i * 0.035 }}
         >
-          <QuickActionCard item={item} />
+          <QuickActionCard item={item} recentTracks={recentTracks} />
         </motion.div>
       ))}
     </motion.div>
@@ -341,7 +426,12 @@ function TileSkeleton() {
 function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
   useReflowPulse();
   const [hover, setHover] = useState(false);
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const setPlaying = usePlayerStore((s) => s.setPlaying);
+  const isThisTrackPlaying = Boolean(currentTrack?.id === track.id && isPlaying);
   const art = track.album?.image_url;
+
   return (
     <motion.button
       layout="position"
@@ -368,20 +458,40 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
         ) : (
           <div style={{ width: "100%", height: "100%", borderRadius: 10, outline: "1px solid rgba(255,255,255,0.1)", outlineOffset: -1, overflow: "hidden", ...meshGradient(track.id) }} />
         )}
-        <span
-          aria-hidden
-          style={{
-            position: "absolute", right: 9, bottom: 9, width: 42, height: 42, borderRadius: "50%",
-            background: "var(--color-accent)", color: "#fff", display: "flex", alignItems: "center",
-            justifyContent: "center", boxShadow: "0 8px 20px rgba(0,0,0,0.45)",
-            opacity: hover ? 1 : 0, transform: hover ? "translateY(0) scale(1)" : "translateY(8px) scale(0.9)",
-            transition: "opacity 0.18s ease, transform 0.22s cubic-bezier(0.23,1,0.32,1)",
+        <CirclePlayButton
+          isPlaying={isThisTrackPlaying}
+          visible={hover || isThisTrackPlaying}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isThisTrackPlaying) {
+              pausePlayback().then(() => setPlaying(false)).catch(() => {});
+            } else {
+              onPlay();
+            }
           }}
-        >
-          <Play size={18} fill="currentColor" strokeWidth={0} style={{ marginLeft: 2 }} />
-        </span>
+          size={42}
+          iconSize={17}
+          style={{ position: "absolute", right: 10, bottom: 10 }}
+          ariaLabel={isThisTrackPlaying ? `Pause ${track.name}` : `Play ${track.name}`}
+        />
       </div>
-      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>{track.name}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, maxWidth: "100%" }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: isThisTrackPlaying ? "var(--color-accent)" : "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {track.name}
+        </span>
+        {isThisTrackPlaying && (
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 11, width: 11, flexShrink: 0 }}>
+            {[0.4, 1.0, 0.6].map((_, i) => (
+              <motion.div
+                key={i}
+                animate={{ height: ["20%", "100%", "20%"] }}
+                transition={{ repeat: Infinity, duration: 0.55 + i * 0.15, ease: "easeInOut" }}
+                style={{ flex: 1, borderRadius: 1, background: "var(--color-accent)" }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
       <span style={{ fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", marginTop: -4 }}>
         {track.artists.map((a) => a.name).join(", ")}
       </span>
@@ -452,34 +562,34 @@ function RecentlyPlayed() {
   );
 }
 
-const RANGES: { key: TimeRange; label: string }[] = [
-  { key: "short_term",  label: "4 weeks" },
-  { key: "medium_term", label: "6 months" },
-  { key: "long_term",   label: "All time" },
-];
+const KEY_TO_LABEL: Record<TimeRange, string> = {
+  short_term: "4 weeks",
+  medium_term: "6 months",
+  long_term: "All time",
+};
 
-function RangeToggle({ value, onChange }: { value: TimeRange; onChange: (r: TimeRange) => void }) {
+const LABEL_TO_KEY: Record<string, TimeRange> = {
+  "4 weeks": "short_term",
+  "6 months": "medium_term",
+  "All time": "long_term",
+};
+
+function RangeSlider({
+  value,
+  onChange,
+  layoutId,
+}: {
+  value: TimeRange;
+  onChange: (r: TimeRange) => void;
+  layoutId: string;
+}) {
   return (
-    <div style={{ display: "flex", gap: 2, padding: 2, borderRadius: 99, background: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
-      {RANGES.map((r) => {
-        const active = r.key === value;
-        return (
-          <button
-            key={r.key}
-            onClick={() => onChange(r.key)}
-            style={{
-              height: 28, padding: "0 12px", borderRadius: 99, border: "none", cursor: "pointer",
-              fontSize: 12, fontWeight: 600, fontFamily: "inherit",
-              background: active ? "var(--color-accent)" : "transparent",
-              color: active ? "var(--color-accent-text)" : "var(--color-text-dim)",
-              transition: "background 0.12s, color 0.12s",
-            }}
-          >
-            {r.label}
-          </button>
-        );
-      })}
-    </div>
+    <SegmentedControl
+      options={["4 weeks", "6 months", "All time"]}
+      value={KEY_TO_LABEL[value]}
+      onChange={(label) => onChange(LABEL_TO_KEY[label])}
+      layoutId={layoutId}
+    />
   );
 }
 
@@ -518,7 +628,7 @@ function TopTracks() {
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;
   return (
     <section>
-      <SectionTitle right={<RangeToggle value={range} onChange={setRange} />}>Your top tracks</SectionTitle>
+      <SectionTitle right={<RangeSlider value={range} onChange={setRange} layoutId="home-top-tracks-range" />}>Your top tracks</SectionTitle>
       {isLoading ? <TileSkeleton />
         : data.length === 0 ? <EmptyHint>Not enough listening from {rangeWord(range)} yet.</EmptyHint>
         : <TrackTiles tracks={data.slice(0, 12)} context={`top-tracks-${range}`} />}
@@ -533,7 +643,7 @@ function TopArtists() {
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;
   return (
     <section>
-      <SectionTitle right={<RangeToggle value={range} onChange={setRange} />}>Your top artists</SectionTitle>
+      <SectionTitle right={<RangeSlider value={range} onChange={setRange} layoutId="home-top-artists-range" />}>Your top artists</SectionTitle>
       {isLoading ? <TileSkeleton />
         : data.length === 0 ? <EmptyHint>Not enough listening from {rangeWord(range)} yet.</EmptyHint>
         : <ArtistTiles artists={data.slice(0, 12)} />}

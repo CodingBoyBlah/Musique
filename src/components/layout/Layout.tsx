@@ -150,35 +150,39 @@ export default function Layout() {
             }}
           >
             {/* Title bar sits over the layout, absolute positioned so panels can extend behind it */}
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 50, pointerEvents: "none" }}>
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 48,
+                zIndex: 50,
+                pointerEvents: "none",
+              }}
+            >
               <TitleBar />
             </div>
 
             {/* main region + right rail sit in ONE horizontal row */}
             <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
-              <div style={{ position: "relative", flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                {/* Spacer blocks main scrolling content but lets page tint through */}
-                <div style={{ height: 48, flexShrink: 0 }} />
+              <div style={{ position: "relative", flex: 1, minWidth: 0, overflow: "hidden" }}>
                 <main
                   ref={mainRef}
                   data-selectable
                   style={{
-                    position: "relative",
-                    flex: 1,
+                    position: "absolute",
+                    inset: 0,
                     overflowY: "auto",
                     overflowX: "hidden",
-<<<<<<< Updated upstream
-                    paddingTop: "clamp(10px, 1.4vw, 16px)",
-=======
-                    paddingTop: "clamp(56px, 2vw, 72px)",
->>>>>>> Stashed changes
+                    paddingTop: "clamp(54px, 1.8vw, 64px)",
                     paddingLeft: "clamp(14px, 3vw, 32px)",
                     paddingRight: "clamp(16px, 3vw, 32px)",
                     paddingBottom: "clamp(16px, 3vw, 32px)",
                     WebkitMaskImage:
-                      "linear-gradient(to bottom, transparent 0px, transparent 36px, rgba(0,0,0,0.015) 44px, rgba(0,0,0,0.06) 53px, rgba(0,0,0,0.15) 63px, rgba(0,0,0,0.28) 74px, rgba(0,0,0,0.46) 86px, rgba(0,0,0,0.66) 98px, rgba(0,0,0,0.83) 110px, rgba(0,0,0,0.94) 120px, rgba(0,0,0,0.985) 128px, #000 136px, #000 100%)",
+                      "linear-gradient(to bottom, transparent 0px, transparent 16px, rgba(0,0,0,0.015) 20px, rgba(0,0,0,0.055) 24px, rgba(0,0,0,0.13) 28px, rgba(0,0,0,0.25) 32px, rgba(0,0,0,0.42) 36px, rgba(0,0,0,0.60) 40px, rgba(0,0,0,0.77) 44px, rgba(0,0,0,0.89) 48px, rgba(0,0,0,0.965) 51px, #000 54px, #000 100%)",
                     maskImage:
-                      "linear-gradient(to bottom, transparent 0px, transparent 36px, rgba(0,0,0,0.015) 44px, rgba(0,0,0,0.06) 53px, rgba(0,0,0,0.15) 63px, rgba(0,0,0,0.28) 74px, rgba(0,0,0,0.46) 86px, rgba(0,0,0,0.66) 98px, rgba(0,0,0,0.83) 110px, rgba(0,0,0,0.94) 120px, rgba(0,0,0,0.985) 128px, #000 136px, #000 100%)",
+                      "linear-gradient(to bottom, transparent 0px, transparent 16px, rgba(0,0,0,0.015) 20px, rgba(0,0,0,0.055) 24px, rgba(0,0,0,0.13) 28px, rgba(0,0,0,0.25) 32px, rgba(0,0,0,0.42) 36px, rgba(0,0,0,0.60) 40px, rgba(0,0,0,0.77) 44px, rgba(0,0,0,0.89) 48px, rgba(0,0,0,0.965) 51px, #000 54px, #000 100%)",
                   }}
                 >
                   {/* page-load motion: content rises gently from below on each

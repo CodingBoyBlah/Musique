@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { AnimatedPlayPause } from "./AnimatedIcons";
+import { CirclePlayButton } from "../ui/CirclePlayButton";
 
 // Random Access Memories Album Card (Kept as user explicitly requested!)
 export function MusiqueAlbumCard({
@@ -45,34 +45,15 @@ export function MusiqueAlbumCard({
         />
 
         {/* Hover play button with blur+scale icon morph */}
-        <motion.button
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={hover || playing ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.8 }}
-          whileHover={{ scale: 1.08 }}
-          whileTap={{ scale: 0.92 }}
+        <CirclePlayButton
+          isPlaying={playing}
+          visible={hover || playing}
           onClick={(e) => {
             e.stopPropagation();
             setPlaying(!playing);
           }}
-          style={{
-            position: "absolute",
-            right: 10,
-            bottom: 10,
-            width: 42,
-            height: 42,
-            borderRadius: 99,
-            border: "none",
-            background: "var(--color-accent)",
-            color: "var(--color-accent-text)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            boxShadow: "0 4px 14px rgba(0,0,0,0.5)",
-          }}
-        >
-          <AnimatedPlayPause isPlaying={playing} size={17} strokeWidth={0} />
-        </motion.button>
+          style={{ position: "absolute", right: 10, bottom: 10 }}
+        />
       </div>
 
       <span

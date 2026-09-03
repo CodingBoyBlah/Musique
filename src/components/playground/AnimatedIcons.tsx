@@ -49,7 +49,7 @@ export function AnimatedPlayPause({
           }}
         >
           {isPlaying ? (
-            <Pause size={size} strokeWidth={strokeWidth} fill={fill} />
+            <Pause size={size} strokeWidth={strokeWidth > 0 ? strokeWidth : 2.4} fill={fill} />
           ) : (
             <Play size={size} strokeWidth={strokeWidth} fill={fill} style={{ marginLeft: 1.5 }} />
           )}

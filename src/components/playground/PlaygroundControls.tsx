@@ -118,10 +118,12 @@ export function SegmentedControl({
   options = ["Stereo", "Hi-Res Studio", "Spatial Atmos", "Vinyl Warmth"],
   value,
   onChange,
+  layoutId = "segmented-pill",
 }: {
   options?: string[];
   value: string;
   onChange: (val: string) => void;
+  layoutId?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -242,7 +244,7 @@ export function SegmentedControl({
           >
             {active && (
               <motion.div
-                layoutId="segmented-pill"
+                layoutId={layoutId}
                 transition={{
                   type: "spring",
                   stiffness: 420,
