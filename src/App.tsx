@@ -13,11 +13,11 @@ import Home from "./pages/Home";
 const Settings = lazy(() => import("./pages/Settings"));
 const Search = lazy(() => import("./pages/Search"));
 const Library = lazy(() => import("./pages/Library"));
-const Profile = lazy(() => import("./pages/Profile"));
 const Playlists = lazy(() => import("./pages/Playlists"));
 const PlaylistPage = lazy(() => import("./pages/PlaylistPage"));
 const ArtistPage = lazy(() => import("./pages/ArtistPage"));
 const AlbumPage = lazy(() => import("./pages/AlbumPage"));
+const Playground = lazy(() => import("./pages/Playground"));
 import { getCredentials, validateCredentials } from "./api/credentials";
 import { getAuthStatus } from "./api/auth";
 import {
@@ -373,14 +373,6 @@ export default function App() {
             }
           />
           <Route
-            path="profile"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Profile />
-              </Suspense>
-            }
-          />
-          <Route
             path="playlist/:id"
             element={
               <Suspense fallback={<Loader />}>
@@ -409,6 +401,14 @@ export default function App() {
             element={
               <Suspense fallback={<Loader />}>
                 <AlbumPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="playground"
+            element={
+              <Suspense fallback={<Loader />}>
+                <Playground />
               </Suspense>
             }
           />

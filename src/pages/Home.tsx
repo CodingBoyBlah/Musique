@@ -1,100 +1,406 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState, useRef, useLayoutEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Play, Heart, Disc3, Users, ListMusic,
-  type LucideIcon,
-} from "lucide-react";
+import { Heart, Music2 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
-import { getRecommendations } from "../api/spotify";
+import { getRecommendations, getAlbum, getArtist } from "../api/spotify";
+import { getLikedSongs } from "../api/library";
 import {
-  useRecentlyPlayed, useTopTracks, useTopArtists, useNewReleases,
+  useRecentlyPlayed,
+  useTopTracks,
+  useTopArtists,
+  useNewReleases,
 } from "../hooks/useLibrary";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
-import { playTrack } from "../api/playback";
+import { playTrack, pausePlayback, resumePlayback } from "../api/playback";
 import { Loader } from "../components/ui/Loader";
-import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
-import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
+import { ArtistCard } from "../components/ui/ArtistCard";
+import { AlbumCard } from "../components/ui/AlbumCard";
+import { EvenGrid, EvenGridSkeleton } from "../components/ui/EvenGrid";
+import { CirclePlayButton } from "../components/ui/CirclePlayButton";
+import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 import { meshGradient } from "../lib/mesh";
 import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
 
-const TILE_MIN = 158;
-
-// grid reflow spring - tiles glide to new columns (lyrics panel / resize) instead
-// of snapping. position-only so artwork never squishes mid-move.
+// grid reflow spring for smooth panel gliding
 const REFLOW = { type: "spring" as const, stiffness: 520, damping: 44 };
 
-const tileGrid: React.CSSProperties = {
-  display: "grid",
-  gap: "clamp(10px, 1.4vw, 16px)",
-  gridTemplateColumns: `repeat(auto-fill, minmax(clamp(118px, 15vw, ${TILE_MIN}px), 1fr))`,
-};
+// ─── top 6 quick action cards ────────────────────────────────────────────────
 
-// ─── shortcut feature cards (replace the old chips) ──────────────────────────
+interface QuickItem {
+  id: string;
+  title: string;
+  imageUrl?: string | null;
+  to: string;
+  track?: TrackItem;
+  albumId?: string;
+  artistId?: string;
+  isLikedSongs?: boolean;
+}
 
-const SHORTCUTS: { name: string; sub: string; to: string; icon: LucideIcon; seed: string }[] = [
-  { name: "Liked Songs", sub: "Everything you've saved", to: "/library?tab=songs",   icon: Heart,     seed: "liked-songs" },
-  { name: "Albums",      sub: "Your saved records",       to: "/library?tab=albums",  icon: Disc3,     seed: "albums-shelf" },
-  { name: "Artists",     sub: "People you follow",        to: "/library?tab=artists", icon: Users,     seed: "artists-shelf" },
-  { name: "Playlists",   sub: "Made and collected",       to: "/playlists",           icon: ListMusic, seed: "playlists-shelf" },
-];
-
-function ShortcutCard({ name, sub, to, icon: Icon, seed }: (typeof SHORTCUTS)[number]) {
+function QuickActionCard({
+  item,
+  recentTracks,
+}: {
+  item: QuickItem;
+  recentTracks: TrackItem[];
+}) {
   const [hover, setHover] = useState(false);
+  const navigate = useNavigate();
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const setPlaying = usePlayerStore((s) => s.setPlaying);
+  const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
+  const playContext = useQueueStore((s) => s.playContext);
+
+  const isThisPlaying = Boolean(
+    isPlaying && (
+      (item.track && currentTrack?.id === item.track.id) ||
+      (item.albumId && currentTrack?.album?.id === item.albumId)
+    )
+  );
+
+  async function handlePlay(e?: React.MouseEvent) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    if (isThisPlaying) {
+      pausePlayback().then(() => setPlaying(false)).catch(() => {});
+      return;
+    }
+
+    if (item.track && currentTrack?.id === item.track.id && !isPlaying) {
+      resumePlayback().then(() => setPlaying(true)).catch(() => {});
+      return;
+    }
+
+    if (item.isLikedSongs) {
+      try {
+        const tracks = await getLikedSongs(50, 0);
+        if (tracks && tracks.length > 0) {
+          const start = playContext(tracks, 0, "liked-songs");
+          if (start) {
+            setCurrentTrack(start);
+            playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+          }
+          return;
+        }
+      } catch {}
+      navigate("/library?tab=songs");
+      return;
+    }
+
+    if (item.albumId) {
+      try {
+        const full = await getAlbum(item.albumId);
+        const tracks = full?.tracks ?? [];
+        if (tracks.length > 0) {
+          const start = playContext(tracks, 0, item.albumId);
+          if (start) {
+            setCurrentTrack(start);
+            playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+          }
+          return;
+        }
+      } catch {}
+    }
+
+    if (item.artistId) {
+      try {
+        const artist = await getArtist(item.artistId);
+        const tracks = artist?.top_tracks ?? [];
+        if (tracks.length > 0) {
+          const start = playContext(tracks, 0, item.artistId);
+          if (start) {
+            setCurrentTrack(start);
+            playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+          }
+          return;
+        }
+      } catch {}
+    }
+
+    if (item.track) {
+      const contextTracks = recentTracks.length > 0 ? recentTracks : [item.track];
+      const idx = contextTracks.findIndex((t) => t.id === item.track!.id);
+      const start = playContext(contextTracks, idx >= 0 ? idx : 0, "quick-action");
+      const trackToPlay = start || item.track;
+      setCurrentTrack(trackToPlay);
+      playTrack(trackToPlay.id).then(() => setPlaying(true)).catch(() => {});
+      return;
+    }
+
+    navigate(item.to);
+  }
+
   return (
-    <Link
-      to={to}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => handlePlay()}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handlePlay(); }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        position: "relative",
         display: "flex",
-        flexDirection: "column",
-        justifyContent: "flex-end",
-        aspectRatio: "1 / 1",
-        padding: 16,
-        borderRadius: 18,
+        alignItems: "center",
+        height: 64,
+        borderRadius: 8,
         overflow: "hidden",
-        textDecoration: "none",
-        color: "#fff",
-        ...meshGradient(seed),
-        outline: "1px solid rgba(255,255,255,0.08)",
-        outlineOffset: -1,
-        transform: hover ? "translateY(-3px)" : "translateY(0)",
-        boxShadow: hover
-          ? "0 18px 40px rgba(0,0,0,0.42)"
-          : "0 6px 18px rgba(0,0,0,0.28)",
-        transition: "transform 0.24s cubic-bezier(0.23,1,0.32,1), box-shadow 0.24s ease",
+        cursor: "pointer",
+        background: hover
+          ? "var(--color-surface-hover, rgba(255,255,255,0.12))"
+          : "var(--color-surface, rgba(255,255,255,0.06))",
+        border: "1px solid rgba(255, 255, 255, 0.05)",
+        transition: "background 0.16s ease, box-shadow 0.16s ease",
+        boxShadow: hover ? "0 8px 24px rgba(0,0,0,0.32)" : "0 2px 8px rgba(0,0,0,0.18)",
+        userSelect: "none",
       }}
     >
-      {/* legibility wash so the title reads on any mesh */}
-      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.05) 30%, rgba(0,0,0,0.42) 100%)" }} />
-      {/* frosted icon badge, top-right (the "Music" chip in the reference) */}
-      <div
-        style={{
-          position: "absolute", top: 12, right: 12,
-          width: 30, height: 30, borderRadius: "50%",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: "rgba(255,255,255,0.18)",
-          backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
-          border: "1px solid rgba(255,255,255,0.22)",
-        }}
-      >
-        <Icon size={15} strokeWidth={2.2} fill={Icon === Heart ? "currentColor" : "none"} style={{ color: "#fff" }} />
-      </div>
-      <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 2 }}>
-        <span style={{ fontSize: "clamp(16px, 1.8vw, 19px)", fontWeight: 700, letterSpacing: "-0.02em", textShadow: "0 1px 12px rgba(0,0,0,0.35)" }}>
-          {name}
+      {item.isLikedSongs ? (
+        <div
+          style={{
+            width: 64,
+            height: 64,
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "linear-gradient(135deg, #450af5 0%, #8e8ee5 100%)",
+            color: "#ffffff",
+          }}
+        >
+          <Heart size={22} fill="#ffffff" strokeWidth={0} />
+        </div>
+      ) : item.imageUrl ? (
+        <img
+          src={item.imageUrl}
+          alt=""
+          loading="lazy"
+          style={{
+            width: 64,
+            height: 64,
+            flexShrink: 0,
+            objectFit: "cover",
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            width: 64,
+            height: 64,
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(255,255,255,0.06)",
+            color: "var(--color-text-dim)",
+          }}
+        >
+          <Music2 size={22} strokeWidth={1.8} />
+        </div>
+      )}
+
+      <div style={{ flex: 1, minWidth: 0, padding: "0 14px", display: "flex", alignItems: "center", gap: 8 }}>
+        <span
+          style={{
+            fontSize: 14,
+            fontWeight: 700,
+            letterSpacing: "-0.01em",
+            color: isThisPlaying ? "var(--color-accent)" : "var(--color-text-hi)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {item.title}
         </span>
-        <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.82)", textShadow: "0 1px 8px rgba(0,0,0,0.4)" }}>
-          {sub}
-        </span>
+        {isThisPlaying && (
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 12, width: 12, flexShrink: 0 }}>
+            {[0.4, 1.0, 0.6].map((_, i) => (
+              <motion.div
+                key={i}
+                animate={{ height: ["20%", "100%", "20%"] }}
+                transition={{ repeat: Infinity, duration: 0.55 + i * 0.15, ease: "easeInOut" }}
+                style={{ flex: 1, borderRadius: 1, background: "var(--color-accent)" }}
+              />
+            ))}
+          </div>
+        )}
       </div>
-    </Link>
+
+      <CirclePlayButton
+        isPlaying={isThisPlaying}
+        visible={hover || isThisPlaying}
+        onClick={(e) => handlePlay(e)}
+        size={42}
+        iconSize={17}
+        style={{ marginRight: 12 }}
+        ariaLabel={isThisPlaying ? `Pause ${item.title}` : `Play ${item.title}`}
+      />
+    </div>
+  );
+}
+
+function QuickActionsShelf() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  useReflowPulse();
+
+  const [containerWidth, setContainerWidth] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      return Math.max(320, window.innerWidth - 320);
+    }
+    return 800;
+  });
+
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.getBoundingClientRect().width;
+      if (w > 0) setContainerWidth(w);
+    };
+    measure();
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 0) setContainerWidth(entry.contentRect.width);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const cols = containerWidth >= 680 ? 3 : containerWidth >= 400 ? 2 : 1;
+
+  const { data: recentTracks = [] } = useRecentlyPlayed();
+  const { data: topTracks = [] } = useTopTracks("short_term");
+  const { data: topArtists = [] } = useTopArtists("short_term");
+  const { data: newReleases = [] } = useNewReleases();
+
+  const items = useMemo<QuickItem[]>(() => {
+    const result: QuickItem[] = [
+      {
+        id: "liked-songs",
+        title: "Liked Songs",
+        to: "/library?tab=songs",
+        isLikedSongs: true,
+      },
+    ];
+
+    const seen = new Set<string>(["liked-songs"]);
+
+    // 1. Collect from recently played tracks (favoring distinct albums/tracks)
+    for (const track of recentTracks) {
+      if (result.length >= 6) break;
+      const key = track.album?.id ? `album-${track.album.id}` : `track-${track.id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push({
+          id: key,
+          title: track.album?.name || track.name,
+          imageUrl: track.album?.image_url,
+          to: track.album?.id ? `/album/${track.album.id}` : "/library?tab=songs",
+          track: track,
+          albumId: track.album?.id,
+        });
+      }
+    }
+
+    // 2. Weave in top artists
+    for (const artist of topArtists) {
+      if (result.length >= 6) break;
+      const key = `artist-${artist.id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push({
+          id: key,
+          title: artist.name,
+          imageUrl: artist.image_url,
+          to: `/artist/${artist.id}`,
+          artistId: artist.id,
+        });
+      }
+    }
+
+    // 3. Fallbacks from topTracks
+    for (const track of topTracks) {
+      if (result.length >= 6) break;
+      const key = `track-${track.id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push({
+          id: key,
+          title: track.name,
+          imageUrl: track.album?.image_url,
+          to: track.album?.id ? `/album/${track.album.id}` : "/library?tab=songs",
+          track: track,
+          albumId: track.album?.id,
+        });
+      }
+    }
+
+    // 4. Fallbacks from new releases
+    for (const album of newReleases) {
+      if (result.length >= 6) break;
+      const key = `album-${album.id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push({
+          id: key,
+          title: album.name,
+          imageUrl: album.image_url,
+          to: `/album/${album.id}`,
+          albumId: album.id,
+        });
+      }
+    }
+
+    // 5. Default entries if history is completely empty
+    const defaults: QuickItem[] = [
+      { id: "def-daily", title: "Daily Mix 1", to: "/playlists" },
+      { id: "def-top", title: "Top Hits", to: "/library?tab=songs" },
+      { id: "def-disc", title: "Discover Weekly", to: "/playlists" },
+      { id: "def-chill", title: "Chill Mix", to: "/playlists" },
+      { id: "def-release", title: "Release Radar", to: "/playlists" },
+    ];
+
+    for (const def of defaults) {
+      if (result.length >= 6) break;
+      result.push(def);
+    }
+
+    return result.slice(0, 6);
+  }, [recentTracks, topArtists, topTracks, newReleases]);
+
+  return (
+    <motion.div
+      ref={containerRef}
+      layout="position"
+      style={{
+        display: "grid",
+        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+        gap: "clamp(8px, 1.2vw, 12px)",
+        width: "100%",
+      }}
+    >
+      {items.map((item, i) => (
+        <motion.div
+          key={item.id}
+          layout="position"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ layout: REFLOW, duration: 0.28, delay: i * 0.035 }}
+        >
+          <QuickActionCard item={item} recentTracks={recentTracks} />
+        </motion.div>
+      ))}
+    </motion.div>
   );
 }
 
@@ -112,21 +418,20 @@ function SectionTitle({ children, right }: { children: React.ReactNode; right?: 
 }
 
 function TileSkeleton() {
-  return (
-    <div style={tileGrid}>
-      {Array.from({ length: 6 }).map((_, i) => (
-        <div key={i} style={{ aspectRatio: "1 / 1", borderRadius: 12, background: "var(--color-surface)" }} />
-      ))}
-    </div>
-  );
+  return <EvenGridSkeleton minColWidth={140} gap={14} maxRows={1} />;
 }
 
 // ─── recommendation / track tile ─────────────────────────────────────────────
 
 function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
-  useReflowPulse(); // re-render on resize / panel toggle so layout glides the move
+  useReflowPulse();
   const [hover, setHover] = useState(false);
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const setPlaying = usePlayerStore((s) => s.setPlaying);
+  const isThisTrackPlaying = Boolean(currentTrack?.id === track.id && isPlaying);
   const art = track.album?.image_url;
+
   return (
     <motion.button
       layout="position"
@@ -153,20 +458,40 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
         ) : (
           <div style={{ width: "100%", height: "100%", borderRadius: 10, outline: "1px solid rgba(255,255,255,0.1)", outlineOffset: -1, overflow: "hidden", ...meshGradient(track.id) }} />
         )}
-        <span
-          aria-hidden
-          style={{
-            position: "absolute", right: 9, bottom: 9, width: 42, height: 42, borderRadius: "50%",
-            background: "var(--color-accent)", color: "#fff", display: "flex", alignItems: "center",
-            justifyContent: "center", boxShadow: "0 8px 20px rgba(0,0,0,0.45)",
-            opacity: hover ? 1 : 0, transform: hover ? "translateY(0) scale(1)" : "translateY(8px) scale(0.9)",
-            transition: "opacity 0.18s ease, transform 0.22s cubic-bezier(0.23,1,0.32,1)",
+        <CirclePlayButton
+          isPlaying={isThisTrackPlaying}
+          visible={hover || isThisTrackPlaying}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isThisTrackPlaying) {
+              pausePlayback().then(() => setPlaying(false)).catch(() => {});
+            } else {
+              onPlay();
+            }
           }}
-        >
-          <Play size={18} fill="currentColor" strokeWidth={0} style={{ marginLeft: 2 }} />
-        </span>
+          size={42}
+          iconSize={17}
+          style={{ position: "absolute", right: 10, bottom: 10 }}
+          ariaLabel={isThisTrackPlaying ? `Pause ${track.name}` : `Play ${track.name}`}
+        />
       </div>
-      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>{track.name}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, maxWidth: "100%" }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: isThisTrackPlaying ? "var(--color-accent)" : "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {track.name}
+        </span>
+        {isThisTrackPlaying && (
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 11, width: 11, flexShrink: 0 }}>
+            {[0.4, 1.0, 0.6].map((_, i) => (
+              <motion.div
+                key={i}
+                animate={{ height: ["20%", "100%", "20%"] }}
+                transition={{ repeat: Infinity, duration: 0.55 + i * 0.15, ease: "easeInOut" }}
+                style={{ flex: 1, borderRadius: 1, background: "var(--color-accent)" }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
       <span style={{ fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", marginTop: -4 }}>
         {track.artists.map((a) => a.name).join(", ")}
       </span>
@@ -185,18 +510,22 @@ function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string 
   }
 
   return (
-    <div style={tileGrid}>
-      {tracks.map((t, i) => (
+    <EvenGrid
+      items={tracks}
+      minColWidth={140}
+      gap={14}
+      maxRows={2}
+      getKey={(t) => t.id}
+      renderItem={(t, i) => (
         <motion.div
-          key={t.id}
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.34, delay: Math.min(i, 11) * 0.035, ease: [0.23, 1, 0.32, 1] }}
         >
           <RecTile track={t} onPlay={() => play(i)} />
         </motion.div>
-      ))}
-    </div>
+      )}
+    />
   );
 }
 
@@ -215,7 +544,7 @@ function MadeForYou() {
       {isLoading ? <TileSkeleton />
         : recs.length === 0 ? (
           <p style={{ margin: 0, fontSize: 13, color: "var(--color-text-dim)" }}>
-            Play and follow some artists — recommendations will grow here.
+            Play and follow some artists, recommendations will grow here.
           </p>
         ) : <TrackTiles tracks={recs} context="made-for-you" />}
     </section>
@@ -233,34 +562,34 @@ function RecentlyPlayed() {
   );
 }
 
-const RANGES: { key: TimeRange; label: string }[] = [
-  { key: "short_term",  label: "4 weeks" },
-  { key: "medium_term", label: "6 months" },
-  { key: "long_term",   label: "All time" },
-];
+const KEY_TO_LABEL: Record<TimeRange, string> = {
+  short_term: "4 weeks",
+  medium_term: "6 months",
+  long_term: "All time",
+};
 
-function RangeToggle({ value, onChange }: { value: TimeRange; onChange: (r: TimeRange) => void }) {
+const LABEL_TO_KEY: Record<string, TimeRange> = {
+  "4 weeks": "short_term",
+  "6 months": "medium_term",
+  "All time": "long_term",
+};
+
+function RangeSlider({
+  value,
+  onChange,
+  layoutId,
+}: {
+  value: TimeRange;
+  onChange: (r: TimeRange) => void;
+  layoutId: string;
+}) {
   return (
-    <div style={{ display: "flex", gap: 2, padding: 2, borderRadius: 99, background: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
-      {RANGES.map((r) => {
-        const active = r.key === value;
-        return (
-          <button
-            key={r.key}
-            onClick={() => onChange(r.key)}
-            style={{
-              height: 28, padding: "0 12px", borderRadius: 99, border: "none", cursor: "pointer",
-              fontSize: 12, fontWeight: 600, fontFamily: "inherit",
-              background: active ? "var(--color-accent)" : "transparent",
-              color: active ? "var(--color-accent-text)" : "var(--color-text-dim)",
-              transition: "background 0.12s, color 0.12s",
-            }}
-          >
-            {r.label}
-          </button>
-        );
-      })}
-    </div>
+    <SegmentedControl
+      options={["4 weeks", "6 months", "All time"]}
+      value={KEY_TO_LABEL[value]}
+      onChange={(label) => onChange(LABEL_TO_KEY[label])}
+      layoutId={layoutId}
+    />
   );
 }
 
@@ -273,18 +602,22 @@ const rangeWord = (r: TimeRange) =>
 
 function ArtistTiles({ artists }: { artists: ArtistItem[] }) {
   return (
-    <ArtistGrid>
-      {artists.map((a, i) => (
+    <EvenGrid
+      items={artists}
+      minColWidth={126}
+      gap={14}
+      maxRows={2}
+      getKey={(a) => a.id}
+      renderItem={(a, i) => (
         <motion.div
-          key={a.id}
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.34, delay: Math.min(i, 11) * 0.035, ease: [0.23, 1, 0.32, 1] }}
         >
           <ArtistCard artist={a} />
         </motion.div>
-      ))}
-    </ArtistGrid>
+      )}
+    />
   );
 }
 
@@ -295,7 +628,7 @@ function TopTracks() {
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;
   return (
     <section>
-      <SectionTitle right={<RangeToggle value={range} onChange={setRange} />}>Your top tracks</SectionTitle>
+      <SectionTitle right={<RangeSlider value={range} onChange={setRange} layoutId="home-top-tracks-range" />}>Your top tracks</SectionTitle>
       {isLoading ? <TileSkeleton />
         : data.length === 0 ? <EmptyHint>Not enough listening from {rangeWord(range)} yet.</EmptyHint>
         : <TrackTiles tracks={data.slice(0, 12)} context={`top-tracks-${range}`} />}
@@ -310,7 +643,7 @@ function TopArtists() {
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;
   return (
     <section>
-      <SectionTitle right={<RangeToggle value={range} onChange={setRange} />}>Your top artists</SectionTitle>
+      <SectionTitle right={<RangeSlider value={range} onChange={setRange} layoutId="home-top-artists-range" />}>Your top artists</SectionTitle>
       {isLoading ? <TileSkeleton />
         : data.length === 0 ? <EmptyHint>Not enough listening from {rangeWord(range)} yet.</EmptyHint>
         : <ArtistTiles artists={data.slice(0, 12)} />}
@@ -324,10 +657,17 @@ function NewReleases() {
   return (
     <section>
       <SectionTitle>New releases</SectionTitle>
-      {isLoading ? <TileSkeleton /> : (
-        <AlbumGrid>
-          {data.slice(0, 12).map((al) => <AlbumCard key={al.id} album={al} />)}
-        </AlbumGrid>
+      {isLoading ? (
+        <TileSkeleton />
+      ) : (
+        <EvenGrid
+          items={data.slice(0, 12)}
+          minColWidth={140}
+          gap={14}
+          maxRows={2}
+          getKey={(al) => al.id}
+          renderItem={(al) => <AlbumCard album={al} />}
+        />
       )}
     </section>
   );
@@ -380,7 +720,7 @@ export default function Home() {
           </button>
           {loggingIn && (
             <p style={{ margin: "16px 0 0", fontSize: 12, color: "rgba(255,255,255,0.72)" }}>
-              Finish signing in in your browser — the app is listening on port 8989.
+              Finish signing in in your browser. The app is listening on port 8989.
             </p>
           )}
         </div>
@@ -397,19 +737,8 @@ export default function Home() {
         </h1>
       </motion.div>
 
-      {/* shortcut feature cards — editorial mesh covers, no chips, no radio */}
-      <motion.div layout="position" style={{ display: "grid", gap: "clamp(10px, 1.4vw, 16px)", gridTemplateColumns: "repeat(auto-fill, minmax(clamp(200px, 24vw, 280px), 1fr))" }}>
-        {SHORTCUTS.map((item, i) => (
-          <motion.div
-            key={item.name}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.34, delay: i * 0.05, ease: [0.23, 1, 0.32, 1] }}
-          >
-            <ShortcutCard {...item} />
-          </motion.div>
-        ))}
-      </motion.div>
+      {/* top 6 quick action shelf */}
+      <QuickActionsShelf />
 
       <motion.div layout="position"><MadeForYou /></motion.div>
       <motion.div layout="position"><RecentlyPlayed /></motion.div>

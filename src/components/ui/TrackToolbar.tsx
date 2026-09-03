@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Search, X } from "lucide-react";
 import type { TrackItem } from "../../types/spotify";
 import { Dropdown, type DropdownOption } from "./Dropdown";
+import { Tooltip } from "./Tooltip";
 
 type OrderKey = "default" | "name" | "artist" | "album" | "duration";
 type Dir = "asc" | "desc";
@@ -95,13 +96,14 @@ export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
           }}
         />
         {query && (
-          <button
-            onClick={() => setQuery("")}
-            title="Clear"
-            style={{ display: "flex", border: "none", background: "transparent", color: "var(--color-text-dim)", cursor: "pointer", padding: 0, flexShrink: 0 }}
-          >
-            <X size={13} strokeWidth={2.4} />
-          </button>
+          <Tooltip label="Clear filter" side="top">
+            <button
+              onClick={() => setQuery("")}
+              style={{ display: "flex", border: "none", background: "transparent", color: "var(--color-text-dim)", cursor: "pointer", padding: 0, flexShrink: 0 }}
+            >
+              <X size={13} strokeWidth={2.4} />
+            </button>
+          </Tooltip>
         )}
       </div>
 

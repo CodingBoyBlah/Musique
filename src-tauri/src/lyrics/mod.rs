@@ -166,8 +166,9 @@ pub fn parse_yrc(raw: &str) -> Vec<LyricLine> {
             let word     = &after[..text_end];
 
             if let Some(start) = start {
-                if !word.is_empty() {
-                    words.push(LyricWord { time_ms: start, end_ms: start + dur.max(0), text: word.to_string() });
+                let clean_word = word.replace('\u{a0}', " ").replace('\u{202f}', " ").replace('\u{feff}', " ");
+                if !clean_word.is_empty() {
+                    words.push(LyricWord { time_ms: start, end_ms: start + dur.max(0), text: clean_word });
                 }
             }
             rest = &after[text_end..];

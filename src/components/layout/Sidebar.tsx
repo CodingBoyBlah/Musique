@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Home, ListMusic,
   Music, Disc3, Users,
-  Pin, PinOff, Plus,
+  Pin, PinOff,
   Search, ChevronDown, X,
 } from "lucide-react";
 import { usePinsStore } from "../../store/pins.store";
@@ -13,6 +13,7 @@ import { gpuLayer, zTransform } from "../../lib/motion";
 import { isMac } from "../../lib/platform";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchPlaylist, prefetchAlbum } from "../../lib/prefetch";
+import { Tooltip } from "../ui/Tooltip";
 
 // frosted glass pill -- (search bar / account bar)
 
@@ -150,10 +151,17 @@ export default function Sidebar() {
   const [query,       setQuery]       = useState(
     () => new URLSearchParams(location.search).get("q") ?? "",
   );
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  function runSearch(value: string) {
-    setQuery(value);
-    navigate(value.trim() ? `/search?q=${encodeURIComponent(value)}` : "/search");
+  useEffect(() => {
+    const q = new URLSearchParams(location.search).get("q") ?? "";
+    setQuery(q);
+  }, [location.search]);
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && query.trim()) {
+      navigate(`/search?q=${encodeURIComponent(query.trim())}`);
+    }
   }
 
   return (
@@ -174,12 +182,16 @@ export default function Sidebar() {
           gap to the top, matching the 8px side padding (equal inset).titlebar
           is the same height so the ... < > icons line up at this level DONE */}
       <div style={{ height: 48, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 8px" }}>
-        <div style={{ ...glassPill, height: 32 }}>
+        <div
+          onClick={() => inputRef.current?.focus()}
+          style={{ ...glassPill, height: 32, cursor: "text" }}
+        >
           <Search size={14} strokeWidth={2.2} style={{ color: "var(--color-text-dim)", flexShrink: 0 }} />
           <input
+            ref={inputRef}
             value={query}
-            onChange={(e) => runSearch(e.target.value)}
-            onFocus={() => { if (path !== "/search") navigate(query.trim() ? `/search?q=${encodeURIComponent(query)}` : "/search"); }}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Search"
             spellCheck={false}
             style={{
@@ -189,13 +201,19 @@ export default function Sidebar() {
             }}
           />
           {query && (
-            <button
-              onClick={() => runSearch("")}
-              title="Clear"
-              style={{ display: "flex", border: "none", background: "transparent", color: "var(--color-text-dim)", cursor: "pointer", padding: 0, flexShrink: 0 }}
-            >
-              <X size={13} strokeWidth={2.4} />
-            </button>
+            <Tooltip label="Clear search" side="top">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setQuery("");
+                  inputRef.current?.focus();
+                  if (path === "/search") navigate("/");
+                }}
+                style={{ display: "flex", border: "none", background: "transparent", color: "var(--color-text-dim)", cursor: "pointer", padding: 0, flexShrink: 0 }}
+              >
+                <X size={13} strokeWidth={2.4} />
+              </button>
+            </Tooltip>
           )}
         </div>
       </div>
@@ -275,10 +293,6 @@ export default function Sidebar() {
             })
           )}
         </Section>
-
-        <div style={{ padding: "2px 0" }}>
-          <NavItem icon={<Plus size={16} strokeWidth={2.5} />} label="All Playlists" active={false} onClick={() => navigate("/playlists")} />
-        </div>
       </div>
       {menuEl}
     </nav>

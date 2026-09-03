@@ -1,6 +1,9 @@
 import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, RefreshCw } from "lucide-react";
+import { Eye, EyeOff, RotateCcw, ChevronDown } from "lucide-react";
+import { SegmentedControl } from "../components/playground/PlaygroundControls";
+import { Tooltip } from "../components/ui/Tooltip";
 import {
   getCredentials,
   saveCredentials,
@@ -240,31 +243,35 @@ function Switch({
 }) {
   return (
     <button
+      type="button"
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
       style={{
         width: 44,
-        height: 26,
+        height: 24,
         borderRadius: 99,
         border: "none",
         cursor: "pointer",
-        padding: 3,
+        padding: 2,
         display: "flex",
+        alignItems: "center",
         flexShrink: 0,
         justifyContent: checked ? "flex-end" : "flex-start",
-        background: checked ? "var(--color-accent)" : "rgba(255,255,255,0.16)",
-        transition: "background 0.18s ease",
+        background: checked ? "var(--color-accent)" : "rgba(255, 255, 255, 0.12)",
+        transition: "background 0.2s",
+        outline: "none",
       }}
     >
-      <span
+      <motion.div
+        layout
+        transition={{ type: "spring", stiffness: 500, damping: 30 }}
         style={{
           width: 20,
           height: 20,
-          borderRadius: "50%",
-          background: "#fff",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.4)",
-          transition: "transform 0.18s cubic-bezier(0.23,1,0.32,1)",
+          borderRadius: 99,
+          background: "#ffffff",
+          boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
         }}
       />
     </button>
@@ -275,49 +282,27 @@ function Segmented<T extends string>({
   value,
   options,
   onChange,
+  layoutId = "settings-segmented",
 }: {
   value: T;
   options: { value: T; label: string }[];
   onChange: (v: T) => void;
+  layoutId?: string;
 }) {
+  const labelToValue = new Map(options.map((o) => [o.label, o.value]));
+  const currentOption = options.find((o) => o.value === value);
+  const currentLabel = currentOption ? currentOption.label : options[0]?.label || "";
+
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: 2,
-        padding: 2,
-        borderRadius: 99,
-        background: "var(--color-surface)",
-        border: "1px solid var(--color-border)",
+    <SegmentedControl
+      options={options.map((o) => o.label)}
+      value={currentLabel}
+      onChange={(label) => {
+        const targetVal = labelToValue.get(label);
+        if (targetVal !== undefined) onChange(targetVal);
       }}
-    >
-      {options.map((o) => {
-        const active = o.value === value;
-        return (
-          <button
-            key={o.value}
-            onClick={() => onChange(o.value)}
-            style={{
-              height: 30,
-              padding: "0 14px",
-              borderRadius: 99,
-              border: "none",
-              cursor: "pointer",
-              fontSize: 12.5,
-              fontWeight: 600,
-              fontFamily: "inherit",
-              background: active ? "var(--color-accent)" : "transparent",
-              color: active
-                ? "var(--color-accent-text)"
-                : "var(--color-text-dim)",
-              transition: "background 0.12s, color 0.12s",
-            }}
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
+      layoutId={layoutId}
+    />
   );
 }
 
@@ -347,7 +332,6 @@ function AppearanceCard() {
   const setSource = useThemeStore((s) => s.setSource);
   const albumColors = useThemeStore((s) => s.albumColors);
   const setAlbumColors = useThemeStore((s) => s.setAlbumColors);
-  const refreshTheme = useThemeStore((s) => s.refreshTheme);
 
   return (
     <Card title="Appearance">
@@ -355,38 +339,16 @@ function AppearanceCard() {
         label="Accent color"
         hint={
           isMac
-            ? "Default blue, sampled from your desktop wallpaper, or your macOS system accent color. Hit refresh after changing your wallpaper."
-            : "Default blue, or sampled from your desktop wallpaper. Hit refresh after changing your wallpaper."
+            ? "Default blue, sampled from your desktop wallpaper, or your macOS system accent color."
+            : "Default blue, or sampled from your desktop wallpaper."
         }
         control={
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Segmented
-              value={source}
-              options={THEME_OPTS}
-              onChange={setSource}
-            />
-            {source !== "default" && (
-              <button
-                onClick={refreshTheme}
-                title="Re-sample now"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 30,
-                  height: 30,
-                  borderRadius: 8,
-                  cursor: "pointer",
-                  border: "1px solid var(--color-border)",
-                  background: "var(--color-surface)",
-                  color: "var(--color-text)",
-                  flexShrink: 0,
-                }}
-              >
-                <RefreshCw size={14} strokeWidth={2.2} />
-              </button>
-            )}
-          </div>
+          <Segmented
+            value={source}
+            options={THEME_OPTS}
+            onChange={setSource}
+            layoutId="settings-accent-color"
+          />
         }
       />
       <Divider />
@@ -415,42 +377,12 @@ function PlaybackCard() {
         label="Audio quality"
         hint="Higher bitrates use more data and cache space."
         control={
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {QUALITY_OPTIONS.map((opt) => {
-              const active = audioQuality === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  onClick={() => setAudioQuality(opt.value)}
-                  style={{
-                    height: 32,
-                    padding: "0 14px",
-                    borderRadius: 9999,
-                    border: "none",
-                    cursor: "pointer",
-                    fontSize: 12.5,
-                    fontWeight: active ? 600 : 500,
-                    fontFamily: "inherit",
-                    background: active ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
-                    color: active ? "#0f1114" : "var(--color-text)",
-                    transition: "background 0.12s, color 0.12s",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!active)
-                      e.currentTarget.style.background =
-                        "rgba(255, 255, 255, 0.14)";
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!active)
-                      e.currentTarget.style.background =
-                        "rgba(255, 255, 255, 0.08)";
-                  }}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
-          </div>
+          <Segmented
+            value={audioQuality}
+            options={QUALITY_OPTIONS}
+            onChange={setAudioQuality}
+            layoutId="settings-audio-quality"
+          />
         }
       />
     </Card>
@@ -538,12 +470,14 @@ function VisualCard() {
               value={windowEffect}
               options={VIBRANCY_OPTS}
               onChange={choose}
+              layoutId="settings-bg-material"
             />
           ) : isMac ? (
             <Segmented
               value={macValue}
               options={MAC_MATERIAL_OPTS}
               onChange={choose}
+              layoutId="settings-bg-material"
             />
           ) : (
             <span style={{ fontSize: 12.5, color: "var(--color-text-dim)" }}>
@@ -564,7 +498,7 @@ function VisualCard() {
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
-                  minWidth: 168,
+                  minWidth: 196,
                 }}
               >
                 <input
@@ -600,6 +534,44 @@ function VisualCard() {
                 >
                   {tpct}%
                 </span>
+                <Tooltip label="Revert to default" side="top">
+                  <motion.button
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.9 }}
+                    onClick={() => setTransparency(0.4)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 24,
+                      height: 24,
+                      borderRadius: 6,
+                      border: "none",
+                      background: "transparent",
+                      color:
+                        Math.abs(tval - 0.4) < 0.005
+                          ? "rgba(255,255,255,0.22)"
+                          : "var(--color-text-dim)",
+                      cursor:
+                        Math.abs(tval - 0.4) < 0.005 ? "default" : "pointer",
+                      padding: 0,
+                      flexShrink: 0,
+                      transition: "color 0.12s",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (Math.abs(tval - 0.4) >= 0.005)
+                        (e.currentTarget as HTMLButtonElement).style.color =
+                          "var(--color-text-hi)";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (Math.abs(tval - 0.4) >= 0.005)
+                        (e.currentTarget as HTMLButtonElement).style.color =
+                          "var(--color-text-dim)";
+                    }}
+                  >
+                    <RotateCcw size={13} strokeWidth={2.2} />
+                  </motion.button>
+                </Tooltip>
               </div>
             }
           />
@@ -849,6 +821,7 @@ export default function Settings() {
   const [clientSecret, setClientSecret] = useState("");
   const [showSecret, setShowSecret] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(true);
 
   function autoValidate() {
     setStatus("validating");
@@ -921,23 +894,32 @@ export default function Settings() {
         Settings
       </h1>
 
-      {/* spotify API card */}
+      <PlaybackCard />
+      <GeneralCard />
+      <AppearanceCard />
+      <VisualCard />
+      <LastfmCard />
+
+      {/* spotify API & authentication card (collapsible at the very end) */}
       <section
         style={{
           borderRadius: 16,
           background: "var(--color-surface)",
           border: "1px solid var(--color-border)",
-          padding: 28,
+          padding: "20px 24px",
           display: "flex",
           flexDirection: "column",
-          gap: 20,
+          gap: 0,
         }}
       >
         <div
+          onClick={() => setCollapsed((v) => !v)}
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            cursor: "pointer",
+            userSelect: "none",
           }}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -957,125 +939,156 @@ export default function Settings() {
                 : "Using public shared multi-grant credentials (Default Quota)"}
             </span>
           </div>
-          <StatusBadge status={status} />
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <StatusBadge status={status} />
+            <motion.div
+              animate={{ rotate: collapsed ? 0 : 180 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 28,
+                height: 28,
+                borderRadius: 8,
+                background: "rgba(255,255,255,0.05)",
+                color: "var(--color-text-dim)",
+              }}
+            >
+              <ChevronDown size={16} strokeWidth={2.2} />
+            </motion.div>
+          </div>
         </div>
 
-        <p
-          style={{
-            margin: 0,
-            fontSize: 13,
-            lineHeight: 1.6,
-            color: "var(--color-text-dim)",
-          }}
-        >
-          Musique includes built-in authentication with zero configuration needed.
-          If you are a power user experiencing rate limits, you can optionally connect your own
-          Spotify Developer App. Set the redirect URI in your dashboard to{" "}
-          <code
-            style={{
-              fontFamily: "ui-monospace, monospace",
-              fontSize: 12,
-              color: "var(--color-text)",
-              background: "rgba(0,0,0,0.25)",
-              padding: "2px 6px",
-              borderRadius: 5,
-            }}
-          >
-            http://127.0.0.1:8989/login
-          </code>
-          , then paste your Client ID below. (Client Secret is optional with PKCE).
-        </p>
+        <AnimatePresence initial={false}>
+          {!collapsed && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.26, ease: [0.23, 1, 0.32, 1] }}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 20,
+                overflow: "hidden",
+                paddingTop: 20,
+              }}
+            >
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                  color: "var(--color-text-dim)",
+                }}
+              >
+                Musique includes built-in authentication with zero configuration needed.
+                If you are a power user experiencing rate limits, you can optionally connect your own
+                Spotify Developer App. Set the redirect URI in your dashboard to{" "}
+                <code
+                  style={{
+                    fontFamily: "ui-monospace, monospace",
+                    fontSize: 12,
+                    color: "var(--color-text)",
+                    background: "rgba(0,0,0,0.25)",
+                    padding: "2px 6px",
+                    borderRadius: 5,
+                  }}
+                >
+                  http://127.0.0.1:8989/login
+                </code>
+                , then paste your Client ID below. (Client Secret is optional with PKCE).
+              </p>
 
-        <Field label="Personal Client ID (Optional)">
-          <input
-            value={clientId}
-            onChange={(e) => setClientId(e.currentTarget.value)}
-            placeholder={
-              isLoading
-                ? "Loading…"
-                : isCustom
-                  ? clientId
-                  : "Leave blank to use default shared access"
-            }
-            disabled={busy}
-            autoComplete="off"
-            spellCheck={false}
-            style={inputStyle}
-          />
-        </Field>
+              <Field label="Personal Client ID (Optional)">
+                <input
+                  value={clientId}
+                  onChange={(e) => setClientId(e.currentTarget.value)}
+                  placeholder={
+                    isLoading
+                      ? "Loading…"
+                      : isCustom
+                        ? clientId
+                        : "Leave blank to use default shared access"
+                  }
+                  disabled={busy}
+                  autoComplete="off"
+                  spellCheck={false}
+                  style={inputStyle}
+                />
+              </Field>
 
-        <Field label="Client Secret (Optional)">
-          <input
-            type={showSecret ? "text" : "password"}
-            value={clientSecret}
-            onChange={(e) => setClientSecret(e.currentTarget.value)}
-            placeholder={
-              isLoading
-                ? "Loading…"
-                : isCustom && status === "configured"
-                  ? "•••••••••••••••• (saved)"
-                  : "Optional (not required for PKCE)"
-            }
-            disabled={busy}
-            autoComplete="off"
-            spellCheck={false}
-            style={inputStyle}
-          />
-          <button
-            type="button"
-            onClick={() => setShowSecret((v) => !v)}
-            tabIndex={-1}
-            title={showSecret ? "Hide" : "Show"}
-            style={{
-              width: 42,
-              height: 42,
-              borderRadius: 10,
-              flexShrink: 0,
-              border: "1px solid var(--color-border)",
-              background: "var(--color-surface)",
-              color: "var(--color-text)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {showSecret ? (
-              <EyeOff size={16} strokeWidth={2} />
-            ) : (
-              <Eye size={16} strokeWidth={2} />
-            )}
-          </button>
-        </Field>
+              <Field label="Client Secret (Optional)">
+                <input
+                  type={showSecret ? "text" : "password"}
+                  value={clientSecret}
+                  onChange={(e) => setClientSecret(e.currentTarget.value)}
+                  placeholder={
+                    isLoading
+                      ? "Loading…"
+                      : isCustom && status === "configured"
+                        ? "•••••••••••••••• (saved)"
+                        : "Optional (not required for PKCE)"
+                  }
+                  disabled={busy}
+                  autoComplete="off"
+                  spellCheck={false}
+                  style={inputStyle}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSecret((v) => !v)}
+                  tabIndex={-1}
+                  title={showSecret ? "Hide" : "Show"}
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 10,
+                    flexShrink: 0,
+                    border: "1px solid var(--color-border)",
+                    background: "var(--color-surface)",
+                    color: "var(--color-text)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {showSecret ? (
+                    <EyeOff size={16} strokeWidth={2} />
+                  ) : (
+                    <Eye size={16} strokeWidth={2} />
+                  )}
+                </button>
+              </Field>
 
-        {validationError && (
-          <p
-            style={{ margin: 0, fontSize: 12.5, color: "var(--color-danger)" }}
-          >
-            {validationError}
-          </p>
-        )}
+              {validationError && (
+                <p
+                  style={{ margin: 0, fontSize: 12.5, color: "var(--color-danger)" }}
+                >
+                  {validationError}
+                </p>
+              )}
 
-        <div style={{ display: "flex", gap: 10, paddingTop: 4 }}>
-          <PrimaryBtn onClick={() => save()} disabled={!canSave}>
-            {saving ? "Saving…" : "Save Custom Client ID"}
-          </PrimaryBtn>
-          <div style={{ flex: 1 }} />
-          <GhostBtn
-            subtle
-            onClick={() => resetToDefault()}
-            disabled={!canReset}
-          >
-            {resetting ? "Resetting…" : "Reset to Default Quota"}
-          </GhostBtn>
-        </div>
+              <div style={{ display: "flex", gap: 10, paddingTop: 4 }}>
+                <PrimaryBtn onClick={() => save()} disabled={!canSave}>
+                  {saving ? "Saving…" : "Save Custom Client ID"}
+                </PrimaryBtn>
+                <div style={{ flex: 1 }} />
+                <GhostBtn
+                  subtle
+                  onClick={() => resetToDefault()}
+                  disabled={!canReset}
+                >
+                  {resetting ? "Resetting…" : "Reset to Default Quota"}
+                </GhostBtn>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </section>
-
-      <PlaybackCard />
-      <GeneralCard />
-      <AppearanceCard />
-      <VisualCard />
-      <LastfmCard />
     </div>
   );
 }

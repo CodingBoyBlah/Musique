@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { TitleBar } from "./TitleBar";
@@ -26,6 +26,11 @@ export default function Layout() {
   const setBackdropActive = useUIStore((s) => s.setBackdropActive);
   const location = useLocation();
   const reduceMotion = useReducedMotion();
+  const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+  }, [location.pathname]);
 
   // ask rust whether a native material actually took this launch. until it
   // answers (and anywhere it didn't - Linux, or a failed Mica/vibrancy) the
@@ -145,7 +150,17 @@ export default function Layout() {
             }}
           >
             {/* Title bar sits over the layout, absolute positioned so panels can extend behind it */}
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 50, pointerEvents: "none" }}>
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 48,
+                zIndex: 50,
+                pointerEvents: "none",
+              }}
+            >
               <TitleBar />
             </div>
 
@@ -153,16 +168,21 @@ export default function Layout() {
             <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
               <div style={{ position: "relative", flex: 1, minWidth: 0, overflow: "hidden" }}>
                 <main
+                  ref={mainRef}
                   data-selectable
                   style={{
                     position: "absolute",
                     inset: 0,
                     overflowY: "auto",
                     overflowX: "hidden",
-                    paddingTop: "clamp(46px, 1.4vw, 52px)", // pad top for title bar
+                    paddingTop: "clamp(54px, 1.8vw, 64px)",
                     paddingLeft: "clamp(14px, 3vw, 32px)",
                     paddingRight: "clamp(16px, 3vw, 32px)",
                     paddingBottom: "clamp(16px, 3vw, 32px)",
+                    WebkitMaskImage:
+                      "linear-gradient(to bottom, transparent 0px, transparent 16px, rgba(0,0,0,0.015) 20px, rgba(0,0,0,0.055) 24px, rgba(0,0,0,0.13) 28px, rgba(0,0,0,0.25) 32px, rgba(0,0,0,0.42) 36px, rgba(0,0,0,0.60) 40px, rgba(0,0,0,0.77) 44px, rgba(0,0,0,0.89) 48px, rgba(0,0,0,0.965) 51px, #000 54px, #000 100%)",
+                    maskImage:
+                      "linear-gradient(to bottom, transparent 0px, transparent 16px, rgba(0,0,0,0.015) 20px, rgba(0,0,0,0.055) 24px, rgba(0,0,0,0.13) 28px, rgba(0,0,0,0.25) 32px, rgba(0,0,0,0.42) 36px, rgba(0,0,0,0.60) 40px, rgba(0,0,0,0.77) 44px, rgba(0,0,0,0.89) 48px, rgba(0,0,0,0.965) 51px, #000 54px, #000 100%)",
                   }}
                 >
                   {/* page-load motion: content rises gently from below on each
@@ -178,9 +198,13 @@ export default function Layout() {
                 </main>
               </div>
 
-              {/* reserves the rail's width instantly (no transition) so the grid
-                  reflows once; the panel below slides over this exact slot. */}
-              <div aria-hidden style={{ width: lyricsOpen ? 366 : queueOpen ? 272 : 0, flexShrink: 0 }} />
+              {/* reserves the rail width with fluid spring physics, matching the panel entrance */}
+              <motion.div
+                aria-hidden
+                animate={{ width: lyricsOpen ? 366 : queueOpen ? 272 : 0 }}
+                transition={{ type: "spring", stiffness: 340, damping: 34 }}
+                style={{ flexShrink: 0, overflow: "hidden" }}
+              />
 
               {/* right rail - lyrics or queue, mutually exclusive. positioned
                   against THIS row (below the title bar), sliding in via a transform. */}

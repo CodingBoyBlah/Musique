@@ -8,12 +8,12 @@ import { ReleaseCountdown } from "./ReleaseCountdown";
 import { releaseYear, isUpcoming } from "../../utils/fmt";
 import { prefetchAlbum } from "../../lib/prefetch";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
+import { CirclePlayButton } from "./CirclePlayButton";
+import { usePlayerStore } from "../../store/player.store";
+import { useQueueStore } from "../../store/queue.store";
+import { getAlbum } from "../../api/spotify";
+import { playTrack, pausePlayback, resumePlayback } from "../../api/playback";
 
-/* reflow spring. when a grid recolumns (lyrics panel opens, window resizes)
- items glide to their new cell instead of snapping. layout="position" o ly
- animates position not size, so covers/text never squish mid-move. */
-
-/* TODO - fix above task, does not work, teleports snaps */
 const REFLOW = { type: "spring" as const, stiffness: 520, damping: 44 };
 
 const MotionLink = motion.create(Link);
@@ -22,7 +22,6 @@ interface Props {
   album: AlbumItem;
   size?: number;
 }
-
 
 export function AlbumGrid({ children }: { children: React.ReactNode }) {
   return (
@@ -43,47 +42,103 @@ function AlbumCardImpl({ album, size = 160 }: Props) {
   const imgSize = size - 24;
   const [hover, setHover] = useState(false);
   const qc = useQueryClient();
-  useReflowPulse(); // rerender on resize / panel toggle so layout glides the move {Broken}
+  useReflowPulse();
+
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const setPlaying = usePlayerStore((s) => s.setPlaying);
+  const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
+  const playContext = useQueueStore((s) => s.playContext);
+
+  const isThisAlbumPlaying = Boolean(album.id && currentTrack?.album?.id === album.id && isPlaying);
+
+  async function handlePlayAlbum(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isThisAlbumPlaying) {
+      pausePlayback().then(() => setPlaying(false)).catch(() => {});
+      return;
+    }
+    if (currentTrack?.album?.id === album.id && !isPlaying) {
+      resumePlayback().then(() => setPlaying(true)).catch(() => {});
+      return;
+    }
+    try {
+      const full = await getAlbum(album.id);
+      const tracks = full?.tracks ?? [];
+      if (tracks.length > 0) {
+        const start = playContext(tracks, 0, album.id);
+        if (start) {
+          setCurrentTrack(start);
+          playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
 
   return (
     <MotionLink
       to={`/album/${album.id}`}
       layout="position"
-      // warm the album page the moment the pointer lands so opening it is instant
       onMouseEnter={() => { setHover(true); prefetchAlbum(qc, album.id); }}
       onMouseLeave={() => setHover(false)}
       whileHover={{ y: -3 }}
-      transition={{ layout: REFLOW }}
+      transition={{ layout: REFLOW, type: "spring", stiffness: 520, damping: 44 }}
       style={{
-        /* 14px inset all round keeps the hover wash off the cover and text so
-         they never touch the lit edge. cover fills the padded width so the
-         inset is equal everywhere (no unsemetrical gap). */
-        display: "flex", flexDirection: "column", gap: 8,
-        padding: 14, borderRadius: 14, width: "100%", boxSizing: "border-box",
-        textDecoration: "none", color: "inherit",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        padding: 14,
+        borderRadius: 14,
+        width: "100%",
+        boxSizing: "border-box",
+        textDecoration: "none",
+        color: "inherit",
         background: hover ? "var(--color-surface-elevated)" : "transparent",
         transition: "background 0.18s ease",
+        position: "relative",
+        cursor: "pointer",
       }}
     >
-      <div style={{ width: "100%", aspectRatio: "1 / 1" }}>
-        <CoverArt url={album.image_url} alt={album.name} size={imgSize} style={{ width: "100%", height: "100%" }} />
+      <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1", borderRadius: 8, overflow: "hidden" }}>
+        <CoverArt url={album.image_url} alt={album.name} size={imgSize} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+
+        {/* Hover play button with blur and scale icon morph from playground */}
+        <CirclePlayButton
+          isPlaying={isThisAlbumPlaying}
+          visible={hover || isThisAlbumPlaying}
+          onClick={handlePlayAlbum}
+          size={42}
+          iconSize={17}
+          style={{ position: "absolute", right: 10, bottom: 10 }}
+          ariaLabel={isThisAlbumPlaying ? `Pause ${album.name}` : `Play ${album.name}`}
+        />
       </div>
-      <span className="text-sm font-medium line-clamp-2" style={{ maxWidth: "100%" }}>
+
+      <span
+        style={{
+          fontSize: 14,
+          fontWeight: 500,
+          color: isThisAlbumPlaying ? "var(--color-accent)" : "var(--color-text-hi)",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
         {album.name}
       </span>
+
       {isUpcoming(album.release_date) ? (
-        // not out yet -> live countdown instead of a static year {DOES NOT WORK}
         <ReleaseCountdown date={album.release_date!} />
       ) : (
-        <span className="text-xs" style={{ color: "var(--color-text-dim)" }}>
-          {releaseYear(album.release_date)}
-          {album.release_date && album.album_type ? " · " : ""}
-          <span className="capitalize">{album.album_type}</span>
+        <span style={{ fontSize: 12, color: "var(--color-text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {releaseYear(album.release_date)} • {album.artists?.map((a) => a.name).join(", ") || album.album_type}
         </span>
       )}
     </MotionLink>
   );
 }
 
-// memoised so grids don't re-render every card when some unrelated parent state (hover, -- a sibling) changes
 export const AlbumCard = memo(AlbumCardImpl);

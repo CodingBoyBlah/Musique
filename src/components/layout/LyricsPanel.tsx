@@ -13,6 +13,8 @@ import { usePlayerStore } from "../../store/player.store";
 import { useLyrics } from "../../hooks/useLyrics";
 import { seekPlayback } from "../../api/playback";
 import { Loader } from "../ui/Loader";
+import { Tooltip } from "../ui/Tooltip";
+import { isMac } from "../../lib/platform";
 import {
   detectLyricScript,
   canRomanize,
@@ -201,15 +203,12 @@ export function LyricsPanel() {
       // Absolute OVERLAY that slides in/out via a transform (x). The layout space
       // is reserved by an in-flow spacer in Layout.tsx (which toggles instantly on
       // open AND close), so the grid reflows in one step and the cards glide via
-      // framer `layout` both ways. This panel just slides over that region — its
+      // framer `layout` both ways. This panel just slides over that region; its
       // width never animates, so nothing reflows per-frame.
-      initial={{ x: WIDTH, opacity: 0 }}
+      initial={{ x: WIDTH, opacity: 0.8 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: WIDTH, opacity: 0 }}
-      transition={{
-        x: { duration: 0.34, ease: [0.32, 0.72, 0, 1] },
-        opacity: { duration: 0.2 },
-      }}
+      transition={{ type: "spring", stiffness: 340, damping: 34 }}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH,
@@ -239,105 +238,149 @@ export function LyricsPanel() {
             display: "flex",
             alignItems: "center",
             gap: 10,
-            padding: "0 12px",
+            padding: isMac ? "0 12px" : "0 146px 0 14px",
             height: 48,
             borderBottom: "1px solid rgba(255,255,255,0.08)",
           }}
         >
           <span
             style={{
-              fontSize: 13,
+              fontSize: 16,
               fontWeight: 700,
-              color: "var(--color-text-hi)",
+              letterSpacing: "-0.02em",
+              color: "#ffffff",
+              userSelect: "none",
             }}
           >
             Lyrics
           </span>
+
           <div style={{ flex: 1 }} />
-          {canPron && (
-            <button
-              onClick={() => setPron((v) => !v)}
-              title={
-                pron ? "Hide pronunciation" : `Show ${scriptLabel(script)}`
-              }
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 5,
-                height: 28,
-                padding: "0 10px",
-                borderRadius: 99,
-                cursor: "pointer",
-                border: pron
-                  ? "1px solid transparent"
-                  : "1px solid rgba(255,255,255,0.16)",
-                background: pron ? "var(--color-accent)" : "transparent",
-                color: pron ? "#fff" : "var(--color-text)",
-                fontSize: 11.5,
-                fontWeight: 600,
-              }}
-            >
-              <Languages size={13} strokeWidth={2.2} /> {scriptLabel(script)}
-            </button>
-          )}
-          {synced && (
-            <button
-              onClick={() => setSyncOpen((v) => !v)}
-              title="Adjust sync"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 26,
-                height: 26,
-                borderRadius: 6,
-                border: "none",
-                background: syncOpen ? "rgba(255,255,255,0.12)" : "transparent",
-                color: syncOpen ? "var(--color-text-hi)" : "var(--color-text)",
-                cursor: "pointer",
-                flexShrink: 0,
-              }}
-              onMouseEnter={(e) => {
-                if (!syncOpen)
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    "rgba(255,255,255,0.08)";
-              }}
-              onMouseLeave={(e) => {
-                if (!syncOpen)
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    "transparent";
-              }}
-            >
-              <Clock size={14} strokeWidth={2.2} />
-            </button>
-          )}
-          <button
-            onClick={() => setLyricsOpen(false)}
-            title="Close"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 26,
-              height: 26,
-              borderRadius: 6,
-              border: "none",
-              background: "transparent",
-              color: "var(--color-text)",
-              cursor: "pointer",
-              flexShrink: 0,
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "rgba(255,255,255,0.08)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "transparent";
-            }}
-          >
-            <X size={14} strokeWidth={2.2} />
-          </button>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {canPron && (
+              <Tooltip
+                label={
+                  pron ? "Hide pronunciation" : `Show ${scriptLabel(script)}`
+                }
+                side="bottom"
+              >
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  transition={{ type: "spring", stiffness: 450, damping: 25 }}
+                  onClick={() => setPron((v) => !v)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    height: 28,
+                    padding: "0 10px",
+                    borderRadius: 99,
+                    cursor: "pointer",
+                    border: "none",
+                    background: pron
+                      ? "var(--color-accent)"
+                      : "rgba(255, 255, 255, 0.14)",
+                    color: pron ? "var(--color-accent-text, #ffffff)" : "#ffffff",
+                    fontSize: 11.5,
+                    fontWeight: 650,
+                    outline: "none",
+                    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.25)",
+                  }}
+                >
+                  <Languages size={13} strokeWidth={2.4} />
+                  <span>{scriptLabel(script)}</span>
+                </motion.button>
+              </Tooltip>
+            )}
+
+            {synced && (
+              <Tooltip
+                label={syncOpen ? "Close sync timing" : "Adjust sync timing"}
+                side="bottom"
+              >
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.92 }}
+                  transition={{ type: "spring", stiffness: 450, damping: 25 }}
+                  onClick={() => setSyncOpen((v) => !v)}
+                  style={{
+                    position: "relative",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 28,
+                    height: 28,
+                    borderRadius: 6,
+                    border: "none",
+                    background: "transparent",
+                    color: syncOpen ? "var(--color-accent)" : "rgba(255, 255, 255, 0.75)",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                    outline: "none",
+                    boxShadow: "none",
+                    padding: 0,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!syncOpen) (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!syncOpen) (e.currentTarget as HTMLButtonElement).style.color = "rgba(255, 255, 255, 0.75)";
+                  }}
+                >
+                  <Clock size={16} strokeWidth={2.2} />
+                  {offset !== 0 && !syncOpen && (
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: 2,
+                        right: 2,
+                        width: 5,
+                        height: 5,
+                        borderRadius: "50%",
+                        background: "var(--color-accent)",
+                        boxShadow: "0 0 5px var(--color-accent)",
+                      }}
+                    />
+                  )}
+                </motion.button>
+              </Tooltip>
+            )}
+
+            <Tooltip label="Close lyrics" side="bottom" align="end">
+              <motion.button
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.92 }}
+                transition={{ type: "spring", stiffness: 450, damping: 25 }}
+                onClick={() => setLyricsOpen(false)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 28,
+                  height: 28,
+                  borderRadius: 6,
+                  border: "none",
+                  background: "transparent",
+                  color: "rgba(255, 255, 255, 0.75)",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                  outline: "none",
+                  boxShadow: "none",
+                  padding: 0,
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.color = "rgba(255, 255, 255, 0.75)";
+                }}
+              >
+                <X size={16} strokeWidth={2.2} />
+              </motion.button>
+            </Tooltip>
+          </div>
         </div>
 
         {/* sync calibration popover (off the clock icon) */}
@@ -353,13 +396,13 @@ export function LyricsPanel() {
               transition={{ duration: 0.16, ease: [0.23, 1, 0.32, 1] }}
               style={{
                 position: "absolute",
-                top: 46,
-                right: 8,
+                top: 52,
+                left: 12,
+                right: 12,
                 zIndex: 6,
-                width: 304,
                 padding: "11px 13px 12px",
                 borderRadius: 12,
-                background: "rgba(18,18,24,0.92)",
+                background: "rgba(18,18,24,0.94)",
                 backdropFilter: "blur(24px) saturate(1.4)",
                 WebkitBackdropFilter: "blur(24px) saturate(1.4)",
                 border: "1px solid rgba(255,255,255,0.12)",
@@ -385,6 +428,7 @@ export function LyricsPanel() {
             zIndex: 1,
             flex: 1,
             overflowY: "auto",
+            overflowX: "hidden",
             padding: "26px 18px 40vh",
             WebkitMaskImage:
               "linear-gradient(to bottom, transparent 0, #000 7%, #000 88%, transparent 100%)",
@@ -407,7 +451,15 @@ export function LyricsPanel() {
               action={<RetryBtn busy={isFetching} onClick={() => refetch()} />}
             />
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 9,
+                width: "100%",
+                minWidth: 0,
+              }}
+            >
               {rows.map((row, ri) => {
                 const isActive = synced && ri === active;
                 const multi = row.voices.length > 1;
@@ -433,10 +485,12 @@ export function LyricsPanel() {
                           : ri < active
                             ? 0.32
                             : 0.5,
-                      // stack concurrent voices TODO
                       display: "flex",
                       flexDirection: "column",
                       gap: multi ? 3 : 0,
+                      width: "100%",
+                      minWidth: 0,
+                      boxSizing: "border-box",
                     }}
                     onMouseEnter={(e) => {
                       if (synced && !isActive)
@@ -464,6 +518,9 @@ export function LyricsPanel() {
                                 ? "none"
                                 : "2px solid rgba(255,255,255,0.18)",
                             paddingLeft: vi === 0 ? 0 : 8,
+                            width: "100%",
+                            minWidth: 0,
+                            boxSizing: "border-box",
                           }}
                         >
                           {isActive && voice.words.length ? (
@@ -486,6 +543,9 @@ export function LyricsPanel() {
                                 fontWeight: weight,
                                 color: "var(--color-text-hi)",
                                 textShadow: "0 0 18px rgba(255,255,255,0.14)",
+                                whiteSpace: "pre-wrap",
+                                wordBreak: "break-word",
+                                overflowWrap: "break-word",
                               }}
                             >
                               {voice.text || "♪"}
@@ -499,6 +559,9 @@ export function LyricsPanel() {
                                 letterSpacing: "-0.01em",
                                 fontWeight: weight,
                                 color: "rgba(255,255,255,0.82)",
+                                whiteSpace: "pre-wrap",
+                                wordBreak: "break-word",
+                                overflowWrap: "break-word",
                               }}
                             >
                               {voice.text || "♪"}
@@ -513,6 +576,9 @@ export function LyricsPanel() {
                                 color: isActive
                                   ? "rgba(255,255,255,0.7)"
                                   : "rgba(255,255,255,0.4)",
+                                whiteSpace: "pre-wrap",
+                                wordBreak: "break-word",
+                                overflowWrap: "break-word",
                               }}
                             >
                               {romaji ? romaji[romIdx] : romanizing ? "…" : ""}
@@ -599,28 +665,31 @@ function SyncBar({
           {label}
         </span>
         <div style={{ flex: 1 }} />
-        <button
-          onClick={() => setOffset(0)}
-          disabled={offset === 0}
-          title="Reset to 0"
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            color:
-              offset === 0 ? "rgba(255,255,255,0.25)" : "var(--color-text)",
-            background: "none",
-            border: "none",
-            cursor: offset === 0 ? "default" : "pointer",
-            padding: "0 2px",
-          }}
-        >
-          Reset
-        </button>
+        <Tooltip label="Reset offset to 0s" side="top">
+          <button
+            onClick={() => setOffset(0)}
+            disabled={offset === 0}
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color:
+                offset === 0 ? "rgba(255,255,255,0.25)" : "var(--color-text)",
+              background: "none",
+              border: "none",
+              cursor: offset === 0 ? "default" : "pointer",
+              padding: "0 2px",
+            }}
+          >
+            Reset
+          </button>
+        </Tooltip>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <RepeatBtn onStep={() => adjust(-50)} title="Lyrics later">
-          <Minus size={13} strokeWidth={2.4} />
-        </RepeatBtn>
+        <Tooltip label="Lyrics later (-50ms)" side="top">
+          <RepeatBtn onStep={() => adjust(-50)} title="">
+            <Minus size={13} strokeWidth={2.4} />
+          </RepeatBtn>
+        </Tooltip>
         <input
           type="range"
           min={-SYNC_RANGE}
@@ -636,9 +705,11 @@ function SyncBar({
             cursor: "pointer",
           }}
         />
-        <RepeatBtn onStep={() => adjust(50)} title="Lyrics earlier">
-          <Plus size={13} strokeWidth={2.4} />
-        </RepeatBtn>
+        <Tooltip label="Lyrics earlier (+50ms)" side="top">
+          <RepeatBtn onStep={() => adjust(50)} title="">
+            <Plus size={13} strokeWidth={2.4} />
+          </RepeatBtn>
+        </Tooltip>
       </div>
       <div
         style={{

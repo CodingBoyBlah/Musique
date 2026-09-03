@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useSearch } from "../hooks/useSearch";
 import { useReflowPulse } from "../hooks/useReflowPulse";
@@ -13,7 +13,6 @@ import { playTrack } from "../api/playback";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
-import { meshGradient } from "../lib/mesh";
 import { errMsg } from "../lib/err";
 
 const CATEGORIES = ["all", "songs", "artists", "albums", "playlists"] as const;
@@ -55,74 +54,6 @@ function PlaylistResultCard({ playlist }: { playlist: PlaylistCardType }) {
 
 
 
-const BROWSE: string[] = [
-  "Pop", "Hip-Hop", "Rock", "R&B", "Indie", "Electronic",
-  "Chill", "Focus", "Workout", "Party", "Jazz", "Classical",
-  "Lo-fi", "Metal", "K-Pop", "Country", "Soul", "Acoustic",
-];
-
-function BrowseCard({ label }: { label: string }) {
-  const [hover, setHover] = useState(false);
-  return (
-    <MotionLink
-      to={`/search?q=${encodeURIComponent(label)}`}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        position: "relative",
-        display: "flex",
-        alignItems: "flex-end",
-        aspectRatio: "4 / 3",
-        padding: 14,
-        borderRadius: 14,
-        overflow: "hidden",
-        textDecoration: "none",
-        color: "#fff",
-        ...meshGradient(label),
-        outline: "1px solid rgba(255,255,255,0.08)",
-        outlineOffset: -1,
-        transform: hover ? "translateY(-3px)" : "translateY(0)",
-        boxShadow: hover ? "0 16px 34px rgba(0,0,0,0.4)" : "0 4px 14px rgba(0,0,0,0.26)",
-        transition: "transform 0.22s cubic-bezier(0.23,1,0.32,1), box-shadow 0.22s ease",
-      }}
-    >
-      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.02), rgba(0,0,0,0.34))" }} />
-      <span style={{ position: "relative", fontSize: "clamp(15px, 1.7vw, 18px)", fontWeight: 700, letterSpacing: "-0.02em", textShadow: "0 1px 10px rgba(0,0,0,0.4)" }}>
-        {label}
-      </span>
-    </MotionLink>
-  );
-}
-
-function BrowseHome() {
-  return (
-    <motion.div layout="position" className="flex flex-col gap-6">
-      <motion.div layout="position">
-        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em", color: "var(--color-text-hi)" }}>Search</h1>
-        <p style={{ margin: "6px 0 0", fontSize: 13.5, color: "var(--color-text-dim)" }}>
-          Find any song, artist, or album, or dive into a mood below.
-        </p>
-      </motion.div>
-
-      <motion.section layout="position">
-        <h2 style={{ margin: "0 0 14px", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>Browse all</h2>
-        <div style={{ display: "grid", gap: "clamp(10px, 1.4vw, 16px)", gridTemplateColumns: "repeat(auto-fill, minmax(clamp(150px, 18vw, 200px), 1fr))" }}>
-          {BROWSE.map((label, i) => (
-            <motion.div
-              key={label}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: Math.min(i, 12) * 0.03, ease: [0.23, 1, 0.32, 1] }}
-            >
-              <BrowseCard label={label} />
-            </motion.div>
-          ))}
-        </div>
-      </motion.section>
-    </motion.div>
-  );
-}
-
 export default function Search() {
   useReflowPulse();
   const loggedIn        = useAuthStore((s) => s.loggedIn);
@@ -151,7 +82,7 @@ export default function Search() {
     );
   }
 
-  if (!query) return <BrowseHome />;
+  if (!query) return <Navigate to="/" replace />;
 
   const hasResults = data && (data.tracks.length || data.artists.length || data.albums.length || data.playlists.length);
   const show = (c: Category) => cat === "all" || cat === c;
