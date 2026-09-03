@@ -117,11 +117,13 @@ native backdrop but blows away react state, so sync hereto keep the os material 
     getCredentials()
       .then((c) => {
         setFromCredentials(c);
-        if (c && c.has_secret) {
+        if (c && c.is_custom && c.has_secret) {
           setCredStatus("validating");
           validateCredentials()
             .then((r) => setCredStatus(r.valid ? "valid" : "invalid"))
             .catch(() => setCredStatus("invalid"));
+        } else {
+          setCredStatus("valid");
         }
       })
       .catch(() => {});

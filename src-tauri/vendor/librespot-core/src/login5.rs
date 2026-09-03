@@ -158,17 +158,19 @@ impl Login5Manager {
         Ok((auth_token, token_response.stored_credential))
     }
 
+    pub fn set_auth_token(&self, access_token: String, expires_in_seconds: i32) {
+        let auth_token = Self::token_from_login(access_token, expires_in_seconds);
+        self.lock(|inner| {
+            inner.auth_token = Some(auth_token);
+        });
+    }
+
     /// Retrieve the access_token via login5
     ///
     /// This request will only work when the store credentials match the client-id. Meaning that
     /// stored credentials generated with the keymaster client-id will not work, for example, with
     /// the android client-id.
     pub async fn auth_token(&self) -> Result<Token, Error> {
-        let auth_data = self.session().auth_data();
-        if auth_data.is_empty() {
-            return Err(Login5Error::NoStoredCredentials.into());
-        }
-
         let auth_token = self.lock(|inner| {
             if let Some(token) = &inner.auth_token {
                 if token.is_expired() {
@@ -180,6 +182,11 @@ impl Login5Manager {
 
         if let Some(auth_token) = auth_token {
             return Ok(auth_token);
+        }
+
+        let auth_data = self.session().auth_data();
+        if auth_data.is_empty() {
+            return Err(Login5Error::NoStoredCredentials.into());
         }
 
         let method = Login_method::StoredCredential(StoredCredential {

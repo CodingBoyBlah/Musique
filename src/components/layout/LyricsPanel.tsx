@@ -198,7 +198,11 @@ export function LyricsPanel() {
 
   return (
     <motion.div
-
+      // Absolute OVERLAY that slides in/out via a transform (x). The layout space
+      // is reserved by an in-flow spacer in Layout.tsx (which toggles instantly on
+      // open AND close), so the grid reflows in one step and the cards glide via
+      // framer `layout` both ways. This panel just slides over that region — its
+      // width never animates, so nothing reflows per-frame.
       initial={{ x: WIDTH, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: WIDTH, opacity: 0 }}
@@ -249,38 +253,6 @@ export function LyricsPanel() {
           >
             Lyrics
           </span>
-          {synced && (
-            <button
-              onClick={() => setSyncOpen((v) => !v)}
-              title="Adjust sync"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 26,
-                height: 26,
-                borderRadius: 6,
-                border: "none",
-                background: syncOpen ? "rgba(255,255,255,0.12)" : "transparent",
-                color: syncOpen ? "var(--color-text-hi)" : "var(--color-text)",
-                cursor: "pointer",
-                flexShrink: 0,
-                marginLeft: 4,
-              }}
-              onMouseEnter={(e) => {
-                if (!syncOpen)
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    "rgba(255,255,255,0.08)";
-              }}
-              onMouseLeave={(e) => {
-                if (!syncOpen)
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    "transparent";
-              }}
-            >
-              <Clock size={14} strokeWidth={2.2} />
-            </button>
-          )}
           <div style={{ flex: 1 }} />
           {canPron && (
             <button
@@ -308,6 +280,64 @@ export function LyricsPanel() {
               <Languages size={13} strokeWidth={2.2} /> {scriptLabel(script)}
             </button>
           )}
+          {synced && (
+            <button
+              onClick={() => setSyncOpen((v) => !v)}
+              title="Adjust sync"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 26,
+                height: 26,
+                borderRadius: 6,
+                border: "none",
+                background: syncOpen ? "rgba(255,255,255,0.12)" : "transparent",
+                color: syncOpen ? "var(--color-text-hi)" : "var(--color-text)",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => {
+                if (!syncOpen)
+                  (e.currentTarget as HTMLButtonElement).style.background =
+                    "rgba(255,255,255,0.08)";
+              }}
+              onMouseLeave={(e) => {
+                if (!syncOpen)
+                  (e.currentTarget as HTMLButtonElement).style.background =
+                    "transparent";
+              }}
+            >
+              <Clock size={14} strokeWidth={2.2} />
+            </button>
+          )}
+          <button
+            onClick={() => setLyricsOpen(false)}
+            title="Close"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 26,
+              height: 26,
+              borderRadius: 6,
+              border: "none",
+              background: "transparent",
+              color: "var(--color-text)",
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background =
+                "rgba(255,255,255,0.08)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background =
+                "transparent";
+            }}
+          >
+            <X size={14} strokeWidth={2.2} />
+          </button>
         </div>
 
         {/* sync calibration popover (off the clock icon) */}

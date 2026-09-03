@@ -15,3 +15,11 @@ export const preloadTrack    = (id: string): Promise<void>           => invoke("
 export const setVolume       = (level: number): Promise<void>        => invoke("set_volume", { level });
 export const setMuted        = (muted: boolean): Promise<void>       => invoke("set_muted", { muted });
 export const getVolume       = (): Promise<VolumeState>              => invoke("get_volume");
+
+export type AudioQuality = "96" | "160" | "320";
+
+export const getAudioQuality = (): Promise<AudioQuality> =>
+  invoke("get_audio_quality");
+
+export const setAudioQuality = (quality: AudioQuality): Promise<void> =>
+  invoke("set_audio_quality", { quality });

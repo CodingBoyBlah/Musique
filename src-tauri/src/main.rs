@@ -12,5 +12,8 @@ fn main() {
     if std::env::args().any(|a| a == "--playback-probe") {
         std::process::exit(spotify_lib::playback_probe());
     }
+    if std::env::args().any(|a| a == "--quality-probe") {
+        std::process::exit(spotify_lib::quality_probe());
+    }
     spotify_lib::run()
 }

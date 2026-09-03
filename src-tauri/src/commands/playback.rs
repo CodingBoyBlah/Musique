@@ -83,6 +83,7 @@ pub async fn warmup_playback(app: AppHandle) -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn play_track(app: AppHandle, id: String) -> Result<(), AppError> {
+    eprintln!("[playback cmd] play_track id={id}");
     ensure_inner(&app).await?;
 
     let uri      = crate::playback::track_uri(&id)?;
@@ -148,6 +149,7 @@ pub async fn resume_playback(app: AppHandle) -> Result<(), AppError> {
 // song shown in the player bar always plays when u hit ▶
 #[tauri::command]
 pub async fn resume_or_play(app: AppHandle, id: String, position_ms: u32) -> Result<(), AppError> {
+    eprintln!("[playback cmd] resume_or_play id={id} pos={position_ms}");
     // heal a missing/dead session first (rebuild resets `loaded` to false
     // so we fall thru to a real load below instead of a silent resume)
     ensure_inner(&app).await?;
@@ -261,4 +263,43 @@ pub async fn get_volume(app: AppHandle) -> Result<VolumeState, AppError> {
     let level = (read_vol(&pool).await * 100.0).round() as u8;
     let muted = read_muted(&pool).await;
     Ok(VolumeState { level, muted })
+}
+
+#[tauri::command]
+pub async fn get_audio_quality(app: AppHandle) -> Result<String, AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    drop(s);
+
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = 'audio_quality'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+
+    Ok(row.map(|(v,)| v).unwrap_or_else(|| "320".to_string()))
+}
+
+#[tauri::command]
+pub async fn set_audio_quality(app: AppHandle, quality: String) -> Result<(), AppError> {
+    let val = match quality.as_str() {
+        "96" => "96",
+        "160" => "160",
+        _ => "320",
+    };
+
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    let playback = s.playback.clone();
+    drop(s);
+
+    save_setting(&pool, "audio_quality", val).await?;
+
+    // Reset playback session so the new bitrate takes effect on next playback
+    let mut guard = playback.lock().await;
+    *guard = None;
+
+    Ok(())
 }

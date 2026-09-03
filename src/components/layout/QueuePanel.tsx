@@ -178,7 +178,8 @@ export function QueuePanel() {
 
   return (
     <motion.div
-      
+      // in-flow rail below the title bar; slides via transform. width is reserved
+      // by the spacer in Layout.tsx so the grid reflows once, both ways.
       initial={{ x: WIDTH, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: WIDTH, opacity: 0 }}
@@ -193,6 +194,19 @@ export function QueuePanel() {
         {/* header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px", height: 48, flexShrink: 0, borderBottom: "1px solid var(--color-border)" }}>
           <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>Queue</span>
+          <button
+            onClick={toggleQueue}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 26, height: 26, borderRadius: 7, border: "none",
+              background: "transparent", color: "rgba(255,255,255,0.45)", cursor: "pointer",
+              transition: "color 0.12s, background 0.12s",
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#fff"; (e.currentTarget as HTMLButtonElement).style.background = "var(--color-surface-hover)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.45)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+          >
+            <X size={14} strokeWidth={2.2} />
+          </button>
         </div>
 
         <div className="scroll-y" style={{ flex: 1, overflowY: "auto", paddingBottom: 12 }}>

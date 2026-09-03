@@ -246,6 +246,11 @@ impl Session {
         info!("Authenticated as '{username}' !");
         self.set_username(username);
         self.set_auth_data(&reusable_credentials.auth_data);
+        if credentials.auth_type == AuthenticationType::AUTHENTICATION_SPOTIFY_TOKEN {
+            if let Ok(token_str) = String::from_utf8(credentials.auth_data.clone()) {
+                self.login5().set_auth_token(token_str, 3600);
+            }
+        }
         if let Some(cache) = self.cache() {
             if store_credentials {
                 let cred_changed = cache

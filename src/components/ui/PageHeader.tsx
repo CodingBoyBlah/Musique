@@ -8,14 +8,18 @@ interface Props {
   imageUrl: string | null | undefined;
   eyebrow: string;
   title: string;
-  children: ReactNode; 
+  children: ReactNode; // meta lines + PlayActions
+}
 
-
+/* Album/playlist header note: the blurred artwork tint is not drawn here.
+   It gets pushed to the UI store and Layout paints it as a fixed faint backdrop 
+   behind the whole content area, so it stays put while the page scrolls. */
 export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
   const setPageTint = useUIStore((s) => s.setPageTint);
-  useReflowPulse(); 
+  useReflowPulse(); // re-render on resize and panel toggle so the header layout glides
 
-  
+  // publish this page's cover to the UI store. ThemeEngine reacts to it and
+  // applies the per-album accent LIVE (when the Album colors toggle is on).
   useEffect(() => {
     setPageTint(imageUrl ?? null);
     return () => setPageTint(null);
@@ -25,19 +29,27 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
     <motion.div
       layout
       style={{
-       
+        // size container: everything inside scales with the HEADER's width (which
+        // shrinks when the lyrics/queue panel opens) via `cqi` units — NOT the
+        // viewport, which never changed and left the title huge while the column
+        // narrowed. This is what fixes the "text takes over, cover tiny" cramming.
         containerType: "inline-size",
         display: "flex",
         alignItems: "flex-end",
         gap: "clamp(14px, 2.4cqi, 24px)",
         minWidth: 0,
         padding: "clamp(8px, 1.4vw, 12px) 0 clamp(14px, 2vw, 20px)",
-        
+        /* only wrap (cover on top, text below) at the extreme narrow end. before  that the cover just shrinks instead of crushing the text column. */
         flexWrap: "wrap",
         rowGap: "clamp(12px, 1.6vw, 16px)",
       }}
     >
-      
+      {/* cover is fluid and tracks the content box, not the viewport  basis is
+          a % of the flex container (clamped in px) so when a side panel
+          (lyrics/queue) opens and this column shrinks the cover scales down with
+          it, instead of staying viewport-pinned and shoving text onto a new
+          line. flex-shrink:1 + the small min keep it shrinking, wrap only kicks
+          in at a true extreme. layout animates the resize. */}
       <motion.div
         layout
         initial={{ opacity: 0, scale: 0.94 }}
@@ -63,9 +75,10 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
         >
           {eyebrow}
         </p>
-        
-
-        {/* TODO experimenet with ellepses limit */}
+        {/* Clamp to 2 lines with ellipsis. A long album/playlist name used to
+            balloon this column and crush the cover when a side panel opened;
+            now it truncates. break-words handles a long unbroken word too.
+            title attr shows the full name on hover. */}
         <h1
           className="font-black line-clamp-2 break-words"
           title={title}
@@ -74,7 +87,7 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
           {title}
         </h1>
         {children}
-      </div>
+      </motion.div>
     </motion.div>
   );
 }

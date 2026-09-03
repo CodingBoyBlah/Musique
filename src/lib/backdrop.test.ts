@@ -21,7 +21,7 @@ describe("backdropScrim", () => {
   });
 
   it("darkens with a scrim under Windows acrylic", () => {
-    expect(backdropScrim(true, "acrylic")).toBe("rgba(8, 8, 10, 0.6)");
+    expect(backdropScrim(true, "acrylic")).toBe("rgba(8, 8, 10, 0.600)");
   });
 
   it("is opaque when the material is explicitly turned off (none)", () => {

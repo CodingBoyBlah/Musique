@@ -5313,12 +5313,14 @@ name = "spotify"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "cpal",
  "discord-rich-presence",
  "dotenvy",
  "keyring",
  "libc",
  "librespot-connect",
  "librespot-core",
+ "librespot-metadata",
  "librespot-playback",
  "log",
  "md5",
@@ -5327,6 +5329,7 @@ dependencies = [
  "rodio",
  "serde",
  "serde_json",
+ "sha1",
  "sha2",
  "souvlaki",
  "sqlx",
@@ -5339,6 +5342,7 @@ dependencies = [
  "tokio",
  "url",
  "window-vibrancy",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

@@ -5,6 +5,7 @@ import {
   logout as apiLogout,
   getAuthStatus,
 } from "../api/auth";
+import { warmupPlayback } from "../api/playback";
 import { useAuthStore } from "../store/auth.store";
 import type { AuthStatus } from "../types/ipc";
 
@@ -37,6 +38,10 @@ export function useAuth() {
     onSuccess: (data) => {
       store.setFromStatus(data);
       qc.setQueryData(["auth-status"], data);
+      qc.invalidateQueries({ queryKey: ["profile"] });
+      qc.invalidateQueries({ queryKey: ["library"] });
+      qc.invalidateQueries({ queryKey: ["recommendations"] });
+      warmupPlayback().catch((err) => console.error("[auth] warmup playback error:", err));
     },
   });
 
@@ -45,6 +50,9 @@ export function useAuth() {
     onSuccess: () => {
       store.clear();
       qc.setQueryData(["auth-status"], LOGGED_OUT);
+      qc.removeQueries({ queryKey: ["profile"] });
+      qc.removeQueries({ queryKey: ["library"] });
+      qc.removeQueries({ queryKey: ["recommendations"] });
     },
   });
 

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, ExternalLink, RefreshCw } from "lucide-react";
+import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import {
   getCredentials,
   saveCredentials,
@@ -12,6 +12,7 @@ import {
   type ConnectionStatus,
 } from "../store/credentials.store";
 import { usePrefsStore } from "../store/prefs.store";
+import { type AudioQuality } from "../api/playback";
 import { useUIStore } from "../store/ui.store";
 import { setDiscordEnabled } from "../api/media";
 import {
@@ -31,8 +32,8 @@ import { useThemeStore, type ThemeSource } from "../store/theme.store";
 
 const STATUS_CONFIG: Record<ConnectionStatus, { dot: string; label: string }> =
   {
-    unconfigured: { dot: "rgba(255,255,255,0.30)", label: "Not configured" },
-    configured: { dot: "#f5a623", label: "Saved - not tested" },
+    unconfigured: { dot: "#34d399", label: "Shared Quota (Default)" },
+    configured: { dot: "#f5a623", label: "Custom Key Saved" },
     validating: { dot: "#fa2d48", label: "Validating…" },
     valid: { dot: "#34d399", label: "Connected" },
     invalid: { dot: "#ff453a", label: "Invalid credentials" },
@@ -393,6 +394,64 @@ function AppearanceCard() {
         label="Album colors"
         hint="Recolor album & playlist pages from their cover art."
         control={<Switch checked={albumColors} onChange={setAlbumColors} />}
+      />
+    </Card>
+  );
+}
+
+const QUALITY_OPTIONS: { value: AudioQuality; label: string }[] = [
+  { value: "96", label: "Normal · 96 kbps" },
+  { value: "160", label: "High · 160 kbps" },
+  { value: "320", label: "Very high · 320 kbps" },
+];
+
+function PlaybackCard() {
+  const audioQuality = usePrefsStore((s) => s.audioQuality);
+  const setAudioQuality = usePrefsStore((s) => s.setAudioQuality);
+
+  return (
+    <Card title="Playback">
+      <SettingRow
+        label="Audio quality"
+        hint="Higher bitrates use more data and cache space."
+        control={
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {QUALITY_OPTIONS.map((opt) => {
+              const active = audioQuality === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => setAudioQuality(opt.value)}
+                  style={{
+                    height: 32,
+                    padding: "0 14px",
+                    borderRadius: 9999,
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: 12.5,
+                    fontWeight: active ? 600 : 500,
+                    fontFamily: "inherit",
+                    background: active ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
+                    color: active ? "#0f1114" : "var(--color-text)",
+                    transition: "background 0.12s, color 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!active)
+                      e.currentTarget.style.background =
+                        "rgba(255, 255, 255, 0.14)";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!active)
+                      e.currentTarget.style.background =
+                        "rgba(255, 255, 255, 0.08)";
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        }
       />
     </Card>
   );
@@ -783,7 +842,7 @@ function Divider() {
 
 export default function Settings() {
   const qc = useQueryClient();
-  const { status, setStatus, setFromCredentials, clear } =
+  const { status, setStatus, setFromCredentials, clear, isCustom } =
     useCredentialsStore();
 
   const [clientId, setClientId] = useState("");
@@ -806,25 +865,27 @@ export default function Settings() {
     queryFn: async () => {
       const creds = await getCredentials();
       setFromCredentials(creds);
-      if (creds) {
+      if (creds && creds.is_custom) {
         setClientId(creds.client_id);
         if (creds.has_secret) autoValidate();
+      } else {
+        setClientId("");
       }
       return creds;
     },
   });
 
   const { mutate: save, isPending: saving } = useMutation({
-    mutationFn: () => saveCredentials(clientId, clientSecret),
+    mutationFn: () => saveCredentials(clientId, clientSecret || undefined),
     onSuccess: () => {
       setClientSecret("");
       setValidationError(null);
       qc.invalidateQueries({ queryKey: ["credentials"] });
-      autoValidate(); // connect now so there's no lingering "saved, not tested"
+      autoValidate();
     },
   });
 
-  const { mutate: disconnect, isPending: disconnecting } = useMutation({
+  const { mutate: resetToDefault, isPending: resetting } = useMutation({
     mutationFn: clearCredentials,
     onSuccess: () => {
       setClientId("");
@@ -835,10 +896,9 @@ export default function Settings() {
     },
   });
 
-  const busy = saving || disconnecting || isLoading;
-  const canSave =
-    clientId.trim().length > 0 && clientSecret.trim().length > 0 && !busy;
-  const canDisconnect = status !== "unconfigured" && !busy;
+  const busy = saving || resetting || isLoading;
+  const canSave = clientId.trim().length > 0 && !busy;
+  const canReset = isCustom && !busy;
 
   return (
     <div
@@ -880,16 +940,23 @@ export default function Settings() {
             justifyContent: "space-between",
           }}
         >
-          <h2
-            style={{
-              margin: 0,
-              fontSize: 16,
-              fontWeight: 600,
-              color: "var(--color-text-hi)",
-            }}
-          >
-            Spotify API
-          </h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <h2
+              style={{
+                margin: 0,
+                fontSize: 16,
+                fontWeight: 600,
+                color: "var(--color-text-hi)",
+              }}
+            >
+              Spotify API & Authentication
+            </h2>
+            <span style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
+              {isCustom
+                ? "Using your personal developer application (Custom Quota)"
+                : "Using public shared multi-grant credentials (Default Quota)"}
+            </span>
+          </div>
           <StatusBadge status={status} />
         </div>
 
@@ -901,23 +968,9 @@ export default function Settings() {
             color: "var(--color-text-dim)",
           }}
         >
-          Create an app in the{" "}
-          <a
-            href="https://developer.spotify.com/dashboard"
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              color: "var(--color-accent)",
-              textDecoration: "none",
-              fontWeight: 500,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 3,
-            }}
-          >
-            Spotify Dashboard <ExternalLink size={11} strokeWidth={2.5} />
-          </a>
-          , set the redirect URI to{" "}
+          Musique includes built-in authentication with zero configuration needed.
+          If you are a power user experiencing rate limits, you can optionally connect your own
+          Spotify Developer App. Set the redirect URI in your dashboard to{" "}
           <code
             style={{
               fontFamily: "ui-monospace, monospace",
@@ -928,16 +981,22 @@ export default function Settings() {
               borderRadius: 5,
             }}
           >
-            http://127.0.0.1:8888/callback
+            http://127.0.0.1:8989/login
           </code>
-          , then paste the Client ID and Secret below.
+          , then paste your Client ID below. (Client Secret is optional with PKCE).
         </p>
 
-        <Field label="Client ID">
+        <Field label="Personal Client ID (Optional)">
           <input
             value={clientId}
             onChange={(e) => setClientId(e.currentTarget.value)}
-            placeholder={isLoading ? "Loading…" : "Paste your Client ID"}
+            placeholder={
+              isLoading
+                ? "Loading…"
+                : isCustom
+                  ? clientId
+                  : "Leave blank to use default shared access"
+            }
             disabled={busy}
             autoComplete="off"
             spellCheck={false}
@@ -945,7 +1004,7 @@ export default function Settings() {
           />
         </Field>
 
-        <Field label="Client Secret">
+        <Field label="Client Secret (Optional)">
           <input
             type={showSecret ? "text" : "password"}
             value={clientSecret}
@@ -953,9 +1012,9 @@ export default function Settings() {
             placeholder={
               isLoading
                 ? "Loading…"
-                : status !== "unconfigured"
+                : isCustom && status === "configured"
                   ? "•••••••••••••••• (saved)"
-                  : "Paste your Client Secret"
+                  : "Optional (not required for PKCE)"
             }
             disabled={busy}
             autoComplete="off"
@@ -999,19 +1058,20 @@ export default function Settings() {
 
         <div style={{ display: "flex", gap: 10, paddingTop: 4 }}>
           <PrimaryBtn onClick={() => save()} disabled={!canSave}>
-            {saving ? "Saving…" : "Save & Connect"}
+            {saving ? "Saving…" : "Save Custom Client ID"}
           </PrimaryBtn>
           <div style={{ flex: 1 }} />
           <GhostBtn
             subtle
-            onClick={() => disconnect()}
-            disabled={!canDisconnect}
+            onClick={() => resetToDefault()}
+            disabled={!canReset}
           >
-            {disconnecting ? "Clearing…" : "Disconnect"}
+            {resetting ? "Resetting…" : "Reset to Default Quota"}
           </GhostBtn>
         </div>
       </section>
 
+      <PlaybackCard />
       <GeneralCard />
       <AppearanceCard />
       <VisualCard />

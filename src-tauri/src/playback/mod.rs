@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, Spirc};
 use librespot_core::{
     authentication::Credentials,
+    cache::Cache,
     config::{DeviceType, SessionConfig},
     session::Session,
     Error as LibrespotError,
@@ -11,7 +12,7 @@ use librespot_core::{
     SpotifyUri,
 };
 use librespot_playback::{
-    audio_backend::{Sink, SinkError, SinkResult},
+    audio_backend::{Sink, SinkResult},
     config::{Bitrate, PlayerConfig},
     convert::Converter,
     decoder::AudioPacket,
@@ -21,7 +22,7 @@ use librespot_playback::{
 };
 use serde::Serialize;
 use sqlx::SqlitePool;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -147,52 +148,7 @@ impl Sink for NullSink {
 // Opening at the device's OWN rate means current==target, so cpal early-returns
 // and never runs that buggy branch. rodio resamples our 44100 source up to the
 // device's rate. Works on Windows/Linux too (native rate is always fine there).
-pub(crate) struct DeviceSink {
-    sink:    rodio::Sink,
-    _stream: rodio::OutputStream,
-}
 
-impl DeviceSink {
-    pub(crate) fn open() -> Result<DeviceSink, String> {
-        let mut stream = rodio::OutputStreamBuilder::from_default_device()
-            .map_err(|e| e.to_string())?
-            // open_stream() uses ONLY the device's native config. we intentionally
-            // do NOT use open_stream_or_fallback(): its fallback would try other
-            // sample rates and could re-trigger the cpal set_sample_rate() crash.
-            .open_stream()
-            .map_err(|e| e.to_string())?;
-        stream.log_on_drop(false);
-        let sink = rodio::Sink::connect_new(stream.mixer());
-        Ok(DeviceSink { sink, _stream: stream })
-    }
-}
-
-impl Sink for DeviceSink {
-    fn start(&mut self) -> SinkResult<()> {
-        self.sink.play();
-        Ok(())
-    }
-
-    fn stop(&mut self) -> SinkResult<()> {
-        self.sink.sleep_until_end();
-        self.sink.pause();
-        Ok(())
-    }
-
-    fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
-        let samples = packet.samples().map_err(|e| SinkError::OnWrite(e.to_string()))?;
-        let samples_f32: &[f32] = &converter.f64_to_f32(samples);
-        // 44100 source; rodio's mixer resamples to the device's native rate
-        let source = rodio::buffer::SamplesBuffer::new(NUM_CHANNELS as u16, SAMPLE_RATE, samples_f32);
-        self.sink.append(source);
-        // backpressure: keep at most ~0.5s queued so playback tracks real time
-        // instead of buffering the whole track at once (mirrors librespot's rodio)
-        while self.sink.len() > 26 {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        Ok(())
-    }
-}
 
 // macos only: are we running inside a hypervisor (a vm)?
 //
@@ -303,31 +259,36 @@ impl PlaybackInner {
     // finds no next track and stops, and the frontend advances by calling this
     // again for the next id. Each load registers as a play on Spotify's backend.
     pub fn play_uri(&self, uri: String, position_ms: u32) -> Result<(), AppError> {
+        eprintln!("[playback] play_uri uri={uri} pos={position_ms}");
         self.spirc.activate().map_err(spirc_err)?;
-        self.spirc
-            .load(LoadRequest::from_tracks(
-                vec![uri],
-                LoadRequestOptions {
-                    start_playing: true,
-                    seek_to: position_ms,
-                    ..Default::default()
-                },
-            ))
-            .map_err(spirc_err)?;
+        self.spirc.load(LoadRequest::from_tracks(
+            vec![uri],
+            LoadRequestOptions {
+                start_playing: true,
+                seek_to: position_ms,
+                ..Default::default()
+            },
+        )).map_err(spirc_err)?;
         self.loaded.store(true, Ordering::Relaxed);
         Ok(())
     }
 
     pub fn resume(&self) -> Result<(), AppError> {
-        self.spirc.play().map_err(spirc_err)
+        eprintln!("[playback] resume");
+        self.spirc.play().map_err(spirc_err)?;
+        Ok(())
     }
 
     pub fn pause(&self) -> Result<(), AppError> {
-        self.spirc.pause().map_err(spirc_err)
+        eprintln!("[playback] pause");
+        self.spirc.pause().map_err(spirc_err)?;
+        Ok(())
     }
 
     pub fn seek(&self, position_ms: u32) -> Result<(), AppError> {
-        self.spirc.set_position_ms(position_ms).map_err(spirc_err)
+        eprintln!("[playback] seek pos={position_ms}");
+        self.spirc.set_position_ms(position_ms).map_err(spirc_err)?;
+        Ok(())
     }
 
     // push a volume change (0.0..=1.0) into Spirc so the connect-state it reports
@@ -379,57 +340,62 @@ pub async fn create_inner(
     initial_muted:  bool,
     media_tx:       std::sync::mpsc::SyncSender<crate::media_controls::MediaMsg>,
 ) -> Result<PlaybackInner, AppError> {
-    let token = auth::get_valid_token(&pool, &auth_state).await
-        .map_err(|e| { eprintln!("[playback] token error: {e}"); e })?;
+    let _ = auth::get_valid_token(&pool, &auth_state).await
+        .map_err(|e| { eprintln!("[playback] auth token error: {e}"); e })?;
 
-    // librespots SESSION uses its built in default client_id. spotifys
-    // streaming pipeline (clienttoken -> login5 -> extended-metadata ->
-    // storage-resolve) is locked to first party client identities, a users own
-    // web api "developer" client_id gets rejected by clienttoken.spotify.com
-    // with HTTP 400 so login5 (which NEEDS a client token) fails and EVERY
-    // track comes back Unavailable, basically forcing the users own client_id into
-    // the session breaks playback completely. the users own client_id is still
-    // what mints the oauth token below (web api + auth), only the librespot
-    // streaming session uses the default. this matches the config that streamed
-    // fine before the (reverted) "use the users client_id" change. see
-    // vendor/librespot-audio for the matching cdn-fallthrough fix
-    // (learned this the hard way, do NOT touch this lol)
-    // client_id stays the librespot default (keymaster) - see the big comment
-    // above; only `autoplay` is overridden. With Spirc driving playback we load a
-    // one-track context per play and let the FRONTEND own queue advancement. If
-    // autoplay were on, Spirc would resolve a recommended-radio "next" track for
-    // the synthetic context and start playing it at end-of-track, fighting the
-    // frontend (which also advances on EndOfTrack). Forcing autoplay off makes
-    // Spirc simply stop at track end, so the frontend stays the single source of
-    // truth for what plays next.
-    let session = Session::new(
-        SessionConfig { autoplay: Some(false), ..SessionConfig::default() },
-        None,
-    );
+    let app_data = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let creds_dir = app_data.join("credentials");
+    let vol_dir = app_data.join("volume");
+    let cache_dir = app_data.join("audio_cache");
+    let _ = std::fs::create_dir_all(&creds_dir);
+    let _ = std::fs::create_dir_all(&vol_dir);
+    let _ = std::fs::create_dir_all(&cache_dir);
+
+    let creds_file = creds_dir.join("credentials.json");
+
+    let open_cache = || {
+        Cache::new(
+            Some(&creds_dir),
+            Some(&vol_dir),
+            Some(&cache_dir),
+            Some(500 * 1024 * 1024),
+        ).ok()
+    };
+
+    let cache = open_cache();
+    let cached_creds = cache.as_ref().and_then(|c| c.credentials());
+    let credentials = match cached_creds {
+        Some(c) => {
+            eprintln!("[playback] using cached librespot credentials from disk");
+            c
+        }
+        None => {
+            let playback_token = match auth::get_setting_value(&pool, "spotify_playback_token").await? {
+                Some(t) if !t.trim().is_empty() => t,
+                _ => crate::commands::auth::authorize_playback_token(&app).await?,
+            };
+            Credentials::with_access_token(&playback_token)
+        }
+    };
+
+    let device_name = auth::get_setting_value(&pool, "device_name")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| auth::DEFAULT_DEVICE_NAME.to_string());
+    let device_id = auth::compute_device_id(&device_name);
+
+    let session_config = SessionConfig {
+        device_id,
+        autoplay: Some(false),
+        ..SessionConfig::default()
+    };
+    let mut session = Session::new(session_config.clone(), cache);
     eprintln!("[playback] librespot session client_id = {}", session.client_id());
-    // NOTE: we deliberately do NOT session.connect() here anymore. Spirc::new()
-    // below registers its dealer listeners (connection-id / cluster / player
-    // commands) FIRST and then connects the session itself - that ordering is
-    // required for the connect-state machinery, and connecting here too would be
-    // redundant and could race those listeners. The client_id stays the librespot
-    // default (see the big comment above): Spirc reuses THIS session so the
-    // connect device is registered under the same first-party identity that the
-    // streaming pipeline needs.
 
     let volume    = SharedVolume::new(initial_volume, initial_muted);
     let vol_clone = volume.clone();
 
-
-    // decide up front whether to even touch the real audio device. two guards,
-    // both because opening cpal's device can HARD-FAULT (SIGSEGV in a system
-    // framework) which catch_unwind cannot catch:
-    //  1) macos-in-a-vm: Apple's paravirt CoreAudio HAL segfaults on open (sysctl)
-    //  2) any os: a throwaway child process (`--audio-probe`) actually opens the
-    //     device; if it can't without faulting, we fall back to silence here
-    //     instead of taking the whole app down. CONFIRMED needed on real M3 Mac
-    //     hardware / macOS 26 where the open SIGSEGVs even in the main process.
-    // When forced, the (real-time-paced) NullSink keeps the app alive + usable
-    // (silent) and playback advances normally instead of insta-skipping.
     #[cfg(target_os = "macos")]
     let force_null_sink = running_under_hypervisor() || !audio_device_safe();
     #[cfg(not(target_os = "macos"))]
@@ -438,62 +404,95 @@ pub async fn create_inner(
         eprintln!("[playback] audio device unavailable/unsafe - using silent sink");
     }
 
+    let make_sink = move || {
+        if force_null_sink {
+            return Box::new(NullSink) as Box<dyn Sink>;
+        }
+        eprintln!("[playback] STEP opening audio device via RodioSink");
+        let on_err: crate::sink::ErrorHook = Arc::new(|msg| {
+            eprintln!("[playback error] {msg}");
+        });
+        Box::new(crate::sink::RodioSink::new(
+            None,
+            on_err,
+            Box::new(vol_clone),
+            crate::sink::DEFAULT_BUFFER_MS,
+        )) as Box<dyn Sink>
+    };
+
+    let bitrate_setting: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = 'audio_quality'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+
+    let bitrate = match bitrate_setting.as_ref().map(|(v,)| v.as_str()) {
+        Some("96") => Bitrate::Bitrate96,
+        Some("160") => Bitrate::Bitrate160,
+        _ => Bitrate::Bitrate320,
+    };
+    eprintln!("[playback] configured bitrate = {bitrate:?}");
+
+    let player_config = PlayerConfig {
+        bitrate,
+        gapless: true,
+        ..Default::default()
+    };
     let player = Player::new(
-        PlayerConfig {
-            bitrate: Bitrate::Bitrate320,
-            gapless: true,
-            ..Default::default()
-        },
+        player_config,
         session.clone(),
-        Box::new(vol_clone),
-        // opening the output device can panic on systems with no/broken audio.
-        // catch it and fall back to a silent sink so the player thread survives
-        // and the app stays usable instead of dying mid track
-        move || {
-            // in a vm never touch the real device, the open SIGSEGVs (cant be
-            // caught) and would crash the whole app. just go straight to silence
-            if force_null_sink {
-                return Box::new(NullSink) as Box<dyn Sink>;
-            }
-            eprintln!("[playback] STEP opening audio device (native rate)");
-            // DeviceSink opens at the device's native rate so it can't hit cpal's
-            // set_sample_rate() SIGSEGV. catch_unwind is just a belt-and-suspenders
-            // for any *unwinding* failure; a graceful Err also falls back to silence.
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(DeviceSink::open)) {
-                Ok(Ok(s))  => { eprintln!("[playback] STEP audio device opened"); Box::new(s) as Box<dyn Sink> }
-                Ok(Err(e)) => { eprintln!("[playback] device open failed: {e} - using silent sink"); Box::new(NullSink) as Box<dyn Sink> }
-                Err(_)     => { eprintln!("[playback] device open panicked - using silent sink"); Box::new(NullSink) as Box<dyn Sink> }
-            }
-        },
+        Box::new(librespot_playback::mixer::NoOpVolume),
+        make_sink,
     );
     eprintln!("[playback] STEP player built");
 
-    // Register Musique as a Spotify Connect device and route ALL playback control
-    // through it (see PlaybackInner helpers). Spirc::new() connects the session
-    // (after wiring its dealer listeners) and starts a state machine that PUTs
-    // connect-state to Spotify on every change - this is the whole point: it makes
-    // plays appear in Spotify's "recently played", drives now-playing, and lets
-    // other Spotify clients see/control this device.
     let mixer: Arc<dyn Mixer> = Arc::new(SharedMixer(volume.clone()));
     let connect_config = ConnectConfig {
-        name:           "Musique".to_string(),
+        name:           device_name.clone(),
         device_type:    DeviceType::Computer,
-        // seed Spirc's initial volume with the user's persisted level. Spirc sets
-        // the mixer to this on startup; since our mixer IS the SharedVolume, using
-        // the real level stops it from resetting playback volume to the 50% default.
         initial_volume: (initial_volume.clamp(0.0, 1.0) * u16::MAX as f64).round() as u16,
         ..Default::default()
     };
-    let (spirc, spirc_task) = Spirc::new(
-        connect_config,
+
+    let mut spirc_attempt = Spirc::new(
+        connect_config.clone(),
         session.clone(),
-        Credentials::with_access_token(&token),
+        credentials.clone(),
         player.clone(),
-        mixer,
+        mixer.clone(),
     )
-    .await
-    .map_err(|e| {
-        eprintln!("[playback] spirc/session connect failed: {e}");
+    .await;
+
+    if let Err(ref e) = spirc_attempt {
+        let err_msg = e.to_string();
+        eprintln!("[playback] spirc connect failed: {err_msg}");
+        if err_msg.contains("INVALID_CREDENTIALS") || err_msg.contains("Login request was denied") {
+            eprintln!("[playback] cached credentials rejected; deleting bad credentials file");
+            let _ = std::fs::remove_file(&creds_file);
+
+            eprintln!("[playback] initiating playback authorization flow");
+            if let Ok(fresh_token) = crate::commands::auth::authorize_playback_token(&app).await {
+                let fresh_cache = open_cache();
+                let fresh_session = Session::new(session_config.clone(), fresh_cache);
+                spirc_attempt = Spirc::new(
+                    connect_config.clone(),
+                    fresh_session.clone(),
+                    Credentials::with_access_token(&fresh_token),
+                    player.clone(),
+                    mixer.clone(),
+                )
+                .await;
+                if spirc_attempt.is_ok() {
+                    session = fresh_session;
+                }
+            }
+        }
+    }
+
+    let (spirc, spirc_task) = spirc_attempt.map_err(|e| {
+        eprintln!("[playback] spirc connect finally failed: {e}");
         AppError::Auth(e.to_string())
     })?;
     eprintln!("[playback] STEP spirc connected (Connect device 'Musique' registered)");
@@ -526,6 +525,7 @@ pub async fn create_inner(
             .unwrap_or_else(std::time::Instant::now);
         let mut last_pos_ms: u32 = 0;
         while let Some(event) = event_rx.recv().await {
+            log::trace!("[playback event] {event:?}");
             // pass the playback state along to the os media controls
             match &event {
                 PlayerEvent::Playing { position_ms, .. } => {

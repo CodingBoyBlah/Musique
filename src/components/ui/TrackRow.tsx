@@ -99,18 +99,17 @@ function TrackRowImpl({
 
   return (
     <>
-    <motion.div
-      layout
+    <div
       style={{
         display: "flex", alignItems: "center", gap: 12,
         padding: "9px 12px", borderRadius: 8, transition: "background 0.1s",
         background: baseBg,
         
         contentVisibility: "auto",
-        /*
-        aiuto lets the browser remember each rows REAL rendered hight and REUSES it instead of snapping evrery offscreen row to a guessed height
-        */
-       
+        // `auto` lets the browser remember each row's REAL rendered height and
+        // reuse it, instead of snapping every offscreen row to a guessed 60px —
+        // that guess/real mismatch is what made the scroll thumb jump and the
+        // list feel janky. Keeps the offscreen-skip perf win, drops the jitter.
         containIntrinsicSize: "auto 60px",
       } as React.CSSProperties}
       onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--color-surface-hover)"; }}
@@ -210,7 +209,7 @@ function TrackRowImpl({
       <span style={{ fontSize: 12.5, flexShrink: 0, color: "rgba(255,255,255,0.35)", fontVariantNumeric: "tabular-nums" }}>
         {fmtMs(track.duration_ms)}
       </span>
-    </motion.div>
+    </div>
     {menuEl}
     </>
   );

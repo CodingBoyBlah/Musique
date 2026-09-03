@@ -1,4 +1,4 @@
-use crate::{errors::AppError, state::AppState};
+use crate::{auth, errors::AppError, state::AppState};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,7 @@ fn now_ms() -> i64 {
 pub struct Credentials {
     pub client_id: String,
     pub has_secret: bool,
+    pub is_custom: bool,
 }
 
 #[derive(Serialize)]
@@ -37,7 +38,6 @@ pub struct ValidationResult {
     pub valid: bool,
     pub error: Option<String>,
 }
-
 
 pub async fn seed_credentials_from_env(pool: &SqlitePool) {
     if let Ok(id) = std::env::var("SPOTIFY_CLIENT_ID") {
@@ -72,14 +72,14 @@ pub async fn seed_credentials_from_env(pool: &SqlitePool) {
 #[tauri::command]
 pub async fn save_credentials(
     client_id: String,
-    client_secret: String,
+    client_secret: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    if client_id.trim().is_empty() {
-        return Err(AppError::InvalidInput("Client ID cannot be empty".into()));
-    }
-    if client_secret.trim().is_empty() {
-        return Err(AppError::InvalidInput("Client secret cannot be empty".into()));
+    let trimmed_id = client_id.trim();
+
+    // If empty or explicitly reset to the default shared ID, clear custom settings
+    if trimmed_id.is_empty() || trimmed_id == auth::SHARED_CLIENT_ID {
+        return clear_credentials(state).await;
     }
 
     sqlx::query(
@@ -87,14 +87,21 @@ pub async fn save_credentials(
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
     )
     .bind("spotify_client_id")
-    .bind(&client_id)
+    .bind(trimmed_id)
     .bind(now_ms())
     .execute(&state.db)
     .await?;
 
-    
-    let _ = entry(ACCOUNT_ID).and_then(|e| e.set_password(&client_id).map_err(AppError::from));
-    entry(ACCOUNT_SECRET)?.set_password(&client_secret)?;
+    let _ = entry(ACCOUNT_ID).and_then(|e| e.set_password(trimmed_id).map_err(AppError::from));
+
+    if let Some(secret) = client_secret {
+        let trimmed_secret = secret.trim();
+        if trimmed_secret.is_empty() {
+            let _ = entry(ACCOUNT_SECRET).and_then(|e| e.delete_password().map_err(AppError::from));
+        } else {
+            entry(ACCOUNT_SECRET)?.set_password(trimmed_secret)?;
+        }
+    }
 
     Ok(())
 }
@@ -107,23 +114,16 @@ pub async fn get_credentials(
         .fetch_optional(&state.db)
         .await?;
 
-    let client_id = match row {
-        Some(r) => r.get::<String, _>("value"),
-        
-        None => match keyring_client_id() {
-            Some(id) => {
-                let _ = sqlx::query(
-                    "INSERT INTO settings (key, value, updated_at) VALUES ('spotify_client_id', ?, ?)
-                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-                )
-                .bind(&id)
-                .bind(now_ms())
-                .execute(&state.db)
-                .await;
-                id
+    let custom_id = match row {
+        Some(r) => {
+            let v = r.get::<String, _>("value");
+            if v.trim().is_empty() {
+                None
+            } else {
+                Some(v)
             }
-            None => return Ok(None),
-        },
+        }
+        None => keyring_client_id(),
     };
 
     let has_secret = match entry(ACCOUNT_SECRET)?.get_password() {
@@ -132,7 +132,18 @@ pub async fn get_credentials(
         Err(e) => return Err(AppError::Keyring(e.to_string())),
     };
 
-    Ok(Some(Credentials { client_id, has_secret }))
+    match custom_id {
+        Some(id) => Ok(Some(Credentials {
+            client_id: id,
+            has_secret,
+            is_custom: true,
+        })),
+        None => Ok(Some(Credentials {
+            client_id: auth::SHARED_CLIENT_ID.to_string(),
+            has_secret: false,
+            is_custom: false,
+        })),
+    }
 }
 
 #[tauri::command]
@@ -144,30 +155,34 @@ pub async fn validate_credentials(
         .await?;
 
     let client_id = match row.map(|r| r.get::<String, _>("value")).or_else(keyring_client_id) {
-        Some(id) => id,
-        None => {
-            return Ok(ValidationResult {
-                valid: false,
-                error: Some("No client ID stored".into()),
-            })
-        }
+        Some(id) if !id.trim().is_empty() => id,
+        _ => return Ok(ValidationResult { valid: true, error: None }),
     };
+
+    // If using the shared client ID, it is valid by default
+    if client_id == auth::SHARED_CLIENT_ID {
+        return Ok(ValidationResult { valid: true, error: None });
+    }
 
     let client_secret = match entry(ACCOUNT_SECRET)?.get_password() {
-        Ok(s) => s,
-        Err(_) => {
+        Ok(s) if !s.trim().is_empty() => s,
+        _ => {
+            // PKCE does not require a secret; check if client ID is a 32-character hex ID
+            if client_id.len() == 32 && client_id.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Ok(ValidationResult { valid: true, error: None });
+            }
             return Ok(ValidationResult {
                 valid: false,
-                error: Some("No client secret stored".into()),
-            })
+                error: Some("Client ID must be a 32-character hex Spotify Application ID".into()),
+            });
         }
     };
 
-    let auth = STANDARD.encode(format!("{}:{}", client_id, client_secret));
+    let auth_header = STANDARD.encode(format!("{}:{}", client_id, client_secret));
 
     let res = reqwest::Client::new()
         .post("https://accounts.spotify.com/api/token")
-        .header("Authorization", format!("Basic {}", auth))
+        .header("Authorization", format!("Basic {}", auth_header))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body("grant_type=client_credentials")
         .send()

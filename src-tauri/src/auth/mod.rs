@@ -37,6 +37,36 @@ struct SpotifyProfile {
     images:       Option<Vec<SpotifyImage>>,
 }
 
+// public shared client ID (ncspot / spotify-player public Web API application)
+pub const SHARED_CLIENT_ID: &str = "d420a117a32841c2b3474932e49fb54b";
+// official Spotify desktop client ID (playback grant with full streaming capabilities)
+pub const PLAYBACK_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
+// persistent device ID derived from device name: hex(&Sha1::digest(device_name.as_bytes()))
+pub const DEFAULT_DEVICE_NAME: &str = "Musique";
+pub const PLAYBACK_DEVICE_ID: &str = "fbdc061e6e145fffdaac1e916106ec81f4503c13";
+pub const PLAYBACK_SCOPES: &str = "app-remote-control streaming user-modify-playback-state user-read-currently-playing user-read-playback-state user-read-private";
+
+pub fn compute_device_id(device_name: &str) -> String {
+    use sha1::{Digest, Sha1};
+    let hash = Sha1::digest(device_name.as_bytes());
+    let mut out = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        use std::fmt::Write;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+pub async fn get_active_client_id(pool: &SqlitePool) -> String {
+    if let Ok(Some(id)) = get_setting_value(pool, "spotify_client_id").await {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    SHARED_CLIENT_ID.to_string()
+}
+
 // db helper junk
 
 pub(crate) fn now_ms() -> i64 {
@@ -100,7 +130,8 @@ pub async fn get_valid_token(
     {
         let g = auth.read().await;
         if let (Some(tok), Some(exp)) = (&g.access_token, g.expires_at) {
-            if exp - now_ms() > 60_000 {
+            // 90-second refresh margin to avoid race conditions mid-request
+            if exp - now_ms() > 90_000 {
                 return Ok(tok.clone());
             }
         }
@@ -109,9 +140,10 @@ pub async fn get_valid_token(
 }
 
 async fn do_refresh(pool: &SqlitePool, auth: &RwLock<AuthState>) -> Result<String, AppError> {
-    let client_id = get_setting_value(pool, "spotify_client_id")
-        .await?
-        .ok_or_else(|| AppError::Auth("No client_id configured".into()))?;
+    let client_id = match get_setting_value(pool, "spotify_auth_client_id").await? {
+        Some(cid) if !cid.trim().is_empty() && cid.trim() != PLAYBACK_CLIENT_ID => cid,
+        _ => get_active_client_id(pool).await,
+    };
 
     let refresh_token = auth
         .read()
@@ -129,12 +161,12 @@ async fn do_refresh(pool: &SqlitePool, auth: &RwLock<AuthState>) -> Result<Strin
     {
         Ok(r) => r,
         Err(e) => {
-            
-            if e.to_string().contains("invalid_grant") {
+            let err_str = e.to_string();
+            if err_str.contains("invalid_grant") || err_str.contains("invalid_client") {
                 let _ = token::clear_tokens();
                 *auth.write().await = AuthState::default();
                 return Err(AppError::Auth(
-                    "Your Spotify session expired. Please sign in again.".into(),
+                    "Your Spotify session expired or was reset. Please sign in again.".into(),
                 ));
             }
             return Err(e);
@@ -260,6 +292,7 @@ pub async fn complete_login(
         .map(|i| i.url.clone());
 
     for (key, val) in [
+        ("spotify_auth_client_id", client_id),
         ("spotify_user_id",      profile.id.as_str()),
         ("spotify_display_name", profile.display_name.as_deref().unwrap_or("")),
         ("spotify_email",        profile.email.as_deref().unwrap_or("")),

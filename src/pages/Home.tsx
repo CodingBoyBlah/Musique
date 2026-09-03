@@ -24,8 +24,8 @@ import type { TimeRange } from "../types/library";
 
 const TILE_MIN = 158;
 
-// grid reflow spring--- tiles glide to new columns (lyrics panel/resize) instead
-// of snapping. position only so artwork never squishes mid move
+// grid reflow spring - tiles glide to new columns (lyrics panel / resize) instead
+// of snapping. position-only so artwork never squishes mid-move.
 const REFLOW = { type: "spring" as const, stiffness: 520, damping: 44 };
 
 const tileGrid: React.CSSProperties = {
@@ -34,8 +34,7 @@ const tileGrid: React.CSSProperties = {
   gridTemplateColumns: `repeat(auto-fill, minmax(clamp(118px, 15vw, ${TILE_MIN}px), 1fr))`,
 };
 
-
-
+// ─── shortcut feature cards (replace the old chips) ──────────────────────────
 
 const SHORTCUTS: { name: string; sub: string; to: string; icon: LucideIcon; seed: string }[] = [
   { name: "Liked Songs", sub: "Everything you've saved", to: "/library?tab=songs",   icon: Heart,     seed: "liked-songs" },
@@ -56,7 +55,6 @@ function ShortcutCard({ name, sub, to, icon: Icon, seed }: (typeof SHORTCUTS)[nu
         display: "flex",
         flexDirection: "column",
         justifyContent: "flex-end",
-        alignItems: "center",
         aspectRatio: "1 / 1",
         padding: 16,
         borderRadius: 18,
@@ -88,17 +86,19 @@ function ShortcutCard({ name, sub, to, icon: Icon, seed }: (typeof SHORTCUTS)[nu
       >
         <Icon size={15} strokeWidth={2.2} fill={Icon === Heart ? "currentColor" : "none"} style={{ color: "#fff" }} />
       </div>
-      <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
-        <span style={{ fontSize: "clamp(16px, 1.8vw, 19px)", fontWeight: 700, letterSpacing: "-0.02em", textShadow: "0 1px 12px rgba(0,0,0,0.35)", textAlign: "center" }}>
+      <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 2 }}>
+        <span style={{ fontSize: "clamp(16px, 1.8vw, 19px)", fontWeight: 700, letterSpacing: "-0.02em", textShadow: "0 1px 12px rgba(0,0,0,0.35)" }}>
           {name}
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.82)", textShadow: "0 1px 8px rgba(0,0,0,0.4)" }}>
+          {sub}
         </span>
       </div>
     </Link>
   );
 }
 
-
-
+// ─── section scaffolding ─────────────────────────────────────────────────────
 
 function SectionTitle({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
@@ -121,11 +121,10 @@ function TileSkeleton() {
   );
 }
 
-
-
+// ─── recommendation / track tile ─────────────────────────────────────────────
 
 function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
-  useReflowPulse(); // rerender on resize/panel toggle so layout glides the move
+  useReflowPulse(); // re-render on resize / panel toggle so layout glides the move
   const [hover, setHover] = useState(false);
   const art = track.album?.image_url;
   return (
@@ -175,7 +174,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
   );
 }
 
-// row of play on click track tiles that all share one playback context
+// row of play-on-click track tiles that all share one playback context
 function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string }) {
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext     = useQueueStore((s) => s.playContext);
@@ -216,7 +215,7 @@ function MadeForYou() {
       {isLoading ? <TileSkeleton />
         : recs.length === 0 ? (
           <p style={{ margin: 0, fontSize: 13, color: "var(--color-text-dim)" }}>
-            Play and follow some artists, recommendations will grow here.
+            Play and follow some artists — recommendations will grow here.
           </p>
         ) : <TrackTiles tracks={recs} context="made-for-you" />}
     </section>
@@ -381,7 +380,7 @@ export default function Home() {
           </button>
           {loggingIn && (
             <p style={{ margin: "16px 0 0", fontSize: 12, color: "rgba(255,255,255,0.72)" }}>
-              Finish signing in in your browser, the app is listening on port 8888.
+              Finish signing in in your browser — the app is listening on port 8989.
             </p>
           )}
         </div>
@@ -398,13 +397,12 @@ export default function Home() {
         </h1>
       </motion.div>
 
-      
-      <motion.div layout style={{ display: "grid", gap: "clamp(10px, 1.4vw, 16px)", gridTemplateColumns: "repeat(auto-fill, minmax(clamp(200px, 24vw, 280px), 1fr))" }}>
+      {/* shortcut feature cards — editorial mesh covers, no chips, no radio */}
+      <motion.div layout="position" style={{ display: "grid", gap: "clamp(10px, 1.4vw, 16px)", gridTemplateColumns: "repeat(auto-fill, minmax(clamp(200px, 24vw, 280px), 1fr))" }}>
         {SHORTCUTS.map((item, i) => (
           <motion.div
             key={item.name}
-            layout
-            initial={reduceMotion ? false : { opacity: 0, y: 12, scale: 0.96 }}
+            initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.34, delay: i * 0.05, ease: [0.23, 1, 0.32, 1] }}
           >

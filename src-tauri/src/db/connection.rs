@@ -12,7 +12,7 @@ use tauri::AppHandle;
 pub async fn create_pool(app: &AppHandle) -> SqlitePool {
     match open_file_db(app).await {
         Ok(pool) => pool,
-        Err(e) => {
+        Err(e) => {     
             eprintln!("[db] file database unavailable ({e}); using in-memory db so the app still launches");
             in_memory().await
         }
