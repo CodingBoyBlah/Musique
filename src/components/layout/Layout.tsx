@@ -167,7 +167,11 @@ export default function Layout() {
                     flex: 1,
                     overflowY: "auto",
                     overflowX: "hidden",
+<<<<<<< Updated upstream
                     paddingTop: "clamp(10px, 1.4vw, 16px)",
+=======
+                    paddingTop: "clamp(56px, 2vw, 72px)",
+>>>>>>> Stashed changes
                     paddingLeft: "clamp(14px, 3vw, 32px)",
                     paddingRight: "clamp(16px, 3vw, 32px)",
                     paddingBottom: "clamp(16px, 3vw, 32px)",
