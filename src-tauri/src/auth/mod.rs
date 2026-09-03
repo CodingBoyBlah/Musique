@@ -41,9 +41,21 @@ struct SpotifyProfile {
 pub const SHARED_CLIENT_ID: &str = "d420a117a32841c2b3474932e49fb54b";
 // official Spotify desktop client ID (playback grant with full streaming capabilities)
 pub const PLAYBACK_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
-// persistent device ID to match Spotify credentials cache
-pub const PLAYBACK_DEVICE_ID: &str = "918a79031e3e0ea87d933ecc3f2ada380581637f";
+// persistent device ID derived from device name: hex(&Sha1::digest(device_name.as_bytes()))
+pub const DEFAULT_DEVICE_NAME: &str = "Musique";
+pub const PLAYBACK_DEVICE_ID: &str = "fbdc061e6e145fffdaac1e916106ec81f4503c13";
 pub const PLAYBACK_SCOPES: &str = "app-remote-control streaming user-modify-playback-state user-read-currently-playing user-read-playback-state user-read-private";
+
+pub fn compute_device_id(device_name: &str) -> String {
+    use sha1::{Digest, Sha1};
+    let hash = Sha1::digest(device_name.as_bytes());
+    let mut out = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        use std::fmt::Write;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
 
 pub async fn get_active_client_id(pool: &SqlitePool) -> String {
     if let Ok(Some(id)) = get_setting_value(pool, "spotify_client_id").await {

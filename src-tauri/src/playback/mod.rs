@@ -260,34 +260,34 @@ impl PlaybackInner {
     // again for the next id. Each load registers as a play on Spotify's backend.
     pub fn play_uri(&self, uri: String, position_ms: u32) -> Result<(), AppError> {
         eprintln!("[playback] play_uri uri={uri} pos={position_ms}");
-        let _ = self.spirc.activate();
-        let _ = self.spirc.load(LoadRequest::from_tracks(
+        self.spirc.activate().map_err(spirc_err)?;
+        self.spirc.load(LoadRequest::from_tracks(
             vec![uri],
             LoadRequestOptions {
                 start_playing: true,
                 seek_to: position_ms,
                 ..Default::default()
             },
-        ));
+        )).map_err(spirc_err)?;
         self.loaded.store(true, Ordering::Relaxed);
         Ok(())
     }
 
     pub fn resume(&self) -> Result<(), AppError> {
         eprintln!("[playback] resume");
-        let _ = self.spirc.play();
+        self.spirc.play().map_err(spirc_err)?;
         Ok(())
     }
 
     pub fn pause(&self) -> Result<(), AppError> {
         eprintln!("[playback] pause");
-        let _ = self.spirc.pause();
+        self.spirc.pause().map_err(spirc_err)?;
         Ok(())
     }
 
     pub fn seek(&self, position_ms: u32) -> Result<(), AppError> {
         eprintln!("[playback] seek pos={position_ms}");
-        let _ = self.spirc.set_position_ms(position_ms);
+        self.spirc.set_position_ms(position_ms).map_err(spirc_err)?;
         Ok(())
     }
 
@@ -332,47 +332,6 @@ pub enum PlayerMsg {
 
 // session / player init stuff
 
-fn find_fastpotify_credentials() -> Option<std::path::PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-            let p = std::path::PathBuf::from(local_app_data)
-                .join("paolino")
-                .join("fastpotify")
-                .join("data")
-                .join("credentials")
-                .join("credentials.json");
-            if p.exists() {
-                return Some(p);
-            }
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        if let Ok(home) = std::env::var("HOME") {
-            let p1 = std::path::PathBuf::from(&home)
-                .join(".local")
-                .join("state")
-                .join("fastpotify")
-                .join("credentials")
-                .join("credentials.json");
-            if p1.exists() {
-                return Some(p1);
-            }
-            let p2 = std::path::PathBuf::from(&home)
-                .join("Library")
-                .join("Application Support")
-                .join("fastpotify")
-                .join("credentials")
-                .join("credentials.json");
-            if p2.exists() {
-                return Some(p2);
-            }
-        }
-    }
-    None
-}
-
 pub async fn create_inner(
     app:            AppHandle,
     pool:           SqlitePool,
@@ -393,12 +352,6 @@ pub async fn create_inner(
     let _ = std::fs::create_dir_all(&cache_dir);
 
     let creds_file = creds_dir.join("credentials.json");
-    if !creds_file.exists() {
-        if let Some(fp_path) = find_fastpotify_credentials() {
-            eprintln!("[playback] importing existing Spotify credentials from Fastpotify ({fp_path:?})");
-            let _ = std::fs::copy(&fp_path, &creds_file);
-        }
-    }
 
     let open_cache = || {
         Cache::new(
@@ -425,8 +378,15 @@ pub async fn create_inner(
         }
     };
 
+    let device_name = auth::get_setting_value(&pool, "device_name")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| auth::DEFAULT_DEVICE_NAME.to_string());
+    let device_id = auth::compute_device_id(&device_name);
+
     let session_config = SessionConfig {
-        device_id: auth::PLAYBACK_DEVICE_ID.to_string(),
+        device_id,
         autoplay: Some(false),
         ..SessionConfig::default()
     };
@@ -490,7 +450,7 @@ pub async fn create_inner(
 
     let mixer: Arc<dyn Mixer> = Arc::new(SharedMixer(volume.clone()));
     let connect_config = ConnectConfig {
-        name:           "Musique".to_string(),
+        name:           device_name.clone(),
         device_type:    DeviceType::Computer,
         initial_volume: (initial_volume.clamp(0.0, 1.0) * u16::MAX as f64).round() as u16,
         ..Default::default()
@@ -512,46 +472,20 @@ pub async fn create_inner(
             eprintln!("[playback] cached credentials rejected; deleting bad credentials file");
             let _ = std::fs::remove_file(&creds_file);
 
-            let mut imported = false;
-            if let Some(fp_path) = find_fastpotify_credentials() {
-                if fp_path.exists() && fp_path != creds_file {
-                    eprintln!("[playback] importing Fastpotify credentials and retrying ({fp_path:?})");
-                    let _ = std::fs::copy(&fp_path, &creds_file);
-                    let retry_cache = open_cache();
-                    if let Some(c) = retry_cache.as_ref().and_then(|c| c.credentials()) {
-                        let retry_session = Session::new(session_config.clone(), retry_cache);
-                        spirc_attempt = Spirc::new(
-                            connect_config.clone(),
-                            retry_session.clone(),
-                            c,
-                            player.clone(),
-                            mixer.clone(),
-                        )
-                        .await;
-                        if spirc_attempt.is_ok() {
-                            session = retry_session;
-                            imported = true;
-                        }
-                    }
-                }
-            }
-
-            if !imported && spirc_attempt.is_err() {
-                eprintln!("[playback] initiating playback authorization flow");
-                if let Ok(fresh_token) = crate::commands::auth::authorize_playback_token(&app).await {
-                    let fresh_cache = open_cache();
-                    let fresh_session = Session::new(session_config.clone(), fresh_cache);
-                    spirc_attempt = Spirc::new(
-                        connect_config.clone(),
-                        fresh_session.clone(),
-                        Credentials::with_access_token(&fresh_token),
-                        player.clone(),
-                        mixer.clone(),
-                    )
-                    .await;
-                    if spirc_attempt.is_ok() {
-                        session = fresh_session;
-                    }
+            eprintln!("[playback] initiating playback authorization flow");
+            if let Ok(fresh_token) = crate::commands::auth::authorize_playback_token(&app).await {
+                let fresh_cache = open_cache();
+                let fresh_session = Session::new(session_config.clone(), fresh_cache);
+                spirc_attempt = Spirc::new(
+                    connect_config.clone(),
+                    fresh_session.clone(),
+                    Credentials::with_access_token(&fresh_token),
+                    player.clone(),
+                    mixer.clone(),
+                )
+                .await;
+                if spirc_attempt.is_ok() {
+                    session = fresh_session;
                 }
             }
         }
@@ -591,7 +525,7 @@ pub async fn create_inner(
             .unwrap_or_else(std::time::Instant::now);
         let mut last_pos_ms: u32 = 0;
         while let Some(event) = event_rx.recv().await {
-            eprintln!("[playback event] {event:?}");
+            log::trace!("[playback event] {event:?}");
             // pass the playback state along to the os media controls
             match &event {
                 PlayerEvent::Playing { position_ms, .. } => {

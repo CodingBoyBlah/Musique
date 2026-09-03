@@ -1,4 +1,4 @@
-//! Audio output for local playback (based on Fastpotify's robust rodio sink).
+//! Audio output for local playback.
 //!
 //! librespot ships a rodio sink, but it opens the output device with
 //! `.unwrap()` on the player thread, and the release profile aborts on any

@@ -40,6 +40,7 @@ reqwest = { version = "0.12", features = ["rustls-tls", "json", "cookies"], defa
 base64 = "0.22"
 dotenvy = "0.15"
 rand = "0.8"
+sha1 = "0.10"
 sha2 = "0.10"
 url = "2"
 log = "0.4"
@@ -82,13 +83,13 @@ libc = "0.2"
 # a generic Web API client_id, taking the app down on launch (warmupPlayback).
 # Same 0.8.0 source, one function patched. See vendor/librespot-core/src/session.rs.
 [patch.crates-io]
-librespot-audio = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
-librespot-connect = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
-librespot-core = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
-librespot-metadata = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
-librespot-oauth = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
-librespot-playback = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
-librespot-protocol = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
+librespot-core = { path = "vendor/librespot-core" }
+# Vendored librespot-audio with the CDN fetch loop patched to fall through to the
+# next mirror on a non-206 response. Upstream 0.8.0 broke on the FIRST CDN URL
+# regardless of status, so one bad regional CDN edge (HTTP 500) killed ALL
+# playback even though storage-resolve returns 3-4 working mirrors. See
+# vendor/librespot-audio/src/fetch/mod.rs.
+librespot-audio = { path = "vendor/librespot-audio" }
 
 [profile.dev]
 incremental = true

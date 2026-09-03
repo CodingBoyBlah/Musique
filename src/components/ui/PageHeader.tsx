@@ -11,12 +11,12 @@ interface Props {
   children: ReactNode; // meta lines + PlayActions
 }
 
-/*album/playlist header    note: the blurred artwork tint isnt drawn here -- it
- gets pushed to the UI store and Layout paints it as a fixed faint backdrop 
- behind the whole content area, so it stays put while the page scrolls. */
+/* Album/playlist header note: the blurred artwork tint is not drawn here.
+   It gets pushed to the UI store and Layout paints it as a fixed faint backdrop 
+   behind the whole content area, so it stays put while the page scrolls. */
 export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
   const setPageTint = useUIStore((s) => s.setPageTint);
-  useReflowPulse(); // re-render on resize / panel toggle so the header layout glides DONE
+  useReflowPulse(); // re-render on resize and panel toggle so the header layout glides
 
   // publish this page's cover to the UI store. ThemeEngine reacts to it and
   // applies the per-album accent LIVE (when the Album colors toggle is on).
@@ -75,12 +75,10 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
         >
           {eyebrow}
         </p>
-        {/* clamp to 2 lines + ellepses. a long album/playlist name used to
-            balloon this column (and crush the cover) when a side panel opened;
+        {/* Clamp to 2 lines with ellipsis. A long album/playlist name used to
+            balloon this column and crush the cover when a side panel opened;
             now it truncates. break-words handles a long unbroken word too.
             title attr shows the full name on hover. */}
-
-        {/* TODO experimenet with ellepses limit */}
         <h1
           className="font-black line-clamp-2 break-words"
           title={title}

@@ -26,11 +26,15 @@ interface PrefsStore {
 
 export const usePrefsStore = create<PrefsStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       audioQuality: "320",
       setAudioQuality: (v) => {
+        const prev = get().audioQuality;
         set({ audioQuality: v });
-        setApiAudioQuality(v).catch(() => {});
+        setApiAudioQuality(v).catch((err) => {
+          console.error("[prefs] set_audio_quality failed:", err);
+          set({ audioQuality: prev });
+        });
       },
 
       notifyOnTrack: true,
