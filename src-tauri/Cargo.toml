@@ -50,6 +50,7 @@ librespot-playback = { version = "0.8", default-features = false, features = ["r
 # backend forces 44100, which trips a SIGSEGV bug in cpal 0.16's macOS
 # set_sample_rate() when the device runs at 48000. Same version librespot pulls.
 rodio = "0.21"
+cpal = "0.16"
 # Discord Rich Presence - connects to the local Discord IPC socket. Pure Rust,
 # cross-platform, no system deps. All calls degrade silently if Discord is closed.
 discord-rich-presence = "1.1"
@@ -60,6 +61,9 @@ md5 = "0.7"
 # played", now-playing, and the device list. rustls to match the rest of the
 # librespot stack (no native-tls / OpenSSL dep).
 librespot-connect = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_System_Threading"] }
 
 # Unix (macOS + Linux): libc powers two crash-safety mechanisms.
 #  • macOS VM detection - read `kern.hv_vmm_present` via sysctl. Apple's
@@ -77,13 +81,13 @@ libc = "0.2"
 # a generic Web API client_id, taking the app down on launch (warmupPlayback).
 # Same 0.8.0 source, one function patched. See vendor/librespot-core/src/session.rs.
 [patch.crates-io]
-librespot-core = { path = "vendor/librespot-core" }
-# Vendored librespot-audio with the CDN fetch loop patched to fall through to the
-# next mirror on a non-206 response. Upstream 0.8.0 broke on the FIRST CDN URL
-# regardless of status, so one bad regional CDN edge (HTTP 500) killed ALL
-# playback even though storage-resolve returns 3-4 working mirrors. See
-# vendor/librespot-audio/src/fetch/mod.rs.
-librespot-audio = { path = "vendor/librespot-audio" }
+librespot-audio = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
+librespot-connect = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
+librespot-core = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
+librespot-metadata = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
+librespot-oauth = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
+librespot-playback = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
+librespot-protocol = { git = "https://github.com/crmne/librespot", branch = "fastpotify-0.8" }
 
 [profile.dev]
 incremental = true

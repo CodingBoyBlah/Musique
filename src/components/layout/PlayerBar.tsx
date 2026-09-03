@@ -339,10 +339,10 @@ export function PlayerBar() {
           onClick={() => { if (currentTrack) setImmersiveOpen(true); }}
           title={currentTrack ? "Open immersive view" : undefined}
         >
-          {/* crossfade on track change: old + new art coexist (default
+          {/* crossfade on track change old + new art coexist (default
               AnimatePresence mode) and dissolve through a soft blur so the swap
-              eases and not cuts. separate in/out blur+scale curves read as
-              a gentle focus and also pull. */}
+              eases and not cuts    separate in/out blur+scale curves read as
+              a gentle focus and also pul */}
           <AnimatePresence initial={false}>
             <motion.div
               key={currentTrack?.album?.image_url ?? currentTrack?.id ?? "none"}

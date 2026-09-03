@@ -103,18 +103,18 @@ function PillBtn({
 // account menu (avatar / name header + Account · Settings · Log out)
 
 const STATUS_DOT: Record<ConnectionStatus, string> = {
-  unconfigured: "rgba(255,255,255,0.30)",
+  unconfigured: "#34d399",
   configured:   "#f5a623",
   validating:   "#f5a623",
   valid:        "#34d399",
   invalid:      "#ff453a",
 };
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
-  unconfigured: "API not configured",
-  configured:   "Saved, not tested",
-  validating:   "Connecting…",
+  unconfigured: "Shared Quota (Ready)",
+  configured:   "Custom Quota (Saved)",
+  validating:   "Testing API…",
   valid:        "Connected",
-  invalid:      "Check your API keys",
+  invalid:      "Check API keys",
 };
 
 function AccountMenuItem({

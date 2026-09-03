@@ -9,15 +9,12 @@ use tauri::{AppHandle, Manager, State};
 use url::Url;
 
 const SCOPES: &str = "user-read-private user-read-email streaming \
+    user-read-playback-state user-modify-playback-state app-remote-control \
     user-library-read user-library-modify \
     playlist-read-private playlist-read-collaborative \
     playlist-modify-public playlist-modify-private \
     user-follow-read user-follow-modify \
-    user-top-read user-read-recently-played";
-
-fn redirect_uri() -> String {
-    format!("http://127.0.0.1:{}/callback", http::CALLBACK_PORT)
-}
+    user-top-read user-read-recently-played user-read-playback-position";
 
 fn gen_state() -> String {
     let mut bytes = [0u8; 16];
@@ -128,22 +125,19 @@ fn build_auth_url(client_id: &str, challenge: &str, state: &str, redirect: &str)
 
 #[tauri::command]
 pub async fn start_login(app: AppHandle) -> Result<auth::AuthStatus, AppError> {
-    // TODO DONE i think, cant remember what this was even for lol
     let db = app.state::<AppState>().db.clone();
     let auth = app.state::<AppState>().auth.clone();
 
-    let client_id = auth::get_setting_value(&db, "spotify_client_id")
-        .await?
-        .ok_or_else(|| {
-            AppError::Auth("Configure Spotify Client ID in Settings → Spotify API first.".into())
-        })?;
+    let client_id = auth::get_active_client_id(&db).await;
+    let port = http::CALLBACK_PORT;
 
     let verifier = pkce::generate_verifier();
     let challenge = pkce::derive_challenge(&verifier);
     let state_token = gen_state();
-    let redirect = redirect_uri();
+    let redirect = format!("http://127.0.0.1:{port}/login");
 
     let auth_url = build_auth_url(&client_id, &challenge, &state_token, &redirect);
+    eprintln!("[auth] starting login with client_id={client_id} port={port}");
 
     #[cfg(target_os = "linux")]
     open_url_linux(&auth_url).map_err(AppError::Auth)?;
@@ -156,27 +150,92 @@ pub async fn start_login(app: AppHandle) -> Result<auth::AuthStatus, AppError> {
             .map_err(|e| AppError::Auth(format!("Cannot open browser: {e}")))?;
     }
 
-    let code = http::wait_for_callback(&state_token).await?;
+    let code = http::wait_for_callback_port(port, &state_token).await?;
+    let status = auth::complete_login(&client_id, &code, &verifier, &redirect, &db, &auth).await?;
+    Ok(status)
+}
 
-    auth::complete_login(&client_id, &code, &verifier, &redirect, &db, &auth).await
+pub async fn authorize_playback_token(app: &AppHandle) -> Result<String, AppError> {
+    let db = app.state::<AppState>().db.clone();
+    let port = http::PLAYBACK_PORT;
+    let client_id = auth::PLAYBACK_CLIENT_ID;
+
+    let verifier = pkce::generate_verifier();
+    let challenge = pkce::derive_challenge(&verifier);
+    let state_token = gen_state();
+    let redirect = format!("http://127.0.0.1:{port}/login");
+
+    let mut url = Url::parse("https://accounts.spotify.com/authorize").unwrap();
+    url.query_pairs_mut()
+        .append_pair("client_id", client_id)
+        .append_pair("response_type", "code")
+        .append_pair("redirect_uri", &redirect)
+        .append_pair("code_challenge_method", "S256")
+        .append_pair("code_challenge", &challenge)
+        .append_pair("state", &state_token)
+        .append_pair("scope", auth::PLAYBACK_SCOPES);
+    let auth_url = url.to_string();
+
+    eprintln!("[playback auth] starting playback authorization on port {port}");
+
+    #[cfg(target_os = "linux")]
+    open_url_linux(&auth_url).map_err(AppError::Auth)?;
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener()
+            .open_url(&auth_url, None::<&str>)
+            .map_err(|e| AppError::Auth(format!("Cannot open browser: {e}")))?;
+    }
+
+    let code = http::wait_for_callback_port(port, &state_token).await?;
+    let resp = auth::call_token_endpoint(&[
+        ("grant_type", "authorization_code"),
+        ("code", &code),
+        ("redirect_uri", &redirect),
+        ("client_id", client_id),
+        ("code_verifier", &verifier),
+    ])
+    .await?;
+
+    auth::upsert_setting(&db, "spotify_playback_token", &resp.access_token).await?;
+    eprintln!("[playback auth] playback token acquired successfully");
+    Ok(resp.access_token)
 }
 
 #[tauri::command]
-pub async fn logout(state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn authorize_playback(app: AppHandle) -> Result<(), AppError> {
+    let _ = authorize_playback_token(&app).await?;
+    let playback = app.state::<AppState>().playback.clone();
+    let mut guard = playback.lock().await;
+    *guard = None;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn logout(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     token::clear_tokens()?;
 
     for key in [
         "spotify_token_expires_at",
+        "spotify_auth_client_id",
         "spotify_user_id",
         "spotify_display_name",
         "spotify_email",
         "spotify_product",
         "spotify_image_url",
+        "spotify_playback_token",
     ] {
         sqlx::query("DELETE FROM settings WHERE key = ?")
             .bind(key)
             .execute(&state.db)
             .await?;
+    }
+
+    if let Ok(app_data) = app.path().app_data_dir() {
+        let creds_file = app_data.join("credentials").join("credentials.json");
+        let _ = std::fs::remove_file(creds_file);
     }
 
     *state.auth.write().await = crate::state::AuthState::default();

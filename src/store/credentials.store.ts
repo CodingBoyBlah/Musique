@@ -11,6 +11,7 @@ export type ConnectionStatus =
 interface CredentialsState {
   clientId: string | null;
   hasSecret: boolean;
+  isCustom: boolean;
   status: ConnectionStatus;
   setStatus: (status: ConnectionStatus) => void;
   setFromCredentials: (creds: Credentials | null) => void;
@@ -20,21 +21,24 @@ interface CredentialsState {
 export const useCredentialsStore = create<CredentialsState>((set) => ({
   clientId: null,
   hasSecret: false,
-  status: "unconfigured",
+  isCustom: false,
+  status: "valid",
 
   setStatus: (status) => set({ status }),
 
   setFromCredentials: (creds) => {
     if (!creds) {
-      set({ clientId: null, hasSecret: false, status: "unconfigured" });
+      set({ clientId: null, hasSecret: false, isCustom: false, status: "valid" });
       return;
     }
+    const isCustom = Boolean(creds.is_custom);
     set({
       clientId: creds.client_id,
       hasSecret: creds.has_secret,
-      status: creds.client_id && creds.has_secret ? "configured" : "unconfigured",
+      isCustom,
+      status: isCustom ? (creds.has_secret ? "configured" : "valid") : "valid",
     });
   },
 
-  clear: () => set({ clientId: null, hasSecret: false, status: "unconfigured" }),
+  clear: () => set({ clientId: null, hasSecret: false, isCustom: false, status: "valid" }),
 }));

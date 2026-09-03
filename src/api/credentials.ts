@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export interface Credentials {
   client_id: string;
   has_secret: boolean;
+  is_custom?: boolean;
 }
 
 export interface ValidationResult {
@@ -12,8 +13,12 @@ export interface ValidationResult {
 
 export const saveCredentials = (
   clientId: string,
-  clientSecret: string,
-): Promise<void> => invoke("save_credentials", { clientId, clientSecret });
+  clientSecret?: string | null,
+): Promise<void> =>
+  invoke("save_credentials", {
+    clientId,
+    clientSecret: clientSecret ?? null,
+  });
 
 export const getCredentials = (): Promise<Credentials | null> =>
   invoke("get_credentials");

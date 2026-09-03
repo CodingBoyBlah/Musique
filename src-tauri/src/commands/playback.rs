@@ -83,6 +83,7 @@ pub async fn warmup_playback(app: AppHandle) -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn play_track(app: AppHandle, id: String) -> Result<(), AppError> {
+    eprintln!("[playback cmd] play_track id={id}");
     ensure_inner(&app).await?;
 
     let uri      = crate::playback::track_uri(&id)?;
@@ -148,6 +149,7 @@ pub async fn resume_playback(app: AppHandle) -> Result<(), AppError> {
 // song shown in the player bar always plays when u hit ▶
 #[tauri::command]
 pub async fn resume_or_play(app: AppHandle, id: String, position_ms: u32) -> Result<(), AppError> {
+    eprintln!("[playback cmd] resume_or_play id={id} pos={position_ms}");
     // heal a missing/dead session first (rebuild resets `loaded` to false
     // so we fall thru to a real load below instead of a silent resume)
     ensure_inner(&app).await?;
