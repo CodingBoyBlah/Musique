@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import {
   Play, Heart, Disc3, Users, ListMusic,
@@ -43,7 +43,7 @@ const SHORTCUTS: { name: string; sub: string; to: string; icon: LucideIcon; seed
   { name: "Playlists",   sub: "Made and collected",       to: "/playlists",           icon: ListMusic, seed: "playlists-shelf" },
 ];
 
-function ShortcutCard({ name, sub, to, icon: Icon, seed }: (typeof SHORTCUTS)[number]) {
+function ShortcutCard({ name, sub: _sub, to, icon: Icon, seed }: (typeof SHORTCUTS)[number]) {
   const [hover, setHover] = useState(false);
   return (
     <Link
@@ -341,6 +341,7 @@ function greeting() {
 export default function Home() {
   const { loggedIn, displayName, isLoading, login, loggingIn } = useAuth();
   const hello = greeting();
+  const reduceMotion = useReducedMotion();
   useReflowPulse();
 
   if (isLoading) {

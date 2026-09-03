@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
-  X,
   Languages,
   Music2,
   RefreshCw,
@@ -102,7 +101,6 @@ function CoverBg({ url }: { url: string | null | undefined }) {
 // panel
 
 export function LyricsPanel() {
-  const setLyricsOpen = usePlayerStore((s) => s.setLyricsOpen);
   const track = usePlayerStore((s) => s.currentTrack);
   const setPosition = usePlayerStore((s) => s.setPosition);
   const offset = usePlayerStore((s) => s.lyricsOffsetMs);
