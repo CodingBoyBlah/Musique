@@ -6,6 +6,7 @@ import {
   Music, Disc3, Users,
   Pin, PinOff, Plus,
   Search, ChevronDown, X,
+  Sparkles,
 } from "lucide-react";
 import { usePinsStore } from "../../store/pins.store";
 import { useContextMenu } from "../ui/ContextMenu";
@@ -211,6 +212,7 @@ export default function Sidebar() {
           <NavItem icon={<Music size={16} strokeWidth={2} />} label="Songs"   active={onLibrary && tab === "songs"}   onClick={() => navigate("/library?tab=songs")} />
           <NavItem icon={<Disc3 size={16} strokeWidth={2} />} label="Albums"  active={onLibrary && tab === "albums"}  onClick={() => navigate("/library?tab=albums")} />
           <NavItem icon={<Users size={16} strokeWidth={2} />} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} />
+          <NavItem icon={<Sparkles size={16} strokeWidth={2} />} label="Playground" active={path === "/playground"} onClick={() => navigate("/playground")} />
         </Section>
 
         <Section label="Pins" expanded={pinsOpen} onToggle={() => setPinsOpen(v => !v)}>
