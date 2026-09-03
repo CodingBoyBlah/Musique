@@ -164,6 +164,7 @@ function EmptyRow({ children }: { children: React.ReactNode }) {
 }
 
 export function QueuePanel() {
+  const toggleQueue     = usePlayerStore((s) => s.toggleQueue);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const currentTrack    = usePlayerStore((s) => s.currentTrack);
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
