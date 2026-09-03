@@ -13,7 +13,6 @@ import Home from "./pages/Home";
 const Settings = lazy(() => import("./pages/Settings"));
 const Search = lazy(() => import("./pages/Search"));
 const Library = lazy(() => import("./pages/Library"));
-const Profile = lazy(() => import("./pages/Profile"));
 const Playlists = lazy(() => import("./pages/Playlists"));
 const PlaylistPage = lazy(() => import("./pages/PlaylistPage"));
 const ArtistPage = lazy(() => import("./pages/ArtistPage"));
@@ -370,14 +369,6 @@ export default function App() {
             element={
               <Suspense fallback={<Loader />}>
                 <Library />
-              </Suspense>
-            }
-          />
-          <Route
-            path="profile"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Profile />
               </Suspense>
             }
           />

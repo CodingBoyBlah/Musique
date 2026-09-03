@@ -111,7 +111,7 @@ function LikedSongsTab() {
         title="Songs you like will appear here"
         hint="Click Sync to load your liked songs from Spotify"
         action={
-          <Link to="/search" style={{ padding: "8px 20px", borderRadius: 99, background: "var(--color-accent)", color: "#fff", fontSize: 13, fontWeight: 600, textDecoration: "none", marginTop: 4 }}>
+          <Link to="/" style={{ padding: "8px 20px", borderRadius: 99, background: "var(--color-accent)", color: "#fff", fontSize: 13, fontWeight: 600, textDecoration: "none", marginTop: 4 }}>
             Find songs
           </Link>
         }

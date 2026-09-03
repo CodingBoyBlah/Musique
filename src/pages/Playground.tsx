@@ -6,7 +6,11 @@ import {
   PulsePlayButton,
   SegmentedControl,
 } from "../components/playground/PlaygroundControls";
-import { MusiqueAlbumCard } from "../components/playground/PlaygroundCards";
+import {
+  MusiqueAlbumCard,
+  GenreBucketCard,
+  ELECTRONIC_ALBUMS,
+} from "../components/playground/PlaygroundCards";
 import { AlbumTrackRowsSection } from "../components/playground/PlaygroundTracks";
 import {
   SpringToggle,
@@ -68,19 +72,21 @@ export default function Playground() {
           </div>
         </section>
 
-        {/* SECTION 2: ALBUM CARD */}
+        {/* SECTION 2: ALBUM & GENRE CRATE CARDS */}
         <section>
           <div style={{ marginBottom: 14 }}>
             <h2 style={{ fontSize: 17, fontWeight: 700, color: "var(--color-text-hi)", margin: "0 0 4px" }}>
-              2. Album Card
+              2. Album Card & Genre Crate Buckets
             </h2>
             <p style={{ fontSize: 13, color: "var(--color-text-dim)", margin: 0 }}>
-              Random Access Memories album card with hover elevation and floating play button with blur/scale icon animation.
+              Standard album card alongside 2D genre crate buckets (holding slotted album covers, interactive digging on click, and hover fan out).
             </p>
           </div>
 
-          <div style={{ padding: 20, borderRadius: 14, background: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: 20, padding: 20, borderRadius: 14, background: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
             <MusiqueAlbumCard />
+            <GenreBucketCard genre="Hip-Hop" />
+            <GenreBucketCard genre="Electronic" albums={ELECTRONIC_ALBUMS} />
           </div>
         </section>
 

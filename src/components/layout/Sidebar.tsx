@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -6,7 +6,6 @@ import {
   Music, Disc3, Users,
   Pin, PinOff,
   Search, ChevronDown, X,
-  Sparkles,
 } from "lucide-react";
 import { usePinsStore } from "../../store/pins.store";
 import { useContextMenu } from "../ui/ContextMenu";
@@ -152,10 +151,17 @@ export default function Sidebar() {
   const [query,       setQuery]       = useState(
     () => new URLSearchParams(location.search).get("q") ?? "",
   );
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  function runSearch(value: string) {
-    setQuery(value);
-    navigate(value.trim() ? `/search?q=${encodeURIComponent(value)}` : "/search");
+  useEffect(() => {
+    const q = new URLSearchParams(location.search).get("q") ?? "";
+    setQuery(q);
+  }, [location.search]);
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && query.trim()) {
+      navigate(`/search?q=${encodeURIComponent(query.trim())}`);
+    }
   }
 
   return (
@@ -176,12 +182,16 @@ export default function Sidebar() {
           gap to the top, matching the 8px side padding (equal inset).titlebar
           is the same height so the ... < > icons line up at this level DONE */}
       <div style={{ height: 48, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 8px" }}>
-        <div style={{ ...glassPill, height: 32 }}>
+        <div
+          onClick={() => inputRef.current?.focus()}
+          style={{ ...glassPill, height: 32, cursor: "text" }}
+        >
           <Search size={14} strokeWidth={2.2} style={{ color: "var(--color-text-dim)", flexShrink: 0 }} />
           <input
+            ref={inputRef}
             value={query}
-            onChange={(e) => runSearch(e.target.value)}
-            onFocus={() => { if (path !== "/search") navigate(query.trim() ? `/search?q=${encodeURIComponent(query)}` : "/search"); }}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Search"
             spellCheck={false}
             style={{
@@ -193,7 +203,12 @@ export default function Sidebar() {
           {query && (
             <Tooltip label="Clear search" side="top">
               <button
-                onClick={() => runSearch("")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setQuery("");
+                  inputRef.current?.focus();
+                  if (path === "/search") navigate("/");
+                }}
                 style={{ display: "flex", border: "none", background: "transparent", color: "var(--color-text-dim)", cursor: "pointer", padding: 0, flexShrink: 0 }}
               >
                 <X size={13} strokeWidth={2.4} />
@@ -214,7 +229,6 @@ export default function Sidebar() {
           <NavItem icon={<Music size={16} strokeWidth={2} />} label="Songs"   active={onLibrary && tab === "songs"}   onClick={() => navigate("/library?tab=songs")} />
           <NavItem icon={<Disc3 size={16} strokeWidth={2} />} label="Albums"  active={onLibrary && tab === "albums"}  onClick={() => navigate("/library?tab=albums")} />
           <NavItem icon={<Users size={16} strokeWidth={2} />} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} />
-          <NavItem icon={<Sparkles size={16} strokeWidth={2} />} label="Playground" active={path === "/playground"} onClick={() => navigate("/playground")} />
         </Section>
 
         <Section label="Pins" expanded={pinsOpen} onToggle={() => setPinsOpen(v => !v)}>
