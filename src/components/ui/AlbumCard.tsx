@@ -7,14 +7,13 @@ import { CoverArt } from "./CoverArt";
 import { ReleaseCountdown } from "./ReleaseCountdown";
 import { releaseYear, isUpcoming } from "../../utils/fmt";
 import { prefetchAlbum } from "../../lib/prefetch";
-import { useReflowPulse } from "../../hooks/useReflowPulse";
 import { CirclePlayButton } from "./CirclePlayButton";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { getAlbum } from "../../api/spotify";
 import { playTrack, pausePlayback, resumePlayback } from "../../api/playback";
 
-const REFLOW = { type: "spring" as const, stiffness: 520, damping: 44 };
+const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 
 const MotionLink = motion.create(Link);
 
@@ -42,7 +41,6 @@ function AlbumCardImpl({ album, size = 160 }: Props) {
   const imgSize = size - 24;
   const [hover, setHover] = useState(false);
   const qc = useQueryClient();
-  useReflowPulse();
 
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);

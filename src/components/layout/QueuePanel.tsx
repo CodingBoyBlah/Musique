@@ -185,14 +185,15 @@ export function QueuePanel() {
     <motion.div
       // in-flow rail below the title bar; slides via transform. width is reserved
       // by the spacer in Layout.tsx so the grid reflows once, both ways.
-      initial={{ x: WIDTH, opacity: 0.8 }}
-      animate={{ x: 0, opacity: 1 }}
-      exit={{ x: WIDTH, opacity: 0 }}
-      transition={{ type: "spring", stiffness: 340, damping: 34 }}
+      initial={{ x: WIDTH }}
+      animate={{ x: 0 }}
+      exit={{ x: WIDTH }}
+      transition={{ type: "spring", stiffness: 340, damping: 38 }}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH, display: "flex", flexDirection: "column", overflow: "hidden",
         background: "var(--color-sidebar)", borderLeft: "1px solid var(--color-border)",
+        willChange: "transform",
       }}
     >
       <div style={{ width: WIDTH, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>

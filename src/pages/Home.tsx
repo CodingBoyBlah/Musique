@@ -23,13 +23,12 @@ import { AlbumCard } from "../components/ui/AlbumCard";
 import { EvenGrid, EvenGridSkeleton } from "../components/ui/EvenGrid";
 import { CirclePlayButton } from "../components/ui/CirclePlayButton";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
-import { useReflowPulse } from "../hooks/useReflowPulse";
 import { meshGradient } from "../lib/mesh";
 import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
 
 // grid reflow spring for smooth panel gliding
-const REFLOW = { type: "spring" as const, stiffness: 520, damping: 44 };
+const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 
 // ─── top 6 quick action cards ────────────────────────────────────────────────
 
@@ -47,9 +46,11 @@ interface QuickItem {
 function QuickActionCard({
   item,
   recentTracks,
+  index = 0,
 }: {
   item: QuickItem;
   recentTracks: TrackItem[];
+  index?: number;
 }) {
   const [hover, setHover] = useState(false);
   const navigate = useNavigate();
@@ -142,9 +143,17 @@ function QuickActionCard({
   }
 
   return (
-    <div
+    <motion.div
       role="button"
       tabIndex={0}
+      layout
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        opacity: { duration: 0.28, delay: index * 0.035 },
+        y: { duration: 0.28, delay: index * 0.035 },
+        layout: REFLOW,
+      }}
       onClick={() => handlePlay()}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handlePlay(); }}
       onMouseEnter={() => setHover(true)}
@@ -166,7 +175,8 @@ function QuickActionCard({
       }}
     >
       {item.isLikedSongs ? (
-        <div
+        <motion.div
+          layout
           style={{
             width: 64,
             height: 64,
@@ -179,9 +189,10 @@ function QuickActionCard({
           }}
         >
           <Heart size={22} fill="#ffffff" strokeWidth={0} />
-        </div>
+        </motion.div>
       ) : item.imageUrl ? (
-        <img
+        <motion.img
+          layout
           src={item.imageUrl}
           alt=""
           loading="lazy"
@@ -193,7 +204,8 @@ function QuickActionCard({
           }}
         />
       ) : (
-        <div
+        <motion.div
+          layout
           style={{
             width: 64,
             height: 64,
@@ -206,10 +218,10 @@ function QuickActionCard({
           }}
         >
           <Music2 size={22} strokeWidth={1.8} />
-        </div>
+        </motion.div>
       )}
 
-      <div style={{ flex: 1, minWidth: 0, padding: "0 14px", display: "flex", alignItems: "center", gap: 8 }}>
+      <motion.div layout style={{ flex: 1, minWidth: 0, padding: "0 14px", display: "flex", alignItems: "center", gap: 8 }}>
         <span
           style={{
             fontSize: 14,
@@ -235,50 +247,50 @@ function QuickActionCard({
             ))}
           </div>
         )}
-      </div>
+      </motion.div>
 
-      <CirclePlayButton
-        isPlaying={isThisPlaying}
-        visible={hover || isThisPlaying}
-        onClick={(e) => handlePlay(e)}
-        size={42}
-        iconSize={17}
-        style={{ marginRight: 12 }}
-        ariaLabel={isThisPlaying ? `Pause ${item.title}` : `Play ${item.title}`}
-      />
-    </div>
+      <motion.div layout style={{ marginRight: 12, flexShrink: 0 }}>
+        <CirclePlayButton
+          isPlaying={isThisPlaying}
+          visible={hover || isThisPlaying}
+          onClick={(e) => handlePlay(e)}
+          size={42}
+          iconSize={17}
+          ariaLabel={isThisPlaying ? `Pause ${item.title}` : `Play ${item.title}`}
+        />
+      </motion.div>
+    </motion.div>
   );
 }
 
 function QuickActionsShelf() {
   const containerRef = useRef<HTMLDivElement>(null);
-  useReflowPulse();
 
-  const [containerWidth, setContainerWidth] = useState<number>(() => {
+  const [cols, setCols] = useState<number>(() => {
     if (typeof window !== "undefined") {
-      return Math.max(320, window.innerWidth - 320);
+      const w = Math.max(320, window.innerWidth - 320);
+      return w >= 680 ? 3 : w >= 400 ? 2 : 1;
     }
-    return 800;
+    return 3;
   });
 
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const measure = () => {
-      const w = el.getBoundingClientRect().width;
-      if (w > 0) setContainerWidth(w);
+    const measure = (w: number) => {
+      if (w <= 0) return;
+      const nextCols = w >= 680 ? 3 : w >= 400 ? 2 : 1;
+      setCols((prev) => (prev === nextCols ? prev : nextCols));
     };
-    measure();
+    measure(el.getBoundingClientRect().width);
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        if (entry.contentRect.width > 0) setContainerWidth(entry.contentRect.width);
+        measure(entry.contentRect.width);
       }
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-
-  const cols = containerWidth >= 680 ? 3 : containerWidth >= 400 ? 2 : 1;
 
   const { data: recentTracks = [] } = useRecentlyPlayed();
   const { data: topTracks = [] } = useTopTracks("short_term");
@@ -381,9 +393,8 @@ function QuickActionsShelf() {
   }, [recentTracks, topArtists, topTracks, newReleases]);
 
   return (
-    <motion.div
+    <div
       ref={containerRef}
-      layout="position"
       style={{
         display: "grid",
         gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
@@ -392,17 +403,14 @@ function QuickActionsShelf() {
       }}
     >
       {items.map((item, i) => (
-        <motion.div
+        <QuickActionCard
           key={item.id}
-          layout="position"
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ layout: REFLOW, duration: 0.28, delay: i * 0.035 }}
-        >
-          <QuickActionCard item={item} recentTracks={recentTracks} />
-        </motion.div>
+          item={item}
+          recentTracks={recentTracks}
+          index={i}
+        />
       ))}
-    </motion.div>
+    </div>
   );
 }
 
@@ -426,7 +434,6 @@ function TileSkeleton() {
 // ─── recommendation / track tile ─────────────────────────────────────────────
 
 function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
-  useReflowPulse();
   const [hover, setHover] = useState(false);
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
@@ -683,7 +690,6 @@ function greeting() {
 export default function Home() {
   const { loggedIn, displayName, isLoading, login, loggingIn } = useAuth();
   const hello = greeting();
-  useReflowPulse();
 
   if (isLoading) {
     return (
@@ -744,13 +750,13 @@ export default function Home() {
   }
 
   return (
-    <motion.div layout="position" style={{ display: "flex", flexDirection: "column", gap: "clamp(26px, 3.4vw, 38px)" }}>
-      <motion.div layout="position">
+    <div style={{ display: "flex", flexDirection: "column", gap: "clamp(26px, 3.4vw, 38px)" }}>
+      <div>
         <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 600, letterSpacing: "0.02em", color: "var(--color-text-dim)" }}>{hello}</p>
         <h1 style={{ margin: 0, fontSize: "clamp(26px, 3.8vw, 34px)", fontWeight: 800, letterSpacing: "-0.03em", color: "var(--color-text-hi)", textWrap: "balance" } as React.CSSProperties}>
           {displayName ? displayName.split(" ")[0] : "Welcome back"}
         </h1>
-      </motion.div>
+      </div>
 
       {/* top 6 quick action shelf */}
       <QuickActionsShelf />
@@ -760,6 +766,6 @@ export default function Home() {
       <motion.div layout="position"><TopTracks /></motion.div>
       <motion.div layout="position"><TopArtists /></motion.div>
       <motion.div layout="position"><NewReleases /></motion.div>
-    </motion.div>
+    </div>
   );
 }

@@ -205,16 +205,17 @@ export function LyricsPanel() {
       // open AND close), so the grid reflows in one step and the cards glide via
       // framer `layout` both ways. This panel just slides over that region; its
       // width never animates, so nothing reflows per-frame.
-      initial={{ x: WIDTH, opacity: 0.8 }}
-      animate={{ x: 0, opacity: 1 }}
-      exit={{ x: WIDTH, opacity: 0 }}
-      transition={{ type: "spring", stiffness: 340, damping: 34 }}
+      initial={{ x: WIDTH }}
+      animate={{ x: 0 }}
+      exit={{ x: WIDTH }}
+      transition={{ type: "spring", stiffness: 340, damping: 38 }}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH,
         overflow: "hidden",
         borderLeft: "1px solid var(--color-border)",
-        background: "transparent",
+        background: "var(--color-sidebar, #0a0a12)",
+        willChange: "transform",
       }}
     >
       <div

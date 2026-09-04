@@ -21,7 +21,7 @@ const CATEGORIES = ["all", "songs", "artists", "albums", "playlists"] as const;
 type Category = (typeof CATEGORIES)[number];
 
 
-const REFLOW = { type: "spring" as const, stiffness: 520, damping: 44 };
+const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 const MotionLink = motion.create(Link);
 
 function PlaylistResultCard({ playlist }: { playlist: PlaylistCardType }) {
