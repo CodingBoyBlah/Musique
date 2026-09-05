@@ -569,7 +569,7 @@ pub fn run() {
     if std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
         std::env::set_var(
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            "--js-flags=--max-old-space-size=96 --optimize-for-size --expose-gc --renderer-process-limit=1 --gpu-rasterization-msaa-sample-count=0 --num-raster-threads=1 --enable-features=TrimOnMemoryPressure,NetworkServiceInProcess --disable-background-networking --disable-component-update --disable-domain-reliability --disable-sync --disable-breakpad --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,BackForwardCache,GlobalMediaControls",
+            "--js-flags=--max-old-space-size=96,--optimize-for-size --renderer-process-limit=1 --gpu-rasterization-msaa-sample-count=0 --num-raster-threads=1 --enable-features=TrimOnMemoryPressure,NetworkServiceInProcess --disable-background-networking --disable-component-update --disable-domain-reliability --disable-sync --disable-breakpad --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,BackForwardCache,GlobalMediaControls",
         );
     }
 

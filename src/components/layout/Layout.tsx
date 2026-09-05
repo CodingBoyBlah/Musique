@@ -67,8 +67,6 @@ export default function Layout() {
   useEffect(() => {
     if (mainRef.current) mainRef.current.scrollTop = 0;
     const t = setTimeout(() => {
-      // @ts-expect-error optional V8 gc exposed via --expose-gc
-      if (typeof window !== "undefined" && window.gc) window.gc();
       invoke("trim_memory").catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
@@ -77,8 +75,6 @@ export default function Layout() {
   useEffect(() => {
     const handleVis = () => {
       if (document.visibilityState === "hidden") {
-        // @ts-expect-error optional V8 gc exposed via --expose-gc
-        if (typeof window !== "undefined" && window.gc) window.gc();
         invoke("trim_memory").catch(() => {});
       }
     };
