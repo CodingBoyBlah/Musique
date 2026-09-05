@@ -244,9 +244,9 @@ function QuickActionCard({
             {[0.4, 1.0, 0.6].map((_, i) => (
               <motion.div
                 key={i}
-                animate={{ height: ["20%", "100%", "20%"] }}
+                animate={{ scaleY: [0.2, 1.0, 0.2] }}
                 transition={{ repeat: Infinity, duration: 0.55 + i * 0.15, ease: "easeInOut" }}
-                style={{ flex: 1, borderRadius: 1, background: "var(--color-accent)" }}
+                style={{ flex: 1, height: "100%", borderRadius: 1, background: "var(--color-accent)", transformOrigin: "bottom" }}
               />
             ))}
           </div>
@@ -480,9 +480,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
 
   return (
     <motion.button
-      layout="position"
       transformTemplate={zTransform}
-      transition={{ layout: REFLOW }}
       onClick={onPlay}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -596,7 +594,7 @@ function MadeForYou() {
     queryKey:  ["recommendations", "home"],
     queryFn:   () => getRecommendations(undefined, 16),
     staleTime: 30 * 60_000,
-    gcTime:    24 * 60 * 60_000,
+    gcTime:    5 * 60_000,
     refetchOnWindowFocus: false,
   });
 

@@ -119,10 +119,11 @@ function PlayPauseButton({
 // progress bar
 
 function ProgressBar({
-  positionMs, durationMs, onSeek,
+  durationMs, onSeek,
 }: {
-  positionMs: number; durationMs: number; onSeek: (ms: number) => void;
+  durationMs: number; onSeek: (ms: number) => void;
 }) {
+  const positionMs = usePlayerStore((s) => s.positionMs);
   // hover scrub preview + drag-scrub. while dragging the bar follows the cursor until release, when we commit the seek.
 
 
@@ -250,7 +251,6 @@ export function PlayerBar() {
   const toggleLyrics    = usePlayerStore((s) => s.toggleLyrics);
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
   const currentTrack    = usePlayerStore((s) => s.currentTrack);
-  const positionMs      = usePlayerStore((s) => s.positionMs);
   const durationMs      = usePlayerStore((s) => s.durationMs);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const incrementPos    = usePlayerStore((s) => s.incrementPos);
@@ -316,7 +316,7 @@ export function PlayerBar() {
     seekPlayback(ms).catch(() => {}); // and tell librespot
   }
   function handlePrev() {
-    if (positionMs > 3000) {
+    if (usePlayerStore.getState().positionMs > 3000) {
       doSeek(0);
     } else {
       const prev = previous(currentTrack);
@@ -429,7 +429,7 @@ export function PlayerBar() {
                   setPlaying(true);                   // optimistic
                   const clickedAt = Date.now();
                   const id = currentTrack.id;
-                  resumeOrPlay(currentTrack.id, sessionReady ? positionMs : 0)
+                  resumeOrPlay(currentTrack.id, sessionReady ? usePlayerStore.getState().positionMs : 0)
                     .then(() => {
                       /* watchdog: if no real "playing" event lands within 5s the
                        load silently died (dead session / unavailable track),
@@ -460,7 +460,7 @@ export function PlayerBar() {
             </Tooltip>
           )}
         </div>
-        <ProgressBar positionMs={positionMs} durationMs={durationMs} onSeek={doSeek} />
+        <ProgressBar durationMs={durationMs} onSeek={doSeek} />
       </div>
 
       {/* right: volume + queue */}

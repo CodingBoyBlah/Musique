@@ -121,44 +121,10 @@ function romanizeCyrillic(text: string): string {
   return out;
 }
 
-// japanese: kuromoji + wanakana
+// japanese: wanakana (zero dictionary footprint)
 
-type Token = { surface_form: string; reading?: string };
-type Tokenizer = { tokenize: (s: string) => Token[] };
-
-let jaTokenizer: Tokenizer | null = null;
-let jaPromise: Promise<Tokenizer> | null = null;
-
-function getJaTokenizer(): Promise<Tokenizer> {
-  if (jaTokenizer) return Promise.resolve(jaTokenizer);
-  if (!jaPromise) {
-    jaPromise = import("kuromoji").then(
-      (mod) =>
-        new Promise<Tokenizer>((resolve, reject) => {
-          const kuromoji = ((mod as { default?: unknown }).default ?? mod) as {
-            builder: (o: { dicPath: string }) => { build: (cb: (e: Error | null, t: Tokenizer) => void) => void };
-          };
-          // dict served from /dict (public/dict/*.dat.gz). kuromoji's `browser`
-          // field swaps in the XHR loader automatically.
-          kuromoji.builder({ dicPath: "/dict" }).build((err, tok) => (err ? reject(err) : resolve(tok)));
-        }),
-    );
-  }
-  return jaPromise;
-}
-
-const JA_PUNCT = /^[\s　-〿＀-￯.,!?…~]+$/u;
-
-function romanizeJapanese(text: string, tok: Tokenizer, toRomaji: (s: string) => string): string {
-  
-  const parts: string[] = [];
-  for (const t of tok.tokenize(text)) {
-    if (JA_PUNCT.test(t.surface_form)) continue;
-    const reading = t.reading && t.reading !== "*" ? t.reading : t.surface_form;
-    const r = toRomaji(reading).trim();
-    if (r) parts.push(r);
-  }
-  return parts.join(" ").replace(/\s+/g, " ").trim();
+function romanizeJapanese(text: string, toRomaji: (s: string) => string): string {
+  return toRomaji(text).trim();
 }
 
 // public API
@@ -175,8 +141,8 @@ export async function romanizeLines(texts: string[], script: Script): Promise<st
     case "cyrillic":
       return texts.map(romanizeCyrillic);
     case "japanese": {
-      const [tok, toRomaji] = await Promise.all([getJaTokenizer(), loadWanakana()]);
-      return texts.map((t) => (t ? romanizeJapanese(t, tok, toRomaji) : ""));
+      const toRomaji = await loadWanakana();
+      return texts.map((t) => (t ? romanizeJapanese(t, toRomaji) : ""));
     }
     default:
       return texts.slice();

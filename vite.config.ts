@@ -9,7 +9,7 @@ export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
   clearScreen: false,
   
-  optimizeDeps: { include: ["kuromoji", "wanakana", "pinyin-pro"] },
+  optimizeDeps: { include: ["wanakana", "pinyin-pro"] },
   build: {
     rollupOptions: {
       output: {
@@ -19,7 +19,7 @@ export default defineConfig(async () => ({
           "vendor-motion": ["framer-motion"],
           "vendor-query":  ["@tanstack/react-query"],
           "vendor-icons":  ["lucide-react"],
-          romanize:        ["kuromoji", "wanakana", "pinyin-pro"],
+          romanize:        ["wanakana", "pinyin-pro"],
         },
       },
     },

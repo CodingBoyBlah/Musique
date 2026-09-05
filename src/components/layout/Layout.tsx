@@ -15,6 +15,7 @@ import { useUIStore } from "../../store/ui.store";
 import { getBackdropActive } from "../../api/window";
 import { backdropScrim } from "../../lib/backdrop";
 import { isMac } from "../../lib/platform";
+import { invoke } from "@tauri-apps/api/core";
 
 export default function Layout() {
   const queueOpen = usePlayerStore((s) => s.queueOpen);
@@ -65,7 +66,25 @@ export default function Layout() {
 
   useEffect(() => {
     if (mainRef.current) mainRef.current.scrollTop = 0;
+    const t = setTimeout(() => {
+      // @ts-expect-error optional V8 gc exposed via --expose-gc
+      if (typeof window !== "undefined" && window.gc) window.gc();
+      invoke("trim_memory").catch(() => {});
+    }, 1500);
+    return () => clearTimeout(t);
   }, [location.pathname]);
+
+  useEffect(() => {
+    const handleVis = () => {
+      if (document.visibilityState === "hidden") {
+        // @ts-expect-error optional V8 gc exposed via --expose-gc
+        if (typeof window !== "undefined" && window.gc) window.gc();
+        invoke("trim_memory").catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", handleVis);
+    return () => document.removeEventListener("visibilitychange", handleVis);
+  }, []);
 
   useEffect(() => {
     getBackdropActive().then(setBackdropActive).catch(() => setBackdropActive(false));
@@ -139,12 +158,15 @@ export default function Layout() {
                 <div
                   style={{
                     position: "absolute",
-                    inset: 0,
+                    top: "-10%",
+                    left: "10%",
+                    width: "80%",
+                    height: "65%",
                     backgroundImage: `url(${pageTint})`,
                     backgroundSize: "cover",
                     backgroundPosition: "center top",
-                    filter: "blur(72px) saturate(1.7)",
-                    transform: "scale(1.6)",
+                    filter: "blur(48px) saturate(1.7)",
+                    transform: "scale(1.4)",
                     transformOrigin: "center top",
                     maskImage:
                       "radial-gradient(75% 70% at 50% 0%, #000 0%, rgba(0,0,0,0.5) 42%, transparent 78%)",
