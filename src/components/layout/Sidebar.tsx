@@ -39,15 +39,11 @@ function NavItem({
 }: {
   icon: React.ReactNode; label: string; active: boolean; onClick: () => void; collapsed?: boolean;
 }) {
-  const [hover, setHover] = useState(false);
-  const bg = active ? "var(--color-active)" : hover ? "var(--color-hover)" : "transparent";
-
   const btn = (
     <motion.button
       onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
       whileTap={{ scale: 0.98 }}
+      whileHover={active ? {} : { backgroundColor: "var(--color-hover)" }}
       transition={{ type: "spring", stiffness: 400, damping: 26 }}
       transformTemplate={zTransform}
       style={{
@@ -63,8 +59,8 @@ function NavItem({
         border:        "none",
         fontSize:      14,
         fontWeight:    active ? 600 : 500,
-        color:         active ? "var(--color-text-hi)" : hover ? "var(--color-text-hi)" : "var(--color-text)",
-        background:    bg,
+        color:         active ? "var(--color-text-hi)" : "var(--color-text)",
+        background:    active ? "var(--color-active)" : "transparent",
         cursor:        "pointer",
         transition:    "background 0.12s, color 0.12s",
         textAlign:     collapsed ? "center" : "left",
@@ -167,15 +163,19 @@ export default function Sidebar() {
 
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar    = useUIStore((s) => s.toggleSidebar);
-  const [windowWidth, setWindowWidth] = useState(() => typeof window !== "undefined" ? window.innerWidth : 1200);
+  const [isNarrow, setIsNarrow] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 768 : false
+  );
 
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia("(max-width: 767px)");
+    const handler = (e: MediaQueryListEvent) => setIsNarrow(e.matches);
+    setIsNarrow(mql.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
   }, []);
 
-  const isNarrow = windowWidth < 768;
   const isCollapsed = sidebarCollapsed || isNarrow;
 
   const [spotifyOpen, setSpotifyOpen] = useState(true);

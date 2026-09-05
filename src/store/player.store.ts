@@ -174,7 +174,6 @@ export const usePlayerStore = create<PlayerStore>()(
         currentTrack: s.currentTrack,
         currentId:    s.currentId,
         durationMs:   s.durationMs,
-        positionMs:   s.positionMs,
       }),
     },
   ),

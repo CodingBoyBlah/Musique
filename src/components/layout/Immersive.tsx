@@ -26,48 +26,50 @@ import {
 
 function GradientBg({ url }: { url: string | null | undefined }) {
   const reduceMotion = useReducedMotion();
-  // isolation:isolate + an opaque base = nothing behind ever bleeds through
 
-
-// TODO done
   const base: React.CSSProperties = {
     position: "absolute", inset: 0, overflow: "hidden",
     isolation: "isolate", background: "#07070b",
+    pointerEvents: "none",
   };
-  if (!url) return <div aria-hidden style={base} />;
-  /* perf: only TWO blurred layers, one moderate raidius and we animate
-   only translate/rotate NOT scale or filter. animating scale on a blurred
-   element rerasterizes the (giant) blur every frame, which is exactly what
-   made this view crawl {Notes in obsidian} translate/rotate are pure compositor transforms the
-   GPU slaps onto the already blurred bitmap for free. no mixBlendMode either
-   (kills the compositor fast-paths). still get the slow churn of the song's
-   colours, just cheap.
-   note: no transform here, framer owns the transform property. scale is passed
-   THROUGH framer ( ALWAYS constant, never animated) so the blur rasterizes only once. */
 
-// we could do a third layer with a different blur radius and a different (TODO ??)
-  const layer = (opacity: number): React.CSSProperties => ({
-    position: "absolute", inset: "-35%",
-    backgroundImage: `url(${url})`, backgroundSize: "cover", backgroundPosition: "center",
-    filter: "blur(64px) saturate(1.8)", opacity,
+  const layer = (opacity: number, blur: number): React.CSSProperties => ({
+    position: "absolute", inset: "-25%",
+    backgroundImage: url ? `url("${url}")` : "none", backgroundSize: "cover", backgroundPosition: "center",
+    filter: `blur(${blur}px) saturate(1.8)`, opacity,
     willChange: "transform", backfaceVisibility: "hidden",
   });
+
   return (
     <div aria-hidden style={base}>
-      <motion.div
-        initial={false}
-        animate={reduceMotion ? { scale: 1.35 } : { scale: 1.35, x: [0, 70, -50, 0], y: [0, -54, 44, 0], rotate: [0, 6, -5, 0] }}
-        transition={{ duration: 30, repeat: Infinity, ease: "easeInOut" }}
-        style={layer(0.95)}
+      {/* Deep atmospheric radial glow so the canvas has rich color depth and never flat pitch black */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: "radial-gradient(ellipse 80% 60% at 50% 35%, rgba(32, 28, 52, 0.6) 0%, #07070b 100%)",
+        }}
       />
-      <motion.div
-        initial={false}
-        animate={reduceMotion ? { scale: 1.6 } : { scale: 1.6, x: [0, -60, 50, 0], y: [0, 48, -38, 0], rotate: [0, -7, 5, 0] }}
-        transition={{ duration: 44, repeat: Infinity, ease: "easeInOut" }}
-        style={layer(0.5)}
-      />
+      {url && (
+        <>
+          <motion.div
+            initial={false}
+            transformTemplate={zTransform}
+            animate={reduceMotion ? { scale: 1.35 } : { scale: 1.35, x: [0, 60, -45, 0], y: [0, -48, 38, 0], rotate: [0, 5, -4, 0] }}
+            transition={{ duration: 32, repeat: Infinity, ease: "easeInOut" }}
+            style={layer(0.85, 60)}
+          />
+          <motion.div
+            initial={false}
+            transformTemplate={zTransform}
+            animate={reduceMotion ? { scale: 1.55 } : { scale: 1.55, x: [0, -50, 42, 0], y: [0, 42, -32, 0], rotate: [0, -6, 4, 0] }}
+            transition={{ duration: 42, repeat: Infinity, ease: "easeInOut" }}
+            style={layer(0.45, 72)}
+          />
+        </>
+      )}
       {/* darkening scrim so white text/controls stay legible over any artwork */}
-      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(4,4,8,0.55) 0%, rgba(4,4,8,0.32) 40%, rgba(4,4,8,0.62) 100%)" }} />
+      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(4,4,8,0.50) 0%, rgba(4,4,8,0.28) 40%, rgba(4,4,8,0.65) 100%)" }} />
     </div>
   );
 }

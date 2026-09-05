@@ -20,7 +20,11 @@ export function ThemeEngine() {
       let hex: string | null = null;
       if (source === "wallpaper") {
         const data = await getWallpaperDataUrl().catch(() => null);
-        if (data) hex = await dataUrlAccent(data); 
+        if (data) {
+          hex = await dataUrlAccent(data);
+          if (!cancelled && hex) setBase(hex);
+        }
+        return;
       } else if (source === "system") {
         hex = await getSystemAccent().catch(() => null);
       }

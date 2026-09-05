@@ -13,7 +13,16 @@ interface Props {
   decoding?: "async" | "sync" | "auto";
 }
 
-export function CoverArt({ url, alt, size, rounded, className = "", style, loading, decoding }: Props) {
+export function CoverArt({
+  url,
+  alt,
+  size,
+  rounded,
+  className = "",
+  style,
+  loading = "lazy",
+  decoding = "async",
+}: Props) {
   const radius  = rounded ? "50%" : 6;
   const baseStyle = { width: size, height: size, borderRadius: radius, flexShrink: 0 as const };
 

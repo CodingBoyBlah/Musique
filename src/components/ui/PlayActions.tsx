@@ -22,7 +22,6 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
   const setCurrentTrack     = usePlayerStore((s) => s.setCurrentTrack);
   const currentTrack        = usePlayerStore((s) => s.currentTrack);
   const isPlaying           = usePlayerStore((s) => s.isPlaying);
-  const positionMs          = usePlayerStore((s) => s.positionMs);
   const sessionReady        = usePlayerStore((s) => s.sessionReady);
   const lyricsOpen          = usePlayerStore((s) => s.lyricsOpen);
   const queueOpen           = usePlayerStore((s) => s.queueOpen);
@@ -65,7 +64,8 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
   function onPlay() {
     if (playing) { pausePlayback().catch(() => {}); return; }
     if (isActive && currentTrack) {
-      resumeOrPlay(currentTrack.id, sessionReady ? positionMs : 0).catch(() => {});
+      const pos = sessionReady ? usePlayerStore.getState().positionMs : 0;
+      resumeOrPlay(currentTrack.id, pos).catch(() => {});
       return;
     }
     const start = playContext(tracks, 0, contextId);

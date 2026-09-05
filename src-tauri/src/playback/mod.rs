@@ -558,8 +558,8 @@ pub async fn create_inner(
                         position_ms,
                     }),
                 PlayerEvent::PositionChanged { track_id, position_ms, .. } => {
-                    let due   = last_pos_emit.elapsed() >= std::time::Duration::from_millis(250);
-                    let moved = position_ms.abs_diff(last_pos_ms) >= 250;
+                    let due   = last_pos_emit.elapsed() >= std::time::Duration::from_millis(1000);
+                    let moved = position_ms.abs_diff(last_pos_ms) >= 1000;
                     if due || moved {
                         last_pos_emit = std::time::Instant::now();
                         last_pos_ms   = position_ms;

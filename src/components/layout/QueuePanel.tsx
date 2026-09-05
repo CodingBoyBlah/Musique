@@ -106,9 +106,9 @@ function Equaliser() {
       {[0, 1, 2].map((i) => (
         <motion.span
           key={i}
-          animate={{ height: ["30%", "100%", "45%", "80%", "30%"] }}
+          animate={{ scaleY: [0.3, 1, 0.45, 0.8, 0.3] }}
           transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: i * 0.18 }}
-          style={{ width: 3, borderRadius: 2, background: "var(--color-accent)", height: "30%" }}
+          style={{ width: 3, borderRadius: 2, background: "var(--color-accent)", height: "100%", transformOrigin: "bottom" }}
         />
       ))}
     </span>

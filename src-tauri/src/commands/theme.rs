@@ -2,15 +2,28 @@ use crate::errors::AppError;
 use base64::Engine;
 use std::path::PathBuf;
 
+static LAST_WALLPAPER_MTIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 // desktop wallpaper as a `data:` URL (base64) so the frontend can sample its
 // colors for the "Wallpaper colors" theme. Returns None when the OS wallpaper
-// can't be located (unsupported DE, missing file, etc) - the frontend then just
-// keeps the current accent.
+// can't be located (unsupported DE, missing file, etc) or hasn't changed.
 #[tauri::command]
 pub async fn get_wallpaper_data_url() -> Result<Option<String>, AppError> {
     let Some(path) = wallpaper_path() else {
         return Ok(None);
-};
+    };
+
+    let mtime_sec = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let last = LAST_WALLPAPER_MTIME.load(std::sync::atomic::Ordering::Relaxed);
+    if mtime_sec != 0 && mtime_sec == last {
+        return Ok(None);
+    }
 
     let mime = match path
         .extension()
@@ -33,7 +46,10 @@ pub async fn get_wallpaper_data_url() -> Result<Option<String>, AppError> {
     .await
     .ok()
     .flatten();
-    Ok(b64.map(|b64| format!("data:{mime}; base64, {b64}")))
+    if b64.is_some() && mtime_sec != 0 {
+        LAST_WALLPAPER_MTIME.store(mtime_sec, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(b64.map(|b64| format!("data:{mime};base64,{b64}")))
 }
 
 // macOS system accent color as a hex string. None on every other OS. This is the

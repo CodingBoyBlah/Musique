@@ -124,7 +124,7 @@ export function loadCoverAccent(url: string): Promise<string | null> {
       const raw = extractVibrant(img);
       const hex = raw ? rgbToHex(normalizeBrightness(raw)) : null;
       memCache.set(url, hex);
-      try { localStorage.setItem("cover-accent:" + url, hex ?? ""); } catch { /* quota */ }
+      try { localStorage.setItem("cover-accent-v2:" + url, hex ?? ""); } catch { /* quota */ }
       resolve(hex);
     };
     img.onerror = () => { memCache.set(url, null); resolve(null); };
