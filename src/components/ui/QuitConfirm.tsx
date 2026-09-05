@@ -31,7 +31,7 @@ export function QuitConfirm() {
             transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: 360, padding: "22px 22px 18px", borderRadius: 16,
+              width: "min(360px, calc(100vw - 32px))", padding: "22px 22px 18px", borderRadius: 16,
               background: "rgba(20,20,26,0.96)",
               border: "1px solid rgba(255,255,255,0.12)",
               boxShadow: "0 24px 64px rgba(0,0,0,0.6)",

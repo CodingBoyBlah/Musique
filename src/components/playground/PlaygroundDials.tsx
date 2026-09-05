@@ -25,7 +25,10 @@ export function SpringToggle({
         background: "var(--color-surface)",
         border: "1px solid var(--color-border)",
         cursor: "pointer",
-        minWidth: 280,
+        minWidth: "min(280px, 100%)",
+        maxWidth: "100%",
+        flex: "1 1 240px",
+        boxSizing: "border-box",
       }}
     >
       <span style={{ fontSize: 13, fontWeight: 600, color: on ? "var(--color-text-hi)" : "var(--color-text-dim)" }}>
@@ -90,6 +93,8 @@ export function PlayerBarVolumeSlider({
         borderRadius: 12,
         background: "var(--color-surface)",
         border: "1px solid var(--color-border)",
+        maxWidth: "100%",
+        boxSizing: "border-box",
       }}
     >
       {/* Mute icon button with exact blur+scale animation */}

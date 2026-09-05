@@ -279,6 +279,19 @@ export function PlayerBar() {
     return () => clearInterval(timer);
   }, [isPlaying, incrementPos]);
 
+  const [windowWidth, setWindowWidth] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth : 1200
+  );
+
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const isCompactBar = windowWidth < 680;
+  const isSuperCompactBar = windowWidth < 500;
+
   const volDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function handleNext() {
@@ -325,13 +338,13 @@ export function PlayerBar() {
         borderTop:  "1px solid var(--color-border)",
         display:    "flex",
         alignItems: "center",
-        gap:        16,
-        padding:    "0 16px",
+        gap:        "clamp(8px, 1.6vw, 16px)",
+        padding:    "0 clamp(10px, 1.8vw, 18px)",
         flexShrink: 0,
       }}
     >
       {/* left: track info */}
-      <div style={{ width: "28%", minWidth: 0, display: "flex", alignItems: "center", gap: 10, overflow: "hidden" }}>
+      <div style={{ flex: "1 1 0%", minWidth: 160, display: "flex", alignItems: "center", gap: 10, overflow: "hidden" }}>
         {/* art swaps (eg on skip) ease in through a slight blur so the change isn't an abrupt cut */}
         <div
           className="group"
@@ -379,13 +392,15 @@ export function PlayerBar() {
       </div>
 
       {/* center: controls + progress */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 7 }}>
+      <div style={{ flex: "0 1 680px", width: "100%", maxWidth: 680, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 7 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <Tooltip label={shuffle ? "Shuffle on" : "Shuffle off"}>
-            <IconBtn active={shuffle} onClick={toggleShuffle}>
-              <Shuffle size={14} strokeWidth={2.4} />
-            </IconBtn>
-          </Tooltip>
+          {!isSuperCompactBar && (
+            <Tooltip label={shuffle ? "Shuffle on" : "Shuffle off"}>
+              <IconBtn active={shuffle} onClick={toggleShuffle}>
+                <Shuffle size={14} strokeWidth={2.4} />
+              </IconBtn>
+            </Tooltip>
+          )}
           <Tooltip label="Previous">
             <IconBtn onClick={handlePrev}>
               <SkipBack size={16} strokeWidth={2} fill="currentColor" />
@@ -425,32 +440,36 @@ export function PlayerBar() {
               <SkipForward size={16} strokeWidth={2} fill="currentColor" />
             </IconBtn>
           </Tooltip>
-          <Tooltip label={repeatLabel}>
-            <IconBtn active={repeat !== "none"} onClick={cycleRepeat}>
-              <RepeatIcon size={14} strokeWidth={2.4} />
-            </IconBtn>
-          </Tooltip>
+          {!isSuperCompactBar && (
+            <Tooltip label={repeatLabel}>
+              <IconBtn active={repeat !== "none"} onClick={cycleRepeat}>
+                <RepeatIcon size={14} strokeWidth={2.4} />
+              </IconBtn>
+            </Tooltip>
+          )}
         </div>
         <ProgressBar positionMs={positionMs} durationMs={durationMs} onSeek={doSeek} />
       </div>
 
       {/* right: volume + queue */}
-      <div style={{ width: "28%", display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
-        <Tooltip label={muted ? "Unmute" : "Mute"}>
+      <div style={{ flex: "1 1 0%", minWidth: 160, display: "flex", alignItems: "center", gap: "clamp(4px, 1vw, 8px)", justifyContent: "flex-end" }}>
+        <Tooltip label={muted ? "Unmute" : `Mute (${volume}%)`}>
           <IconBtn onClick={handleMuteToggle}>
             <VolumeIcon size={14} strokeWidth={2} fill="currentColor" />
           </IconBtn>
         </Tooltip>
-        <Tooltip label={muted ? "Muted" : `Volume ${volume}%`}>
-          <input
-            className="vol"
-            type="range" min={0} max={100}
-            value={muted ? 0 : volume}
-            onChange={handleVolumeChange}
-            onMouseDown={() => { if (muted) { storeSetMuted(false); apiSetMuted(false).catch(() => {}); } }}
-            style={{ width: 72, ["--vol" as string]: `${muted ? 0 : volume}%` } as React.CSSProperties}
-          />
-        </Tooltip>
+        {!isCompactBar && (
+          <Tooltip label={muted ? "Muted" : `Volume ${volume}%`}>
+            <input
+              className="vol"
+              type="range" min={0} max={100}
+              value={muted ? 0 : volume}
+              onChange={handleVolumeChange}
+              onMouseDown={() => { if (muted) { storeSetMuted(false); apiSetMuted(false).catch(() => {}); } }}
+              style={{ width: "clamp(54px, 8vw, 76px)", ["--vol" as string]: `${muted ? 0 : volume}%` } as React.CSSProperties}
+            />
+          </Tooltip>
+        )}
 
       {/* TODO reveiew bottom tooltip (ai made, check the paddings) - DONE changed scale value to 1.08 */}
         <Tooltip label={lyricsOpen ? "Hide lyrics" : "Lyrics"}>

@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { motion } from "framer-motion";
 import { ListMusic, RefreshCw, Pin, PinOff } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -9,48 +10,103 @@ import { usePinsStore } from "../store/pins.store";
 import { useContextMenu, type MenuEntry } from "../components/ui/ContextMenu";
 import type { PlaylistSummary } from "../types/library";
 
+const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
+const MotionLink = motion.create(Link);
+
 function PlaylistCard({
   playlist, onContextMenu,
 }: {
   playlist: PlaylistSummary;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
+  const [hover, setHover] = useState(false);
+
   return (
-    <Link
+    <MotionLink
       to={`/playlist/${playlist.id}`}
+      layout="position"
+      transition={{ layout: REFLOW }}
       onContextMenu={onContextMenu}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      whileHover={{ y: -3 }}
+      whileTap={{ scale: 0.98 }}
       style={{
-        display:       "flex",
-        flexDirection: "column",
-        gap:           8,
-        padding:       12,
-        borderRadius:  10,
-        width:         156,
+        display:        "flex",
+        flexDirection:  "column",
+        gap:            10,
+        padding:        "clamp(10px, 1.2vw, 14px)",
+        borderRadius:   14,
+        width:          "100%",
+        boxSizing:      "border-box",
         textDecoration: "none",
-        color:         "inherit",
-        transition:    "background 0.12s",
+        color:          "inherit",
+        background:     hover ? "var(--color-surface-hover)" : "transparent",
+        transition:     "background 0.18s ease",
+        position:       "relative",
+        cursor:         "pointer",
       }}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "var(--color-surface-hover)"; }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "transparent"; }}
     >
-      {playlist.image_url ? (
-        <img
-          src={playlist.image_url}
-          alt={playlist.name}
-          style={{ width: 132, height: 132, objectFit: "cover", borderRadius: 6 }}
-        />
-      ) : (
-        <div style={{ width: 132, height: 132, borderRadius: 6, background: "rgba(124,111,255,0.18)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <ListMusic size={40} strokeWidth={1.5} style={{ color: "rgba(124,111,255,0.55)" }} />
-        </div>
-      )}
-      <p style={{ margin: 0, fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 10, overflow: "hidden", position: "relative" }}>
+        {playlist.image_url ? (
+          <img
+            src={playlist.image_url}
+            alt={playlist.name}
+            loading="lazy"
+            decoding="async"
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              display: "block",
+              outline: "1px solid rgba(255, 255, 255, 0.08)",
+              outlineOffset: -1,
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              background: "rgba(124,111,255,0.14)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              outline: "1px solid rgba(124,111,255,0.22)",
+              outlineOffset: -1,
+            }}
+          >
+            <ListMusic size={38} strokeWidth={1.5} style={{ color: "rgba(124,111,255,0.6)" }} />
+          </div>
+        )}
+      </div>
+      <p
+        style={{
+          margin: 0,
+          fontSize: "clamp(13px, 0.9vw, 14px)",
+          fontWeight: 600,
+          color: "var(--color-text-hi)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          lineHeight: 1.3,
+        }}
+      >
         {playlist.name}
       </p>
-      <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.40)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <p
+        style={{
+          margin: 0,
+          fontSize: 12,
+          color: "var(--color-text-dim)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
         {playlist.total_tracks} {playlist.total_tracks === 1 ? "song" : "songs"}
       </p>
-    </Link>
+    </MotionLink>
   );
 }
 
@@ -82,8 +138,10 @@ export default function Playlists() {
 
   if (!loggedIn) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "rgba(255,255,255,0.92)" }}>Playlists</h1>
+      <div style={{ display: "flex", flexDirection: "column", gap: "clamp(20px, 2.5vw, 28px)" }}>
+        <h1 style={{ margin: 0, fontSize: "clamp(22px, 2.5vw, 26px)", fontWeight: 700, letterSpacing: "-0.02em", color: "var(--color-text-hi)" }}>
+          Playlists
+        </h1>
         <EmptyState
           icon={
             <MusiqueLogo
@@ -124,9 +182,11 @@ export default function Playlists() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "rgba(255,255,255,0.92)" }}>Playlists</h1>
+    <motion.div layout="position" style={{ display: "flex", flexDirection: "column", gap: "clamp(20px, 2.5vw, 28px)" }}>
+      <motion.div layout="position" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <h1 style={{ margin: 0, fontSize: "clamp(22px, 2.5vw, 26px)", fontWeight: 700, letterSpacing: "-0.02em", color: "var(--color-text-hi)" }}>
+          Playlists
+        </h1>
         <button
           onClick={() => sync()}
           disabled={isPending}
@@ -154,30 +214,37 @@ export default function Playlists() {
           <RefreshCw size={12} strokeWidth={2} style={{ animation: isPending ? "spin 1s linear infinite" : "none" }} />
           {isPending ? "Syncing…" : "Sync"}
         </button>
-      </div>
+      </motion.div>
 
       {isLoading && (
-        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.40)" }}>Loading playlists…</p>
+        <motion.p layout="position" style={{ fontSize: 13, color: "var(--color-text-dim)" }}>Loading playlists…</motion.p>
       )}
 
       {!isLoading && playlists.length === 0 && (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", paddingTop: 80, gap: 12 }}>
+        <motion.div layout="position" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", paddingTop: 80, gap: 12 }}>
           <ListMusic size={44} strokeWidth={1.5} style={{ color: "rgba(255,255,255,0.18)" }} />
           <p style={{ margin: 0, fontSize: 15, fontWeight: 600, color: "rgba(255,255,255,0.75)" }}>No playlists yet</p>
-          <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.28)" }}>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--color-text-dim)" }}>
             Click Sync to load your playlists from Spotify
           </p>
-        </div>
+        </motion.div>
       )}
 
       {playlists.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(clamp(130px, 14vw, 170px), 1fr))",
+            gap: "clamp(10px, 1.4vw, 16px)",
+            width: "100%",
+          }}
+        >
           {playlists.map((p: PlaylistSummary) => (
             <PlaylistCard key={p.id} playlist={p} onContextMenu={openMenu(cardMenu(p))} />
           ))}
         </div>
       )}
       {menuEl}
-    </div>
+    </motion.div>
   );
 }

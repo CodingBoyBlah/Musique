@@ -100,6 +100,7 @@ export function EvenGrid<T>({
     const el = containerRef.current;
     if (!el) return;
 
+    let rafId = 0;
     const measure = (w: number) => {
       if (w <= 0) return;
       lastWidthRef.current = w;
@@ -116,15 +117,23 @@ export function EvenGrid<T>({
     measure(el.getBoundingClientRect().width);
 
     const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        measure(entry.contentRect.width);
-      }
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        for (const entry of entries) {
+          measure(entry.contentRect.width);
+        }
+      });
     });
 
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      ro.disconnect();
+    };
   }, []);
 
+  // Update metrics synchronously during render when input parameters change
   const derivedMetrics = useMemo(() => {
     return calculateGridMetrics(
       lastWidthRef.current,
@@ -158,12 +167,23 @@ export function EvenGrid<T>({
         gridTemplateColumns: `repeat(${effectiveCols}, minmax(0, 1fr))`,
         gap,
         width: "100%",
+        contain: "layout style",
         ...style,
       }}
     >
       {visibleItems.map((item, index) => {
         const key = getKey ? getKey(item, index) : index;
-        return <div key={key} style={{ minWidth: 0 }}>{renderItem(item, index)}</div>;
+        return (
+          <div
+            key={key}
+            style={{
+              minWidth: 0,
+              contain: "layout style",
+            }}
+          >
+            {renderItem(item, index)}
+          </div>
+        );
       })}
     </div>
   );

@@ -62,6 +62,7 @@ export interface ArtistDetail {
   albums:     AlbumItem[];
   singles:    AlbumItem[];
   top_tracks: TrackItem[];
+  related_artists?: ArtistItem[];
 }
 
 export interface AlbumDetail {

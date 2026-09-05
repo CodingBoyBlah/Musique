@@ -33,15 +33,17 @@ export function PlaygroundThemeBar() {
         justifyContent: "space-between",
         flexWrap: "wrap",
         gap: 16,
-        padding: "16px 20px",
+        padding: "clamp(14px, 2vw, 18px) clamp(16px, 2.5vw, 24px)",
         borderRadius: 16,
         background: "rgba(255, 255, 255, 0.03)",
         border: "1px solid rgba(255, 255, 255, 0.08)",
         backdropFilter: "blur(20px)",
         marginBottom: 32,
+        width: "100%",
+        boxSizing: "border-box",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flex: "1 1 260px", minWidth: 0 }}>
         <div
           style={{
             width: 40,
@@ -52,6 +54,7 @@ export function PlaygroundThemeBar() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            flexShrink: 0,
             boxShadow: "0 0 20px -4px var(--color-accent-dim)",
           }}
         >

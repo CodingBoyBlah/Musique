@@ -191,8 +191,9 @@ export function QueuePanel() {
       transition={{ type: "spring", stiffness: 340, damping: 38 }}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
-        width: WIDTH, display: "flex", flexDirection: "column", overflow: "hidden",
+        width: WIDTH, maxWidth: "100vw", display: "flex", flexDirection: "column", overflow: "hidden",
         background: "var(--color-sidebar)", borderLeft: "1px solid var(--color-border)",
+        boxShadow: "-8px 0 32px rgba(0,0,0,0.36)",
         willChange: "transform",
       }}
     >

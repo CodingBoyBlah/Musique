@@ -117,7 +117,7 @@ function TrackRowItem({
       </div>
 
       {/* Right Slot: Like Button & Duration */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -171,7 +171,7 @@ export function AlbumTrackRowsSection() {
   const [playingId, setPlayingId] = useState<string>("2"); // "Instant Crush" playing by default
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", width: "100%", maxWidth: 680 }}>
+    <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
       {SAMPLE_TRACKS.map((t, i) => (
         <TrackRowItem
           key={t.id}

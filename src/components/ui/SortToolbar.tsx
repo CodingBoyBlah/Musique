@@ -42,7 +42,7 @@ export function useSortTools<T extends NamedPop>(
   ];
 
   const toolbar = (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", boxSizing: "border-box", padding: "0 2px 14px" }}>
+    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, width: "100%", boxSizing: "border-box", padding: "0 2px 14px" }}>
       <div
         style={{
           display: "flex", alignItems: "center", gap: 8, height: 32,
@@ -73,7 +73,7 @@ export function useSortTools<T extends NamedPop>(
         )}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: "auto", flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginLeft: "auto" }}>
         <Dropdown value={sort} options={sortOptions} onChange={setSort} align="right" minWidth={150} title="Sort by" />
         <Dropdown value={dir}  options={dirOptions}  onChange={setDir}  align="right" minWidth={140} title="Direction" />
       </div>

@@ -22,6 +22,8 @@ import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { playTrack } from "../api/playback";
 
+const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
+
 const TABS = [
   { key: "songs",   label: "Songs"   },
   { key: "albums",  label: "Albums"  },
@@ -112,30 +114,40 @@ function LikedSongsTab() {
   };
 
   return (
-    <div>
-      <p style={{ margin: "0 0 12px", fontSize: 12, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>{count} TRACKS</p>
-      {toolbar}
-      {view.map((t, i) => (
-        <motion.div
-          key={t.id}
-          layout="position"
-          transition={{ type: "spring", stiffness: 520, damping: 42, mass: 0.7 }}
-        >
-          <TrackRow
-            track={t}
-            index={i}
-            showAlbum
-            liked={likedSet.has(t.id)}
-            onPlay={() => handlePlay(i)}
-            onQueue={(track) => enqueue(track)}
-            onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
-          />
-        </motion.div>
-      ))}
+    <motion.div layout="position" transition={{ layout: REFLOW }}>
+      <motion.p
+        layout="position"
+        transition={{ layout: REFLOW }}
+        style={{ margin: "0 0 12px", fontSize: 12, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}
+      >
+        {count || tracks.length} TRACKS
+      </motion.p>
+      <motion.div layout="position" transition={{ layout: REFLOW }}>
+        {toolbar}
+      </motion.div>
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        {view.map((t, i) => (
+          <motion.div
+            key={t.id}
+            layout="position"
+            transition={{ layout: { type: "spring", stiffness: 340, damping: 38 } }}
+          >
+            <TrackRow
+              track={t}
+              index={i}
+              showAlbum
+              liked={likedSet.has(t.id)}
+              onPlay={() => handlePlay(i)}
+              onQueue={(track) => enqueue(track)}
+              onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
+            />
+          </motion.div>
+        ))}
+      </div>
       {view.length === 0 && (
         <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>No songs match your filter.</p>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -160,15 +172,24 @@ function AlbumsTab() {
   }
 
   return (
-    <div>
-      {toolbar}
+    <motion.div layout="position" transition={{ layout: REFLOW }}>
+      <motion.p
+        layout="position"
+        transition={{ layout: REFLOW }}
+        style={{ margin: "0 0 12px", fontSize: 12, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}
+      >
+        {albums.length} ALBUMS
+      </motion.p>
+      <motion.div layout="position" transition={{ layout: REFLOW }}>
+        {toolbar}
+      </motion.div>
       <AlbumGrid>
         {view.map((al) => <AlbumCard key={al.id} album={al} />)}
       </AlbumGrid>
       {view.length === 0 && (
         <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>No albums match your filter.</p>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -193,15 +214,24 @@ function ArtistsTab() {
   }
 
   return (
-    <div>
-      {toolbar}
+    <motion.div layout="position" transition={{ layout: REFLOW }}>
+      <motion.p
+        layout="position"
+        transition={{ layout: REFLOW }}
+        style={{ margin: "0 0 12px", fontSize: 12, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}
+      >
+        {artists.length} ARTISTS
+      </motion.p>
+      <motion.div layout="position" transition={{ layout: REFLOW }}>
+        {toolbar}
+      </motion.div>
       <ArtistGrid>
         {view.map((a) => <ArtistCard key={a.id} artist={a} />)}
       </ArtistGrid>
       {view.length === 0 && (
         <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>No artists match your filter.</p>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -262,50 +292,100 @@ export default function Library() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", rowGap: 12 }}>
+    <motion.div
+      layout="position"
+      transition={{ layout: REFLOW }}
+      style={{ display: "flex", flexDirection: "column", gap: 18 }}
+    >
+      <motion.div
+        layout="position"
+        transition={{ layout: REFLOW }}
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", rowGap: 12 }}
+      >
         <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>
           Your Library
         </h1>
         <SyncButton />
-      </div>
+      </motion.div>
 
       {/* segmented tabs */}
-      <div style={{ display: "flex", gap: 6 }}>
+      <motion.div
+        layout="position"
+        transition={{ layout: REFLOW }}
+        role="tablist"
+        aria-label="Library sections"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          padding: 3,
+          borderRadius: 99,
+          background: "var(--color-surface)",
+          border: "1px solid var(--color-border)",
+          width: "fit-content",
+          maxWidth: "100%",
+          overflowX: "auto",
+        }}
+      >
         {TABS.map((t) => {
           const on = tab === t.key;
           return (
             <button
               key={t.key}
+              role="tab"
+              aria-selected={on}
               onClick={() => selectTab(t.key)}
               style={{
-                padding:      "6px 16px",
+                position: "relative",
+                padding: "6px 18px",
                 borderRadius: 99,
-                border:       "none",
-                background:   on ? "var(--color-active)" : "var(--color-surface)",
-                color:        on ? "var(--color-text-hi)" : "var(--color-text-dim)",
-                fontSize:     13,
-                fontWeight:   on ? 600 : 500,
-                cursor:       "pointer",
-                transition:   "background 0.12s, color 0.12s",
+                border: "none",
+                background: "transparent",
+                color: on ? "var(--color-text-hi)" : "var(--color-text-dim)",
+                fontSize: 13,
+                fontWeight: on ? 600 : 500,
+                cursor: "pointer",
+                transition: "color 0.15s ease",
+                zIndex: 1,
+                userSelect: "none",
+                whiteSpace: "nowrap",
               }}
             >
+              {on && (
+                <motion.div
+                  layoutId="library-tab-indicator"
+                  transition={{ type: "spring", stiffness: 400, damping: 34 }}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    borderRadius: 99,
+                    background: "var(--color-active)",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.25)",
+                    zIndex: -1,
+                  }}
+                />
+              )}
               {t.label}
             </button>
           );
         })}
-      </div>
+      </motion.div>
 
       <motion.div
         key={tab}
+        layout="position"
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.26, ease: [0.23, 1, 0.32, 1] }}
+        transition={{
+          opacity: { duration: 0.26, ease: [0.23, 1, 0.32, 1] },
+          y: { duration: 0.26, ease: [0.23, 1, 0.32, 1] },
+          layout: REFLOW,
+        }}
       >
         {tab === "songs"   && <LikedSongsTab />}
         {tab === "albums"  && <AlbumsTab />}
         {tab === "artists" && <ArtistsTab />}
       </motion.div>
-    </div>
+    </motion.div>
   );
 }

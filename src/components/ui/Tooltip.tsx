@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 interface Props {
   label:    ReactNode;
   children: ReactNode;
-  side?:    "top" | "bottom";
+  side?:    "top" | "bottom" | "right";
   /* horizontal anchoring. "center" (default) centres over the control "end"
   pins the tooltip right edge to the control so it never spills off the
   right of the window (the corner queue button uses this) */
@@ -21,10 +21,14 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
   const [open, setOpen] = useState(false);
   const off = side === "top" ? 5 : -5;
 
-  const horiz =
-    align === "center" ? { left: "50%" as const }
-    : align === "end"  ? { right: 0 }
-    : { left: 0 };
+  const isRight = side === "right";
+  const horiz = isRight
+    ? { left: "calc(100% + 10px)", top: "50%", bottom: "auto" as const }
+    : {
+        ...(align === "center" ? { left: "50%" as const } : align === "end" ? { right: 0 } : { left: 0 }),
+        bottom: side === "top" ? "calc(100% + 9px)" : "auto",
+        top: side === "bottom" ? "calc(100% + 9px)" : "auto",
+      };
   const tx = align === "center" ? "-50%" : "0%";
 
   return (
@@ -38,15 +42,13 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
         {open && (
           <motion.span
             role="tooltip"
-            initial={{ opacity: 0, y: off, scale: 0.94, x: tx }}
-            animate={{ opacity: 1, y: 0, scale: 1, x: tx }}
-            exit={{ opacity: 0, y: off, scale: 0.94, x: tx }}
+            initial={isRight ? { opacity: 0, x: -4, y: "-50%", scale: 0.94 } : { opacity: 0, y: off, scale: 0.94, x: tx }}
+            animate={isRight ? { opacity: 1, x: 0, y: "-50%", scale: 1 } : { opacity: 1, y: 0, scale: 1, x: tx }}
+            exit={isRight ? { opacity: 0, x: -4, y: "-50%", scale: 0.94 } : { opacity: 0, y: off, scale: 0.94, x: tx }}
             transition={{ duration: 0.15, ease: [0.23, 1, 0.32, 1] }}
             style={{
               position:      "absolute",
               ...horiz,
-              bottom:        side === "top" ? "calc(100% + 9px)" : "auto",
-              top:           side === "bottom" ? "calc(100% + 9px)" : "auto",
               whiteSpace:    "nowrap",
               pointerEvents: "none",
               zIndex:        300,

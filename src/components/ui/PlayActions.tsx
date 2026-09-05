@@ -80,7 +80,7 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
   const shuffleActive = isActive && shuffle;
 
   return (
-    <div ref={rootRef} className="flex items-center mt-3" style={{ gap: 10, flexWrap: "wrap", rowGap: 10 }}>
+    <div ref={rootRef} className="flex items-center mt-3" style={{ gap: 10, flexWrap: "nowrap" }}>
       <Tooltip label={playing ? "Pause" : "Play"} side="top">
         <motion.button
           initial={false}
@@ -276,7 +276,6 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
 
       <Tooltip label={pinned ? "Unpin from sidebar" : "Pin to sidebar"} side="top">
         <motion.button
-          layout
           onClick={() => togglePin(pinItem)}
           whileHover={{ scale: 1.06 }}
           whileTap={{ scale: 0.94 }}
@@ -297,7 +296,6 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
 
       <Tooltip label="Share options" side="top">
         <motion.button
-          layout
           onClick={(e) => openMenu(shareEntries)(e)}
           onContextMenu={openMenu(shareEntries)}
           whileHover={{ scale: 1.06 }}

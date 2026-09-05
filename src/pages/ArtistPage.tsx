@@ -5,6 +5,7 @@ import { Check, UserPlus, Share2, Shuffle } from "lucide-react";
 import { useArtist } from "../hooks/useArtist";
 import { CoverArt } from "../components/ui/CoverArt";
 import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
+import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
 import { TrackRow } from "../components/ui/TrackRow";
 import { Loader } from "../components/ui/Loader";
 import { useContextMenu } from "../components/ui/ContextMenu";
@@ -25,6 +26,7 @@ import { errMsg } from "../lib/err";
 import { AnimatedPlayPause } from "../components/playground/AnimatedIcons";
 
 const TOP_TRACKS_COLLAPSED = 5;
+const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 
 export default function ArtistPage() {
   const { id } = useParams<{ id: string }>();
@@ -114,37 +116,31 @@ export default function ArtistPage() {
   }
 
   return (
-    <div className="flex flex-col gap-8">
+    <div style={{ display: "flex", flexDirection: "column", gap: "clamp(24px, 3.5vw, 36px)" }}>
       {/* header - smoothly scales down with spring physics when lyrics/queue rail opens */}
       <div
         style={{
           display: "flex",
           alignItems: "flex-end",
-          gap: isCompact ? 16 : 24,
+          gap: "clamp(14px, 2.2vw, 24px)",
           flexWrap: "wrap",
           minWidth: 0,
-          transition: "gap 0.35s cubic-bezier(0.23, 1, 0.32, 1)",
         }}
       >
-        <motion.div
-          initial={false}
-          animate={{
-            width: isCompact ? 144 : 200,
-            height: isCompact ? 144 : 200,
-          }}
-          transition={{ type: "spring", stiffness: 340, damping: 34 }}
+        <div
           style={{
-            width: isCompact ? 144 : 200,
-            height: isCompact ? 144 : 200,
+            width: isCompact ? "clamp(120px, 15vw, 160px)" : "clamp(130px, 18vw, 200px)",
+            height: isCompact ? "clamp(120px, 15vw, 160px)" : "clamp(130px, 18vw, 200px)",
             flexShrink: 0,
             borderRadius: "50%",
             overflow: "hidden",
+            transition: "width 0.28s cubic-bezier(0.23, 1, 0.32, 1), height 0.28s cubic-bezier(0.23, 1, 0.32, 1)",
           }}
         >
           <div style={{ width: "100%", height: "100%" }}>
             <CoverArt url={data.image_url} alt={data.name} size={200} rounded style={{ width: "100%", height: "100%" }} />
           </div>
-        </motion.div>
+        </div>
 
         <div
           className="flex flex-col gap-2 min-w-0"
@@ -152,27 +148,24 @@ export default function ArtistPage() {
         >
           <p
             className="text-[10px] font-bold uppercase tracking-widest"
-            style={{ color: "var(--color-text-dim)" }}
+            style={{ color: "var(--color-text-dim)", margin: 0 }}
           >
             Artist
           </p>
 
-          <motion.h1
-            initial={false}
-            animate={{
-              fontSize: isCompact ? 32 : 48,
-            }}
-            transition={{ type: "spring", stiffness: 340, damping: 34 }}
+          <h1
             className="font-black"
             style={{
-              fontSize: isCompact ? 32 : 48,
+              fontSize: isCompact ? "clamp(26px, 3.8vw, 36px)" : "clamp(30px, 4.5vw, 48px)",
               lineHeight: 1.05,
               letterSpacing: "-0.02em",
               color: "#ffffff",
+              margin: 0,
+              transition: "font-size 0.28s cubic-bezier(0.23, 1, 0.32, 1)",
             }}
           >
             {data.name}
-          </motion.h1>
+          </h1>
 
           {data.popularity != null && (
             <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
@@ -186,8 +179,7 @@ export default function ArtistPage() {
               alignItems: "center",
               gap: 10,
               marginTop: 4,
-              flexWrap: "wrap",
-              rowGap: 10,
+              flexWrap: "nowrap",
             }}
           >
             {topTracks.length > 0 && (
@@ -459,7 +451,17 @@ export default function ArtistPage() {
       {/* top tracks */}
       {topTracks.length > 0 && (
         <section>
-          <h2 className="text-xl font-bold mb-4">Popular</h2>
+          <h2
+            style={{
+              fontSize: "clamp(18px, 2vw, 22px)",
+              fontWeight: 700,
+              letterSpacing: "-0.02em",
+              color: "var(--color-text-hi)",
+              margin: "0 0 16px",
+            }}
+          >
+            Popular
+          </h2>
           <div>
             {shownTop.map((t, i) => (
               <motion.div
@@ -468,6 +470,7 @@ export default function ArtistPage() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{
+                  layout: REFLOW,
                   duration: 0.28,
                   delay: Math.min(i, 6) * 0.03,
                   ease: [0.23, 1, 0.32, 1],
@@ -495,21 +498,27 @@ export default function ArtistPage() {
               onClick={() => setShowAllTop((v) => !v)}
               style={{
                 marginTop: 8,
-                padding: "6px 4px",
+                padding: "8px 12px",
+                borderRadius: 6,
                 border: "none",
                 background: "transparent",
                 color: "var(--color-text-dim)",
                 fontSize: 13,
                 fontWeight: 600,
                 cursor: "pointer",
+                transition: "color 0.15s, background 0.15s",
               }}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLButtonElement).style.color =
                   "var(--color-text-hi)";
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "rgba(255, 255, 255, 0.05)";
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as HTMLButtonElement).style.color =
                   "var(--color-text-dim)";
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "transparent";
               }}
             >
               {showAllTop ? "Show less" : "Show more"}
@@ -521,7 +530,17 @@ export default function ArtistPage() {
       {/* discography (albums) */}
       {data.albums.length > 0 && (
         <section>
-          <h2 className="text-xl font-bold mb-4">Discography</h2>
+          <h2
+            style={{
+              fontSize: "clamp(18px, 2vw, 22px)",
+              fontWeight: 700,
+              letterSpacing: "-0.02em",
+              color: "var(--color-text-hi)",
+              margin: "0 0 16px",
+            }}
+          >
+            Discography
+          </h2>
           <AlbumGrid>
             {data.albums.map((al) => (
               <AlbumCard key={al.id} album={al} />
@@ -533,12 +552,44 @@ export default function ArtistPage() {
       {/* singles & EPs */}
       {data.singles.length > 0 && (
         <section>
-          <h2 className="text-xl font-bold mb-4">Singles & EPs</h2>
+          <h2
+            style={{
+              fontSize: "clamp(18px, 2vw, 22px)",
+              fontWeight: 700,
+              letterSpacing: "-0.02em",
+              color: "var(--color-text-hi)",
+              margin: "0 0 16px",
+            }}
+          >
+            Singles & EPs
+          </h2>
           <AlbumGrid>
             {data.singles.map((al) => (
               <AlbumCard key={al.id} album={al} />
             ))}
           </AlbumGrid>
+        </section>
+      )}
+
+      {/* fans also like / related artists */}
+      {data.related_artists && data.related_artists.length > 0 && (
+        <section>
+          <h2
+            style={{
+              fontSize: "clamp(18px, 2vw, 22px)",
+              fontWeight: 700,
+              letterSpacing: "-0.02em",
+              color: "var(--color-text-hi)",
+              margin: "0 0 16px",
+            }}
+          >
+            Fans Also Like
+          </h2>
+          <ArtistGrid>
+            {data.related_artists.map((ar) => (
+              <ArtistCard key={ar.id} artist={ar} />
+            ))}
+          </ArtistGrid>
         </section>
       )}
       {menuEl}

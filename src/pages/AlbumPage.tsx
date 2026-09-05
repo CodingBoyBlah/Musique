@@ -16,6 +16,8 @@ import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { errMsg } from "../lib/err";
 
+const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
+
 export default function AlbumPage() {
   const { id }                     = useParams<{ id: string }>();
   const { data, isLoading, error } = useAlbum(id);
@@ -78,28 +80,34 @@ export default function AlbumPage() {
 
       <section>
         {toolbar}
-        {view.map((t, i) => (
-          <motion.div
-            key={keys[i]}
-            layout="position"
-            transition={{ type: "spring", stiffness: 520, damping: 42, mass: 0.7 }}
-          >
-            <TrackRow
-              track={t}
-              index={i}
-              showCover={false}
-              liked={likedSet.has(t.id)}
-              onPlay={() => startAt(i)}
-              onQueue={(track) => enqueue(track)}
-              onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
-            />
-          </motion.div>
-        ))}
-        {view.length === 0 && (
-          <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>
-            No tracks match your filter.
-          </p>
-        )}
+        <motion.div
+          layout="position"
+          transition={{ layout: REFLOW }}
+          className="flex flex-col"
+        >
+          {view.map((t, i) => (
+            <motion.div
+              key={keys[i]}
+              layout="position"
+              transition={{ layout: REFLOW }}
+            >
+              <TrackRow
+                track={t}
+                index={i}
+                showCover={false}
+                liked={likedSet.has(t.id)}
+                onPlay={() => startAt(i)}
+                onQueue={(track) => enqueue(track)}
+                onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
+              />
+            </motion.div>
+          ))}
+          {view.length === 0 && (
+            <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>
+              No tracks match your filter.
+            </p>
+          )}
+        </motion.div>
       </section>
       {menuEl}
     </div>

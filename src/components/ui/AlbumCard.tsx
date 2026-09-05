@@ -12,6 +12,7 @@ import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { getAlbum } from "../../api/spotify";
 import { playTrack, pausePlayback, resumePlayback } from "../../api/playback";
+import { gpuLayer, zTransform } from "../../lib/motion";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 
@@ -80,6 +81,7 @@ function AlbumCardImpl({ album, size = 160 }: Props) {
     <MotionLink
       to={`/album/${album.id}`}
       layout="position"
+      transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchAlbum(qc, album.id); }}
       onMouseLeave={() => setHover(false)}
       whileHover={{ y: -3 }}
@@ -98,6 +100,8 @@ function AlbumCardImpl({ album, size = 160 }: Props) {
         transition: "background 0.18s ease",
         position: "relative",
         cursor: "pointer",
+        minWidth: 0,
+        ...gpuLayer,
       }}
     >
       <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1", borderRadius: 8, overflow: "hidden" }}>
@@ -123,6 +127,7 @@ function AlbumCardImpl({ album, size = 160 }: Props) {
           whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",
+          maxWidth: "100%",
         }}
       >
         {album.name}
@@ -131,7 +136,7 @@ function AlbumCardImpl({ album, size = 160 }: Props) {
       {isUpcoming(album.release_date) ? (
         <ReleaseCountdown date={album.release_date!} />
       ) : (
-        <span style={{ fontSize: 12, color: "var(--color-text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <span style={{ fontSize: 12, color: "var(--color-text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
           {releaseYear(album.release_date)} • {album.artists?.map((a) => a.name).join(", ") || album.album_type}
         </span>
       )}

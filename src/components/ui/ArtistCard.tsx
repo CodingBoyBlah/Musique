@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { CoverArt } from "./CoverArt";
 import { prefetchArtist } from "../../lib/prefetch";
+import { gpuLayer, zTransform } from "../../lib/motion";
 
 interface Props {
   artist: { id: string; name: string; image_url?: string | null };
@@ -37,6 +38,7 @@ function ArtistCardImpl({ artist }: Props) {
     <MotionLink
       to={`/artist/${artist.id}`}
       layout="position"
+      transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchArtist(qc, artist.id); }}
       onMouseLeave={() => setHover(false)}
       whileHover={{ y: -3 }}
@@ -47,6 +49,8 @@ function ArtistCardImpl({ artist }: Props) {
         textDecoration: "none", color: "inherit",
         background: hover ? "var(--color-surface-elevated)" : "transparent",
         transition: "background 0.18s ease",
+        minWidth: 0,
+        ...gpuLayer,
       }}
     >
       {/* circular avatar fills the padded width, soft ring + lift shadow */}

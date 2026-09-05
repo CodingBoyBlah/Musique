@@ -32,6 +32,9 @@ import {
 } from "../api/window";
 import { isWindows, isMac } from "../lib/platform";
 import { useThemeStore, type ThemeSource } from "../store/theme.store";
+import { useReflowPulse } from "../hooks/useReflowPulse";
+
+const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 
 const STATUS_CONFIG: Record<ConnectionStatus, { dot: string; label: string }> =
   {
@@ -64,6 +67,8 @@ function StatusBadge({ status }: { status: ConnectionStatus }) {
 
 const inputStyle: React.CSSProperties = {
   flex: 1,
+  minWidth: 0,
+  boxSizing: "border-box",
   height: 42,
   borderRadius: 10,
   border: "1px solid var(--color-border)",
@@ -198,10 +203,19 @@ function SettingRow({
   control: React.ReactNode;
 }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: "10px 16px",
+        width: "100%",
+      }}
+    >
       <div
         style={{
-          flex: 1,
+          flex: "1 1 200px",
           minWidth: 0,
           display: "flex",
           flexDirection: "column",
@@ -210,7 +224,7 @@ function SettingRow({
       >
         <span
           style={{
-            fontSize: 13.5,
+            fontSize: "clamp(13px, 1.2vw, 14px)",
             fontWeight: 600,
             color: "var(--color-text-hi)",
           }}
@@ -229,7 +243,16 @@ function SettingRow({
           </span>
         )}
       </div>
-      <div style={{ flexShrink: 0 }}>{control}</div>
+      <div
+        style={{
+          flexShrink: 0,
+          maxWidth: "100%",
+          display: "flex",
+          alignItems: "center",
+        }}
+      >
+        {control}
+      </div>
     </div>
   );
 }
@@ -498,7 +521,10 @@ function VisualCard() {
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
-                  minWidth: 196,
+                  width: "100%",
+                  minWidth: "min(196px, 100%)",
+                  maxWidth: 260,
+                  boxSizing: "border-box",
                 }}
               >
                 <input
@@ -667,7 +693,7 @@ function LastfmCard() {
             }
           />
           <Divider />
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
             <GhostBtn subtle onClick={disconnect}>
               Disconnect
             </GhostBtn>
@@ -782,29 +808,34 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <section
+    <motion.section
+      layout="position"
+      transition={{ layout: REFLOW }}
       style={{
         borderRadius: 16,
         background: "var(--color-surface)",
         border: "1px solid var(--color-border)",
-        padding: 28,
+        padding: "clamp(16px, 2.5vw, 24px)",
         display: "flex",
         flexDirection: "column",
         gap: 18,
+        width: "100%",
+        boxSizing: "border-box",
       }}
     >
       <h2
         style={{
           margin: 0,
-          fontSize: 16,
+          fontSize: "clamp(15px, 1.6vw, 17px)",
           fontWeight: 600,
+          letterSpacing: "-0.01em",
           color: "var(--color-text-hi)",
         }}
       >
         {title}
       </h2>
       {children}
-    </section>
+    </motion.section>
   );
 }
 
@@ -813,6 +844,7 @@ function Divider() {
 }
 
 export default function Settings() {
+  useReflowPulse();
   const qc = useQueryClient();
   const { status, setStatus, setFromCredentials, clear, isCustom } =
     useCredentialsStore();
@@ -876,18 +908,22 @@ export default function Settings() {
   return (
     <div
       style={{
-        maxWidth: 620,
+        maxWidth: "min(760px, 100%)",
+        margin: "0 auto",
+        width: "100%",
+        boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
-        gap: 24,
+        gap: "clamp(20px, 2.5vw, 26px)",
+        paddingBottom: 60,
       }}
     >
       <h1
         style={{
           margin: 0,
-          fontSize: 28,
+          fontSize: "clamp(24px, 3vw, 30px)",
           fontWeight: 700,
-          letterSpacing: "-0.01em",
+          letterSpacing: "-0.02em",
           color: "var(--color-text-hi)",
         }}
       >
@@ -901,15 +937,19 @@ export default function Settings() {
       <LastfmCard />
 
       {/* spotify API & authentication card (collapsible at the very end) */}
-      <section
+      <motion.section
+        layout="position"
+        transition={{ layout: REFLOW }}
         style={{
           borderRadius: 16,
           background: "var(--color-surface)",
           border: "1px solid var(--color-border)",
-          padding: "20px 24px",
+          padding: "clamp(16px, 2.5vw, 24px)",
           display: "flex",
           flexDirection: "column",
           gap: 0,
+          width: "100%",
+          boxSizing: "border-box",
         }}
       >
         <div
@@ -918,16 +958,19 @@ export default function Settings() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 12,
             cursor: "pointer",
             userSelect: "none",
           }}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 240px", minWidth: 0 }}>
             <h2
               style={{
                 margin: 0,
-                fontSize: 16,
+                fontSize: "clamp(15px, 1.6vw, 17px)",
                 fontWeight: 600,
+                letterSpacing: "-0.01em",
                 color: "var(--color-text-hi)",
               }}
             >
@@ -940,7 +983,7 @@ export default function Settings() {
             </span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
             <StatusBadge status={status} />
             <motion.div
               animate={{ rotate: collapsed ? 0 : 180 }}
@@ -995,6 +1038,7 @@ export default function Settings() {
                     background: "rgba(0,0,0,0.25)",
                     padding: "2px 6px",
                     borderRadius: 5,
+                    wordBreak: "break-all",
                   }}
                 >
                   http://127.0.0.1:8989/login
@@ -1072,7 +1116,7 @@ export default function Settings() {
                 </p>
               )}
 
-              <div style={{ display: "flex", gap: 10, paddingTop: 4 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, paddingTop: 4 }}>
                 <PrimaryBtn onClick={() => save()} disabled={!canSave}>
                   {saving ? "Saving…" : "Save Custom Client ID"}
                 </PrimaryBtn>
@@ -1088,7 +1132,7 @@ export default function Settings() {
             </motion.div>
           )}
         </AnimatePresence>
-      </section>
+      </motion.section>
     </div>
   );
 }

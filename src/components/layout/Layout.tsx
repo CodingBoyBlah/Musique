@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { TitleBar } from "./TitleBar";
@@ -28,13 +28,28 @@ export default function Layout() {
   const reduceMotion = useReducedMotion();
   const mainRef = useRef<HTMLElement>(null);
 
+  const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
+  const [windowWidth, setWindowWidth] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth : 1200
+  );
+
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const isNarrow = windowWidth < 768;
+  const isSidebarCollapsed = sidebarCollapsed || isNarrow;
+  const sidebarWidth = isSidebarCollapsed ? 64 : 232;
+  const rawPanelWidth = lyricsOpen ? 366 : queueOpen ? 272 : 0;
+  const willCrushMain = windowWidth - sidebarWidth - rawPanelWidth < 340;
+  const spacerWidth = willCrushMain ? 0 : rawPanelWidth;
+
   useEffect(() => {
     if (mainRef.current) mainRef.current.scrollTop = 0;
   }, [location.pathname]);
 
-  // ask rust whether a native material actually took this launch. until it
-  // answers (and anywhere it didn't - Linux, or a failed Mica/vibrancy) the
-  // root stays opaque dark so we never get white-on-white.
   useEffect(() => {
     getBackdropActive().then(setBackdropActive).catch(() => setBackdropActive(false));
   }, [setBackdropActive]);
@@ -176,9 +191,9 @@ export default function Layout() {
                     overflowY: "auto",
                     overflowX: "hidden",
                     paddingTop: "clamp(54px, 1.8vw, 64px)",
-                    paddingLeft: "clamp(14px, 3vw, 32px)",
-                    paddingRight: "clamp(16px, 3vw, 32px)",
-                    paddingBottom: "clamp(16px, 3vw, 32px)",
+                    paddingLeft: "clamp(12px, 2.5vw, 32px)",
+                    paddingRight: "clamp(12px, 2.5vw, 32px)",
+                    paddingBottom: "clamp(16px, 3vw, 36px)",
                     WebkitMaskImage:
                       "linear-gradient(to bottom, transparent 0px, transparent 16px, rgba(0,0,0,0.015) 20px, rgba(0,0,0,0.055) 24px, rgba(0,0,0,0.13) 28px, rgba(0,0,0,0.25) 32px, rgba(0,0,0,0.42) 36px, rgba(0,0,0,0.60) 40px, rgba(0,0,0,0.77) 44px, rgba(0,0,0,0.89) 48px, rgba(0,0,0,0.965) 51px, #000 54px, #000 100%)",
                     maskImage:
@@ -199,8 +214,9 @@ export default function Layout() {
               </div>
 
               {/* reserves the rail's width instantly (no transition) so the grid
-                  reflows once; the panel below slides over this exact slot. */}
-              <div aria-hidden style={{ width: lyricsOpen ? 366 : queueOpen ? 272 : 0, flexShrink: 0 }} />
+                  reflows once; the panel below slides over this exact slot.
+                  on narrow windows where space is tight, spacer is 0 so the panel overlays gracefully */}
+              <div aria-hidden style={{ width: spacerWidth, flexShrink: 0 }} />
 
               {/* right rail - lyrics or queue, mutually exclusive. positioned
                   against THIS row (below the title bar), sliding in via a transform. */}

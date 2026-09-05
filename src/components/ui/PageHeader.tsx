@@ -1,5 +1,4 @@
 import { useEffect, type ReactNode } from "react";
-import { motion } from "framer-motion";
 import { CoverArt } from "./CoverArt";
 import { useUIStore } from "../../store/ui.store";
 import { usePlayerStore } from "../../store/player.store";
@@ -29,30 +28,26 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
       style={{
         display: "flex",
         alignItems: "flex-end",
-        gap: isCompact ? 16 : 24,
+        gap: "clamp(14px, 2.2vw, 24px)",
+        flexWrap: "wrap",
         minWidth: 0,
         padding: isCompact ? "8px 0 16px" : "12px 0 22px",
-        transition: "gap 0.35s cubic-bezier(0.23, 1, 0.32, 1), padding 0.35s cubic-bezier(0.23, 1, 0.32, 1)",
+        transition: "padding 0.28s ease, gap 0.28s ease",
       }}
     >
-      {/* Fluid spring scaling album cover */}
-      <motion.div
-        initial={false}
-        animate={{
-          width: isCompact ? 160 : 240,
-          height: isCompact ? 160 : 240,
-        }}
-        transition={{ type: "spring", stiffness: 340, damping: 34 }}
+      {/* Fluid responsive album cover */}
+      <div
         style={{
-          width: isCompact ? 160 : 240,
-          height: isCompact ? 160 : 240,
+          width: isCompact ? "clamp(130px, 17vw, 170px)" : "clamp(140px, 20vw, 230px)",
+          height: isCompact ? "clamp(130px, 17vw, 170px)" : "clamp(140px, 20vw, 230px)",
           flexShrink: 0,
-          borderRadius: isCompact ? 10 : 14,
+          borderRadius: 12,
           overflow: "hidden",
           boxShadow: isCompact
             ? "0 10px 24px rgba(0, 0, 0, 0.42)"
             : "0 20px 48px rgba(0, 0, 0, 0.58)",
-          transition: "box-shadow 0.35s ease, border-radius 0.35s ease",
+          transition:
+            "width 0.28s cubic-bezier(0.23, 1, 0.32, 1), height 0.28s cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.28s ease",
         }}
       >
         <div style={{ width: "100%", height: "100%" }}>
@@ -64,36 +59,33 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
             style={{ width: "100%", height: "100%", borderRadius: "inherit" }}
           />
         </div>
-      </motion.div>
+      </div>
 
       <div
         className="flex flex-col gap-2 min-w-0"
-        style={{ flex: 1, paddingBottom: 4 }}
+        style={{ flex: "1 1 240px", paddingBottom: 4 }}
       >
         <p
           className="text-[10.5px] font-bold uppercase tracking-widest"
-          style={{ color: "var(--color-text-dim)" }}
+          style={{ color: "var(--color-text-dim)", margin: 0 }}
         >
           {eyebrow}
         </p>
 
-        <motion.h1
-          initial={false}
-          animate={{
-            fontSize: isCompact ? 26 : 40,
-          }}
-          transition={{ type: "spring", stiffness: 340, damping: 34 }}
+        <h1
           className="font-black line-clamp-2 break-words"
           title={title}
           style={{
-            fontSize: isCompact ? 26 : 40,
+            fontSize: isCompact ? "clamp(22px, 3.4vw, 32px)" : "clamp(26px, 4.2vw, 44px)",
             lineHeight: 1.06,
             letterSpacing: "-0.025em",
             color: "#ffffff",
+            margin: 0,
+            transition: "font-size 0.28s cubic-bezier(0.23, 1, 0.32, 1)",
           }}
         >
           {title}
-        </motion.h1>
+        </h1>
 
         {children}
       </div>

@@ -15,6 +15,7 @@ import { seekPlayback } from "../../api/playback";
 import { Loader } from "../ui/Loader";
 import { Tooltip } from "../ui/Tooltip";
 import { isMac } from "../../lib/platform";
+import { zTransform } from "../../lib/motion";
 import {
   detectLyricScript,
   canRomanize,
@@ -76,12 +77,14 @@ function CoverBg({ url }: { url: string | null | undefined }) {
     >
       <motion.div
         initial={false}
+        transformTemplate={zTransform}
         animate={reduceMotion ? { scale: 1.45 } : { scale: 1.45, x: [0, 54, -38, 0], y: [0, -42, 32, 0], rotate: [0, 6, -5, 0] }}
         transition={{ duration: 26, repeat: Infinity, ease: "easeInOut" }}
         style={layer(0.5)}
       />
       <motion.div
         initial={false}
+        transformTemplate={zTransform}
         animate={reduceMotion ? { scale: 1.7 } : { scale: 1.7, x: [0, -48, 40, 0], y: [0, 36, -30, 0], rotate: [0, -7, 5, 0] }}
         transition={{ duration: 38, repeat: Infinity, ease: "easeInOut" }}
         style={layer(0.34)}
@@ -208,13 +211,17 @@ export function LyricsPanel() {
       initial={{ x: WIDTH }}
       animate={{ x: 0 }}
       exit={{ x: WIDTH }}
+      transformTemplate={zTransform}
       transition={{ type: "spring", stiffness: 340, damping: 38 }}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH,
+        maxWidth: "100vw",
         overflow: "hidden",
         borderLeft: "1px solid var(--color-border)",
         background: "var(--color-sidebar, #0a0a12)",
+        boxShadow: "-8px 0 32px rgba(0,0,0,0.36)",
+        contain: "paint",
         willChange: "transform",
       }}
     >

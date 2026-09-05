@@ -212,7 +212,10 @@ export function SegmentedControl({
         userSelect: "none",
         touchAction: "none",
         cursor: dragIndex !== null ? "grabbing" : "grab",
-        overflow: "hidden",
+        maxWidth: "100%",
+        boxSizing: "border-box",
+        overflowX: "auto",
+        scrollbarWidth: "none",
       }}
     >
       {options.map((opt, idx) => {
@@ -227,11 +230,11 @@ export function SegmentedControl({
             onClick={() => onChange(opt)}
             style={{
               position: "relative",
-              padding: "7px 16px",
+              padding: "7px clamp(8px, 1.4vw, 16px)",
               borderRadius: 8,
               border: "none",
               background: "transparent",
-              fontSize: 12,
+              fontSize: "clamp(11.5px, 1.2vw, 12.5px)",
               fontWeight: 600,
               color: active ? "var(--color-accent-text)" : "var(--color-text-dim)",
               cursor: "pointer",

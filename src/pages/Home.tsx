@@ -24,6 +24,8 @@ import { EvenGrid, EvenGridSkeleton } from "../components/ui/EvenGrid";
 import { CirclePlayButton } from "../components/ui/CirclePlayButton";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { meshGradient } from "../lib/mesh";
+import { gpuLayer, zTransform } from "../lib/motion";
+import { useReflowPulse } from "../hooks/useReflowPulse";
 import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
 
@@ -146,7 +148,8 @@ function QuickActionCard({
     <motion.div
       role="button"
       tabIndex={0}
-      layout
+      layout="position"
+      transformTemplate={zTransform}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{
@@ -172,11 +175,12 @@ function QuickActionCard({
         transition: "background 0.16s ease, box-shadow 0.16s ease",
         boxShadow: hover ? "0 8px 24px rgba(0,0,0,0.32)" : "0 2px 8px rgba(0,0,0,0.18)",
         userSelect: "none",
+        minWidth: 0,
+        ...gpuLayer,
       }}
     >
       {item.isLikedSongs ? (
-        <motion.div
-          layout
+        <div
           style={{
             width: 64,
             height: 64,
@@ -189,10 +193,9 @@ function QuickActionCard({
           }}
         >
           <Heart size={22} fill="#ffffff" strokeWidth={0} />
-        </motion.div>
+        </div>
       ) : item.imageUrl ? (
-        <motion.img
-          layout
+        <img
           src={item.imageUrl}
           alt=""
           loading="lazy"
@@ -204,8 +207,7 @@ function QuickActionCard({
           }}
         />
       ) : (
-        <motion.div
-          layout
+        <div
           style={{
             width: 64,
             height: 64,
@@ -218,10 +220,10 @@ function QuickActionCard({
           }}
         >
           <Music2 size={22} strokeWidth={1.8} />
-        </motion.div>
+        </div>
       )}
 
-      <motion.div layout style={{ flex: 1, minWidth: 0, padding: "0 14px", display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ flex: 1, minWidth: 0, padding: "0 14px", display: "flex", alignItems: "center", gap: 8 }}>
         <span
           style={{
             fontSize: 14,
@@ -231,6 +233,8 @@ function QuickActionCard({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
+            flex: 1,
+            minWidth: 0,
           }}
         >
           {item.title}
@@ -247,9 +251,9 @@ function QuickActionCard({
             ))}
           </div>
         )}
-      </motion.div>
+      </div>
 
-      <motion.div layout style={{ marginRight: 12, flexShrink: 0 }}>
+      <div style={{ marginRight: 12, flexShrink: 0 }}>
         <CirclePlayButton
           isPlaying={isThisPlaying}
           visible={hover || isThisPlaying}
@@ -258,7 +262,7 @@ function QuickActionCard({
           iconSize={17}
           ariaLabel={isThisPlaying ? `Pause ${item.title}` : `Play ${item.title}`}
         />
-      </motion.div>
+      </div>
     </motion.div>
   );
 }
@@ -268,7 +272,7 @@ function QuickActionsShelf() {
 
   const [cols, setCols] = useState<number>(() => {
     if (typeof window !== "undefined") {
-      const w = Math.max(320, window.innerWidth - 320);
+      const w = Math.max(320, window.innerWidth - (window.innerWidth < 768 ? 88 : 280));
       return w >= 680 ? 3 : w >= 400 ? 2 : 1;
     }
     return 3;
@@ -277,6 +281,7 @@ function QuickActionsShelf() {
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    let rafId = 0;
     const measure = (w: number) => {
       if (w <= 0) return;
       const nextCols = w >= 680 ? 3 : w >= 400 ? 2 : 1;
@@ -284,12 +289,19 @@ function QuickActionsShelf() {
     };
     measure(el.getBoundingClientRect().width);
     const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        measure(entry.contentRect.width);
-      }
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        for (const entry of entries) {
+          measure(entry.contentRect.width);
+        }
+      });
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      ro.disconnect();
+    };
   }, []);
 
   const { data: recentTracks = [] } = useRecentlyPlayed();
@@ -393,13 +405,19 @@ function QuickActionsShelf() {
   }, [recentTracks, topArtists, topTracks, newReleases]);
 
   return (
-    <div
+    <motion.section
       ref={containerRef}
+      layout="position"
+      transformTemplate={zTransform}
+      transition={{ layout: REFLOW }}
+      aria-label="Quick actions"
       style={{
         display: "grid",
         gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
         gap: "clamp(8px, 1.2vw, 12px)",
         width: "100%",
+        contain: "layout style",
+        ...gpuLayer,
       }}
     >
       {items.map((item, i) => (
@@ -410,7 +428,7 @@ function QuickActionsShelf() {
           index={i}
         />
       ))}
-    </div>
+    </motion.section>
   );
 }
 
@@ -418,8 +436,27 @@ function QuickActionsShelf() {
 
 function SectionTitle({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: "0 0 14px" }}>
-      <h2 style={{ margin: 0, fontSize: "clamp(17px, 2.2vw, 21px)", fontWeight: 700, letterSpacing: "-0.02em", color: "var(--color-text-hi)", textWrap: "balance" } as React.CSSProperties}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+        rowGap: 8,
+        margin: "0 0 14px",
+      }}
+    >
+      <h2
+        style={{
+          margin: 0,
+          fontSize: "clamp(17px, 2.2vw, 21px)",
+          fontWeight: 700,
+          letterSpacing: "-0.02em",
+          color: "var(--color-text-hi)",
+          textWrap: "balance",
+        } as React.CSSProperties}
+      >
         {children}
       </h2>
       {right}
@@ -444,15 +481,26 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
   return (
     <motion.button
       layout="position"
+      transformTemplate={zTransform}
       transition={{ layout: REFLOW }}
       onClick={onPlay}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       whileTap={{ scale: 0.97 }}
       style={{
-        width: "100%", display: "flex", flexDirection: "column", gap: 10,
-        padding: 8, borderRadius: 14, border: "none", background: hover ? "var(--color-surface)" : "transparent",
-        cursor: "pointer", textAlign: "left", transition: "background 0.18s ease",
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        padding: 8,
+        borderRadius: 14,
+        border: "none",
+        background: hover ? "var(--color-surface)" : "transparent",
+        cursor: "pointer",
+        textAlign: "left",
+        transition: "background 0.18s ease",
+        boxSizing: "border-box",
+        ...gpuLayer,
       }}
     >
       <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
@@ -484,8 +532,19 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
           ariaLabel={isThisTrackPlaying ? `Pause ${track.name}` : `Play ${track.name}`}
         />
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, maxWidth: "100%" }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: isThisTrackPlaying ? "var(--color-accent)" : "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", minWidth: 0 }}>
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: isThisTrackPlaying ? "var(--color-accent)" : "var(--color-text-hi)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
           {track.name}
         </span>
         {isThisTrackPlaying && (
@@ -501,7 +560,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
           </div>
         )}
       </div>
-      <span style={{ fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", marginTop: -4 }}>
+      <span style={{ fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", width: "100%", display: "block", marginTop: -4 }}>
         {track.artists.map((a) => a.name).join(", ")}
       </span>
     </motion.button>
@@ -526,13 +585,7 @@ function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string 
       maxRows={2}
       getKey={(t) => t.id}
       renderItem={(t, i) => (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.34, delay: Math.min(i, 11) * 0.035, ease: [0.23, 1, 0.32, 1] }}
-        >
-          <RecTile track={t} onPlay={() => play(i)} />
-        </motion.div>
+        <RecTile track={t} onPlay={() => play(i)} />
       )}
     />
   );
@@ -541,22 +594,25 @@ function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string 
 function MadeForYou() {
   const { data: recs = [], isLoading } = useQuery({
     queryKey:  ["recommendations", "home"],
-    queryFn:   () => getRecommendations(undefined, 12),
+    queryFn:   () => getRecommendations(undefined, 16),
     staleTime: 30 * 60_000,
     gcTime:    24 * 60 * 60_000,
     refetchOnWindowFocus: false,
   });
 
   return (
-    <section>
+    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="Made for you">
       <SectionTitle>Made for you</SectionTitle>
-      {isLoading ? <TileSkeleton />
-        : recs.length === 0 ? (
-          <p style={{ margin: 0, fontSize: 13, color: "var(--color-text-dim)" }}>
-            Play and follow some artists, recommendations will grow here.
-          </p>
-        ) : <TrackTiles tracks={recs} context="made-for-you" />}
-    </section>
+      {isLoading ? (
+        <TileSkeleton />
+      ) : recs.length === 0 ? (
+        <p style={{ margin: 0, fontSize: 13, color: "var(--color-text-dim)" }}>
+          Play and follow some artists, recommendations will grow here.
+        </p>
+      ) : (
+        <TrackTiles tracks={recs} context="made-for-you" />
+      )}
+    </motion.section>
   );
 }
 
@@ -564,10 +620,10 @@ function RecentlyPlayed() {
   const { data = [], isLoading } = useRecentlyPlayed();
   if (!isLoading && data.length === 0) return null;
   return (
-    <section>
+    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="Jump back in">
       <SectionTitle>Jump back in</SectionTitle>
-      {isLoading ? <TileSkeleton /> : <TrackTiles tracks={data.slice(0, 12)} context="recently-played" />}
-    </section>
+      {isLoading ? <TileSkeleton /> : <TrackTiles tracks={data.slice(0, 16)} context="recently-played" />}
+    </motion.section>
   );
 }
 
@@ -617,15 +673,7 @@ function ArtistTiles({ artists }: { artists: ArtistItem[] }) {
       gap={14}
       maxRows={2}
       getKey={(a) => a.id}
-      renderItem={(a, i) => (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.34, delay: Math.min(i, 11) * 0.035, ease: [0.23, 1, 0.32, 1] }}
-        >
-          <ArtistCard artist={a} />
-        </motion.div>
-      )}
+      renderItem={(a) => <ArtistCard artist={a} />}
     />
   );
 }
@@ -636,12 +684,16 @@ function TopTracks() {
   const probe = useTopTracks("medium_term");
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;
   return (
-    <section>
+    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="Your top tracks">
       <SectionTitle right={<RangeSlider value={range} onChange={setRange} layoutId="home-top-tracks-range" />}>Your top tracks</SectionTitle>
-      {isLoading ? <TileSkeleton />
-        : data.length === 0 ? <EmptyHint>Not enough listening from {rangeWord(range)} yet.</EmptyHint>
-        : <TrackTiles tracks={data.slice(0, 12)} context={`top-tracks-${range}`} />}
-    </section>
+      {isLoading ? (
+        <TileSkeleton />
+      ) : data.length === 0 ? (
+        <EmptyHint>Not enough listening from {rangeWord(range)} yet.</EmptyHint>
+      ) : (
+        <TrackTiles tracks={data.slice(0, 16)} context={`top-tracks-${range}`} />
+      )}
+    </motion.section>
   );
 }
 
@@ -651,12 +703,16 @@ function TopArtists() {
   const probe = useTopArtists("medium_term");
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;
   return (
-    <section>
+    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="Your top artists">
       <SectionTitle right={<RangeSlider value={range} onChange={setRange} layoutId="home-top-artists-range" />}>Your top artists</SectionTitle>
-      {isLoading ? <TileSkeleton />
-        : data.length === 0 ? <EmptyHint>Not enough listening from {rangeWord(range)} yet.</EmptyHint>
-        : <ArtistTiles artists={data.slice(0, 12)} />}
-    </section>
+      {isLoading ? (
+        <EvenGridSkeleton minColWidth={126} gap={14} maxRows={1} borderRadius={999} />
+      ) : data.length === 0 ? (
+        <EmptyHint>Not enough listening from {rangeWord(range)} yet.</EmptyHint>
+      ) : (
+        <ArtistTiles artists={data.slice(0, 16)} />
+      )}
+    </motion.section>
   );
 }
 
@@ -664,13 +720,13 @@ function NewReleases() {
   const { data = [], isLoading } = useNewReleases();
   if (!isLoading && data.length === 0) return null;
   return (
-    <section>
+    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="New releases">
       <SectionTitle>New releases</SectionTitle>
       {isLoading ? (
         <TileSkeleton />
       ) : (
         <EvenGrid
-          items={data.slice(0, 12)}
+          items={data.slice(0, 16)}
           minColWidth={140}
           gap={14}
           maxRows={2}
@@ -678,7 +734,7 @@ function NewReleases() {
           renderItem={(al) => <AlbumCard album={al} />}
         />
       )}
-    </section>
+    </motion.section>
   );
 }
 
@@ -688,6 +744,7 @@ function greeting() {
 }
 
 export default function Home() {
+  useReflowPulse();
   const { loggedIn, displayName, isLoading, login, loggingIn } = useAuth();
   const hello = greeting();
 
@@ -751,21 +808,21 @@ export default function Home() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "clamp(26px, 3.4vw, 38px)" }}>
-      <div>
+      <motion.div layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }}>
         <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 600, letterSpacing: "0.02em", color: "var(--color-text-dim)" }}>{hello}</p>
         <h1 style={{ margin: 0, fontSize: "clamp(26px, 3.8vw, 34px)", fontWeight: 800, letterSpacing: "-0.03em", color: "var(--color-text-hi)", textWrap: "balance" } as React.CSSProperties}>
           {displayName ? displayName.split(" ")[0] : "Welcome back"}
         </h1>
-      </div>
+      </motion.div>
 
       {/* top 6 quick action shelf */}
       <QuickActionsShelf />
 
-      <motion.div layout="position"><MadeForYou /></motion.div>
-      <motion.div layout="position"><RecentlyPlayed /></motion.div>
-      <motion.div layout="position"><TopTracks /></motion.div>
-      <motion.div layout="position"><TopArtists /></motion.div>
-      <motion.div layout="position"><NewReleases /></motion.div>
+      <MadeForYou />
+      <RecentlyPlayed />
+      <TopTracks />
+      <TopArtists />
+      <NewReleases />
     </div>
   );
 }

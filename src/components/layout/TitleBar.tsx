@@ -238,9 +238,18 @@ function AccountMenu() {
 export function TitleBar() {
   const navigate = useNavigate();
   const [maximized, setMaximized] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1200));
   const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
   const queueOpen = usePlayerStore((s) => s.queueOpen);
   const railWidth = lyricsOpen ? 366 : queueOpen ? 272 : 0;
+  const isCompact = windowWidth < 768;
+  const effectiveRailWidth = railWidth > 0 && !isCompact ? railWidth : "auto";
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -288,7 +297,7 @@ export function TitleBar() {
         {/* right rail slot (lyrics/queue) with window controls */}
         <div
           style={{
-            width: railWidth > 0 ? railWidth : "auto",
+            width: effectiveRailWidth,
             height: "100%",
             display: "flex",
             alignItems: "stretch",

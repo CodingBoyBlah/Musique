@@ -74,7 +74,7 @@ export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
   ];
 
   const toolbar = (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", boxSizing: "border-box", padding: "0 2px 12px" }}>
+    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, width: "100%", boxSizing: "border-box", padding: "0 2px 12px" }}>
       {/* filter box */}
       <div
         style={{
@@ -107,7 +107,7 @@ export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
         )}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: "auto", flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginLeft: "auto" }}>
         <Dropdown value={order} options={orderOptions} onChange={setOrder} align="right" minWidth={150} title="Sort by" />
         <Dropdown value={dir}   options={dirOptions}   onChange={setDir}   align="right" minWidth={140} title="Direction" />
       </div>
