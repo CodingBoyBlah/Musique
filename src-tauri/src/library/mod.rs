@@ -594,12 +594,14 @@ pub async fn sync_all(pool: &SqlitePool, token: &str) -> Result<SyncResult, AppE
     };
 
     // stash the sync timestamp in settings
-    let now = now_ms().to_string();
+    let now_num = now_ms();
+    let now = now_num.to_string();
     let _ = sqlx::query(
-        "INSERT INTO settings (key, value) VALUES ('library_last_synced', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        "INSERT INTO settings (key, value, updated_at) VALUES ('library_last_synced', ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
     )
     .bind(&now)
+    .bind(now_num)
     .execute(pool)
     .await;
 

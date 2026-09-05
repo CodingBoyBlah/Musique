@@ -390,37 +390,102 @@ pub async fn get_recommendations(
 
     // 2. sample the pool
     seeds.shuffle(&mut rand::thread_rng());
-    seeds.truncate(25);
+    seeds.truncate(20);
 
-    // 3. pull market filtered top tracks, capping per artist
+    // 3. pull market filtered top tracks concurrently in chunks of 5
     let exclude: HashSet<String> =
         exclude_track_ids.unwrap_or_default().into_iter().collect();
     let mut out:        Vec<TrackItem>          = Vec::new();
     let mut seen:       HashSet<String>         = HashSet::new();
     let mut per_artist: HashMap<String, usize>  = HashMap::new();
 
-    for aid in &seeds {
-        if let Ok(tt) = spotify::spotify_get::<SpTopTracks>(
-            &token,
-            &format!("{BASE}/artists/{aid}/top-tracks?market=from_token"),
-        ).await {
-            let mut tracks = tt.tracks;
-            tracks.shuffle(&mut rand::thread_rng());
-            let mut added_here = 0;
-            for t in tracks {
-                if added_here >= 2 { break; }
-                if t.is_local.unwrap_or(false) { continue; }
-                if filter_explicit && t.explicit { continue; }
-                if exclude.contains(&t.id) || !seen.insert(t.id.clone()) { continue; }
-                let primary = t.artists.first().map(|a| a.id.clone()).unwrap_or_default();
-                let count   = per_artist.entry(primary).or_insert(0);
-                if *count >= 2 { continue; }   // dont let one artist take over the whole thing
-                *count += 1;
-                out.push(item_from_track(&t));
-                added_here += 1;
+    for chunk in seeds.chunks(5) {
+        let mut tasks = Vec::new();
+        for aid in chunk {
+            let token_clone = token.clone();
+            let aid_clone = aid.clone();
+            tasks.push(tokio::spawn(async move {
+                spotify::spotify_get::<SpTopTracks>(
+                    &token_clone,
+                    &format!("{BASE}/artists/{aid_clone}/top-tracks?market=from_token"),
+                ).await
+            }));
+        }
+
+        for task in tasks {
+            if let Ok(Ok(tt)) = task.await {
+                let mut tracks = tt.tracks;
+                tracks.shuffle(&mut rand::thread_rng());
+                let mut added_here = 0;
+                for t in tracks {
+                    if added_here >= 2 { break; }
+                    if t.is_local.unwrap_or(false) { continue; }
+                    if filter_explicit && t.explicit { continue; }
+                    if exclude.contains(&t.id) || !seen.insert(t.id.clone()) { continue; }
+                    let primary = t.artists.first().map(|a| a.id.clone()).unwrap_or_default();
+                    let count   = per_artist.entry(primary).or_insert(0);
+                    if *count >= 2 { continue; }
+                    *count += 1;
+                    out.push(item_from_track(&t));
+                    added_here += 1;
+                }
             }
         }
         if out.len() >= limit * 2 { break; }
+    }
+
+    // If exclude filtered out all tracks, relax exclusion
+    if out.is_empty() && !seeds.is_empty() {
+        for aid in seeds.iter().take(5) {
+            if let Ok(tt) = spotify::spotify_get::<SpTopTracks>(
+                &token,
+                &format!("{BASE}/artists/{aid}/top-tracks?market=from_token"),
+            ).await {
+                for t in tt.tracks {
+                    if seen.insert(t.id.clone()) {
+                        out.push(item_from_track(&t));
+                    }
+                    if out.len() >= limit { break; }
+                }
+            }
+            if out.len() >= limit { break; }
+        }
+    }
+
+    // Local library fallback if network/API returned nothing
+    if out.is_empty() {
+        let local_tracks: Vec<(String, String, i64, i64, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT t.id, t.name, t.duration_ms, t.explicit, al.name, al.image_url
+             FROM tracks t
+             LEFT JOIN albums al ON al.id = t.album_id
+             ORDER BY RANDOM() LIMIT ?",
+        )
+        .bind(limit as i64)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+
+        for (tid, tname, dur, exp, al_name, al_img) in local_tracks {
+            if seen.insert(tid.clone()) {
+                out.push(TrackItem {
+                    id: tid,
+                    name: tname,
+                    duration_ms: dur,
+                    explicit: exp == 1,
+                    artists: Vec::new(),
+                    album: Some(AlbumItem {
+                        id: String::new(),
+                        name: al_name.unwrap_or_default(),
+                        album_type: "album".to_string(),
+                        image_url: al_img,
+                        release_date: None,
+                        artists: Vec::new(),
+                        popularity: None,
+                    }),
+                    popularity: None,
+                });
+            }
+        }
     }
 
     out.shuffle(&mut rand::thread_rng());

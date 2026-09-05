@@ -200,6 +200,8 @@ function ImmersiveQueue() {
     const picked = queue[i];
     useQueueStore.setState({ queue: queue.slice(i + 1) });
     setCurrentTrack(picked);
+    usePlayerStore.getState().setPlaying(true);
+    usePlayerStore.getState().setTargetState("playing");
     playTrack(picked.id).catch(() => {});
   }
 

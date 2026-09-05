@@ -178,6 +178,8 @@ export function QueuePanel() {
 
   function playItem(track: TrackItem) {
     setCurrentTrack(track);
+    usePlayerStore.getState().setPlaying(true);
+    usePlayerStore.getState().setTargetState("playing");
     playTrack(track.id).catch(() => {});
   }
 

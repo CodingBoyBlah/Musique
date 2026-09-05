@@ -218,24 +218,16 @@ fn audio_device_safe() -> bool {
 // playbackinner
 
 pub struct PlaybackInner {
-    pub player:  Arc<Player>,
-    pub volume:  SharedVolume,
-    // whether a track has ever been loaded into this session. a freshly warmed
-    // session has a live player but nothing loaded so player.play() would do
-    // nothing, callers gotta load first. set to true on every load
-    pub loaded:  Arc<AtomicBool>,
-    // Spotify Connect controller. ALL playback control (load/play/pause/seek/
-    // volume) goes through this instead of straight to `player` so that every
-    // action is reflected in the connect-state Spirc PUTs to Spotify's backend
-    // - that's what makes plays land in "recently played" and shows Musique as
-    // the active device. `player` is still held for preload() (pure audio
-    // pre-cache, no state change) and for the event channel.
-    spirc:       Spirc,
-    session:     Session,
-    _event_task: tauri::async_runtime::JoinHandle<()>,
-    // the Spirc state-machine future. dropping the handle aborts it, tearing the
-    // connect device down, so it must live exactly as long as this inner.
-    _spirc_task: tauri::async_runtime::JoinHandle<()>,
+    pub player:            Arc<Player>,
+    pub volume:            SharedVolume,
+    pub loaded:            Arc<AtomicBool>,
+    pub current_uri:       Arc<Mutex<Option<String>>>,
+    pub is_ended:          Arc<AtomicBool>,
+    pub is_playing_atomic: Arc<AtomicBool>,
+    spirc:                 Spirc,
+    session:               Session,
+    _event_task:           tauri::async_runtime::JoinHandle<()>,
+    _spirc_task:           tauri::async_runtime::JoinHandle<()>,
 }
 
 // map a librespot control error into our IPC error type
@@ -244,6 +236,18 @@ fn spirc_err(e: LibrespotError) -> AppError {
 }
 
 impl PlaybackInner {
+    pub fn is_playing(&self) -> bool {
+        self.is_playing_atomic.load(Ordering::Relaxed)
+    }
+
+    pub fn is_ended(&self) -> bool {
+        self.is_ended.load(Ordering::Relaxed)
+    }
+
+    pub fn current_uri(&self) -> Option<String> {
+        self.current_uri.lock().unwrap().clone()
+    }
+
     // a dropped/expired librespot session just eats load/play calls so
     // playback shows as "playing" with no actual audio. callers rebuild when this is
     // true (see ensure_inner)
@@ -251,37 +255,36 @@ impl PlaybackInner {
         self.session.is_invalid()
     }
 
-    // load + start a single track through Spotify Connect. `activate()` MUST come
-    // first: Spirc ignores load/play/etc while the device is inactive, and since
-    // both commands ride the same ordered channel the activate is processed first.
-    // We load a one-track ad-hoc context (not a real album/playlist context) so
-    // the frontend stays the source of truth for the queue: at end-of-track Spirc
-    // finds no next track and stops, and the frontend advances by calling this
-    // again for the next id. Each load registers as a play on Spotify's backend.
     pub fn play_uri(&self, uri: String, position_ms: u32) -> Result<(), AppError> {
         eprintln!("[playback] play_uri uri={uri} pos={position_ms}");
         self.spirc.activate().map_err(spirc_err)?;
         self.spirc.load(LoadRequest::from_tracks(
-            vec![uri],
+            vec![uri.clone()],
             LoadRequestOptions {
                 start_playing: true,
                 seek_to: position_ms,
                 ..Default::default()
             },
         )).map_err(spirc_err)?;
+        *self.current_uri.lock().unwrap() = Some(uri);
         self.loaded.store(true, Ordering::Relaxed);
+        self.is_ended.store(false, Ordering::Relaxed);
+        self.is_playing_atomic.store(true, Ordering::Relaxed);
         Ok(())
     }
 
     pub fn resume(&self) -> Result<(), AppError> {
         eprintln!("[playback] resume");
         self.spirc.play().map_err(spirc_err)?;
+        self.is_playing_atomic.store(true, Ordering::Relaxed);
+        self.is_ended.store(false, Ordering::Relaxed);
         Ok(())
     }
 
     pub fn pause(&self) -> Result<(), AppError> {
         eprintln!("[playback] pause");
         self.spirc.pause().map_err(spirc_err)?;
+        self.is_playing_atomic.store(false, Ordering::Relaxed);
         Ok(())
     }
 
@@ -513,6 +516,13 @@ pub async fn create_inner(
     }
     eprintln!("[playback] STEP country = {:?}", session.country());
 
+    let current_uri       = Arc::new(Mutex::new(None));
+    let is_ended          = Arc::new(AtomicBool::new(false));
+    let is_playing_atomic = Arc::new(AtomicBool::new(false));
+
+    let is_ended_clone          = is_ended.clone();
+    let is_playing_atomic_clone = is_playing_atomic.clone();
+
     let mut event_rx = player.get_player_event_channel();
     let event_app    = app.clone();
     let event_task   = tauri::async_runtime::spawn(async move {
@@ -529,11 +539,14 @@ pub async fn create_inner(
             // pass the playback state along to the os media controls
             match &event {
                 PlayerEvent::Playing { position_ms, .. } => {
+                    is_playing_atomic_clone.store(true, Ordering::Relaxed);
+                    is_ended_clone.store(false, Ordering::Relaxed);
                     let _ = media_tx.try_send(
                         crate::media_controls::MediaMsg::Playing { position_ms: *position_ms as u64 }
                     );
                 }
                 PlayerEvent::Paused { position_ms, .. } => {
+                    is_playing_atomic_clone.store(false, Ordering::Relaxed);
                     let _ = media_tx.try_send(
                         crate::media_controls::MediaMsg::Paused { position_ms: *position_ms as u64 }
                     );
@@ -541,6 +554,8 @@ pub async fn create_inner(
                 PlayerEvent::Stopped { .. }
                 | PlayerEvent::EndOfTrack { .. }
                 | PlayerEvent::Unavailable { .. } => {
+                    is_playing_atomic_clone.store(false, Ordering::Relaxed);
+                    is_ended_clone.store(true, Ordering::Relaxed);
                     let _ = media_tx.try_send(crate::media_controls::MediaMsg::Stopped);
                 }
                 _ => {}
@@ -593,11 +608,14 @@ pub async fn create_inner(
     Ok(PlaybackInner {
         player,
         volume,
-        loaded:      Arc::new(AtomicBool::new(false)),
+        loaded:            Arc::new(AtomicBool::new(false)),
+        current_uri,
+        is_ended,
+        is_playing_atomic,
         spirc,
         session,
-        _event_task: event_task,
-        _spirc_task: spirc_task,
+        _event_task:       event_task,
+        _spirc_task:       spirc_task,
     })
 }
 

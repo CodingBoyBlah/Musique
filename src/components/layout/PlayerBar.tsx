@@ -10,13 +10,12 @@ import { useShallow } from "zustand/react/shallow";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import {
-  pausePlayback, resumeOrPlay, seekPlayback, playTrack,
   setVolume as apiSetVolume, setMuted as apiSetMuted,
 } from "../../api/playback";
 import { CoverArt } from "../ui/CoverArt";
 import { Tooltip } from "../ui/Tooltip";
 import { fmtMs } from "../../utils/fmt";
-import { startRadio } from "../../utils/radio";
+import { usePlayerControls } from "../../hooks/usePlayerControls";
 import { gpuLayer, zTransform } from "../../lib/motion";
 
 // icon button
@@ -252,22 +251,17 @@ export function PlayerBar() {
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
   const currentTrack    = usePlayerStore((s) => s.currentTrack);
   const durationMs      = usePlayerStore((s) => s.durationMs);
-  const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const incrementPos    = usePlayerStore((s) => s.incrementPos);
-  const setPosition     = usePlayerStore((s) => s.setPosition);
   const volume          = usePlayerStore((s) => s.volume);
   const muted           = usePlayerStore((s) => s.muted);
   const storeSetVolume  = usePlayerStore((s) => s.setVolume);
   const storeSetMuted   = usePlayerStore((s) => s.setMuted);
-  const setPlaying      = usePlayerStore((s) => s.setPlaying);
-  const sessionReady    = usePlayerStore((s) => s.sessionReady);
   const setImmersiveOpen = usePlayerStore((s) => s.setImmersiveOpen);
-  const { shuffle, repeat, advance, previous, toggleShuffle, cycleRepeat } = useQueueStore(
+  const { togglePlay, next: handleNext, prev: handlePrev, seek: doSeek } = usePlayerControls();
+  const { shuffle, repeat, toggleShuffle, cycleRepeat } = useQueueStore(
     useShallow((s) => ({
       shuffle: s.shuffle,
       repeat:  s.repeat,
-      advance: s.advance,
-      previous: s.previous,
       toggleShuffle: s.toggleShuffle,
       cycleRepeat:   s.cycleRepeat,
     }))
@@ -306,23 +300,6 @@ export function PlayerBar() {
 
   const volDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function handleNext() {
-    const next = advance(currentTrack);
-    if (next) { setCurrentTrack(next); playTrack(next.id).catch(() => {}); }
-    else if (currentTrack) { startRadio(currentTrack); }  // queue dry -> radio
-  }
-  function doSeek(ms: number) {
-    setPosition(ms);                 // move the bar now
-    seekPlayback(ms).catch(() => {}); // and tell librespot
-  }
-  function handlePrev() {
-    if (usePlayerStore.getState().positionMs > 3000) {
-      doSeek(0);
-    } else {
-      const prev = previous(currentTrack);
-      if (prev) { setCurrentTrack(prev); playTrack(prev.id).catch(() => {}); }
-    }
-  }
   function handleVolumeChange(e: React.ChangeEvent<HTMLInputElement>) {
     const v = Number(e.target.value);
     storeSetVolume(v);
@@ -421,30 +398,7 @@ export function PlayerBar() {
           <Tooltip label={isPlaying ? "Pause" : "Play"}>
             <PlayPauseButton
               isPlaying={isPlaying}
-              onClick={() => {
-                if (isPlaying) {
-                  setPlaying(false);                  // optimistic, flip icon now
-                  pausePlayback().catch(console.error);
-                } else if (currentTrack) {
-                  setPlaying(true);                   // optimistic
-                  const clickedAt = Date.now();
-                  const id = currentTrack.id;
-                  resumeOrPlay(currentTrack.id, sessionReady ? usePlayerStore.getState().positionMs : 0)
-                    .then(() => {
-                      /* watchdog: if no real "playing" event lands within 5s the
-                       load silently died (dead session / unavailable track),
-                       revert so the UI never shows "playing" with no audio */
-
-                      setTimeout(() => {
-                        const s = usePlayerStore.getState();
-                        if (s.isPlaying && s.currentId === id && s.lastPlayingAt < clickedAt) {
-                          s.setPlaying(false);
-                        }
-                      }, 5000);
-                    })
-                    .catch((e) => { console.error(e); setPlaying(false); });
-                }
-              }}
+              onClick={togglePlay}
             />
           </Tooltip>
           <Tooltip label="Next">

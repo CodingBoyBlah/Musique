@@ -35,12 +35,17 @@ async fn read_muted(pool: &sqlx::SqlitePool) -> bool {
 }
 
 async fn save_setting(pool: &sqlx::SqlitePool, key: &str, value: &str) -> Result<(), AppError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
     sqlx::query(
-        "INSERT INTO settings (key, value) VALUES (?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
     )
     .bind(key)
     .bind(value)
+    .bind(now)
     .execute(pool)
     .await?;
     Ok(())
@@ -138,30 +143,42 @@ pub async fn resume_playback(app: AppHandle) -> Result<(), AppError> {
     let playback = app.state::<AppState>().playback.clone();
     let guard    = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
-        inner.resume()?;
+        if !inner.is_ended() {
+            if let Err(e) = inner.resume() {
+                eprintln!("[playback cmd] resume failed ({e}), falling back to play_uri");
+                if let Some(uri) = inner.current_uri() {
+                    inner.play_uri(uri, 0)?;
+                }
+            }
+        } else if let Some(uri) = inner.current_uri() {
+            inner.play_uri(uri, 0)?;
+        }
     }
     Ok(())
 }
 
-// the ▶ button. only resumes if a track is actually loaded, otherwise (fresh
-// session right after launch, warmed but nothing loaded, or no session at all)
-// it spins up the session and loads the given track at position_ms. this makes sure a
-// song shown in the player bar always plays when u hit ▶
+// the ▶ button. resumes if the matching track is loaded and not ended,
+// otherwise loads and plays the requested track at position_ms.
 #[tauri::command]
 pub async fn resume_or_play(app: AppHandle, id: String, position_ms: u32) -> Result<(), AppError> {
     eprintln!("[playback cmd] resume_or_play id={id} pos={position_ms}");
-    // heal a missing/dead session first (rebuild resets `loaded` to false
-    // so we fall thru to a real load below instead of a silent resume)
     ensure_inner(&app).await?;
 
     let uri      = crate::playback::track_uri(&id)?;
     let playback = app.state::<AppState>().playback.clone();
     let guard    = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
-        if inner.loaded.load(Ordering::Relaxed) {
-            inner.resume()?;                 // track already loaded so just resume
+        let loaded = inner.loaded.load(Ordering::Relaxed);
+        let same_uri = inner.current_uri().as_deref() == Some(&uri);
+        let ended = inner.is_ended();
+
+        if loaded && same_uri && !ended {
+            if let Err(e) = inner.resume() {
+                eprintln!("[playback cmd] resume failed ({e}), falling back to play_uri");
+                inner.play_uri(uri, position_ms)?;
+            }
         } else {
-            inner.play_uri(uri, position_ms)?;  // fresh session so load it
+            inner.play_uri(uri, position_ms)?;
         }
     }
     Ok(())
@@ -297,9 +314,13 @@ pub async fn set_audio_quality(app: AppHandle, quality: String) -> Result<(), Ap
 
     save_setting(&pool, "audio_quality", val).await?;
 
-    // Reset playback session so the new bitrate takes effect on next playback
+    // Reset playback session if idle so the new bitrate takes effect on next playback.
+    // If music is actively playing, keep the session so it doesn't cut off mid-track.
     let mut guard = playback.lock().await;
-    *guard = None;
+    let playing = guard.as_ref().map(|i| i.is_playing()).unwrap_or(false);
+    if !playing {
+        *guard = None;
+    }
 
     Ok(())
 }

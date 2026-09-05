@@ -23,6 +23,7 @@ interface QueueStore {
   repeat:        Repeat;
 
   enqueue:       (track: TrackItem) => void;
+  appendTracks:  (tracks: TrackItem[]) => void;
   playNext:      (track: TrackItem) => void;
   removeAt:      (idx: number) => void;
   reorder:       (from: number, to: number) => void;
@@ -87,6 +88,13 @@ export const useQueueStore = create<QueueStore>()(
       playNext: (track) =>
         set((s) => ({ queue: [track, ...s.queue] })),
 
+      appendTracks: (tracks) =>
+        set((s) => {
+          const existing = new Set(s.queue.map((t) => t.id));
+          const fresh = tracks.filter((t) => !existing.has(t.id));
+          return { queue: [...s.queue, ...fresh] };
+        }),
+
       removeAt: (idx) =>
         set((s) => ({ queue: s.queue.filter((_, i) => i !== idx) })),
 
@@ -126,7 +134,7 @@ export const useQueueStore = create<QueueStore>()(
         }),
 
       advance: (current) => {
-        const { queue, history, contextTracks, repeat } = get();
+        const { queue, history, contextTracks, repeat, shuffle } = get();
 
         if (repeat === "one" && current) return current;
 
@@ -141,12 +149,31 @@ export const useQueueStore = create<QueueStore>()(
         // queue empty + repeat all: restart the whole context from the top
         if (repeat === "all" && contextTracks.length > 0) {
           const [next, ...rest] = contextTracks;
-          set({ queue: rest, history: [] });
+          set({ queue: rest, history: current ? [...history, current].slice(-50) : history });
           return next;
         }
 
-        // nothing to advance to. do NOT touch history (caller may start radio).
-        return null;
+        // queue empty: queue should never end!
+        // Seamlessly loop context tracks (shuffled or in order)
+        if (contextTracks.length > 0) {
+          const order = shuffle && contextTracks.length > 1
+            ? shuffled(contextTracks)
+            : [...contextTracks];
+          const [next, ...rest] = order;
+          const newHistory = current ? [...history, current].slice(-50) : history;
+          set({ queue: rest, history: newHistory });
+          return next;
+        }
+
+        // fallback: replay from history so music never stops
+        if (history.length > 0) {
+          const order = shuffled(history);
+          const [next, ...rest] = order;
+          set({ queue: rest, history: current ? [current] : [] });
+          return next;
+        }
+
+        return current;
       },
 
       previous: (current) => {
@@ -162,14 +189,21 @@ export const useQueueStore = create<QueueStore>()(
       },
 
       peek: (current) => {
-        const { queue, history, repeat } = get();
+        const { queue, history, contextTracks, repeat } = get();
         if (repeat === "one" && current) return current;
         if (queue.length > 0) return queue[0];
-        if (repeat === "all" && history.length > 0) {
-          const refill = history.filter((t) => t.id !== current?.id);
-          return refill[0] ?? null;
+        if (repeat === "all" && contextTracks.length > 0) {
+          return contextTracks[0] ?? null;
         }
-        return null;
+        if (contextTracks.length > 0) {
+          const candidates = contextTracks.filter((t) => t.id !== current?.id);
+          return candidates[0] ?? contextTracks[0] ?? null;
+        }
+        if (history.length > 0) {
+          const candidates = history.filter((t) => t.id !== current?.id);
+          return candidates[0] ?? null;
+        }
+        return current;
       },
     }),
     {

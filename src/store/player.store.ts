@@ -39,6 +39,11 @@ interface PlayerStore {
   volume:    number;   // 0–100
   muted:     boolean;
 
+  targetState:     "playing" | "paused" | null;
+  targetStateTime: number;
+  setTargetState:  (state: "playing" | "paused" | null) => void;
+  clearTargetState: () => void;
+
   setCurrentTrack: (track: TrackItem | null) => void;
   setPlaying:      (playing: boolean) => void;
   onEvent:         (payload: unknown) => void;
@@ -83,12 +88,13 @@ export const usePlayerStore = create<PlayerStore>()(
       volume: 80,
       muted:  false,
 
+      targetState:     null,
+      targetStateTime: 0,
+      setTargetState:  (state) => set({ targetState: state, targetStateTime: Date.now() }),
+      clearTargetState: () => set({ targetState: null, targetStateTime: 0 }),
+
       setSessionReady: () => set({ sessionReady: true }),
 
-      // optimistic play/pause flip so the UI (and icon morph) reacts on click
-      // instead of waiting for the librespot round-trip. the real event
-      // reconciles a moment later and, since it sets the same value, it's a
-      // no-op when we guessed right.
       setPlaying: (playing) => set({ isPlaying: playing }),
 
       setCurrentTrack: (track) =>
@@ -108,23 +114,39 @@ export const usePlayerStore = create<PlayerStore>()(
         };
         switch (msg.type) {
           case "playing":
-            set((s) => ({
-              isPlaying:    true,
-              sessionReady: true,
-              lastPlayingAt: Date.now(),
-              currentId:    msg.track_id ?? s.currentId,
-              positionMs:   msg.position_ms ?? s.positionMs,
-              durationMs:   msg.duration_ms ?? s.durationMs,
-            }));
+            set((s) => {
+              // Ignore stale playing event if user recently requested pause
+              if (s.targetState === "paused" && Date.now() - s.targetStateTime < 1500) {
+                return s;
+              }
+              return {
+                isPlaying:       true,
+                sessionReady:    true,
+                lastPlayingAt:   Date.now(),
+                currentId:       msg.track_id ?? s.currentId,
+                positionMs:      msg.position_ms ?? s.positionMs,
+                durationMs:      msg.duration_ms ?? s.durationMs,
+                targetState:     null,
+                targetStateTime: 0,
+              };
+            });
             break;
           case "paused":
-            set((s) => ({
-              isPlaying:    false,
-              sessionReady: true,
-              currentId:    msg.track_id ?? s.currentId,
-              positionMs:   msg.position_ms ?? s.positionMs,
-              durationMs:   msg.duration_ms ?? s.durationMs,
-            }));
+            set((s) => {
+              // Ignore stale paused event if user recently requested play
+              if (s.targetState === "playing" && Date.now() - s.targetStateTime < 1500) {
+                return s;
+              }
+              return {
+                isPlaying:       false,
+                sessionReady:    true,
+                currentId:       msg.track_id ?? s.currentId,
+                positionMs:      msg.position_ms ?? s.positionMs,
+                durationMs:      msg.duration_ms ?? s.durationMs,
+                targetState:     null,
+                targetStateTime: 0,
+              };
+            });
             break;
           case "position_changed":
             set((s) => ({
@@ -137,7 +159,8 @@ export const usePlayerStore = create<PlayerStore>()(
             set(() => ({ isPlaying: false, positionMs: 0 }));
             break;
           case "end_of_track":
-            set(() => ({ isPlaying: false, positionMs: 0 }));
+            // Keep isPlaying alive so the upcoming track transitions seamlessly
+            set(() => ({ positionMs: 0 }));
             break;
           default:
             break;

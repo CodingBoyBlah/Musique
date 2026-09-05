@@ -11,7 +11,8 @@ import { CoverArt } from "../components/ui/CoverArt";
 import { TrackRow } from "../components/ui/TrackRow";
 import { CirclePlayButton } from "../components/ui/CirclePlayButton";
 import { getArtist, getAlbum } from "../api/spotify";
-import { playTrack, pausePlayback, resumePlayback } from "../api/playback";
+import { playTrack } from "../api/playback";
+import { transportPlay, transportPause } from "../hooks/usePlayerControls";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
@@ -301,13 +302,13 @@ export default function Search() {
     if (!topResult) return;
 
     if (isTopResultPlaying) {
-      pausePlayback().then(() => setPlaying(false)).catch(() => {});
+      transportPause();
       return;
     }
 
     if (topResult.type === "track") {
       if (currentTrack?.id === topResult.item.id && !isPlaying) {
-        resumePlayback().then(() => setPlaying(true)).catch(() => {});
+        transportPlay();
         return;
       }
       const idx = data?.tracks.findIndex((t) => t.id === topResult.item.id) ?? -1;

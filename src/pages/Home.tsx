@@ -14,7 +14,8 @@ import {
 } from "../hooks/useLibrary";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
-import { playTrack, pausePlayback, resumePlayback } from "../api/playback";
+import { playTrack } from "../api/playback";
+import { transportPlay, transportPause } from "../hooks/usePlayerControls";
 import { Loader } from "../components/ui/Loader";
 import { EmptyState } from "../components/ui/EmptyState";
 import { MusiqueLogo } from "../components/ui/MusiqueLogo";
@@ -76,12 +77,12 @@ function QuickActionCard({
     }
 
     if (isThisPlaying) {
-      pausePlayback().then(() => setPlaying(false)).catch(() => {});
+      transportPause();
       return;
     }
 
     if (item.track && currentTrack?.id === item.track.id && !isPlaying) {
-      resumePlayback().then(() => setPlaying(true)).catch(() => {});
+      transportPlay();
       return;
     }
 
@@ -474,7 +475,6 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
   const [hover, setHover] = useState(false);
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const setPlaying = usePlayerStore((s) => s.setPlaying);
   const isThisTrackPlaying = Boolean(currentTrack?.id === track.id && isPlaying);
   const art = track.album?.image_url;
 
@@ -519,7 +519,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
           onClick={(e) => {
             e.stopPropagation();
             if (isThisTrackPlaying) {
-              pausePlayback().then(() => setPlaying(false)).catch(() => {});
+              transportPause();
             } else {
               onPlay();
             }

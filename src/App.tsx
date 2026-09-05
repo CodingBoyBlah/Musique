@@ -23,13 +23,9 @@ import { getAuthStatus } from "./api/auth";
 import {
   setVolume,
   setMuted,
-  pausePlayback,
-  resumePlayback,
-  stopPlayback,
   playTrack,
   warmupPlayback,
   preloadTrack,
-  seekPlayback,
   retryPlayTrack,
 } from "./api/playback";
 import {
@@ -50,7 +46,14 @@ import { useQueueStore } from "./store/queue.store";
 import { usePrefsStore } from "./store/prefs.store";
 import { toast } from "./store/toast.store";
 import { useInvalidateLibrary } from "./hooks/useLibrary";
-import { startRadio } from "./utils/radio";
+import { startRadio, replenishQueue } from "./utils/radio";
+import {
+  transportPlay,
+  transportPause,
+  transportTogglePlay,
+  transportNext,
+  transportPrev,
+} from "./hooks/usePlayerControls";
 import { prefetchLyrics } from "./lib/prefetch";
 import { lastfmNowPlaying, lastfmScrobble } from "./api/lastfm";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -198,6 +201,9 @@ Home recs so they're cached before the user gets there
         const { currentTrack } = usePlayerStore.getState();
         // it played so let it be autoretried again if it ever dies later
         if (msg.track_id) retriedUnavailable.current.delete(msg.track_id);
+        if (currentTrack) {
+          replenishQueue(currentTrack).catch(() => {});
+        }
         if (currentTrack && currentTrack.id !== lastTrackId.current) {
           // new track started = scrobble the previous one if it earned it
           maybeScrobble();
@@ -238,33 +244,41 @@ Home recs so they're cached before the user gets there
             toast("Can't play this track. Try another.");
           });
         } else if (isCurrent) {
-          // already did the freshsession retry and it still died = really dead
-          toast("Can't play this track. Try another.");
+          toast("Can't play this track. Skipping to next.");
+          const next = useQueueStore.getState().advance(currentTrack);
+          if (next) {
+            usePlayerStore.getState().setCurrentTrack(next);
+            usePlayerStore.getState().setPlaying(true);
+            playTrack(next.id).catch(() => {});
+            replenishQueue(next).catch(() => {});
+          }
         }
         /* not the current track (failed preload, say) = ignore. never tear the
        session down while something else is playing. */
       }
 
       if (msg.type === "time_to_preload_next_track") {
-        // preload the next queued track for (gapless) transitions TODO- DONE
+        // preload the next queued track for (gapless) transitions
         const { currentTrack } = usePlayerStore.getState();
         const next = useQueueStore.getState().peek(currentTrack);
         if (next) {
           preloadTrack(next.id).catch(() => {});
         }
+        if (currentTrack) {
+          replenishQueue(currentTrack).catch(() => {});
+        }
       }
 
       if (msg.type === "end_of_track") {
-        /* TODO review 233-246 ai code */
         maybeScrobble();
         const { currentTrack, setCurrentTrack } = usePlayerStore.getState();
         const next = useQueueStore.getState().advance(currentTrack);
         if (next) {
           setCurrentTrack(next);
+          usePlayerStore.getState().setPlaying(true);
           playTrack(next.id).catch(() => {});
+          replenishQueue(next).catch(() => {});
         } else {
-          // queue's empty (end of playlist / a single) -> kick off a rec radio
-          // seeded from the track that just ended
           startRadio(currentTrack);
         }
       }
@@ -297,35 +311,12 @@ Home recs so they're cached before the user gets there
 
     const reg = async () => {
       unlisteners.push(
-        await listen("media:play", () => resumePlayback().catch(() => {})),
-        await listen("media:pause", () => pausePlayback().catch(() => {})),
-        await listen("media:stop", () => stopPlayback().catch(() => {})),
-        await listen("media:toggle", () => {
-          const { isPlaying } = usePlayerStore.getState();
-          if (isPlaying) pausePlayback().catch(() => {});
-          else resumePlayback().catch(() => {});
-        }),
-        await listen("media:next", () => {
-          const { currentTrack, setCurrentTrack } = usePlayerStore.getState();
-          const next = useQueueStore.getState().advance(currentTrack);
-          if (next) {
-            setCurrentTrack(next);
-            playTrack(next.id).catch(() => {});
-          }
-        }),
-        await listen("media:prev", () => {
-          const { currentTrack, positionMs, setCurrentTrack } =
-            usePlayerStore.getState();
-          if (positionMs > 3000) {
-            seekPlayback(0).catch(() => {});
-          } else {
-            const prev = useQueueStore.getState().previous(currentTrack);
-            if (prev) {
-              setCurrentTrack(prev);
-              playTrack(prev.id).catch(() => {});
-            }
-          }
-        }),
+        await listen("media:play", () => transportPlay()),
+        await listen("media:pause", () => transportPause()),
+        await listen("media:stop", () => transportPause()),
+        await listen("media:toggle", () => transportTogglePlay()),
+        await listen("media:next", () => transportNext()),
+        await listen("media:prev", () => transportPrev()),
       );
     };
 

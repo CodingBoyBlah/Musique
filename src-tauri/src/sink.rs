@@ -11,7 +11,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait};
 use librespot_playback::audio_backend::{Sink, SinkError, SinkResult};
@@ -29,9 +29,6 @@ pub type ErrorHook = Arc<dyn Fn(String) + Send + Sync>;
 /// run from a few hundred to a few thousand samples; this is about a fifth
 /// of a second, which is also how long a pause takes to be heard.
 const QUEUE_LIMIT: usize = 12;
-
-/// How long `stop` lets the queue play out before pausing regardless.
-const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How often playback looks at which output the system calls its default.
 const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_secs(10);
@@ -174,10 +171,6 @@ impl Sink for RodioSink {
 
     fn stop(&mut self) -> SinkResult<()> {
         if let Some(output) = &self.output {
-            let deadline = Instant::now() + DRAIN_TIMEOUT;
-            while !output.sink.empty() && !output.failed() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(10));
-            }
             output.sink.pause();
         }
         Ok(())

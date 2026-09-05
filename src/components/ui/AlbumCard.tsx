@@ -11,7 +11,8 @@ import { CirclePlayButton } from "./CirclePlayButton";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { getAlbum } from "../../api/spotify";
-import { playTrack, pausePlayback, resumePlayback } from "../../api/playback";
+import { playTrack } from "../../api/playback";
+import { transportPlay, transportPause } from "../../hooks/usePlayerControls";
 import { gpuLayer, zTransform } from "../../lib/motion";
 
 const MotionLink = motion.create(Link);
@@ -53,11 +54,11 @@ function AlbumCardImpl({ album, size = 160 }: Props) {
     e.preventDefault();
     e.stopPropagation();
     if (isThisAlbumPlaying) {
-      pausePlayback().then(() => setPlaying(false)).catch(() => {});
+      transportPause();
       return;
     }
     if (currentTrack?.album?.id === album.id && !isPlaying) {
-      resumePlayback().then(() => setPlaying(true)).catch(() => {});
+      transportPlay();
       return;
     }
     try {

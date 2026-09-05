@@ -11,7 +11,7 @@ import { useContextMenu, type MenuEntry } from "./ContextMenu";
 import { shareSpotifyLink, shareUniversalLink } from "../../lib/share";
 import { useAddToPlaylistStore } from "../../store/addToPlaylist.store";
 import { usePlayerStore } from "../../store/player.store";
-import { pausePlayback, resumePlayback } from "../../api/playback";
+import { transportPlay, transportPause } from "../../hooks/usePlayerControls";
 import { AnimatedPlayPause, AnimatedHeart } from "../playground/AnimatedIcons";
 import { Tooltip } from "./Tooltip";
 
@@ -79,7 +79,6 @@ function TrackRowImpl({
 
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const setPlaying = usePlayerStore((s) => s.setPlaying);
   const isThisPlaying = Boolean(currentTrack?.id === track.id && isPlaying);
   const isThisCurrent = Boolean(currentTrack?.id === track.id);
 
@@ -88,9 +87,9 @@ function TrackRowImpl({
       e.stopPropagation();
     }
     if (isThisPlaying) {
-      pausePlayback().then(() => setPlaying(false)).catch(() => {});
+      transportPause();
     } else if (isThisCurrent && !isPlaying) {
-      resumePlayback().then(() => setPlaying(true)).catch(() => {});
+      transportPlay();
     } else if (onPlay) {
       onPlay(track);
     }
