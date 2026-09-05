@@ -183,8 +183,8 @@ function ProgressBar({
         <div style={{ position: "relative", width: "100%", height: 4, borderRadius: 99 }}>
           <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.10)", borderRadius: 99 }} />
           <motion.div
-            style={{ position: "absolute", inset: "0 auto 0 0", background: "rgba(242,238,233,0.80)", borderRadius: 99 }}
-            animate={{ width: `${pct}%` }}
+            style={{ position: "absolute", inset: 0, transformOrigin: "left", background: "rgba(242,238,233,0.80)", borderRadius: 99 }}
+            animate={{ scaleX: pct / 100 }}
             transition={{ duration: dragging ? 0 : 0.16, ease: [0.23, 1, 0.32, 1] }}
           />
           {/* draggable thumb --- shows on hover/drag, sits at the fill end to */}
@@ -279,18 +279,30 @@ export function PlayerBar() {
     return () => clearInterval(timer);
   }, [isPlaying, incrementPos]);
 
-  const [windowWidth, setWindowWidth] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth : 1200
+  const [isCompactBar, setIsCompactBar] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 680 : false
+  );
+  const [isSuperCompactBar, setIsSuperCompactBar] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 500 : false
   );
 
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+    if (typeof window === "undefined") return;
+    const mqlCompact = window.matchMedia("(max-width: 679px)");
+    const mqlSuperCompact = window.matchMedia("(max-width: 499px)");
+    const onCompact = (e: MediaQueryListEvent) => setIsCompactBar(e.matches);
+    const onSuperCompact = (e: MediaQueryListEvent) => setIsSuperCompactBar(e.matches);
 
-  const isCompactBar = windowWidth < 680;
-  const isSuperCompactBar = windowWidth < 500;
+    setIsCompactBar(mqlCompact.matches);
+    setIsSuperCompactBar(mqlSuperCompact.matches);
+
+    mqlCompact.addEventListener("change", onCompact);
+    mqlSuperCompact.addEventListener("change", onSuperCompact);
+    return () => {
+      mqlCompact.removeEventListener("change", onCompact);
+      mqlSuperCompact.removeEventListener("change", onSuperCompact);
+    };
+  }, []);
 
   const volDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 

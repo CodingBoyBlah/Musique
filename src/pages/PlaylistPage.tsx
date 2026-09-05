@@ -97,22 +97,17 @@ export default function PlaylistPage() {
           className="flex flex-col"
         >
           {view.map((t, i) => (
-            <motion.div
+            <TrackRow
               key={keys[i]}
-              layout="position"
-              transition={{ layout: REFLOW }}
-            >
-              <TrackRow
-                track={t}
-                index={i}
-                showAlbum
-                liked={likedSet.has(t.id)}
-                onPlay={() => startAt(i)}
-                onQueue={(track) => enqueue(track)}
-                onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
-                onRemoveFromPlaylist={isOwner ? removeFromPlaylist : undefined}
-              />
-            </motion.div>
+              track={t}
+              index={i}
+              showAlbum
+              liked={likedSet.has(t.id)}
+              onPlay={() => startAt(i)}
+              onQueue={(track) => enqueue(track)}
+              onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
+              onRemoveFromPlaylist={isOwner ? removeFromPlaylist : undefined}
+            />
           ))}
           {view.length === 0 && (
             <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>

@@ -29,21 +29,38 @@ export default function Layout() {
   const mainRef = useRef<HTMLElement>(null);
 
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
-  const [windowWidth, setWindowWidth] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth : 1200
-  );
+  const [willCrushMain, setWillCrushMain] = useState(false);
 
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+    if (typeof window === "undefined") return;
+    const checkCrush = () => {
+      const w = window.innerWidth;
+      const isCollapsed = sidebarCollapsed || w < 768;
+      const sw = isCollapsed ? 64 : 232;
+      const rpw = lyricsOpen ? 366 : queueOpen ? 272 : 0;
+      const nextCrush = w - sw - rpw < 340;
+      setWillCrushMain((prev) => (prev === nextCrush ? prev : nextCrush));
+    };
 
-  const isNarrow = windowWidth < 768;
-  const isSidebarCollapsed = sidebarCollapsed || isNarrow;
-  const sidebarWidth = isSidebarCollapsed ? 64 : 232;
+    checkCrush();
+
+    let rId = 0;
+    const onResizeThrottled = () => {
+      if (rId) return;
+      rId = requestAnimationFrame(() => {
+        rId = 0;
+        checkCrush();
+      });
+    };
+    window.addEventListener("resize", onResizeThrottled, { passive: true });
+
+    return () => {
+      window.removeEventListener("resize", onResizeThrottled);
+      if (rId) cancelAnimationFrame(rId);
+    };
+  }, [sidebarCollapsed, lyricsOpen, queueOpen]);
+
   const rawPanelWidth = lyricsOpen ? 366 : queueOpen ? 272 : 0;
-  const willCrushMain = windowWidth - sidebarWidth - rawPanelWidth < 340;
   const spacerWidth = willCrushMain ? 0 : rawPanelWidth;
 
   useEffect(() => {

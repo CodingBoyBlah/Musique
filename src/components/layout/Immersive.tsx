@@ -33,6 +33,7 @@ function GradientBg({ url }: { url: string | null | undefined }) {
   const base: React.CSSProperties = {
     position: "absolute", inset: 0, overflow: "hidden",
     isolation: "isolate", background: "#07070b",
+    contain: "strict", pointerEvents: "none",
   };
   if (!url) return <div aria-hidden style={base} />;
   /* perf: only TWO blurred layers, one moderate raidius and we animate
