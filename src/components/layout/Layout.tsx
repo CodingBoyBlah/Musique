@@ -138,7 +138,7 @@ export default function Layout() {
                 key={pageTint}
                 aria-hidden
                 initial={{ opacity: 0 }}
-                animate={{ opacity: 0.42 }}
+                animate={{ opacity: 0.40 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.7, ease: "easeOut" }}
                 style={{
@@ -154,15 +154,12 @@ export default function Layout() {
                 <div
                   style={{
                     position: "absolute",
-                    top: "-10%",
-                    left: "10%",
-                    width: "80%",
-                    height: "65%",
+                    inset: 0,
                     backgroundImage: `url(${pageTint})`,
                     backgroundSize: "cover",
                     backgroundPosition: "center top",
-                    filter: "blur(48px) saturate(1.7)",
-                    transform: "scale(1.4)",
+                    filter: "blur(72px) saturate(1.7)",
+                    transform: "scale(1.6)",
                     transformOrigin: "center top",
                     maskImage:
                       "radial-gradient(75% 70% at 50% 0%, #000 0%, rgba(0,0,0,0.5) 42%, transparent 78%)",
