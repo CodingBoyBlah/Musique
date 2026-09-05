@@ -10,6 +10,7 @@ import {
   Clock,
 } from "lucide-react";
 import { usePlayerStore } from "../../store/player.store";
+import { useUIStore } from "../../store/ui.store";
 import { useLyrics } from "../../hooks/useLyrics";
 import { seekPlayback } from "../../api/playback";
 import { Loader } from "../ui/Loader";
@@ -37,7 +38,8 @@ const WIDTH = 366;
 
 function CoverBg({ url }: { url: string | null | undefined }) {
   const reduceMotion = useReducedMotion();
-  if (!url) {
+  const fastMode = useUIStore((s) => s.fastMode);
+  if (fastMode || !url) {
     return (
       <div
         aria-hidden
@@ -113,6 +115,7 @@ export function LyricsPanel() {
   const adjustOffset = usePlayerStore((s) => s.adjustLyricsOffset);
   const setOffset = usePlayerStore((s) => s.setLyricsOffset);
   const reduceMotion = useReducedMotion();
+  const fastMode = useUIStore((s) => s.fastMode);
 
   const { data, isLoading, isError, isFetching, refetch } = useLyrics(track);
 
@@ -208,11 +211,11 @@ export function LyricsPanel() {
       // open AND close), so the grid reflows in one step and the cards glide via
       // framer `layout` both ways. This panel just slides over that region; its
       // width never animates, so nothing reflows per-frame.
-      initial={{ x: WIDTH }}
+      initial={fastMode ? false : { x: WIDTH }}
       animate={{ x: 0 }}
-      exit={{ x: WIDTH }}
+      exit={fastMode ? { opacity: 0 } : { x: WIDTH }}
       transformTemplate={zTransform}
-      transition={{ type: "spring", stiffness: 340, damping: 38 }}
+      transition={fastMode ? { duration: 0 } : { type: "spring", stiffness: 340, damping: 38 }}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH,
@@ -531,7 +534,7 @@ export function LyricsPanel() {
                             boxSizing: "border-box",
                           }}
                         >
-                          {isActive && voice.words.length ? (
+                          {!fastMode && isActive && voice.words.length ? (
                             // word-by-word (musixmatch ANDOR netease real timings)
                             <ActiveLine
                               words={mapWords(voice)}

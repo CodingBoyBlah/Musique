@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
+import { useUIStore } from "../../store/ui.store";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
 import { useLyrics } from "../../hooks/useLyrics";
 import { CoverArt } from "../ui/CoverArt";
@@ -26,6 +27,7 @@ import {
 
 function GradientBg({ url }: { url: string | null | undefined }) {
   const reduceMotion = useReducedMotion();
+  const fastMode = useUIStore((s) => s.fastMode);
   // isolation:isolate + an opaque base = nothing behind ever bleeds through
 
 
@@ -34,7 +36,7 @@ function GradientBg({ url }: { url: string | null | undefined }) {
     position: "absolute", inset: 0, overflow: "hidden",
     isolation: "isolate", background: "#07070b",
   };
-  if (!url) return <div aria-hidden style={base} />;
+  if (fastMode || !url) return <div aria-hidden style={base} />;
   /* perf: only TWO blurred layers, one moderate raidius and we animate
    only translate/rotate NOT scale or filter. animating scale on a blurred
    element rerasterizes the (giant) blur every frame, which is exactly what
@@ -81,6 +83,7 @@ function ImmersiveLyrics() {
   const track        = usePlayerStore((s) => s.currentTrack);
   const setPosition  = usePlayerStore((s) => s.setPosition);
   const reduceMotion = useReducedMotion();
+  const fastMode     = useUIStore((s) => s.fastMode);
   const { data, isLoading } = useLyrics(track);
   const { seek } = usePlayerControls();
 
@@ -146,7 +149,7 @@ function ImmersiveLyrics() {
                     paddingLeft: vi === 0 ? 0 : 10,
                   }}
                 >
-                  {isActive && voice.words.length ? (
+                  {!fastMode && isActive && voice.words.length ? (
                     // word-by-word brightness sweep (real musixmatch/netease timings)
                     <ActiveLine words={mapWords(voice)} getClock={getClock} size={size} weight={weight} halo={0.18} />
                   ) : (
@@ -301,6 +304,7 @@ export function Immersive() {
   const setPanel    = usePlayerStore((s) => s.setImmersivePanel);
   const track       = usePlayerStore((s) => s.currentTrack);
   const isPlaying   = usePlayerStore((s) => s.isPlaying);
+  const fastMode    = useUIStore((s) => s.fastMode);
   const { togglePlay, next, prev } = usePlayerControls();
   const { shuffle, repeat, toggleShuffle, cycleRepeat } = useQueueStore();
 
@@ -318,10 +322,10 @@ export function Immersive() {
     <AnimatePresence>
       {open && track && (
         <motion.div
-          initial={{ opacity: 0, y: 24 }}
+          initial={{ opacity: 0, y: fastMode ? 0 : 24 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 24 }}
-          transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
+          exit={{ opacity: 0, y: fastMode ? 0 : 24 }}
+          transition={fastMode ? { duration: 0 } : { duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b" }}
         >
           <GradientBg url={track.album?.image_url} />

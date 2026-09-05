@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, lazy, Suspense } from "react";
+import { MotionConfig } from "framer-motion";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/layout/Layout";
 import { Loader } from "./components/ui/Loader";
@@ -337,84 +338,88 @@ Home recs so they're cached before the user gets there
 }
 
 export default function App() {
-  return (
-    <BrowserRouter>
-      <AppInit />
-      <ThemeEngine />
-      <UpdatePrompt />
-      <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Home />} />
-          {/* suspense fallback covers the quick lazy chunk fetch on first
-              visit to a route --- later visits are instant (chunks cached) */}
-          <Route
-            path="settings"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Settings />
-              </Suspense>
-            }
-          />
-          <Route
-            path="search"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Search />
-              </Suspense>
-            }
-          />
+  const fastMode = useUIStore((s) => s.fastMode);
 
-          <Route
-            path="library"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Library />
-              </Suspense>
-            }
-          />
-          <Route
-            path="playlist/:id"
-            element={
-              <Suspense fallback={<Loader />}>
-                <PlaylistPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="playlists"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Playlists />
-              </Suspense>
-            }
-          />
-          <Route
-            path="artist/:id"
-            element={
-              <Suspense fallback={<Loader />}>
-                <ArtistPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="album/:id"
-            element={
-              <Suspense fallback={<Loader />}>
-                <AlbumPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="playground"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Playground />
-              </Suspense>
-            }
-          />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+  return (
+    <MotionConfig reducedMotion={fastMode ? "always" : "user"}>
+      <BrowserRouter>
+        <AppInit />
+        <ThemeEngine />
+        <UpdatePrompt />
+        <Routes>
+          <Route path="/" element={<Layout />}>
+            <Route index element={<Home />} />
+            {/* suspense fallback covers the quick lazy chunk fetch on first
+                visit to a route --- later visits are instant (chunks cached) */}
+            <Route
+              path="settings"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <Settings />
+                </Suspense>
+              }
+            />
+            <Route
+              path="search"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <Search />
+                </Suspense>
+              }
+            />
+
+            <Route
+              path="library"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <Library />
+                </Suspense>
+              }
+            />
+            <Route
+              path="playlist/:id"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <PlaylistPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="playlists"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <Playlists />
+                </Suspense>
+              }
+            />
+            <Route
+              path="artist/:id"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <ArtistPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="album/:id"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <AlbumPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="playground"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <Playground />
+                </Suspense>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </MotionConfig>
   );
 }

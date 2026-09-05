@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, RotateCcw, ChevronDown } from "lucide-react";
+import { Eye, EyeOff, RotateCcw, ChevronDown, Info } from "lucide-react";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { Tooltip } from "../components/ui/Tooltip";
 import {
@@ -198,7 +198,7 @@ function SettingRow({
   hint,
   control,
 }: {
-  label: string;
+  label: React.ReactNode;
   hint?: string;
   control: React.ReactNode;
 }) {
@@ -453,8 +453,16 @@ function VisualCard() {
   const setWindowEffect = useUIStore((s) => s.setWindowEffect);
   const transparency = useUIStore((s) => s.materialTransparency);
   const setTransparency = useUIStore((s) => s.setMaterialTransparency);
+  const fastMode = useUIStore((s) => s.fastMode);
+  const setFastMode = useUIStore((s) => s.setFastMode);
+
+  function toggleFastMode(enabled: boolean) {
+    setFastMode(enabled);
+    applyWindowEffect(enabled ? "none" : useUIStore.getState().windowEffect).catch(() => {});
+  }
 
   function choose(e: WindowEffect) {
+    if (fastMode) return;
     setWindowEffect(e); // persist + drive the CSS scrim
     applyWindowEffect(e).catch(() => {}); // re-apply / clear native material
   }
@@ -465,7 +473,8 @@ function VisualCard() {
   // the transparency slider only applies to adjustable materials:
   // Windows acrylic, or macOS vibrancy (which we model as "mica" on mac).
   const showTransparency =
-    (isWindows && windowEffect === "acrylic") || (isMac && macValue === "mica");
+    !fastMode &&
+    ((isWindows && windowEffect === "acrylic") || (isMac && macValue === "mica"));
 
   // guard: an old/partial persisted store can hand us a non-finite value, which
   // makes `--vol` compute to "NaN%" -> invalid -> track falls back to 0% (all grey).
@@ -477,18 +486,50 @@ function VisualCard() {
   ); // 0..100 fill
 
   return (
-    <Card title="Window">
+    <Card title="Performance & Window">
+      <SettingRow
+        label={
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <span>Fast mode</span>
+            <Tooltip
+              label="Maximizes performance: disables window Mica/Acrylic materials, eliminates icon and gradient blurs, turns off animated cover backdrops in Immersive and Lyrics, and disables album page tint blooms."
+              side="top"
+            >
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--color-text-dim)",
+                  cursor: "help",
+                }}
+              >
+                <Info size={14} strokeWidth={2.2} />
+              </span>
+            </Tooltip>
+          </div>
+        }
+        hint="Sacrifices transparency, blurs, and transitions for maximum frame rates and lowest CPU/GPU usage."
+        control={<Switch checked={fastMode} onChange={toggleFastMode} />}
+      />
+      <Divider />
       <SettingRow
         label="Background material"
         hint={
-          isWindows
-            ? "Mica tints with your wallpaper, Acrylic is a darker blur, None is a solid background."
-            : isMac
-              ? "Vibrancy shows the desktop through the window; No material paints a solid background."
-              : "Translucent window materials aren't available on this platform."
+          fastMode
+            ? "Disabled in Fast mode. Turn off Fast mode to enable translucent window materials."
+            : isWindows
+              ? "Mica tints with your wallpaper, Acrylic is a darker blur, None is a solid background."
+              : isMac
+                ? "Vibrancy shows the desktop through the window; No material paints a solid background."
+                : "Translucent window materials aren't available on this platform."
         }
         control={
-          isWindows ? (
+          fastMode ? (
+            <span style={{ fontSize: 12.5, color: "var(--color-text-dim)", fontStyle: "italic" }}>
+              Locked to None (Fast mode)
+            </span>
+          ) : isWindows ? (
             <Segmented
               value={windowEffect}
               options={VIBRANCY_OPTS}
