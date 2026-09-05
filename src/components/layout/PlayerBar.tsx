@@ -163,10 +163,11 @@ function PlayPauseButton({
 // progress bar
 
 function ProgressBar({
-  positionMs, durationMs, onSeek,
+  durationMs, onSeek,
 }: {
-  positionMs: number; durationMs: number; onSeek: (ms: number) => void;
+  durationMs: number; onSeek: (ms: number) => void;
 }) {
+  const positionMs = usePlayerStore((s) => s.positionMs);
   // hover scrub preview + drag-scrub. while dragging the bar follows the cursor until release, when we commit the seek.
 
 
@@ -227,8 +228,8 @@ function ProgressBar({
         <div style={{ position: "relative", width: "100%", height: 4, borderRadius: 99 }}>
           <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.10)", borderRadius: 99 }} />
           <motion.div
-            style={{ position: "absolute", inset: "0 auto 0 0", background: "rgba(242,238,233,0.80)", borderRadius: 99 }}
-            animate={{ width: `${pct}%` }}
+            style={{ position: "absolute", inset: 0, transformOrigin: "left", background: "rgba(242,238,233,0.80)", borderRadius: 99 }}
+            animate={{ scaleX: pct / 100 }}
             transition={{ duration: dragging ? 0 : 0.16, ease: [0.23, 1, 0.32, 1] }}
           />
           {/* draggable thumb --- shows on hover/drag, sits at the fill end to */}
@@ -294,7 +295,6 @@ export function PlayerBar() {
   const toggleLyrics    = usePlayerStore((s) => s.toggleLyrics);
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
   const currentTrack    = usePlayerStore((s) => s.currentTrack);
-  const positionMs      = usePlayerStore((s) => s.positionMs);
   const durationMs      = usePlayerStore((s) => s.durationMs);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const incrementPos    = usePlayerStore((s) => s.incrementPos);
@@ -324,18 +324,30 @@ export function PlayerBar() {
     return () => clearInterval(timer);
   }, [isPlaying, incrementPos]);
 
-  const [windowWidth, setWindowWidth] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth : 1200
+  const [isCompactBar, setIsCompactBar] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 680 : false
+  );
+  const [isSuperCompactBar, setIsSuperCompactBar] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 500 : false
   );
 
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+    if (typeof window === "undefined") return;
+    const mqlCompact = window.matchMedia("(max-width: 679px)");
+    const mqlSuperCompact = window.matchMedia("(max-width: 499px)");
+    const onCompact = (e: MediaQueryListEvent) => setIsCompactBar(e.matches);
+    const onSuperCompact = (e: MediaQueryListEvent) => setIsSuperCompactBar(e.matches);
 
-  const isCompactBar = windowWidth < 680;
-  const isSuperCompactBar = windowWidth < 500;
+    setIsCompactBar(mqlCompact.matches);
+    setIsSuperCompactBar(mqlSuperCompact.matches);
+
+    mqlCompact.addEventListener("change", onCompact);
+    mqlSuperCompact.addEventListener("change", onSuperCompact);
+    return () => {
+      mqlCompact.removeEventListener("change", onCompact);
+      mqlSuperCompact.removeEventListener("change", onSuperCompact);
+    };
+  }, []);
 
   const volDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -349,7 +361,7 @@ export function PlayerBar() {
     seekPlayback(ms).catch(() => {}); // and tell librespot
   }
   function handlePrev() {
-    if (positionMs > 3000) {
+    if (usePlayerStore.getState().positionMs > 3000) {
       doSeek(0);
     } else {
       const prev = previous(currentTrack);
@@ -468,7 +480,7 @@ export function PlayerBar() {
                   setPlaying(true);                   // optimistic
                   const clickedAt = Date.now();
                   const id = currentTrack.id;
-                  resumeOrPlay(currentTrack.id, sessionReady ? positionMs : 0)
+                  resumeOrPlay(currentTrack.id, sessionReady ? usePlayerStore.getState().positionMs : 0)
                     .then(() => {
                       /* watchdog: if no real "playing" event lands within 5s the
                        load silently died (dead session / unavailable track),
@@ -499,7 +511,7 @@ export function PlayerBar() {
             </Tooltip>
           )}
         </div>
-        <ProgressBar positionMs={positionMs} durationMs={durationMs} onSeek={doSeek} />
+        <ProgressBar durationMs={durationMs} onSeek={doSeek} />
       </div>
 
       {/* right: volume + queue */}

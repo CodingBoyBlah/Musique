@@ -34,7 +34,7 @@ const QUEUE_LIMIT: usize = 12;
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How often playback looks at which output the system calls its default.
-const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_secs(2);
+const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 
 /// How much sound the audio engine is asked to hold for the device, in milliseconds.
 pub const DEFAULT_BUFFER_MS: u32 = 100;

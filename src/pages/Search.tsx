@@ -630,40 +630,31 @@ export default function Search() {
                       </button>
                     )}
                   </div>
-                  <motion.div
-                    layout="position"
-                    transition={{ layout: REFLOW }}
-                    className="flex flex-col"
-                  >
+                  <div className="flex flex-col">
                     {data.tracks.slice(0, 4).map((t, i) => (
-                      <motion.div
+                      <TrackRow
                         key={t.id}
-                        layout="position"
-                        transition={{ layout: REFLOW }}
-                      >
-                        <TrackRow
-                          track={t}
-                          index={i}
-                          showAlbum
-                          liked={likedSet.has(t.id)}
-                          onPlay={() => {
-                            const start = playContext(data.tracks, i, "search");
-                            if (start) {
-                              setCurrentTrack(start);
-                              playTrack(start.id).catch(console.error);
-                            }
-                          }}
-                          onQueue={(track) => enqueue(track)}
-                          onToggleLike={(track) =>
-                            toggleLike.mutate({
-                              id: track.id,
-                              liked: likedSet.has(track.id),
-                            })
+                        track={t}
+                        index={i}
+                        showAlbum
+                        liked={likedSet.has(t.id)}
+                        onPlay={() => {
+                          const start = playContext(data.tracks, i, "search");
+                          if (start) {
+                            setCurrentTrack(start);
+                            playTrack(start.id).catch(console.error);
                           }
-                        />
-                      </motion.div>
+                        }}
+                        onQueue={(track) => enqueue(track)}
+                        onToggleLike={(track) =>
+                          toggleLike.mutate({
+                            id: track.id,
+                            liked: likedSet.has(track.id),
+                          })
+                        }
+                      />
                     ))}
-                  </motion.div>
+                  </div>
                 </motion.section>
               )}
             </motion.div>
@@ -683,40 +674,31 @@ export default function Search() {
               >
                 Songs
               </h2>
-              <motion.div
-                layout="position"
-                transition={{ layout: REFLOW }}
-                className="flex flex-col"
-              >
+              <div className="flex flex-col">
                 {data.tracks.map((t, i) => (
-                  <motion.div
+                  <TrackRow
                     key={t.id}
-                    layout="position"
-                    transition={{ layout: REFLOW }}
-                  >
-                    <TrackRow
-                      track={t}
-                      index={i}
-                      showAlbum
-                      liked={likedSet.has(t.id)}
-                      onPlay={() => {
-                        const start = playContext(data.tracks, i, "search");
-                        if (start) {
-                          setCurrentTrack(start);
-                          playTrack(start.id).catch(console.error);
-                        }
-                      }}
-                      onQueue={(track) => enqueue(track)}
-                      onToggleLike={(track) =>
-                        toggleLike.mutate({
-                          id: track.id,
-                          liked: likedSet.has(track.id),
-                        })
+                    track={t}
+                    index={i}
+                    showAlbum
+                    liked={likedSet.has(t.id)}
+                    onPlay={() => {
+                      const start = playContext(data.tracks, i, "search");
+                      if (start) {
+                        setCurrentTrack(start);
+                        playTrack(start.id).catch(console.error);
                       }
-                    />
-                  </motion.div>
+                    }}
+                    onQueue={(track) => enqueue(track)}
+                    onToggleLike={(track) =>
+                      toggleLike.mutate({
+                        id: track.id,
+                        liked: likedSet.has(track.id),
+                      })
+                    }
+                  />
                 ))}
-              </motion.div>
+              </div>
             </motion.section>
           )}
 

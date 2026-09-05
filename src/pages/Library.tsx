@@ -127,21 +127,16 @@ function LikedSongsTab() {
       </motion.div>
       <div style={{ display: "flex", flexDirection: "column" }}>
         {view.map((t, i) => (
-          <motion.div
+          <TrackRow
             key={t.id}
-            layout="position"
-            transition={{ layout: { type: "spring", stiffness: 340, damping: 38 } }}
-          >
-            <TrackRow
-              track={t}
-              index={i}
-              showAlbum
-              liked={likedSet.has(t.id)}
-              onPlay={() => handlePlay(i)}
-              onQueue={(track) => enqueue(track)}
-              onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
-            />
-          </motion.div>
+            track={t}
+            index={i}
+            showAlbum
+            liked={likedSet.has(t.id)}
+            onPlay={() => handlePlay(i)}
+            onQueue={(track) => enqueue(track)}
+            onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
+          />
         ))}
       </div>
       {view.length === 0 && (

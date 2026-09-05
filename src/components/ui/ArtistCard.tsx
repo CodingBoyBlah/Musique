@@ -11,7 +11,6 @@ interface Props {
   size?:  number;
 }
 
-const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 const MotionLink = motion.create(Link);
 
 // responsive grid of circular artist cards, even gutters, fills the row
@@ -37,12 +36,10 @@ function ArtistCardImpl({ artist }: Props) {
   return (
     <MotionLink
       to={`/artist/${artist.id}`}
-      layout="position"
       transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchArtist(qc, artist.id); }}
       onMouseLeave={() => setHover(false)}
       whileHover={{ y: -3 }}
-      transition={{ layout: REFLOW }}
       style={{
         display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
         padding: 14, borderRadius: 14, width: "100%", boxSizing: "border-box",

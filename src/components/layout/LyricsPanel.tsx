@@ -75,7 +75,7 @@ function CoverBg({ url }: { url: string | null | undefined }) {
   return (
     <div
       aria-hidden
-      style={{ position: "absolute", inset: 0, overflow: "hidden", zIndex: 0 }}
+      style={{ position: "absolute", inset: 0, overflow: "hidden", zIndex: 0, pointerEvents: "none" }}
     >
       <motion.div
         initial={false}

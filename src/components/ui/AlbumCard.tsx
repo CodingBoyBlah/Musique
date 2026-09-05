@@ -14,8 +14,6 @@ import { getAlbum } from "../../api/spotify";
 import { playTrack, pausePlayback, resumePlayback } from "../../api/playback";
 import { gpuLayer, zTransform } from "../../lib/motion";
 
-const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
-
 const MotionLink = motion.create(Link);
 
 interface Props {
@@ -80,12 +78,11 @@ function AlbumCardImpl({ album, size = 160 }: Props) {
   return (
     <MotionLink
       to={`/album/${album.id}`}
-      layout="position"
       transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchAlbum(qc, album.id); }}
       onMouseLeave={() => setHover(false)}
       whileHover={{ y: -3 }}
-      transition={{ layout: REFLOW, type: "spring", stiffness: 520, damping: 44 }}
+      transition={{ type: "spring", stiffness: 520, damping: 44 }}
       style={{
         display: "flex",
         flexDirection: "column",

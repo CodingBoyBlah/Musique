@@ -50,16 +50,17 @@ async fn try_open(db_path: &Path) -> Result<SqlitePool, Box<dyn std::error::Erro
         .filename(db_path)
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
-        // wal lets a bunch of readers go at once but only one writer. without a
-        // busy timeout the second write just dies instantly with SQLITE_BUSY
-        // (database is locked). just wait for the lock instead of erroring out.
+        .pragma("synchronous", "NORMAL")
         .pragma("cache_size", "-2000")
         .pragma("mmap_size", "0")
         .pragma("temp_store", "FILE")
+        // wal lets a bunch of readers go at once but only one writer. without a
+        // busy timeout the second write just dies instantly with SQLITE_BUSY
+        // (database is locked). just wait for the lock instead of erroring out.
         .busy_timeout(std::time::Duration::from_secs(5));
 
     let pool = SqlitePoolOptions::new()
-        .max_connections(3)
+        .max_connections(4)
         .connect_with(opts)
         .await?;
 
