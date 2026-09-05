@@ -39,10 +39,12 @@ function NavItem({
 }: {
   icon: React.ReactNode; label: string; active: boolean; onClick: () => void; collapsed?: boolean;
 }) {
+  const fastMode = useUIStore((s) => s.fastMode);
+
   const btn = (
     <motion.button
       onClick={onClick}
-      whileTap={{ scale: 0.98 }}
+      whileTap={fastMode ? undefined : { scale: 0.98 }}
       whileHover={active ? {} : { backgroundColor: "var(--color-hover)" }}
       transition={{ type: "spring", stiffness: 400, damping: 26 }}
       transformTemplate={zTransform}

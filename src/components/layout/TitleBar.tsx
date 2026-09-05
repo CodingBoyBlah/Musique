@@ -13,6 +13,7 @@ import { Tooltip } from "../ui/Tooltip";
 import { isMac } from "../../lib/platform";
 import { gpuLayer, zTransform } from "../../lib/motion";
 import { usePlayerStore } from "../../store/player.store";
+import { useUIStore } from "../../store/ui.store";
 
 // win11 caption button (transparent and full-height)
 
@@ -62,14 +63,15 @@ function PillBtn({
   nudge?: "left" | "right";
 }) {
   const [hover, setHover] = useState(false);
+  const fastMode = useUIStore((s) => s.fastMode);
   const nudgeX = nudge && hover ? (nudge === "left" ? -2 : 2) : 0;
   return (
     <motion.button
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      whileHover={{ scale: 0.97 }}
-      whileTap={{ scale: 0.92 }}
+      whileHover={fastMode ? undefined : { scale: 0.97 }}
+      whileTap={fastMode ? undefined : { scale: 0.92 }}
       transition={{ type: "spring", stiffness: 400, damping: 22 }}
       transformTemplate={zTransform}
       style={{
@@ -152,6 +154,7 @@ function AccountMenu() {
   const imageUrl    = useAuthStore((s) => s.imageUrl);
   const loggedIn    = useAuthStore((s) => s.loggedIn);
   const status      = useCredentialsStore((s) => s.status);
+  const fastMode    = useUIStore((s) => s.fastMode);
   const { login, logout } = useAuth();
 
   useEffect(() => {
@@ -175,6 +178,7 @@ function AccountMenu() {
       <AnimatePresence>
         {open && (
           <motion.div
+            className="profile-popover popup-panel"
             initial={{ opacity: 0, y: -6, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.97 }}
@@ -187,9 +191,9 @@ function AccountMenu() {
               padding:       6,
               borderRadius:  14,
               transformOrigin: "top left",
-              background:    "rgba(28, 28, 32, 0.92)",
-              backdropFilter: "blur(40px) saturate(1.4)",
-              WebkitBackdropFilter: "blur(40px) saturate(1.4)",
+              background:    fastMode ? "#1c1c20" : "rgba(28, 28, 32, 0.92)",
+              backdropFilter: fastMode ? "none" : "blur(40px) saturate(1.4)",
+              WebkitBackdropFilter: fastMode ? "none" : "blur(40px) saturate(1.4)",
               border:        "1px solid var(--color-border)",
               boxShadow:     "0 16px 40px rgba(0,0,0,0.5)",
               zIndex:        100,

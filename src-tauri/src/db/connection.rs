@@ -51,9 +51,9 @@ async fn try_open(db_path: &Path) -> Result<SqlitePool, Box<dyn std::error::Erro
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .pragma("synchronous", "NORMAL")
-        .pragma("cache_size", "-8000")
-        .pragma("mmap_size", "33554432")
-        .pragma("temp_store", "MEMORY")
+        .pragma("cache_size", "-2000")
+        .pragma("mmap_size", "0")
+        .pragma("temp_store", "FILE")
         // wal lets a bunch of readers go at once but only one writer. without a
         // busy timeout the second write just dies instantly with SQLITE_BUSY
         // (database is locked). just wait for the lock instead of erroring out.

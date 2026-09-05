@@ -19,6 +19,7 @@ import {
   useToggleLike,
 } from "../hooks/useLibrary";
 import { usePlayerStore } from "../store/player.store";
+import { useUIStore } from "../store/ui.store";
 import { useQueueStore } from "../store/queue.store";
 import { playTrack, pausePlayback } from "../api/playback";
 import { gpuLayer, zTransform } from "../lib/motion";
@@ -40,6 +41,7 @@ export default function ArtistPage() {
   const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
   const queueOpen = usePlayerStore((s) => s.queueOpen);
   const isCompact = lyricsOpen || queueOpen;
+  const fastMode = useUIStore((s) => s.fastMode);
   const enqueue = useQueueStore((s) => s.enqueue);
   const playContext = useQueueStore((s) => s.playContext);
   const playContextShuffled = useQueueStore((s) => s.playContextShuffled);
@@ -187,8 +189,8 @@ export default function ArtistPage() {
                 <motion.button
                   initial={false}
                   onClick={playAll}
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.96 }}
+                  whileHover={fastMode ? undefined : { scale: 1.04 }}
+                  whileTap={fastMode ? undefined : { scale: 0.96 }}
                   animate={{
                     width: isCompact ? 44 : 114,
                     paddingLeft: isCompact ? 0 : 20,
@@ -234,7 +236,7 @@ export default function ArtistPage() {
                     animate={{
                       maxWidth: isCompact ? 0 : 54,
                       opacity: isCompact ? 0 : 1,
-                      filter: isCompact ? "blur(6px)" : "blur(0px)",
+                      filter: fastMode ? "none" : (isCompact ? "blur(6px)" : "blur(0px)"),
                       scale: isCompact ? 0.75 : 1,
                       marginLeft: isCompact ? 0 : 8,
                     }}
@@ -278,8 +280,8 @@ export default function ArtistPage() {
                 <motion.button
                   initial={false}
                   onClick={shuffleAll}
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.96 }}
+                  whileHover={fastMode ? undefined : { scale: 1.04 }}
+                  whileTap={fastMode ? undefined : { scale: 0.96 }}
                   animate={{
                     width: isCompact ? 44 : 114,
                     paddingLeft: isCompact ? 0 : 18,
@@ -317,7 +319,7 @@ export default function ArtistPage() {
                     animate={{
                       maxWidth: isCompact ? 0 : 56,
                       opacity: isCompact ? 0 : 1,
-                      filter: isCompact ? "blur(6px)" : "blur(0px)",
+                      filter: fastMode ? "none" : (isCompact ? "blur(6px)" : "blur(0px)"),
                       scale: isCompact ? 0.75 : 1,
                       marginLeft: isCompact ? 0 : 8,
                     }}
@@ -359,8 +361,8 @@ export default function ArtistPage() {
             <Tooltip label={following ? "Unfollow artist" : "Follow artist"} side="top">
               <motion.button
                 onClick={() => id && toggleFollow.mutate({ id, following })}
-                whileHover={{ scale: 1.04 }}
-                whileTap={{ scale: 0.96 }}
+                whileHover={fastMode ? undefined : { scale: 1.04 }}
+                whileTap={fastMode ? undefined : { scale: 0.96 }}
                 transformTemplate={zTransform}
                 style={{
                   ...gpuLayer,
@@ -396,8 +398,8 @@ export default function ArtistPage() {
               <motion.button
                 onClick={(e) => openMenu(shareEntries)(e)}
                 onContextMenu={openMenu(shareEntries)}
-                whileHover={{ scale: 1.06 }}
-                whileTap={{ scale: 0.94 }}
+                whileHover={fastMode ? undefined : { scale: 1.06 }}
+                whileTap={fastMode ? undefined : { scale: 0.94 }}
                 transformTemplate={zTransform}
                 style={{
                   ...gpuLayer,

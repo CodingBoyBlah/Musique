@@ -4,6 +4,7 @@ import { Shuffle, Pin, Share2, Link2, Globe } from "lucide-react";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { usePinsStore, type PinnedItem } from "../../store/pins.store";
+import { useUIStore } from "../../store/ui.store";
 import { playTrack, pausePlayback, resumeOrPlay } from "../../api/playback";
 import type { TrackItem } from "../../types/spotify";
 import { gpuLayer, zTransform } from "../../lib/motion";
@@ -32,6 +33,7 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
   const pins                = usePinsStore((s) => s.pins);
   const togglePin           = usePinsStore((s) => s.togglePin);
   const { open: openMenu, element: menuEl } = useContextMenu();
+  const fastMode            = useUIStore((s) => s.fastMode);
 
   // when the button row gets narrow or when lyrics/queue rail opens,
   // condense Play and Shuffle to circular icon buttons with smooth blur morph
@@ -86,8 +88,8 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
           initial={false}
           onClick={onPlay}
           disabled={empty}
-          whileHover={empty ? {} : { scale: 1.04 }}
-          whileTap={empty ? {} : { scale: 0.96 }}
+          whileHover={empty || fastMode ? {} : { scale: 1.04 }}
+          whileTap={empty || fastMode ? {} : { scale: 0.96 }}
           animate={{
             width: isCondensed ? 44 : 114,
             paddingLeft: isCondensed ? 0 : 20,
@@ -134,7 +136,7 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
             animate={{
               maxWidth: isCondensed ? 0 : 54,
               opacity: isCondensed ? 0 : 1,
-              filter: isCondensed ? "blur(6px)" : "blur(0px)",
+              filter: fastMode ? "none" : (isCondensed ? "blur(6px)" : "blur(0px)"),
               scale: isCondensed ? 0.75 : 1,
               marginLeft: isCondensed ? 0 : 8,
             }}
@@ -177,8 +179,8 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
           initial={false}
           onClick={onShuffle}
           disabled={empty}
-          whileHover={empty ? {} : { scale: 1.04 }}
-          whileTap={empty ? {} : { scale: 0.96 }}
+          whileHover={empty || fastMode ? {} : { scale: 1.04 }}
+          whileTap={empty || fastMode ? {} : { scale: 0.96 }}
           animate={{
             width: isCondensed ? 44 : 114,
             paddingLeft: isCondensed ? 0 : 18,
@@ -236,7 +238,7 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
             animate={{
               maxWidth: isCondensed ? 0 : 56,
               opacity: isCondensed ? 0 : 1,
-              filter: isCondensed ? "blur(6px)" : "blur(0px)",
+              filter: fastMode ? "none" : (isCondensed ? "blur(6px)" : "blur(0px)"),
               scale: isCondensed ? 0.75 : 1,
               marginLeft: isCondensed ? 0 : 8,
             }}
@@ -277,8 +279,8 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
       <Tooltip label={pinned ? "Unpin from sidebar" : "Pin to sidebar"} side="top">
         <motion.button
           onClick={() => togglePin(pinItem)}
-          whileHover={{ scale: 1.06 }}
-          whileTap={{ scale: 0.94 }}
+          whileHover={fastMode ? undefined : { scale: 1.06 }}
+          whileTap={fastMode ? undefined : { scale: 0.94 }}
           transformTemplate={zTransform}
           style={{
             ...gpuLayer,
@@ -298,8 +300,8 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
         <motion.button
           onClick={(e) => openMenu(shareEntries)(e)}
           onContextMenu={openMenu(shareEntries)}
-          whileHover={{ scale: 1.06 }}
-          whileTap={{ scale: 0.94 }}
+          whileHover={fastMode ? undefined : { scale: 1.06 }}
+          whileTap={fastMode ? undefined : { scale: 0.94 }}
           transformTemplate={zTransform}
           style={{
             ...gpuLayer,

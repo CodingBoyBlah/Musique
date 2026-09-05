@@ -1,4 +1,5 @@
 import { Play, Pause, Volume2, Volume1, VolumeX, Heart } from "lucide-react";
+import { useUIStore } from "../../store/ui.store";
 
 export function AnimatedPlayPause({
   isPlaying,
@@ -13,6 +14,31 @@ export function AnimatedPlayPause({
   fill?: string;
   style?: React.CSSProperties;
 }) {
+  const fastMode = useUIStore((s) => s.fastMode);
+
+  if (fastMode) {
+    return (
+      <span
+        style={{
+          position: "relative",
+          width: size,
+          height: size,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+          ...style,
+        }}
+      >
+        {isPlaying ? (
+          <Pause size={size} strokeWidth={strokeWidth > 0 ? strokeWidth : 2.4} fill={fill} />
+        ) : (
+          <Play size={size} strokeWidth={strokeWidth} fill={fill} style={{ marginLeft: 1.5 }} />
+        )}
+      </span>
+    );
+  }
+
   return (
     <span
       style={{
@@ -95,6 +121,16 @@ export function AnimatedHeart({
   liked: boolean;
   size?: number;
 }) {
+  const fastMode = useUIStore((s) => s.fastMode);
+
+  if (fastMode) {
+    return (
+      <span style={{ position: "relative", width: size, height: size, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <Heart size={size} strokeWidth={liked ? 0 : 2} fill={liked ? "var(--color-accent, #34d399)" : "none"} color={liked ? "var(--color-accent, #34d399)" : "currentColor"} />
+      </span>
+    );
+  }
+
   return (
     <span
       style={{

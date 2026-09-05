@@ -578,6 +578,7 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
+    #[cfg(target_os = "windows")]
     mem_trim::start_memory_trimmer();
 
     let _ = dotenvy::from_filename("../.env");

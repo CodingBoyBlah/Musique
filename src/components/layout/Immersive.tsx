@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
+import { useUIStore } from "../../store/ui.store";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
 import { useLyrics } from "../../hooks/useLyrics";
 import { CoverArt } from "../ui/CoverArt";
@@ -26,12 +27,14 @@ import {
 
 function GradientBg({ url }: { url: string | null | undefined }) {
   const reduceMotion = useReducedMotion();
+  const fastMode = useUIStore((s) => s.fastMode);
 
   const base: React.CSSProperties = {
     position: "absolute", inset: 0, overflow: "hidden",
     isolation: "isolate", background: "#07070b",
     pointerEvents: "none",
   };
+  if (fastMode || !url) return <div aria-hidden style={base} />;
 
   const layer = (opacity: number, blur: number): React.CSSProperties => ({
     position: "absolute", inset: "-25%",
@@ -83,6 +86,7 @@ function ImmersiveLyrics() {
   const track        = usePlayerStore((s) => s.currentTrack);
   const setPosition  = usePlayerStore((s) => s.setPosition);
   const reduceMotion = useReducedMotion();
+  const fastMode     = useUIStore((s) => s.fastMode);
   const { data, isLoading } = useLyrics(track);
   const { seek } = usePlayerControls();
 
@@ -148,7 +152,7 @@ function ImmersiveLyrics() {
                     paddingLeft: vi === 0 ? 0 : 10,
                   }}
                 >
-                  {isActive && voice.words.length ? (
+                  {!fastMode && isActive && voice.words.length ? (
                     // word-by-word brightness sweep (real musixmatch/netease timings)
                     <ActiveLine words={mapWords(voice)} getClock={getClock} size={size} weight={weight} halo={0.18} />
                   ) : (
@@ -272,12 +276,13 @@ const tmark: React.CSSProperties = { fontSize: 12, color: "rgba(255,255,255,0.6)
 // round control button
 
 function Ctl({ children, onClick, active, big, title }: { children: React.ReactNode; onClick: () => void; active?: boolean; big?: boolean; title?: string }) {
+  const fastMode = useUIStore((s) => s.fastMode);
   return (
     <motion.button
       onClick={onClick}
       title={title}
-      whileHover={{ scale: 1.1 }}
-      whileTap={{ scale: 0.9 }}
+      whileHover={fastMode ? undefined : { scale: 1.1 }}
+      whileTap={fastMode ? undefined : { scale: 0.9 }}
       transition={{ type: "spring", stiffness: 400, damping: 22 }}
       transformTemplate={zTransform}
       style={{
@@ -303,6 +308,7 @@ export function Immersive() {
   const setPanel    = usePlayerStore((s) => s.setImmersivePanel);
   const track       = usePlayerStore((s) => s.currentTrack);
   const isPlaying   = usePlayerStore((s) => s.isPlaying);
+  const fastMode    = useUIStore((s) => s.fastMode);
   const { togglePlay, next, prev } = usePlayerControls();
   const { shuffle, repeat, toggleShuffle, cycleRepeat } = useQueueStore();
 
@@ -320,10 +326,10 @@ export function Immersive() {
     <AnimatePresence>
       {open && track && (
         <motion.div
-          initial={{ opacity: 0, y: 24 }}
+          initial={{ opacity: 0, y: fastMode ? 0 : 24 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 24 }}
-          transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
+          exit={{ opacity: 0, y: fastMode ? 0 : 24 }}
+          transition={fastMode ? { duration: 0 } : { duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b" }}
         >
           <GradientBg url={track.album?.image_url} />

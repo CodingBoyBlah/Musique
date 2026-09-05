@@ -8,10 +8,9 @@ import { applyAccent, dataUrlAccent, loadCoverAccent } from "../lib/color";
 export function ThemeEngine() {
   const source      = useThemeStore((s) => s.source);
   const albumColors = useThemeStore((s) => s.albumColors);
-  const refreshKey = useThemeStore((s) => s.refreshKey);
+  const refreshKey  = useThemeStore((s) => s.refreshKey);
   const pageTint    = useUIStore((s) => s.pageTint);
-
-  
+  const fastMode    = useUIStore((s) => s.fastMode);
 
   const [base, setBase] = useState<string | null>(null);
   useEffect(() => {
@@ -32,12 +31,11 @@ export function ThemeEngine() {
     };
     resolve();
 
-    
     if (source === "wallpaper" || source === "system") {
       const refresh = () => { if (!document.hidden) resolve(); };
       window.addEventListener("focus", refresh);
       document.addEventListener("visibilitychange", refresh);
-      const iv = source === "wallpaper" ? window.setInterval(resolve, 20000) : 0;
+      const iv = (!fastMode && source === "wallpaper") ? window.setInterval(resolve, 20000) : 0;
       return () => {
         cancelled = true;
         window.removeEventListener("focus", refresh);
@@ -46,21 +44,20 @@ export function ThemeEngine() {
       };
     }
     return () => { cancelled = true; };
-  }, [source, refreshKey]);
+  }, [source, refreshKey, fastMode]);
 
-  
   useEffect(() => {
     let cancelled = false;
     (async () => {
       let effective = base;
-      if (albumColors && pageTint) {
+      if (!fastMode && albumColors && pageTint) {
         const cover = await loadCoverAccent(pageTint); 
         if (cover) effective = cover;
       }
       if (!cancelled) applyAccent(effective); 
     })();
     return () => { cancelled = true; };
-  }, [base, albumColors, pageTint]);
+  }, [base, albumColors, pageTint, fastMode]);
 
   return null;
 }

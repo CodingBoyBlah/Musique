@@ -23,6 +23,7 @@ export default function Layout() {
   const effect = useUIStore((s) => s.windowEffect);
   const materialTransparency = useUIStore((s) => s.materialTransparency);
   const pageTint = useUIStore((s) => s.pageTint);
+  const fastMode = useUIStore((s) => s.fastMode);
   const backdropActive = useUIStore((s) => s.backdropActive);
   const setBackdropActive = useUIStore((s) => s.setBackdropActive);
   const location = useLocation();
@@ -133,7 +134,7 @@ export default function Layout() {
               (top-left) and fades it to nothing - no hard edges, no top/bottom
               gradient cuts. */}
           <AnimatePresence>
-            {pageTint && (
+            {!fastMode && pageTint && (
               <motion.div
                 key={pageTint}
                 aria-hidden

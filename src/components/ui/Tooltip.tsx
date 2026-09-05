@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useUIStore } from "../../store/ui.store";
 
 interface Props {
   label:    ReactNode;
@@ -9,6 +10,7 @@ interface Props {
   pins the tooltip right edge to the control so it never spills off the
   right of the window (the corner queue button uses this) */
   align?:   "center" | "start" | "end";
+  maxWidth?: number | string;
 }
 
 /* small themed tooltip. wraps a control, shows a frosted label on hover.
@@ -17,7 +19,8 @@ stays visible while the pointers over the control, so clicking toggle
 (shuffle / repeat) updates the label INPLACE without re-hovering
 verticalAlign:middle + lineHeight:0 keep the wrapped button on the text
 baseline so its scale animation doesnt make it jump. */
-export function Tooltip({ label, children, side = "top", align = "center" }: Props) {
+export function Tooltip({ label, children, side = "top", align = "center", maxWidth }: Props) {
+  const fastMode = useUIStore((s) => s.fastMode);
   const [open, setOpen] = useState(false);
   const off = side === "top" ? 5 : -5;
 
@@ -42,6 +45,7 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
         {open && (
           <motion.span
             role="tooltip"
+            className="popup-panel"
             initial={isRight ? { opacity: 0, x: -4, y: "-50%", scale: 0.94 } : { opacity: 0, y: off, scale: 0.94, x: tx }}
             animate={isRight ? { opacity: 1, x: 0, y: "-50%", scale: 1 } : { opacity: 1, y: 0, scale: 1, x: tx }}
             exit={isRight ? { opacity: 0, x: -4, y: "-50%", scale: 0.94 } : { opacity: 0, y: off, scale: 0.94, x: tx }}
@@ -49,21 +53,25 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
             style={{
               position:      "absolute",
               ...horiz,
-              whiteSpace:    "nowrap",
+              width:         "max-content",
+              maxWidth:      maxWidth ?? 280,
+              whiteSpace:    "normal",
+              wordBreak:     "break-word",
               pointerEvents: "none",
               zIndex:        300,
-              padding:       "5px 9px",
+              padding:       "6px 10px",
               borderRadius:  7,
-              lineHeight:    1.2,
-              background:    "rgba(26, 26, 30, 0.96)",
-              backdropFilter:       "blur(20px)",
-              WebkitBackdropFilter: "blur(20px)",
+              lineHeight:    1.35,
+              background:    fastMode ? "#1c1c20" : "rgba(26, 26, 30, 0.96)",
+              backdropFilter:       fastMode ? "none" : "blur(20px)",
+              WebkitBackdropFilter: fastMode ? "none" : "blur(20px)",
               border:        "1px solid var(--color-glass-border)",
               boxShadow:     "0 8px 22px rgba(0,0,0,0.45)",
               fontSize:      11.5,
               fontWeight:    600,
               letterSpacing: "0.01em",
               color:         "var(--color-text-hi)",
+              textAlign:     "left",
             }}
           >
             {label}

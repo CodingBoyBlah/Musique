@@ -15,6 +15,7 @@ import { playTrack, pausePlayback, resumePlayback } from "../api/playback";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
+import { useUIStore } from "../store/ui.store";
 import { errMsg } from "../lib/err";
 import type {
   PlaylistCard as PlaylistCardType,
@@ -263,6 +264,7 @@ function PlaylistResultCard({ playlist }: { playlist: PlaylistCardType }) {
 // ─── Search Page ────────────────────────────────────────────────────────────
 
 export default function Search() {
+  const fastMode        = useUIStore((s) => s.fastMode);
   const { loggedIn, login, loggingIn } = useAuth();
   const [params]        = useSearchParams();
   const query           = (params.get("q") ?? "").trim();
@@ -473,8 +475,8 @@ export default function Search() {
               transition={{ layout: REFLOW }}
               role="tab"
               aria-selected={on}
-              whileHover={{ scale: 1.04 }}
-              whileTap={{ scale: 0.96 }}
+              whileHover={fastMode ? undefined : { scale: 1.04 }}
+              whileTap={fastMode ? undefined : { scale: 0.96 }}
               onClick={() => setCat(c)}
               style={{
                 padding: "7px 18px",

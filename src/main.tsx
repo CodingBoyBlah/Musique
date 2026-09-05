@@ -5,7 +5,7 @@ import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./index.css";
 
-const queryClient = new QueryClient({
+export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,

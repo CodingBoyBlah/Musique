@@ -191,3 +191,29 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
         transform: rotate(360deg);
     }
 }
+
+/* Fast mode overrides: completely eliminate all blurs, backdrop filters, and expensive composite filters */
+html[data-fast-mode="true"] *,
+html[data-fast-mode="true"] *::before,
+html[data-fast-mode="true"] *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+/* Fast mode popups: solid gray instead of transparent without blur */
+html[data-fast-mode="true"] .profile-popover,
+html[data-fast-mode="true"] [role="tooltip"],
+html[data-fast-mode="true"] .context-menu,
+html[data-fast-mode="true"] .dropdown-menu,
+html[data-fast-mode="true"] .modal-card,
+html[data-fast-mode="true"] .popup-panel {
+    background: #1c1c20 !important;
+    background-color: #1c1c20 !important;
+}
+
+/* Fast mode: disable scale on clicking buttons */
+html[data-fast-mode="true"] button:active,
+html[data-fast-mode="true"] [role="button"]:active {
+    transform: none !important;
+}
+

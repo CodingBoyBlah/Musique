@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { ListMusic, Plus, Search, X } from "lucide-react";
 import { useAddToPlaylistStore } from "../../store/addToPlaylist.store";
+import { useUIStore } from "../../store/ui.store";
 import { useMyPlaylists, LIBRARY_KEYS } from "../../hooks/useLibrary";
 import { addTrackToPlaylist, createPlaylist } from "../../api/library";
 import { toast } from "../../store/toast.store";
@@ -13,6 +14,7 @@ track through to spotify. can also spin up a new playlist on demand. */
 export function AddToPlaylistModal() {
   const track   = useAddToPlaylistStore((s) => s.track);
   const close   = useAddToPlaylistStore((s) => s.close);
+  const fastMode = useUIStore((s) => s.fastMode);
   const { data: playlists = [], isLoading } = useMyPlaylists();
   const qc = useQueryClient();
 
@@ -76,9 +78,10 @@ export function AddToPlaylistModal() {
             exit={{ opacity: 0, scale: 0.97, y: 6 }}
             transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
             onClick={(e) => e.stopPropagation()}
+            className="modal-card popup-panel"
             style={{
               width: "min(400px, calc(100vw - 32px))", maxHeight: "70vh", display: "flex", flexDirection: "column",
-              borderRadius: 16, background: "rgba(20,20,26,0.97)",
+              borderRadius: 16, background: fastMode ? "#1c1c20" : "rgba(20,20,26,0.97)",
               border: "1px solid rgba(255,255,255,0.12)", boxShadow: "0 24px 64px rgba(0,0,0,0.6)",
               overflow: "hidden",
             }}

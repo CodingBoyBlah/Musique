@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, lazy, Suspense } from "react";
+import { MotionConfig } from "framer-motion";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/layout/Layout";
 import { Loader } from "./components/ui/Loader";
@@ -54,6 +55,7 @@ import { startRadio } from "./utils/radio";
 import { prefetchLyrics } from "./lib/prefetch";
 import { lastfmNowPlaying, lastfmScrobble } from "./api/lastfm";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { trimMemory } from "./lib/memory";
 
 function AppInit() {
   const setFromCredentials = useCredentialsStore((s) => s.setFromCredentials);
@@ -65,6 +67,7 @@ function AppInit() {
   const invalidateLibrary = useInvalidateLibrary();
   const queryClient = useQueryClient();
   const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const fastMode = useUIStore((s) => s.fastMode);
   const upcoming = useQueueStore((s) => s.queue);
   const lastTrackId = useRef<string | null>(null);
   // tracks we already auto-retried on a fresh session after an `unavailable`
@@ -97,8 +100,8 @@ function AppInit() {
 native backdrop but blows away react state, so sync hereto keep the os material matching the stored choice - otherwise it flashes
    back to a bright default. */
   useEffect(() => {
-    const effect = useUIStore.getState().windowEffect;
-    setWindowEffect(effect).catch(() => {});
+    const { windowEffect: effect, fastMode } = useUIStore.getState();
+    setWindowEffect(fastMode ? "none" : effect).catch(() => {});
   }, []);
 
   /*  TODO- kill the default webview rightclick menu (dev artifact). our own context
@@ -159,8 +162,35 @@ Home recs so they're cached before the user gets there
   reruns on track/queue change; prefetchLyrics (dedupes) */
   useEffect(() => {
     if (currentTrack) prefetchLyrics(queryClient, currentTrack);
-    upcoming.slice(0, 3).forEach((t) => prefetchLyrics(queryClient, t));
-  }, [currentTrack, upcoming, queryClient]);
+    if (!fastMode) {
+      upcoming.slice(0, 3).forEach((t) => prefetchLyrics(queryClient, t));
+    }
+  }, [currentTrack, upcoming, queryClient, fastMode]);
+
+  // memory management: periodic and event-based trim in Fast mode
+  useEffect(() => {
+    if (!fastMode) return;
+    trimMemory().catch(() => {});
+    const interval = setInterval(() => {
+      trimMemory().catch(() => {});
+    }, 45_000);
+
+    const onBlur = () => {
+      trimMemory().catch(() => {});
+    };
+    window.addEventListener("blur", onBlur);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [fastMode]);
+
+  useEffect(() => {
+    if (fastMode && currentTrack) {
+      trimMemory().catch(() => {});
+    }
+  }, [fastMode, currentTrack?.id]);
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -337,84 +367,96 @@ Home recs so they're cached before the user gets there
 }
 
 export default function App() {
-  return (
-    <BrowserRouter>
-      <AppInit />
-      <ThemeEngine />
-      <UpdatePrompt />
-      <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Home />} />
-          {/* suspense fallback covers the quick lazy chunk fetch on first
-              visit to a route --- later visits are instant (chunks cached) */}
-          <Route
-            path="settings"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Settings />
-              </Suspense>
-            }
-          />
-          <Route
-            path="search"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Search />
-              </Suspense>
-            }
-          />
+  const fastMode = useUIStore((s) => s.fastMode);
 
-          <Route
-            path="library"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Library />
-              </Suspense>
-            }
-          />
-          <Route
-            path="playlist/:id"
-            element={
-              <Suspense fallback={<Loader />}>
-                <PlaylistPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="playlists"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Playlists />
-              </Suspense>
-            }
-          />
-          <Route
-            path="artist/:id"
-            element={
-              <Suspense fallback={<Loader />}>
-                <ArtistPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="album/:id"
-            element={
-              <Suspense fallback={<Loader />}>
-                <AlbumPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="playground"
-            element={
-              <Suspense fallback={<Loader />}>
-                <Playground />
-              </Suspense>
-            }
-          />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+  useEffect(() => {
+    if (fastMode) {
+      document.documentElement.setAttribute("data-fast-mode", "true");
+    } else {
+      document.documentElement.removeAttribute("data-fast-mode");
+    }
+  }, [fastMode]);
+
+  return (
+    <MotionConfig reducedMotion={fastMode ? "always" : "user"}>
+      <BrowserRouter>
+        <AppInit />
+        <ThemeEngine />
+        <UpdatePrompt />
+        <Routes>
+          <Route path="/" element={<Layout />}>
+            <Route index element={<Home />} />
+            {/* suspense fallback covers the quick lazy chunk fetch on first
+                visit to a route --- later visits are instant (chunks cached) */}
+            <Route
+              path="settings"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <Settings />
+                </Suspense>
+              }
+            />
+            <Route
+              path="search"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <Search />
+                </Suspense>
+              }
+            />
+
+            <Route
+              path="library"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <Library />
+                </Suspense>
+              }
+            />
+            <Route
+              path="playlist/:id"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <PlaylistPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="playlists"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <Playlists />
+                </Suspense>
+              }
+            />
+            <Route
+              path="artist/:id"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <ArtistPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="album/:id"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <AlbumPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="playground"
+              element={
+                <Suspense fallback={<Loader />}>
+                  <Playground />
+                </Suspense>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </MotionConfig>
   );
 }

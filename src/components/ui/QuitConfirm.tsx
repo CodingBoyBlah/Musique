@@ -4,8 +4,9 @@ import { useUIStore } from "../../store/ui.store";
 
 
 export function QuitConfirm() {
-  const open    = useUIStore((s) => s.quitConfirmOpen);
-  const setOpen = useUIStore((s) => s.setQuitConfirmOpen);
+  const open     = useUIStore((s) => s.quitConfirmOpen);
+  const setOpen  = useUIStore((s) => s.setQuitConfirmOpen);
+  const fastMode = useUIStore((s) => s.fastMode);
 
   const quit = () => getCurrentWindow().destroy().catch(() => {});
 
@@ -30,9 +31,10 @@ export function QuitConfirm() {
             exit={{ opacity: 0, scale: 0.97, y: 6 }}
             transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
             onClick={(e) => e.stopPropagation()}
+            className="modal-card popup-panel"
             style={{
               width: "min(360px, calc(100vw - 32px))", padding: "22px 22px 18px", borderRadius: 16,
-              background: "rgba(20,20,26,0.96)",
+              background: fastMode ? "#1c1c20" : "rgba(20,20,26,0.96)",
               border: "1px solid rgba(255,255,255,0.12)",
               boxShadow: "0 24px 64px rgba(0,0,0,0.6)",
             }}

@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { X, GripVertical, ListMusic } from "lucide-react";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
+import { useUIStore } from "../../store/ui.store";
 import { playTrack } from "../../api/playback";
 import { fmtMs } from "../../utils/fmt";
 import { meshGradient } from "../../lib/mesh";
@@ -101,6 +102,19 @@ function QueueTrackRow({
 
 // animated 3-bar equaliser for the now-playing card
 function Equaliser() {
+  const fastMode = useUIStore((s) => s.fastMode);
+  if (fastMode) {
+    return (
+      <span style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 13 }}>
+        {[4, 12, 7].map((h, i) => (
+          <span
+            key={i}
+            style={{ width: 3, borderRadius: 2, background: "var(--color-accent)", height: h }}
+          />
+        ))}
+      </span>
+    );
+  }
   return (
     <span style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 13 }}>
       {[0, 1, 2].map((i) => (
@@ -172,6 +186,7 @@ export function QueuePanel() {
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const currentTrack    = usePlayerStore((s) => s.currentTrack);
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
+  const fastMode        = useUIStore((s) => s.fastMode);
 
   const { queue, history, removeAt, reorder, clearQueue, clearHistory } = useQueueStore();
   const dragIdx = useRef<number | null>(null);
@@ -185,10 +200,10 @@ export function QueuePanel() {
     <motion.div
       // in-flow rail below the title bar; slides via transform. width is reserved
       // by the spacer in Layout.tsx so the grid reflows once, both ways.
-      initial={{ x: WIDTH }}
+      initial={fastMode ? false : { x: WIDTH }}
       animate={{ x: 0 }}
-      exit={{ x: WIDTH }}
-      transition={{ type: "spring", stiffness: 340, damping: 38 }}
+      exit={fastMode ? { opacity: 0 } : { x: WIDTH }}
+      transition={fastMode ? { duration: 0 } : { type: "spring", stiffness: 340, damping: 38 }}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH, maxWidth: "100vw", display: "flex", flexDirection: "column", overflow: "hidden",
