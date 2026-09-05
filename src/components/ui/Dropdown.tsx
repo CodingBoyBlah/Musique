@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Check } from "lucide-react";
+import { useUIStore } from "../../store/ui.store";
 import { gpuLayer, zTransform } from "../../lib/motion";
 
 export interface DropdownOption<T extends string> {
@@ -22,6 +23,7 @@ interface Props<T extends string> {
 export function Dropdown<T extends string>({
   value, options, onChange, align = "left", minWidth = 140, title,
 }: Props<T>) {
+  const fastMode = useUIStore((s) => s.fastMode);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const current = options.find((o) => o.value === value);
@@ -40,7 +42,7 @@ export function Dropdown<T extends string>({
       <motion.button
         onClick={() => setOpen((v) => !v)}
         title={title}
-        whileTap={{ scale: 0.97 }}
+        whileTap={fastMode ? undefined : { scale: 0.97 }}
         transition={{ type: "spring", stiffness: 400, damping: 25 }}
         transformTemplate={zTransform}
         style={{
@@ -63,6 +65,7 @@ export function Dropdown<T extends string>({
       <AnimatePresence>
         {open && (
           <motion.div
+            className="dropdown-menu popup-panel"
             initial={{ opacity: 0, scale: 0.95, y: -4 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: -4 }}
@@ -73,8 +76,9 @@ export function Dropdown<T extends string>({
               right: align === "right" ? 0 : undefined,
               padding: 5, borderRadius: 11, zIndex: 60,
               transformOrigin: align === "right" ? "top right" : "top left",
-              background: "rgba(28, 28, 32, 0.94)",
-              backdropFilter: "blur(40px)", WebkitBackdropFilter: "blur(40px)",
+              background: fastMode ? "#1c1c20" : "rgba(28, 28, 32, 0.94)",
+              backdropFilter: fastMode ? "none" : "blur(40px)",
+              WebkitBackdropFilter: fastMode ? "none" : "blur(40px)",
               border: "1px solid var(--color-border)",
               boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
             }}

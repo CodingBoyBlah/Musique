@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { WindowEffect } from "../api/window";
+import { trimMemory } from "../lib/memory";
 
 interface UIState {
   sidebarCollapsed: boolean;
@@ -40,7 +41,10 @@ export const useUIStore = create<UIState>()(
       backdropActive: false,
       setBackdropActive: (v) => set({ backdropActive: v }),
       fastMode: false,
-      setFastMode: (enabled) =>
+      setFastMode: (enabled) => {
+        if (enabled) {
+          trimMemory(true).catch(() => {});
+        }
         set((s) => {
           if (enabled) {
             return {
@@ -54,7 +58,8 @@ export const useUIStore = create<UIState>()(
               windowEffect: s.savedWindowEffect || "mica",
             };
           }
-        }),
+        });
+      },
       quitConfirmOpen: false,
       setQuitConfirmOpen: (v) => set({ quitConfirmOpen: v }),
     }),

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { useUIStore } from "../../store/ui.store";
 
 export interface MenuEntry {
   label:    string;
@@ -39,6 +40,7 @@ function ContextMenuView({
   x: number; y: number; entries: MenuEntry[]; onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const fastMode = useUIStore((s) => s.fastMode);
   const [pos, setPos] = useState({ x, y });
 
   // keep the menu inside the viewport
@@ -69,6 +71,7 @@ function ContextMenuView({
   return createPortal(
     <div
       ref={ref}
+      className="context-menu popup-panel"
       style={{
         position:      "fixed",
         top:           pos.y,
@@ -76,9 +79,9 @@ function ContextMenuView({
         minWidth:      180,
         padding:       5,
         borderRadius:  10,
-        background:    "rgba(28, 28, 32, 0.96)",
-        backdropFilter: "blur(40px)",
-        WebkitBackdropFilter: "blur(40px)",
+        background:    fastMode ? "#1c1c20" : "rgba(28, 28, 32, 0.96)",
+        backdropFilter: fastMode ? "none" : "blur(40px)",
+        WebkitBackdropFilter: fastMode ? "none" : "blur(40px)",
         border:        "1px solid var(--color-border)",
         boxShadow:     "0 12px 32px rgba(0,0,0,0.5)",
         zIndex:        1000,

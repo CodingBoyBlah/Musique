@@ -10,3 +10,4 @@ pub mod share;
 pub mod spotify;
 pub mod window;
 pub mod theme; 
+pub mod memory; 

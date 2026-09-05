@@ -26,6 +26,7 @@ import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { meshGradient } from "../lib/mesh";
 import { gpuLayer, zTransform } from "../lib/motion";
 import { useReflowPulse } from "../hooks/useReflowPulse";
+import { useUIStore } from "../store/ui.store";
 import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
 
@@ -475,6 +476,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const setPlaying = usePlayerStore((s) => s.setPlaying);
+  const fastMode = useUIStore((s) => s.fastMode);
   const isThisTrackPlaying = Boolean(currentTrack?.id === track.id && isPlaying);
   const art = track.album?.image_url;
 
@@ -486,7 +488,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
       onClick={onPlay}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      whileTap={{ scale: 0.97 }}
+      whileTap={fastMode ? undefined : { scale: 0.97 }}
       style={{
         width: "100%",
         display: "flex",

@@ -569,6 +569,26 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
+    #[cfg(target_os = "windows")]
+    if std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
+        std::env::set_var(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            "--js-flags=--max-old-space-size=64,--optimize-for-size,--expose-gc \
+             --renderer-process-limit=1 \
+             --enable-features=TrimOnMemoryPressure,NetworkServiceInProcess \
+             --gpu-rasterization-msaa-sample-count=0 \
+             --num-raster-threads=1 \
+             --disk-cache-size=16777216 \
+             --media-cache-size=16777216 \
+             --disable-background-networking \
+             --disable-component-update \
+             --disable-domain-reliability \
+             --disable-sync \
+             --disable-breakpad \
+             --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,BackForwardCache,GlobalMediaControls",
+        );
+    }
+
     let _ = dotenvy::from_filename("../.env");
     let _ = dotenvy::from_filename(".env");
 
@@ -811,6 +831,7 @@ pub fn run() {
             commands::lastfm::lastfm_scrobble,
             commands::theme::get_wallpaper_data_url,
             commands::theme::get_system_accent,
+            commands::memory::trim_memory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

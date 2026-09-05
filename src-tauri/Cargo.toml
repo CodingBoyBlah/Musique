@@ -65,7 +65,12 @@ md5 = "0.7"
 librespot-connect = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.60", features = ["Win32_System_Threading"] }
+windows-sys = { version = "0.60", features = [
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Foundation",
+] }
 
 # Unix (macOS + Linux): libc powers two crash-safety mechanisms.
 #  • macOS VM detection - read `kern.hv_vmm_present` via sysctl. Apple's

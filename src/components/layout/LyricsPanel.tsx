@@ -277,8 +277,8 @@ export function LyricsPanel() {
                 side="bottom"
               >
                 <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
+                  whileHover={fastMode ? undefined : { scale: 1.05 }}
+                  whileTap={fastMode ? undefined : { scale: 0.95 }}
                   transition={{ type: "spring", stiffness: 450, damping: 25 }}
                   onClick={() => setPron((v) => !v)}
                   style={{
@@ -312,8 +312,8 @@ export function LyricsPanel() {
                 side="bottom"
               >
                 <motion.button
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.92 }}
+                  whileHover={fastMode ? undefined : { scale: 1.1 }}
+                  whileTap={fastMode ? undefined : { scale: 0.92 }}
                   transition={{ type: "spring", stiffness: 450, damping: 25 }}
                   onClick={() => setSyncOpen((v) => !v)}
                   style={{
@@ -361,8 +361,8 @@ export function LyricsPanel() {
 
             <Tooltip label="Close lyrics" side="bottom" align="end">
               <motion.button
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.92 }}
+                whileHover={fastMode ? undefined : { scale: 1.1 }}
+                whileTap={fastMode ? undefined : { scale: 0.92 }}
                 transition={{ type: "spring", stiffness: 450, damping: 25 }}
                 onClick={() => setLyricsOpen(false)}
                 style={{

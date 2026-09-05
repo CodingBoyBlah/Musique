@@ -53,10 +53,13 @@ async fn try_open(db_path: &Path) -> Result<SqlitePool, Box<dyn std::error::Erro
         // wal lets a bunch of readers go at once but only one writer. without a
         // busy timeout the second write just dies instantly with SQLITE_BUSY
         // (database is locked). just wait for the lock instead of erroring out.
+        .pragma("cache_size", "-2000")
+        .pragma("mmap_size", "0")
+        .pragma("temp_store", "FILE")
         .busy_timeout(std::time::Duration::from_secs(5));
 
     let pool = SqlitePoolOptions::new()
-        .max_connections(5)
+        .max_connections(3)
         .connect_with(opts)
         .await?;
 

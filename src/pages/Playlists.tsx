@@ -8,6 +8,7 @@ import { MusiqueLogo } from "../components/ui/MusiqueLogo";
 import { useMyPlaylists, useSyncLibrary } from "../hooks/useLibrary";
 import { usePinsStore } from "../store/pins.store";
 import { useContextMenu, type MenuEntry } from "../components/ui/ContextMenu";
+import { useUIStore } from "../store/ui.store";
 import type { PlaylistSummary } from "../types/library";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
@@ -20,6 +21,7 @@ function PlaylistCard({
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const [hover, setHover] = useState(false);
+  const fastMode = useUIStore((s) => s.fastMode);
 
   return (
     <MotionLink
@@ -29,8 +31,8 @@ function PlaylistCard({
       onContextMenu={onContextMenu}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      whileHover={{ y: -3 }}
-      whileTap={{ scale: 0.98 }}
+      whileHover={fastMode ? undefined : { y: -3 }}
+      whileTap={fastMode ? undefined : { scale: 0.98 }}
       style={{
         display:        "flex",
         flexDirection:  "column",

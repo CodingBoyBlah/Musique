@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { AnimatedPlayPause } from "../playground/AnimatedIcons";
+import { useUIStore } from "../../store/ui.store";
 
 export function CirclePlayButton({
   isPlaying,
@@ -18,13 +19,15 @@ export function CirclePlayButton({
   style?: React.CSSProperties;
   ariaLabel?: string;
 }) {
+  const fastMode = useUIStore((s) => s.fastMode);
+
   return (
     <motion.button
       aria-label={ariaLabel}
-      initial={{ opacity: 0, scale: 0.8 }}
-      animate={visible ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.8 }}
-      whileHover={{ scale: 1.08 }}
-      whileTap={{ scale: 0.92 }}
+      initial={fastMode ? false : { opacity: 0, scale: 0.8 }}
+      animate={visible ? { opacity: 1, scale: 1 } : { opacity: 0, scale: fastMode ? 1 : 0.8 }}
+      whileHover={fastMode ? undefined : { scale: 1.08 }}
+      whileTap={fastMode ? undefined : { scale: 0.92 }}
       transition={{ duration: 0.18, ease: "easeOut" }}
       onClick={onClick}
       style={{

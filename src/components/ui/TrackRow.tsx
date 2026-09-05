@@ -14,6 +14,7 @@ import { usePlayerStore } from "../../store/player.store";
 import { pausePlayback, resumePlayback } from "../../api/playback";
 import { AnimatedPlayPause, AnimatedHeart } from "../playground/AnimatedIcons";
 import { Tooltip } from "./Tooltip";
+import { useUIStore } from "../../store/ui.store";
 
 interface Props {
   track:         TrackItem;
@@ -41,13 +42,14 @@ function ActionBtn({
   className?: string;
   accent?:  boolean;
 }) {
+  const fastMode = useUIStore((s) => s.fastMode);
   return (
     <motion.button
       onClick={onClick}
       title={title}
       className={className}
-      whileHover={{ scale: 1.18 }}
-      whileTap={{ scale: 0.86 }}
+      whileHover={fastMode ? undefined : { scale: 1.18 }}
+      whileTap={fastMode ? undefined : { scale: 0.86 }}
       transition={{ type: "spring", stiffness: 420, damping: 22 }}
       transformTemplate={zTransform}
       style={{
@@ -76,6 +78,7 @@ function TrackRowImpl({
   const navigate = useNavigate();
   const openAddToPlaylist = useAddToPlaylistStore((s) => s.open);
   const { open: openMenu, element: menuEl } = useContextMenu();
+  const fastMode = useUIStore((s) => s.fastMode);
 
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
@@ -157,8 +160,8 @@ function TrackRowImpl({
             {hover || isThisPlaying ? (
               <Tooltip label={isThisPlaying ? `Pause ${track.name}` : `Play ${track.name}`} side="top">
                 <motion.button
-                  whileHover={{ scale: 1.15 }}
-                  whileTap={{ scale: 0.88 }}
+                  whileHover={fastMode ? undefined : { scale: 1.15 }}
+                  whileTap={fastMode ? undefined : { scale: 0.88 }}
                   onClick={(e) => {
                     stop(e);
                     handlePlayToggle();

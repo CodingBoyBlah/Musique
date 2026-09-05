@@ -494,6 +494,8 @@ function VisualCard() {
             <Tooltip
               label="Maximizes performance: disables window Mica/Acrylic materials, eliminates icon and gradient blurs, turns off animated cover backdrops in Immersive and Lyrics, and disables album page tint blooms."
               side="top"
+              align="start"
+              maxWidth={300}
             >
               <span
                 style={{
@@ -603,8 +605,8 @@ function VisualCard() {
                 </span>
                 <Tooltip label="Revert to default" side="top">
                   <motion.button
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.9 }}
+                    whileHover={fastMode ? undefined : { scale: 1.1 }}
+                    whileTap={fastMode ? undefined : { scale: 0.9 }}
                     onClick={() => setTransparency(0.4)}
                     style={{
                       display: "flex",

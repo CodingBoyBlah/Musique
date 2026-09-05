@@ -9,6 +9,7 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
+import { useUIStore } from "../../store/ui.store";
 import {
   pausePlayback, resumeOrPlay, seekPlayback, playTrack,
   setVolume as apiSetVolume, setMuted as apiSetMuted,
@@ -31,13 +32,34 @@ function IconBtn({
   title?:    string;
   disabled?: boolean;
 }) {
+  const fastMode = useUIStore((s) => s.fastMode);
+  if (fastMode) {
+    return (
+      <button
+        onClick={onClick}
+        title={title}
+        disabled={disabled}
+        style={{
+          position: "relative",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: large ? 36 : 28, height: large ? 36 : 28,
+          border: "none", background: "transparent",
+          color: active ? "var(--color-accent)" : disabled ? "rgba(242,238,233,0.18)" : "var(--color-text)",
+          cursor: disabled ? "default" : "pointer",
+        }}
+      >
+        {children}
+      </button>
+    );
+  }
+
   return (
     <motion.button
       onClick={onClick}
       title={title}
       disabled={disabled}
-      whileHover={disabled ? {} : { scale: 1.10 }}
-      whileTap={disabled   ? {} : { scale: 0.92 }}
+      whileHover={disabled || fastMode ? {} : { scale: 1.10 }}
+      whileTap={disabled || fastMode ? {} : { scale: 0.92 }}
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
       /* TODO LOGIC - keep a permanent GPU layer (translateZ(0) always there) so scaling
        never prodemotes the layer - that promote/demote rounding is the
@@ -78,11 +100,33 @@ function PlayPauseButton({
 }: {
   isPlaying: boolean; onClick: () => void;
 }) {
+  const fastMode = useUIStore((s) => s.fastMode);
+
+  if (fastMode) {
+    return (
+      <button
+        onClick={onClick}
+        style={{
+          position: "relative",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: 34, height: 34, flexShrink: 0,
+          border: "none", background: "transparent",
+          color: "var(--color-text-hi)", cursor: "pointer",
+        }}
+      >
+        {isPlaying
+          ? <Pause size={22} strokeWidth={2.4} fill="currentColor" />
+          : <Play  size={22} strokeWidth={2.4} fill="currentColor" style={{ marginLeft: 2 }} />
+        }
+      </button>
+    );
+  }
+
   return (
     <motion.button
       onClick={onClick}
-      whileHover={{ scale: 1.08 }}
-      whileTap={{ scale: 0.86 }}
+      whileHover={fastMode ? undefined : { scale: 1.08 }}
+      whileTap={fastMode ? undefined : { scale: 0.86 }}
       transition={{ type: "spring", stiffness: 420, damping: 20 }}
       transformTemplate={zTransform}
       style={{
@@ -262,6 +306,7 @@ export function PlayerBar() {
   const setPlaying      = usePlayerStore((s) => s.setPlaying);
   const sessionReady    = usePlayerStore((s) => s.sessionReady);
   const setImmersiveOpen = usePlayerStore((s) => s.setImmersiveOpen);
+  const fastMode        = useUIStore((s) => s.fastMode);
   const { shuffle, repeat, advance, previous, toggleShuffle, cycleRepeat } = useQueueStore(
     useShallow((s) => ({
       shuffle: s.shuffle,
@@ -355,22 +400,28 @@ export function PlayerBar() {
           {/* crossfade on track change: old and new art dissolve through a soft blur
               so the swap eases instead of cutting. Separate in/out curves create
               a gentle focus transition. */}
-          <AnimatePresence initial={false}>
-            <motion.div
-              key={currentTrack?.album?.image_url ?? currentTrack?.id ?? "none"}
-              initial={{ opacity: 0, filter: "blur(16px)", scale: 1.08 }}
-              animate={{ opacity: 1, filter: "blur(0px)",  scale: 1 }}
-              exit={{    opacity: 0, filter: "blur(12px)", scale: 1.04 }}
-              transition={{
-                opacity: { duration: 0.45, ease: [0.22, 1, 0.36, 1] },
-                filter:  { duration: 0.5,  ease: [0.22, 1, 0.36, 1] },
-                scale:   { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
-              }}
-              style={{ position: "absolute", inset: 0, willChange: "filter, opacity, transform", backfaceVisibility: "hidden" }}
-            >
+          {fastMode ? (
+            <div style={{ position: "absolute", inset: 0 }}>
               <CoverArt url={currentTrack?.album?.image_url ?? null} alt={currentTrack?.name ?? ""} size={44} />
-            </motion.div>
-          </AnimatePresence>
+            </div>
+          ) : (
+            <AnimatePresence initial={false}>
+              <motion.div
+                key={currentTrack?.album?.image_url ?? currentTrack?.id ?? "none"}
+                initial={{ opacity: 0, filter: "blur(16px)", scale: 1.08 }}
+                animate={{ opacity: 1, filter: "blur(0px)",  scale: 1 }}
+                exit={{    opacity: 0, filter: "blur(12px)", scale: 1.04 }}
+                transition={{
+                  opacity: { duration: 0.45, ease: [0.22, 1, 0.36, 1] },
+                  filter:  { duration: 0.5,  ease: [0.22, 1, 0.36, 1] },
+                  scale:   { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
+                }}
+                style={{ position: "absolute", inset: 0, willChange: "filter, opacity, transform", backfaceVisibility: "hidden" }}
+              >
+                <CoverArt url={currentTrack?.album?.image_url ?? null} alt={currentTrack?.name ?? ""} size={44} />
+              </motion.div>
+            </AnimatePresence>
+          )}
           {/* expand affordance on hover (only when a track is loaded) */}
           {currentTrack && (
             <div
@@ -476,8 +527,8 @@ export function PlayerBar() {
           <motion.button
             onClick={() => { if (currentTrack) toggleLyrics(); }}
             disabled={!currentTrack}
-            whileHover={currentTrack ? { scale: 1.08 } : {}}
-            whileTap={currentTrack ? { scale: 0.92 } : {}}
+            whileHover={fastMode ? undefined : currentTrack ? { scale: 1.08 } : {}}
+            whileTap={!fastMode && currentTrack ? { scale: 0.92 } : {}}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             transformTemplate={zTransform}
             style={{
@@ -500,8 +551,8 @@ export function PlayerBar() {
         <Tooltip label={queueOpen ? "Hide queue" : "Show queue"} align="end">
           <motion.button
             onClick={toggleQueue}
-            whileHover={{ scale: 1.08 }}
-            whileTap={{ scale: 0.92 }}
+            whileHover={fastMode ? undefined : { scale: 1.08 }}
+            whileTap={fastMode ? undefined : { scale: 0.92 }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
             transformTemplate={zTransform}
             style={{

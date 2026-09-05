@@ -273,12 +273,13 @@ const tmark: React.CSSProperties = { fontSize: 12, color: "rgba(255,255,255,0.6)
 // round control button
 
 function Ctl({ children, onClick, active, big, title }: { children: React.ReactNode; onClick: () => void; active?: boolean; big?: boolean; title?: string }) {
+  const fastMode = useUIStore((s) => s.fastMode);
   return (
     <motion.button
       onClick={onClick}
       title={title}
-      whileHover={{ scale: 1.1 }}
-      whileTap={{ scale: 0.9 }}
+      whileHover={fastMode ? undefined : { scale: 1.1 }}
+      whileTap={fastMode ? undefined : { scale: 0.9 }}
       transition={{ type: "spring", stiffness: 400, damping: 22 }}
       transformTemplate={zTransform}
       style={{
