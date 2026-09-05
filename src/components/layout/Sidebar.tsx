@@ -38,6 +38,7 @@ function NavItem({
   icon, label, active, onClick, collapsed,
 }: {
   icon: React.ReactNode; label: string; active: boolean; onClick: () => void; collapsed?: boolean;
+}) {
   const fastMode = useUIStore((s) => s.fastMode);
 
   const btn = (
