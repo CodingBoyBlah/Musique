@@ -101,6 +101,12 @@ librespot-audio = { path = "vendor/librespot-audio" }
 
 [profile.dev]
 incremental = true
+debug = 1
+
+# Disable debug symbols for dependencies. Dependencies generate 20GB+ of PDBs and
+# incremental data. This keeps backtraces working while drastically shrinking target size.
+[profile.dev.package."*"]
+debug = 0
 
 [profile.dev.package."librespot-playback"]
 opt-level = 2

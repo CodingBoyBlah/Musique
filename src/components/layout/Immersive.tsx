@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   X, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1,
@@ -374,9 +375,48 @@ export function Immersive() {
               </motion.div>
 
               <div style={{ minWidth: 0 }}>
-                <h1 style={{ margin: 0, fontSize: "clamp(24px, 3.4vw, 40px)", fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.name}</h1>
+                <h1 style={{ margin: 0, fontSize: "clamp(24px, 3.4vw, 40px)", fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {track.album?.id ? (
+                    <Link
+                      to={`/album/${track.album.id}`}
+                      onClick={() => setOpen(false)}
+                      style={{ color: "inherit", textDecoration: "none" }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none"; }}
+                      title={`Go to ${track.album.album_type === "single" ? "single" : "album"}: ${track.album.name}`}
+                    >
+                      {track.name}
+                    </Link>
+                  ) : (
+                    track.name
+                  )}
+                </h1>
                 <p style={{ margin: "6px 0 0", fontSize: "clamp(14px, 1.6vw, 18px)", color: "rgba(255,255,255,0.7)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {track.artists.map((a) => a.name).join(", ")}
+                  {track.artists.map((a, i) => (
+                    <span key={a.id || i}>
+                      {i > 0 && ", "}
+                      {a.id ? (
+                        <Link
+                          to={`/artist/${a.id}`}
+                          onClick={() => setOpen(false)}
+                          style={{ color: "inherit", textDecoration: "none", transition: "color 0.15s" }}
+                          onMouseEnter={(e) => {
+                            (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline";
+                            (e.currentTarget as HTMLAnchorElement).style.color = "#fff";
+                          }}
+                          onMouseLeave={(e) => {
+                            (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none";
+                            (e.currentTarget as HTMLAnchorElement).style.color = "inherit";
+                          }}
+                          title={`Go to artist: ${a.name}`}
+                        >
+                          {a.name}
+                        </Link>
+                      ) : (
+                        <span>{a.name}</span>
+                      )}
+                    </span>
+                  ))}
                 </p>
               </div>
 

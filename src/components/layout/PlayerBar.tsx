@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
+import { prefetchAlbum, prefetchArtist } from "../../lib/prefetch";
 import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat, Repeat1,
@@ -244,6 +247,7 @@ function ProgressBar({
 // playerbar
 
 export function PlayerBar() {
+  const qc              = useQueryClient();
   const queueOpen       = usePlayerStore((s) => s.queueOpen);
   const toggleQueue     = usePlayerStore((s) => s.toggleQueue);
   const lyricsOpen      = usePlayerStore((s) => s.lyricsOpen);
@@ -373,10 +377,57 @@ export function PlayerBar() {
         </div>
         <div style={{ minWidth: 0 }}>
           <p style={{ margin: 0, fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: currentTrack ? "var(--color-text-hi)" : "var(--color-text-dim)" }}>
-            {currentTrack?.name ?? "Not playing"}
+            {currentTrack?.album?.id ? (
+              <Link
+                to={`/album/${currentTrack.album.id}`}
+                onClick={() => setImmersiveOpen(false)}
+                style={{ color: "inherit", textDecoration: "none" }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline";
+                  prefetchAlbum(qc, currentTrack.album?.id);
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none";
+                }}
+                title={`Go to ${currentTrack.album.album_type === "single" ? "single" : "album"}: ${currentTrack.album.name}`}
+              >
+                {currentTrack.name}
+              </Link>
+            ) : (
+              currentTrack?.name ?? "Not playing"
+            )}
           </p>
           <p style={{ margin: 0, fontSize: 12, fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-dim)" }}>
-            {currentTrack?.artists.map((a) => a.name).join(", ") ?? "-"}
+            {currentTrack ? (
+              currentTrack.artists.map((a, i) => (
+                <span key={a.id || i}>
+                  {i > 0 && ", "}
+                  {a.id ? (
+                    <Link
+                      to={`/artist/${a.id}`}
+                      onClick={() => setImmersiveOpen(false)}
+                      style={{ color: "inherit", textDecoration: "none", transition: "color 0.15s" }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline";
+                        (e.currentTarget as HTMLAnchorElement).style.color = "var(--color-text-hi)";
+                        prefetchArtist(qc, a.id);
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none";
+                        (e.currentTarget as HTMLAnchorElement).style.color = "inherit";
+                      }}
+                      title={`Go to artist: ${a.name}`}
+                    >
+                      {a.name}
+                    </Link>
+                  ) : (
+                    <span>{a.name}</span>
+                  )}
+                </span>
+              ))
+            ) : (
+              "-"
+            )}
           </p>
         </div>
       </div>
