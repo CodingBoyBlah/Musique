@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, useRef, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface Props {
@@ -19,22 +19,46 @@ verticalAlign:middle + lineHeight:0 keep the wrapped button on the text
 baseline so its scale animation doesnt make it jump. */
 export function Tooltip({ label, children, side = "top", align = "center" }: Props) {
   const [open, setOpen] = useState(false);
+  const [effectiveAlign, setEffectiveAlign] = useState(align);
+  const triggerRef = useRef<HTMLSpanElement>(null);
   const off = side === "top" ? 5 : -5;
+
+  const handleMouseEnter = () => {
+    if (triggerRef.current && align === "center") {
+      const rect = triggerRef.current.getBoundingClientRect();
+      if (rect.right > window.innerWidth - 85) {
+        setEffectiveAlign("end");
+      } else if (rect.left < 85) {
+        setEffectiveAlign("start");
+      } else {
+        setEffectiveAlign("center");
+      }
+    } else {
+      setEffectiveAlign(align);
+    }
+    setOpen(true);
+  };
 
   const isRight = side === "right";
   const horiz = isRight
     ? { left: "calc(100% + 10px)", top: "50%", bottom: "auto" as const }
     : {
-        ...(align === "center" ? { left: "50%" as const } : align === "end" ? { right: 0 } : { left: 0 }),
+        ...(effectiveAlign === "center" ? { left: "50%" as const } : effectiveAlign === "end" ? { right: 0 } : { left: 0 }),
         bottom: side === "top" ? "calc(100% + 9px)" : "auto",
         top: side === "bottom" ? "calc(100% + 9px)" : "auto",
       };
-  const tx = align === "center" ? "-50%" : "0%";
+  const tx = effectiveAlign === "center" ? "-50%" : "0%";
 
   return (
     <span
-      style={{ position: "relative", display: "inline-flex", verticalAlign: "middle" }}
-      onMouseEnter={() => setOpen(true)}
+      ref={triggerRef}
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        verticalAlign: "middle",
+        zIndex: open ? 60 : undefined,
+      }}
+      onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setOpen(false)}
     >
       {children}
@@ -51,7 +75,7 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
               ...horiz,
               whiteSpace:    "nowrap",
               pointerEvents: "none",
-              zIndex:        300,
+              zIndex:        1000,
               padding:       "5px 9px",
               borderRadius:  7,
               lineHeight:    1.2,

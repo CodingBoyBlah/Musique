@@ -20,6 +20,7 @@ import {
 } from "../hooks/useLibrary";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
+import { useSpeedDialStore } from "../store/speedDial.store";
 import { playTrack, pausePlayback } from "../api/playback";
 import { gpuLayer, zTransform } from "../lib/motion";
 import { errMsg } from "../lib/err";
@@ -90,6 +91,9 @@ export default function ArtistPage() {
     if (start) {
       setCurrentTrack(start);
       playTrack(start.id).catch(console.error);
+      if (data) {
+        useSpeedDialStore.getState().recordArtist({ id: data.id, name: data.name, image_url: data.image_url });
+      }
     }
   }
 
@@ -104,6 +108,9 @@ export default function ArtistPage() {
     if (start) {
       setCurrentTrack(start);
       playTrack(start.id).catch(console.error);
+      if (data) {
+        useSpeedDialStore.getState().recordArtist({ id: data.id, name: data.name, image_url: data.image_url });
+      }
     }
   }
 
@@ -112,6 +119,9 @@ export default function ArtistPage() {
     if (start) {
       setCurrentTrack(start);
       playTrack(start.id).catch(console.error);
+      if (data) {
+        useSpeedDialStore.getState().recordArtist({ id: data.id, name: data.name, image_url: data.image_url });
+      }
     }
   }
 
@@ -475,6 +485,8 @@ export default function ArtistPage() {
                   delay: Math.min(i, 6) * 0.03,
                   ease: [0.23, 1, 0.32, 1],
                 }}
+                style={{ position: "relative" }}
+                whileHover={{ zIndex: 40 }}
               >
                 <TrackRow
                   track={t}

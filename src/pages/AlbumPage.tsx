@@ -5,6 +5,7 @@ import { useAlbum } from "../hooks/useAlbum";
 import { TrackRow } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
 import { PageHeader } from "../components/ui/PageHeader";
+import { ExpandableDescription } from "../components/ui/ExpandableDescription";
 import { Loader } from "../components/ui/Loader";
 import { useTrackTools } from "../components/ui/TrackToolbar";
 import { releaseYear } from "../utils/fmt";
@@ -12,6 +13,7 @@ import { playTrack } from "../api/playback";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { usePinsStore } from "../store/pins.store";
+import { useSpeedDialStore } from "../store/speedDial.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { errMsg } from "../lib/err";
@@ -48,7 +50,13 @@ export default function AlbumPage() {
 
   function startAt(index: number) {
     const start = playContext(view, index, data!.id);
-    if (start) { setCurrentTrack(start); playTrack(start.id).catch(console.error); }
+    if (start) {
+      setCurrentTrack(start);
+      playTrack(start.id).catch(console.error);
+      if (data) {
+        useSpeedDialStore.getState().recordAlbum({ id: data.id, name: data.name, image_url: data.image_url });
+      }
+    }
   }
 
   return (
@@ -75,6 +83,9 @@ export default function AlbumPage() {
           </span>
           {data.popularity != null && <> · {data.popularity}% POPULARITY</>}
         </p>
+        {data.description && (
+          <ExpandableDescription text={data.description} />
+        )}
         <PlayActions tracks={tracks} contextId={data.id} pinItem={pinItem} />
       </PageHeader>
 
@@ -90,6 +101,8 @@ export default function AlbumPage() {
               key={keys[i]}
               layout="position"
               transition={{ layout: REFLOW }}
+              style={{ position: "relative" }}
+              whileHover={{ zIndex: 40 }}
             >
               <TrackRow
                 track={t}

@@ -13,6 +13,7 @@ interface PinsStore {
   isPinned:   (id: string) => boolean;
   togglePin:  (item: PinnedItem) => void;
   removePin:  (id: string) => void;
+  clear:      () => void;
 }
 
 export const usePinsStore = create<PinsStore>()(
@@ -31,6 +32,8 @@ export const usePinsStore = create<PinsStore>()(
 
       removePin: (id) =>
         set((s) => ({ pins: s.pins.filter((p) => p.id !== id) })),
+
+      clear: () => set({ pins: [] }),
     }),
     { name: "spotify-pins" },
   ),

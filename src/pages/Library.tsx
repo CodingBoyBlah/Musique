@@ -21,6 +21,7 @@ import { useSortTools } from "../components/ui/SortToolbar";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { playTrack } from "../api/playback";
+import { useSpeedDialStore } from "../store/speedDial.store";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 
@@ -110,7 +111,11 @@ function LikedSongsTab() {
 
   const handlePlay = (index: number) => {
     const start = playContext(view, index, "liked");
-    if (start) { setCurrentTrack(start); playTrack(start.id).catch(() => {}); }
+    if (start) {
+      setCurrentTrack(start);
+      playTrack(start.id).catch(() => {});
+      useSpeedDialStore.getState().recordLikedSongs();
+    }
   };
 
   return (

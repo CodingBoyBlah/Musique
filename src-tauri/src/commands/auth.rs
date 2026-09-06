@@ -215,29 +215,59 @@ pub async fn authorize_playback(app: AppHandle) -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn logout(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    // 1. Stop playback & teardown librespot session
+    {
+        let playback = state.playback.clone();
+        let mut guard = playback.lock().await;
+        if let Some(inner) = guard.as_ref() {
+            let _ = inner.pause();
+        }
+        *guard = None;
+    }
+    let _ = state.media_tx.try_send(crate::media_controls::MediaMsg::Stopped);
+
+    // 2. Clear token keyring
     token::clear_tokens()?;
 
-    for key in [
-        "spotify_token_expires_at",
-        "spotify_auth_client_id",
-        "spotify_user_id",
-        "spotify_display_name",
-        "spotify_email",
-        "spotify_product",
-        "spotify_image_url",
-        "spotify_playback_token",
-    ] {
-        sqlx::query("DELETE FROM settings WHERE key = ?")
-            .bind(key)
-            .execute(&state.db)
-            .await?;
-    }
+    // 3. Clear in-memory caches
+    crate::commands::spotify::clear_spotify_memory_caches();
+    crate::library::clear_known_artists_cache();
 
+    // 4. Delete credentials directory and audio cache directory from disk
     if let Ok(app_data) = app.path().app_data_dir() {
-        let creds_file = app_data.join("credentials").join("credentials.json");
-        let _ = std::fs::remove_file(creds_file);
+        let creds_dir = app_data.join("credentials");
+        let _ = std::fs::remove_dir_all(&creds_dir);
+        let audio_cache = app_data.join("audio_cache");
+        let _ = std::fs::remove_dir_all(&audio_cache);
     }
 
+    // 5. Purge all SQLite database tables
+    let mut tx = state.db.begin().await?;
+    sqlx::query("DELETE FROM playlist_tracks").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM playlists").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM track_artists").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM album_artists").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM saved_tracks").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM saved_albums").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM followed_artists").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM search_history").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM playback_history").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM play_history").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM top_tracks").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM top_artists").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM recently_played").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM new_releases").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM lyrics").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM tracks").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM albums").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM artists").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM users").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM settings WHERE key NOT IN ('player_volume', 'player_muted')").execute(&mut *tx).await?;
+    tx.commit().await?;
+
+    let _ = sqlx::query("VACUUM").execute(&state.db).await;
+
+    // 6. Reset in-memory auth state
     *state.auth.write().await = crate::state::AuthState::default();
     Ok(())
 }

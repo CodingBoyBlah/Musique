@@ -97,6 +97,21 @@ pub async fn play_track(app: AppHandle, id: String) -> Result<(), AppError> {
     if let Some(inner) = guard.as_ref() {
         inner.play_uri(uri, 0)?;
     }
+
+    let pool = app.state::<AppState>().db.clone();
+    let track_id = id.clone();
+    tokio::spawn(async move {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let _ = sqlx::query("INSERT INTO recently_played (track_id, played_at) VALUES (?, ?)")
+            .bind(&track_id)
+            .bind(now)
+            .execute(&pool)
+            .await;
+    });
+
     Ok(())
 }
 

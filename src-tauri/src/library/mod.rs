@@ -445,33 +445,51 @@ pub async fn sync_recently_played(pool: &SqlitePool, token: &str) -> Result<usiz
 
 // ─── known-artist signal, shared by recs + personalized new releases ─────────
 
+use std::sync::RwLock;
+use std::time::{Duration, Instant};
+
+static KNOWN_ARTISTS_CACHE: RwLock<Option<(Instant, Vec<String>)>> = RwLock::new(None);
+
+pub fn clear_known_artists_cache() {
+    if let Ok(mut guard) = KNOWN_ARTISTS_CACHE.write() {
+        *guard = None;
+    }
+}
+
 /// the users whole artist universe, strongest signal first so current top artists,
 /// then followed artists, then artists from liked songs. we use this so recs
 /// and "new releases" stay inside the music the user actually listens to
 /// instead of random global catalog stuff in languages they dont speak
 pub(crate) async fn gather_known_artists(pool: &SqlitePool, token: &str) -> Vec<String> {
     use std::collections::HashSet;
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut out:  Vec<String>     = Vec::new();
 
-    for range in ["short_term", "medium_term"] {
-        if let Ok(p) = spotify::spotify_get::<SpPage<SpArtist>>(
-            token,
-            &format!("{BASE}/me/top/artists?limit=50&time_range={range}"),
-        )
-        .await
-        {
-            for a in p.items {
-                if !a.id.is_empty() && seen.insert(a.id.clone()) { out.push(a.id); }
+    // 1. Check in-memory cache (15 min TTL)
+    if let Ok(guard) = KNOWN_ARTISTS_CACHE.read() {
+        if let Some((ts, ref list)) = *guard {
+            if ts.elapsed() < Duration::from_secs(15 * 60) && !list.is_empty() {
+                return list.clone();
             }
         }
     }
 
-    if let Ok(rows) = sqlx::query_as::<_, (String,)>("SELECT artist_id FROM followed_artists")
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out:  Vec<String>     = Vec::new();
+
+    // 2. Query local SQLite tables first (instant <1ms, zero network)
+    if let Ok(rows) = sqlx::query_as::<_, (String,)>(
+        "SELECT artist_id FROM top_artists ORDER BY CASE time_range WHEN 'short_term' THEN 1 WHEN 'medium_term' THEN 2 ELSE 3 END, position ASC LIMIT 100",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        for (id,) in rows { if !id.is_empty() && seen.insert(id.clone()) { out.push(id); } }
+    }
+
+    if let Ok(rows) = sqlx::query_as::<_, (String,)>("SELECT artist_id FROM followed_artists LIMIT 100")
         .fetch_all(pool)
         .await
     {
-        for (id,) in rows { if seen.insert(id.clone()) { out.push(id); } }
+        for (id,) in rows { if !id.is_empty() && seen.insert(id.clone()) { out.push(id); } }
     }
 
     if let Ok(rows) = sqlx::query_as::<_, (String,)>(
@@ -482,7 +500,42 @@ pub(crate) async fn gather_known_artists(pool: &SqlitePool, token: &str) -> Vec<
     .fetch_all(pool)
     .await
     {
-        for (id,) in rows { if seen.insert(id.clone()) { out.push(id); } }
+        for (id,) in rows { if !id.is_empty() && seen.insert(id.clone()) { out.push(id); } }
+    }
+
+    if let Ok(rows) = sqlx::query_as::<_, (String,)>(
+        "SELECT DISTINCT ta.artist_id
+         FROM track_artists ta JOIN recently_played rp ON rp.track_id = ta.track_id
+         LIMIT 50",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        for (id,) in rows { if !id.is_empty() && seen.insert(id.clone()) { out.push(id); } }
+    }
+
+    // 3. Only if local DB has fewer than 10 artists (e.g. brand new install), query Spotify concurrently
+    if out.len() < 10 {
+        let url_st = format!("{BASE}/me/top/artists?limit=50&time_range=short_term");
+        let url_mt = format!("{BASE}/me/top/artists?limit=50&time_range=medium_term");
+        let (st_res, mt_res) = tokio::join!(
+            spotify::spotify_get::<SpPage<SpArtist>>(token, &url_st),
+            spotify::spotify_get::<SpPage<SpArtist>>(token, &url_mt),
+        );
+        if let Ok(p) = st_res {
+            for a in p.items {
+                if !a.id.is_empty() && seen.insert(a.id.clone()) { out.push(a.id); }
+            }
+        }
+        if let Ok(p) = mt_res {
+            for a in p.items {
+                if !a.id.is_empty() && seen.insert(a.id.clone()) { out.push(a.id); }
+            }
+        }
+    }
+
+    if let Ok(mut guard) = KNOWN_ARTISTS_CACHE.write() {
+        *guard = Some((Instant::now(), out.clone()));
     }
 
     out

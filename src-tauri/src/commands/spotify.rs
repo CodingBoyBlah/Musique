@@ -334,6 +334,48 @@ pub async fn get_track(app: AppHandle, id: String) -> Result<TrackDetail, AppErr
     })
 }
 
+use std::collections::HashMap;
+use std::sync::RwLock;
+use std::time::{Duration, Instant};
+
+static DEFAULT_RECS_CACHE: RwLock<Option<(Instant, Vec<TrackItem>)>> = RwLock::new(None);
+static ARTIST_TOP_TRACKS_CACHE: RwLock<Option<HashMap<String, (Instant, Vec<SpTrack>)>>> = RwLock::new(None);
+
+pub fn clear_spotify_memory_caches() {
+    if let Ok(mut guard) = DEFAULT_RECS_CACHE.write() {
+        *guard = None;
+    }
+    if let Ok(mut guard) = ARTIST_TOP_TRACKS_CACHE.write() {
+        *guard = None;
+    }
+}
+
+async fn get_cached_or_fetch_top_tracks(token: &str, aid: &str) -> Option<Vec<SpTrack>> {
+    if let Ok(guard) = ARTIST_TOP_TRACKS_CACHE.read() {
+        if let Some(map) = &*guard {
+            if let Some((ts, tracks)) = map.get(aid) {
+                if ts.elapsed() < Duration::from_secs(60 * 60) {
+                    return Some(tracks.clone());
+                }
+            }
+        }
+    }
+
+    let url = format!("{BASE}/artists/{aid}/top-tracks?market=from_token");
+    if let Ok(tt) = spotify::spotify_get::<SpTopTracks>(token, &url).await {
+        let tracks = tt.tracks;
+        if let Ok(mut guard) = ARTIST_TOP_TRACKS_CACHE.write() {
+            let map = guard.get_or_insert_with(HashMap::new);
+            if map.len() > 300 {
+                map.clear();
+            }
+            map.insert(aid.to_string(), (Instant::now(), tracks.clone()));
+        }
+        return Some(tracks);
+    }
+    None
+}
+
 // personalized "made for you" radio, stays inside the users taste
 //
 // the old engine expanded into global genre search which dragged in random
@@ -355,13 +397,27 @@ pub async fn get_recommendations(
     limit:             Option<i64>,
 ) -> Result<Vec<TrackItem>, AppError> {
     use rand::seq::SliceRandom;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
+
+    let limit = limit.unwrap_or(30).clamp(1, 100) as usize;
+    let is_default_home = seed_artist_ids.as_ref().map_or(true, |v| v.is_empty())
+        && exclude_track_ids.as_ref().map_or(true, |v| v.is_empty());
+
+    // 0. Instant in-memory cache hit for default Home recommendations (5 min TTL)
+    if is_default_home {
+        if let Ok(guard) = DEFAULT_RECS_CACHE.read() {
+            if let Some((ts, ref recs)) = *guard {
+                if ts.elapsed() < Duration::from_secs(5 * 60) && recs.len() >= limit.min(10) {
+                    let mut cached = recs.clone();
+                    cached.truncate(limit);
+                    return Ok(cached);
+                }
+            }
+        }
+    }
 
     let token = tok(&app).await?;
     let pool  = app.state::<AppState>().db.clone();
-    let limit = limit.unwrap_or(30).clamp(1, 100) as usize;
-    // note: never hold a ThreadRng across an .await, its !Send. just grab a fresh one
-    // inside each (sync) shuffle
 
     // respect the accounts explicit content filter (saved by get_profile)
     let filter_explicit = crate::auth::get_setting_value(&pool, "spotify_explicit_filter")
@@ -389,46 +445,42 @@ pub async fn get_recommendations(
     }
 
     // 2. sample the pool
+    // 8-12 artists give 80-120 candidate tracks, which is more than enough to fill the requested limit
+    let sample_count = if limit <= 16 { 8 } else { 12 };
     seeds.shuffle(&mut rand::thread_rng());
-    seeds.truncate(20);
+    seeds.truncate(sample_count);
 
-    // 3. pull market filtered top tracks concurrently in chunks of 5
+    // 3. fetch all sampled artists concurrently in a single batch (no slow sequential chunks)
     let exclude: HashSet<String> =
         exclude_track_ids.unwrap_or_default().into_iter().collect();
     let mut out:        Vec<TrackItem>          = Vec::new();
     let mut seen:       HashSet<String>         = HashSet::new();
     let mut per_artist: HashMap<String, usize>  = HashMap::new();
 
-    for chunk in seeds.chunks(5) {
-        let mut tasks = Vec::new();
-        for aid in chunk {
-            let token_clone = token.clone();
-            let aid_clone = aid.clone();
-            tasks.push(tokio::spawn(async move {
-                spotify::spotify_get::<SpTopTracks>(
-                    &token_clone,
-                    &format!("{BASE}/artists/{aid_clone}/top-tracks?market=from_token"),
-                ).await
-            }));
-        }
+    let mut tasks = Vec::with_capacity(seeds.len());
+    for aid in &seeds {
+        let token_clone = token.clone();
+        let aid_clone = aid.clone();
+        tasks.push(tokio::spawn(async move {
+            get_cached_or_fetch_top_tracks(&token_clone, &aid_clone).await
+        }));
+    }
 
-        for task in tasks {
-            if let Ok(Ok(tt)) = task.await {
-                let mut tracks = tt.tracks;
-                tracks.shuffle(&mut rand::thread_rng());
-                let mut added_here = 0;
-                for t in tracks {
-                    if added_here >= 2 { break; }
-                    if t.is_local.unwrap_or(false) { continue; }
-                    if filter_explicit && t.explicit { continue; }
-                    if exclude.contains(&t.id) || !seen.insert(t.id.clone()) { continue; }
-                    let primary = t.artists.first().map(|a| a.id.clone()).unwrap_or_default();
-                    let count   = per_artist.entry(primary).or_insert(0);
-                    if *count >= 2 { continue; }
-                    *count += 1;
-                    out.push(item_from_track(&t));
-                    added_here += 1;
-                }
+    for task in tasks {
+        if let Ok(Some(mut tracks)) = task.await {
+            tracks.shuffle(&mut rand::thread_rng());
+            let mut added_here = 0;
+            for t in tracks {
+                if added_here >= 2 { break; }
+                if t.is_local.unwrap_or(false) { continue; }
+                if filter_explicit && t.explicit { continue; }
+                if exclude.contains(&t.id) || !seen.insert(t.id.clone()) { continue; }
+                let primary = t.artists.first().map(|a| a.id.clone()).unwrap_or_default();
+                let count   = per_artist.entry(primary).or_insert(0);
+                if *count >= 2 { continue; }
+                *count += 1;
+                out.push(item_from_track(&t));
+                added_here += 1;
             }
         }
         if out.len() >= limit * 2 { break; }
@@ -437,11 +489,8 @@ pub async fn get_recommendations(
     // If exclude filtered out all tracks, relax exclusion
     if out.is_empty() && !seeds.is_empty() {
         for aid in seeds.iter().take(5) {
-            if let Ok(tt) = spotify::spotify_get::<SpTopTracks>(
-                &token,
-                &format!("{BASE}/artists/{aid}/top-tracks?market=from_token"),
-            ).await {
-                for t in tt.tracks {
+            if let Some(tracks) = get_cached_or_fetch_top_tracks(&token, aid).await {
+                for t in tracks {
                     if seen.insert(t.id.clone()) {
                         out.push(item_from_track(&t));
                     }
@@ -490,6 +539,13 @@ pub async fn get_recommendations(
 
     out.shuffle(&mut rand::thread_rng());
     out.truncate(limit);
+
+    if is_default_home && !out.is_empty() {
+        if let Ok(mut guard) = DEFAULT_RECS_CACHE.write() {
+            *guard = Some((Instant::now(), out.clone()));
+        }
+    }
+
     Ok(out)
 }
 
@@ -564,55 +620,8 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
         next = page.next;
     }
 
-    // save it: playlist meta + the full track list (replace)
-    let _ = sqlx::query(
-        "INSERT INTO playlists
-             (id, name, description, owner_id, image_url, total_tracks,
-              is_public, is_local, snapshot_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-             name         = excluded.name,
-             description  = excluded.description,
-             owner_id     = excluded.owner_id,
-             image_url    = excluded.image_url,
-             total_tracks = excluded.total_tracks,
-             snapshot_id  = excluded.snapshot_id,
-             updated_at   = excluded.updated_at",
-    )
-    .bind(&pl.id)
-    .bind(&pl.name)
-    .bind(&pl.description)
-    .bind(pl.owner.as_ref().and_then(|o| o.display_name.clone()))
-    .bind(pl.images.as_ref().and_then(|v| v.first()).map(|i| i.url.as_str()))
-    .bind(total)
-    .bind(&pl.snapshot_id)
-    .bind(now_ms())
-    .execute(&pool)
-    .await;
-
-    let _ = sqlx::query("DELETE FROM playlist_tracks WHERE playlist_id = ?")
-        .bind(&pl.id)
-        .execute(&pool)
-        .await;
-
-    let mut tracks: Vec<TrackItem> = Vec::with_capacity(items.len());
-    for (pos, (t, added_at)) in items.iter().enumerate() {
-        let _ = crate::library::upsert_track_with_deps(&pool, t).await;
-        let _ = sqlx::query(
-            "INSERT OR IGNORE INTO playlist_tracks
-                 (playlist_id, track_id, position, added_at, added_by)
-             VALUES (?, ?, ?, ?, NULL)",
-        )
-        .bind(&pl.id)
-        .bind(&t.id)
-        .bind(pos as i64)
-        .bind(added_at)
-        .execute(&pool)
-        .await;
-        tracks.push(item_from_track(t));
-    }
-
-    Ok(PlaylistDetail {
+    let tracks: Vec<TrackItem> = items.iter().map(|(t, _)| item_from_track(t)).collect();
+    let detail = PlaylistDetail {
         id:           pl.id.clone(),
         name:         pl.name.clone(),
         description:  pl.description.clone().filter(|s| !s.is_empty()),
@@ -620,7 +629,65 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
         owner_name:   pl.owner.as_ref().and_then(|o| o.display_name.clone()),
         total_tracks: total,
         tracks,
-    })
+    };
+
+    // persist to SQLite asynchronously in the background so the UI doesn't block on 300+ disk writes
+    let pool_clone = pool.clone();
+    let pl_id = pl.id.clone();
+    let pl_name = pl.name.clone();
+    let pl_desc = pl.description.clone();
+    let pl_owner = pl.owner.as_ref().and_then(|o| o.display_name.clone());
+    let pl_img = pl.images.as_ref().and_then(|v| v.first()).map(|i| i.url.clone());
+    let pl_snap = pl.snapshot_id.clone();
+
+    tokio::spawn(async move {
+        let _ = sqlx::query(
+            "INSERT INTO playlists
+                 (id, name, description, owner_id, image_url, total_tracks,
+                  is_public, is_local, snapshot_id, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                 name         = excluded.name,
+                 description  = excluded.description,
+                 owner_id     = excluded.owner_id,
+                 image_url    = excluded.image_url,
+                 total_tracks = excluded.total_tracks,
+                 snapshot_id  = excluded.snapshot_id,
+                 updated_at   = excluded.updated_at",
+        )
+        .bind(&pl_id)
+        .bind(&pl_name)
+        .bind(&pl_desc)
+        .bind(&pl_owner)
+        .bind(pl_img.as_deref())
+        .bind(total)
+        .bind(&pl_snap)
+        .bind(now_ms())
+        .execute(&pool_clone)
+        .await;
+
+        let _ = sqlx::query("DELETE FROM playlist_tracks WHERE playlist_id = ?")
+            .bind(&pl_id)
+            .execute(&pool_clone)
+            .await;
+
+        for (pos, (t, added_at)) in items.iter().enumerate() {
+            let _ = crate::library::upsert_track_with_deps(&pool_clone, t).await;
+            let _ = sqlx::query(
+                "INSERT OR IGNORE INTO playlist_tracks
+                     (playlist_id, track_id, position, added_at, added_by)
+                 VALUES (?, ?, ?, ?, NULL)",
+            )
+            .bind(&pl_id)
+            .bind(&t.id)
+            .bind(pos as i64)
+            .bind(added_at)
+            .execute(&pool_clone)
+            .await;
+        }
+    });
+
+    Ok(detail)
 }
 
 // deep copy a deserialized track (SpTrack isnt Clone) so we can keep it past

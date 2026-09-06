@@ -43,6 +43,7 @@ interface PlayerStore {
   targetStateTime: number;
   setTargetState:  (state: "playing" | "paused" | null) => void;
   clearTargetState: () => void;
+  clear:           () => void;
 
   setCurrentTrack: (track: TrackItem | null) => void;
   setPlaying:      (playing: boolean) => void;
@@ -92,6 +93,22 @@ export const usePlayerStore = create<PlayerStore>()(
       targetStateTime: 0,
       setTargetState:  (state) => set({ targetState: state, targetStateTime: Date.now() }),
       clearTargetState: () => set({ targetState: null, targetStateTime: 0 }),
+
+      clear: () =>
+        set({
+          isPlaying: false,
+          sessionReady: false,
+          lastPlayingAt: 0,
+          currentId: null,
+          currentTrack: null,
+          positionMs: 0,
+          durationMs: 0,
+          targetState: null,
+          targetStateTime: 0,
+          queueOpen: false,
+          lyricsOpen: false,
+          immersiveOpen: false,
+        }),
 
       setSessionReady: () => set({ sessionReady: true }),
 

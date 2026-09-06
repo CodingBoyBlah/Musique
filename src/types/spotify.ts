@@ -75,6 +75,7 @@ export interface AlbumDetail {
   popularity:   number | null;
   artists:      ArtistItem[];
   tracks:       TrackItem[];
+  description?: string | null;
 }
 
 export interface TrackDetail {

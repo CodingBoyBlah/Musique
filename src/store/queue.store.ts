@@ -29,6 +29,7 @@ interface QueueStore {
   reorder:       (from: number, to: number) => void;
   clearQueue:    () => void;
   clearHistory:  () => void;
+  clearAll:      () => void;
   toggleShuffle: () => void;
   cycleRepeat:   () => void;
 
@@ -108,6 +109,7 @@ export const useQueueStore = create<QueueStore>()(
 
       clearQueue:   () => set({ queue: [] }),
       clearHistory: () => set({ history: [] }),
+      clearAll:     () => set({ queue: [], history: [], contextTracks: [], contextId: null }),
 
       toggleShuffle: () =>
         set((s) => {

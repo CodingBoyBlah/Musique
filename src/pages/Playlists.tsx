@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ListMusic, RefreshCw, Pin, PinOff } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { getPlaylist } from "../api/spotify";
 import { useAuth } from "../hooks/useAuth";
 import { EmptyState } from "../components/ui/EmptyState";
 import { MusiqueLogo } from "../components/ui/MusiqueLogo";
@@ -20,6 +22,27 @@ function PlaylistCard({
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const [hover, setHover] = useState(false);
+  const qc = useQueryClient();
+  const prefetchTimer = useRef<number | null>(null);
+
+  const handleMouseEnter = () => {
+    setHover(true);
+    prefetchTimer.current = window.setTimeout(() => {
+      qc.prefetchQuery({
+        queryKey: ["playlist", playlist.id],
+        queryFn: () => getPlaylist(playlist.id),
+        staleTime: 120_000,
+      });
+    }, 40);
+  };
+
+  const handleMouseLeave = () => {
+    setHover(false);
+    if (prefetchTimer.current) {
+      window.clearTimeout(prefetchTimer.current);
+      prefetchTimer.current = null;
+    }
+  };
 
   return (
     <MotionLink
@@ -27,8 +50,8 @@ function PlaylistCard({
       layout="position"
       transition={{ layout: REFLOW }}
       onContextMenu={onContextMenu}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       whileHover={{ y: -3 }}
       whileTap={{ scale: 0.98 }}
       style={{

@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
-import { motion } from "framer-motion";
-import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2, Check } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TrackItem } from "../../types/spotify";
@@ -11,6 +11,8 @@ import { useContextMenu, type MenuEntry } from "./ContextMenu";
 import { shareSpotifyLink, shareUniversalLink } from "../../lib/share";
 import { useAddToPlaylistStore } from "../../store/addToPlaylist.store";
 import { usePlayerStore } from "../../store/player.store";
+import { useQueueStore } from "../../store/queue.store";
+import { toast } from "../../store/toast.store";
 import { transportPlay, transportPause } from "../../hooks/usePlayerControls";
 import { AnimatedPlayPause, AnimatedHeart } from "../playground/AnimatedIcons";
 import { Tooltip } from "./Tooltip";
@@ -95,11 +97,27 @@ function TrackRowImpl({
     }
   }
 
+  const isQueued = useQueueStore((s) => s.queue.some((t) => t.id === track.id));
+  const [justAdded, setJustAdded] = useState(false);
+
+  function handleEnqueue(e?: React.MouseEvent) {
+    if (e) stop(e);
+    if (!onQueue) return;
+    onQueue(track);
+    setJustAdded(true);
+    setTimeout(() => setJustAdded(false), 2200);
+    toast(`Added "${track.name}" to queue`);
+  }
+
   /* right-click menu -- every action that fits a track, built from the handlers
   this row got plus navigation + share (always available) */
   const menuEntries: MenuEntry[] = [];
   if (onPlay)  menuEntries.push({ label: isThisPlaying ? "Pause" : "Play", icon: <Play size={14} />, onSelect: () => handlePlayToggle() });
-  if (onQueue) menuEntries.push({ label: "Add to queue", icon: <Plus size={14} />, onSelect: () => onQueue(track) });
+  if (onQueue) menuEntries.push({
+    label: isQueued ? "In queue (add again)" : "Add to queue",
+    icon: isQueued ? <Check size={14} style={{ color: "var(--color-accent)" }} /> : <Plus size={14} />,
+    onSelect: () => handleEnqueue(),
+  });
   if (onToggleLike) menuEntries.push({
     label: liked ? "Remove from Liked Songs" : "Save to Liked Songs",
     icon: <Heart size={14} fill={liked ? "currentColor" : "none"} />,
@@ -136,6 +154,8 @@ function TrackRowImpl({
         onContextMenu={openMenu(menuEntries)}
         className="group"
         style={{
+          position: "relative",
+          zIndex: hover ? 40 : 1,
           display: "flex",
           alignItems: "center",
           gap: 12,
@@ -146,44 +166,41 @@ function TrackRowImpl({
           background: hover ? "var(--color-surface-hover, rgba(255,255,255,0.06))" : baseBg,
           cursor: onPlay ? "pointer" : "default",
           userSelect: "none",
-          contentVisibility: "auto",
-          containIntrinsicSize: "auto 58px",
         } as React.CSSProperties}
       >
         {/* Left Slot: Track Number or Play/Pause Button with blur+scale morph */}
         {(index != null || onPlay) && (
           <div style={{ position: "relative", width: 28, height: 30, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             {hover || isThisPlaying ? (
-              <Tooltip label={isThisPlaying ? `Pause ${track.name}` : `Play ${track.name}`} side="top">
-                <motion.button
-                  whileHover={{ scale: 1.15 }}
-                  whileTap={{ scale: 0.88 }}
-                  onClick={(e) => {
-                    stop(e);
-                    handlePlayToggle();
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 28,
-                    height: 28,
-                    borderRadius: "50%",
-                    border: "none",
-                    background: "transparent",
-                    color: isThisPlaying ? "var(--color-accent)" : "#ffffff",
-                    cursor: "pointer",
-                    padding: 0,
-                  }}
-                >
-                  <AnimatedPlayPause
-                    isPlaying={isThisPlaying}
-                    size={15}
-                    strokeWidth={2.4}
-                    fill={isThisPlaying ? "var(--color-accent)" : "#ffffff"}
-                  />
-                </motion.button>
-              </Tooltip>
+              <motion.button
+                whileHover={{ scale: 1.15 }}
+                whileTap={{ scale: 0.88 }}
+                onClick={(e) => {
+                  stop(e);
+                  handlePlayToggle();
+                }}
+                aria-label={isThisPlaying ? `Pause ${track.name}` : `Play ${track.name}`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  border: "none",
+                  background: "transparent",
+                  color: isThisPlaying ? "var(--color-accent)" : "#ffffff",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                <AnimatedPlayPause
+                  isPlaying={isThisPlaying}
+                  size={15}
+                  strokeWidth={2.4}
+                  fill={isThisPlaying ? "var(--color-accent)" : "#ffffff"}
+                />
+              </motion.button>
             ) : (
               <span
                 style={{
@@ -290,10 +307,58 @@ function TrackRowImpl({
         )}
 
         {onQueue && (
-          <Tooltip label="Add to queue" side="top">
-            <ActionBtn onClick={(e) => { stop(e); onQueue(track); }} title="" className="queue-btn">
-              <Plus size={15} strokeWidth={2.5} />
-            </ActionBtn>
+          <Tooltip label={isQueued || justAdded ? "In queue" : "Add to queue"} side="top">
+            <div style={{ position: "relative", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+              <ActionBtn
+                onClick={handleEnqueue}
+                title=""
+                className={isQueued || justAdded ? "" : "queue-btn"}
+                active={isQueued || justAdded}
+                accent={isQueued || justAdded}
+              >
+                <AnimatePresence mode="wait" initial={false}>
+                  {isQueued || justAdded ? (
+                    <motion.span
+                      key="check"
+                      initial={{ scale: 0.3, rotate: -45, opacity: 0 }}
+                      animate={{ scale: 1, rotate: 0, opacity: 1 }}
+                      exit={{ scale: 0.3, rotate: 45, opacity: 0 }}
+                      transition={{ type: "spring", stiffness: 480, damping: 24 }}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+                    >
+                      <Check size={14} strokeWidth={2.8} />
+                    </motion.span>
+                  ) : (
+                    <motion.span
+                      key="plus"
+                      initial={{ scale: 0.3, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0.3, opacity: 0 }}
+                      transition={{ duration: 0.15 }}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+                    >
+                      <Plus size={15} strokeWidth={2.5} />
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </ActionBtn>
+
+              {/* Radiant ripple pulse ring on click */}
+              {justAdded && (
+                <motion.span
+                  initial={{ scale: 0.8, opacity: 0.85 }}
+                  animate={{ scale: 2.2, opacity: 0 }}
+                  transition={{ duration: 0.5, ease: "easeOut" }}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    borderRadius: "50%",
+                    border: "2px solid var(--color-accent)",
+                    pointerEvents: "none",
+                  }}
+                />
+              )}
+            </div>
           </Tooltip>
         )}
 

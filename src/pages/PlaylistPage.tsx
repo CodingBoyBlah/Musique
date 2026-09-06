@@ -5,12 +5,14 @@ import { usePlaylist } from "../hooks/usePlaylist";
 import { TrackRow } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
 import { PageHeader } from "../components/ui/PageHeader";
+import { ExpandableDescription } from "../components/ui/ExpandableDescription";
 import { Loader } from "../components/ui/Loader";
 import { useTrackTools } from "../components/ui/TrackToolbar";
 import { playTrack } from "../api/playback";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { usePinsStore } from "../store/pins.store";
+import { useSpeedDialStore } from "../store/speedDial.store";
 import { useAuthStore } from "../store/auth.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
 import { useContextMenu } from "../components/ui/ContextMenu";
@@ -66,7 +68,13 @@ export default function PlaylistPage() {
   // play within whatever order's on screen right now (filtered/sorted view)
   function startAt(index: number) {
     const start = playContext(view, index, data!.id);
-    if (start) { setCurrentTrack(start); playTrack(start.id).catch(console.error); }
+    if (start) {
+      setCurrentTrack(start);
+      playTrack(start.id).catch(console.error);
+      if (data) {
+        useSpeedDialStore.getState().recordPlaylist({ id: data.id, name: data.name, image_url: data.image_url });
+      }
+    }
   }
 
   return (
@@ -78,7 +86,7 @@ export default function PlaylistPage() {
     >
       <PageHeader imageUrl={data.image_url} eyebrow="Playlist" title={data.name}>
         {data.description && (
-          <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>{data.description}</p>
+          <ExpandableDescription text={data.description} />
         )}
         <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
           {data.owner_name && <>{data.owner_name} · </>}

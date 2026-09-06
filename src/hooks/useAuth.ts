@@ -6,7 +6,12 @@ import {
   getAuthStatus,
 } from "../api/auth";
 import { warmupPlayback } from "../api/playback";
+import { syncLibrary } from "../api/library";
 import { useAuthStore } from "../store/auth.store";
+import { usePlayerStore } from "../store/player.store";
+import { useQueueStore } from "../store/queue.store";
+import { usePinsStore } from "../store/pins.store";
+import { useSpeedDialStore } from "../store/speedDial.store";
 import type { AuthStatus } from "../types/ipc";
 
 const LOGGED_OUT: AuthStatus = {
@@ -36,12 +41,18 @@ export function useAuth() {
   const { mutate: login, isPending: loggingIn } = useMutation({
     mutationFn: startLogin,
     onSuccess: (data) => {
+      qc.clear();
       store.setFromStatus(data);
       qc.setQueryData(["auth-status"], data);
-      qc.invalidateQueries({ queryKey: ["profile"] });
-      qc.invalidateQueries({ queryKey: ["library"] });
-      qc.invalidateQueries({ queryKey: ["recommendations"] });
       warmupPlayback().catch((err) => console.error("[auth] warmup playback error:", err));
+      syncLibrary()
+        .then(() => {
+          qc.invalidateQueries();
+        })
+        .catch((err) => {
+          console.error("[auth] post-login sync library error:", err);
+          qc.invalidateQueries();
+        });
     },
   });
 
@@ -49,10 +60,17 @@ export function useAuth() {
     mutationFn: apiLogout,
     onSuccess: () => {
       store.clear();
+      usePlayerStore.getState().clear();
+      useQueueStore.getState().clearAll();
+      usePinsStore.getState().clear();
+      useSpeedDialStore.getState().clear();
+      qc.clear();
       qc.setQueryData(["auth-status"], LOGGED_OUT);
-      qc.removeQueries({ queryKey: ["profile"] });
-      qc.removeQueries({ queryKey: ["library"] });
-      qc.removeQueries({ queryKey: ["recommendations"] });
+      try {
+        localStorage.clear();
+      } catch (err) {
+        console.error("[auth] failed to clear localStorage:", err);
+      }
     },
   });
 

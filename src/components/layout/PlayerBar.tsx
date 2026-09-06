@@ -258,12 +258,13 @@ export function PlayerBar() {
   const storeSetMuted   = usePlayerStore((s) => s.setMuted);
   const setImmersiveOpen = usePlayerStore((s) => s.setImmersiveOpen);
   const { togglePlay, next: handleNext, prev: handlePrev, seek: doSeek } = usePlayerControls();
-  const { shuffle, repeat, toggleShuffle, cycleRepeat } = useQueueStore(
+  const { shuffle, repeat, toggleShuffle, cycleRepeat, queueLength } = useQueueStore(
     useShallow((s) => ({
       shuffle: s.shuffle,
       repeat:  s.repeat,
       toggleShuffle: s.toggleShuffle,
       cycleRepeat:   s.cycleRepeat,
+      queueLength:   s.queue.length,
     }))
   );
 
@@ -463,7 +464,7 @@ export function PlayerBar() {
             <Captions size={15} strokeWidth={2} />
           </motion.button>
         </Tooltip>
-        <Tooltip label={queueOpen ? "Hide queue" : "Show queue"} align="end">
+        <Tooltip label={queueOpen ? "Hide queue" : queueLength > 0 ? `Queue (${queueLength})` : "Show queue"} align="end">
           <motion.button
             onClick={toggleQueue}
             whileHover={{ scale: 1.08 }}
@@ -472,6 +473,7 @@ export function PlayerBar() {
             transformTemplate={zTransform}
             style={{
               ...gpuLayer,
+              position:       "relative",
               display:        "flex",
               alignItems:     "center",
               justifyContent: "center",
@@ -485,6 +487,21 @@ export function PlayerBar() {
             }}
           >
             <ListMusic size={14} strokeWidth={2} />
+            {queueLength > 0 && !queueOpen && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: 5,
+                  right: 5,
+                  width: 5,
+                  height: 5,
+                  borderRadius: "50%",
+                  background: "var(--color-accent)",
+                  boxShadow: "0 0 6px var(--color-accent)",
+                  pointerEvents: "none",
+                }}
+              />
+            )}
           </motion.button>
         </Tooltip>
       </div>

@@ -4,6 +4,7 @@ import { Shuffle, Pin, Share2, Link2, Globe } from "lucide-react";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { usePinsStore, type PinnedItem } from "../../store/pins.store";
+import { useSpeedDialStore } from "../../store/speedDial.store";
 import { playTrack, pausePlayback, resumeOrPlay } from "../../api/playback";
 import type { TrackItem } from "../../types/spotify";
 import { gpuLayer, zTransform } from "../../lib/motion";
@@ -69,12 +70,32 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
       return;
     }
     const start = playContext(tracks, 0, contextId);
-    if (start) { setCurrentTrack(start); playTrack(start.id).catch(() => {}); }
+    if (start) {
+      setCurrentTrack(start);
+      playTrack(start.id).catch(() => {});
+      if (pinItem.type === "playlist") {
+        useSpeedDialStore.getState().recordPlaylist({ id: pinItem.id, name: pinItem.name, image_url: pinItem.image_url });
+      } else if (pinItem.type === "album") {
+        useSpeedDialStore.getState().recordAlbum({ id: pinItem.id, name: pinItem.name, image_url: pinItem.image_url });
+      } else if (pinItem.type === "artist") {
+        useSpeedDialStore.getState().recordArtist({ id: pinItem.id, name: pinItem.name, image_url: pinItem.image_url });
+      }
+    }
   }
 
   function onShuffle() {
     const start = playContextShuffled(tracks, contextId);
-    if (start) { setCurrentTrack(start); playTrack(start.id).catch(() => {}); }
+    if (start) {
+      setCurrentTrack(start);
+      playTrack(start.id).catch(() => {});
+      if (pinItem.type === "playlist") {
+        useSpeedDialStore.getState().recordPlaylist({ id: pinItem.id, name: pinItem.name, image_url: pinItem.image_url });
+      } else if (pinItem.type === "album") {
+        useSpeedDialStore.getState().recordAlbum({ id: pinItem.id, name: pinItem.name, image_url: pinItem.image_url });
+      } else if (pinItem.type === "artist") {
+        useSpeedDialStore.getState().recordArtist({ id: pinItem.id, name: pinItem.name, image_url: pinItem.image_url });
+      }
+    }
   }
 
   const shuffleActive = isActive && shuffle;

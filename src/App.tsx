@@ -43,6 +43,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { usePlayerStore } from "./store/player.store";
 import { useQueueStore } from "./store/queue.store";
+import { useSpeedDialStore } from "./store/speedDial.store";
 import { usePrefsStore } from "./store/prefs.store";
 import { toast } from "./store/toast.store";
 import { useInvalidateLibrary } from "./hooks/useLibrary";
@@ -150,7 +151,7 @@ Home recs so they're cached before the user gets there
       queryClient
         .prefetchQuery({
           queryKey: ["recommendations", "home"],
-          queryFn: () => getRecommendations(undefined, 12),
+          queryFn: () => getRecommendations(undefined, 16),
           staleTime: 30 * 60_000,
         })
         .catch(() => {});
@@ -209,6 +210,10 @@ Home recs so they're cached before the user gets there
           maybeScrobble();
           lastTrackId.current = currentTrack.id;
           updateNowPlaying(currentTrack, 0);
+
+          // Update dynamic speed dial
+          const activeContextId = useQueueStore.getState().contextId;
+          useSpeedDialStore.getState().recordTrack(currentTrack, activeContextId);
           // notification disabled can be from settings general (os fucks it up too, TODO fix)
           if (usePrefsStore.getState().notifyOnTrack)
             showTrackNotification(currentTrack);

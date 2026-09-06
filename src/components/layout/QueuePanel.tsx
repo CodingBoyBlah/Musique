@@ -47,14 +47,22 @@ function QueueTrackRow({
       onDrop={onDrop}
       className="group"
       style={{
+        position: "relative",
+        zIndex: 1,
         display: "flex", alignItems: "center", gap: 9,
         padding: "6px 8px", borderRadius: 9,
         opacity: dim ? 0.5 : 1,
         cursor: draggable ? "grab" : "default",
         transition: "background 0.12s, opacity 0.12s",
       }}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--color-surface-hover)"; }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLDivElement).style.background = "var(--color-surface-hover)";
+        (e.currentTarget as HTMLDivElement).style.zIndex = "20";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLDivElement).style.background = "transparent";
+        (e.currentTarget as HTMLDivElement).style.zIndex = "1";
+      }}
     >
       {draggable && (
         <span
@@ -74,7 +82,7 @@ function QueueTrackRow({
         </p>
       </div>
       {onRemove ? (
-        <Tooltip label="Remove from queue" side="top">
+        <Tooltip label="Remove from queue" side="top" align="end">
           <button
             onClick={(e) => { e.stopPropagation(); onRemove(); }}
             className="queue-btn"
@@ -146,7 +154,7 @@ function SectionHead({ label, onClear }: { label: string; onClear?: () => void }
         {label}
       </p>
       {onClear && (
-        <Tooltip label={`Clear ${label.toLowerCase()}`} side="top">
+        <Tooltip label={`Clear ${label.toLowerCase()}`} side="top" align="end">
           <button
             onClick={onClear}
             style={{ background: "none", border: "none", fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", cursor: "pointer", padding: "0 2px" }}
@@ -220,7 +228,7 @@ export function QueuePanel() {
           </Tooltip>
         </div>
 
-        <div className="scroll-y" style={{ flex: 1, overflowY: "auto", paddingBottom: 12 }}>
+        <div className="scroll-y" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: 12 }}>
           {/* now playing */}
           <SectionHead label="Now playing" />
           {currentTrack

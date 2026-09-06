@@ -2,18 +2,20 @@ import { useState, useRef, useLayoutEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { Heart, Music2 } from "lucide-react";
+import { Heart, Music2, ListMusic, Disc3, Users } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
-import { getRecommendations, getAlbum, getArtist } from "../api/spotify";
+import { getRecommendations, getAlbum, getArtist, getPlaylist, getTrack } from "../api/spotify";
 import { getLikedSongs } from "../api/library";
 import {
   useRecentlyPlayed,
   useTopTracks,
   useTopArtists,
   useNewReleases,
+  useMyPlaylists,
 } from "../hooks/useLibrary";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
+import { useSpeedDialStore, type SpeedDialEntry } from "../store/speedDial.store";
 import { playTrack } from "../api/playback";
 import { transportPlay, transportPause } from "../hooks/usePlayerControls";
 import { Loader } from "../components/ui/Loader";
@@ -33,15 +35,16 @@ import type { TimeRange } from "../types/library";
 // grid reflow spring for smooth panel gliding
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 
-// ─── top 6 quick action cards ────────────────────────────────────────────────
-
+// --- top 6 quick action cards ---
 interface QuickItem {
   id: string;
   title: string;
   imageUrl?: string | null;
   to: string;
+  type?: "liked-songs" | "playlist" | "album" | "artist" | "track";
   track?: TrackItem;
   albumId?: string;
+  playlistId?: string;
   artistId?: string;
   isLikedSongs?: boolean;
 }
@@ -62,11 +65,15 @@ function QuickActionCard({
   const setPlaying = usePlayerStore((s) => s.setPlaying);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext = useQueueStore((s) => s.playContext);
+  const contextId = useQueueStore((s) => s.contextId);
 
   const isThisPlaying = Boolean(
     isPlaying && (
-      (item.track && currentTrack?.id === item.track.id) ||
-      (item.albumId && currentTrack?.album?.id === item.albumId)
+      (item.isLikedSongs && (contextId === "liked-songs" || contextId === "liked")) ||
+      (item.playlistId && contextId === item.playlistId) ||
+      (item.albumId && contextId === item.albumId) ||
+      (item.artistId && (contextId === item.artistId || contextId === `artist-top-${item.artistId}`)) ||
+      (item.track && currentTrack?.id === item.track.id)
     )
   );
 
@@ -86,9 +93,10 @@ function QuickActionCard({
       return;
     }
 
-    if (item.isLikedSongs) {
+    // 1. Liked Songs
+    if (item.isLikedSongs || item.id === "liked-songs") {
       try {
-        const tracks = await getLikedSongs(50, 0);
+        const tracks = await getLikedSongs(100, 0);
         if (tracks && tracks.length > 0) {
           const start = playContext(tracks, 0, "liked-songs");
           if (start) {
@@ -97,11 +105,67 @@ function QuickActionCard({
           }
           return;
         }
-      } catch {}
+      } catch (err) {
+        console.error("[speed-dial] Failed to play liked songs:", err);
+      }
       navigate("/library?tab=songs");
       return;
     }
 
+    // 2. Individual Track (Always play the exact track directly!)
+    const trackId = item.track?.id || (item.type === "track" ? item.id.replace("track-", "") : null);
+    if (item.track || (item.type === "track" && trackId)) {
+      let target = item.track;
+      if (!target && trackId) {
+        try {
+          const detail = await getTrack(trackId);
+          if (detail) {
+            target = {
+              id: detail.id,
+              name: detail.name,
+              duration_ms: detail.duration_ms,
+              explicit: detail.explicit,
+              popularity: detail.popularity,
+              artists: detail.artists,
+              album: detail.album,
+            };
+          }
+        } catch (err) {
+          console.error("[speed-dial] Failed to fetch track:", err);
+        }
+      }
+      if (target) {
+        const pool = recentTracks.filter((t) => t.id !== target!.id);
+        const contextTracks = [target, ...pool];
+        const start = playContext(contextTracks, 0, "quick-action");
+        const trackToPlay = start || target;
+        setCurrentTrack(trackToPlay);
+        playTrack(trackToPlay.id).then(() => setPlaying(true)).catch(() => {});
+        return;
+      }
+    }
+
+    // 3. Playlist
+    if (item.playlistId) {
+      try {
+        const pl = await getPlaylist(item.playlistId);
+        const tracks = pl?.tracks ?? [];
+        if (tracks.length > 0) {
+          const start = playContext(tracks, 0, item.playlistId);
+          if (start) {
+            setCurrentTrack(start);
+            playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+          }
+          return;
+        }
+      } catch (err) {
+        console.error("[speed-dial] Failed to play playlist:", err);
+      }
+      navigate(`/playlist/${item.playlistId}`);
+      return;
+    }
+
+    // 4. Album
     if (item.albumId) {
       try {
         const full = await getAlbum(item.albumId);
@@ -114,9 +178,14 @@ function QuickActionCard({
           }
           return;
         }
-      } catch {}
+      } catch (err) {
+        console.error("[speed-dial] Failed to play album:", err);
+      }
+      navigate(`/album/${item.albumId}`);
+      return;
     }
 
+    // 5. Artist
     if (item.artistId) {
       try {
         const artist = await getArtist(item.artistId);
@@ -129,16 +198,10 @@ function QuickActionCard({
           }
           return;
         }
-      } catch {}
-    }
-
-    if (item.track) {
-      const contextTracks = recentTracks.length > 0 ? recentTracks : [item.track];
-      const idx = contextTracks.findIndex((t) => t.id === item.track!.id);
-      const start = playContext(contextTracks, idx >= 0 ? idx : 0, "quick-action");
-      const trackToPlay = start || item.track;
-      setCurrentTrack(trackToPlay);
-      playTrack(trackToPlay.id).then(() => setPlaying(true)).catch(() => {});
+      } catch (err) {
+        console.error("[speed-dial] Failed to play artist:", err);
+      }
+      navigate(`/artist/${item.artistId}`);
       return;
     }
 
@@ -220,7 +283,15 @@ function QuickActionCard({
             color: "var(--color-text-dim)",
           }}
         >
-          <Music2 size={22} strokeWidth={1.8} />
+          {item.playlistId ? (
+            <ListMusic size={22} strokeWidth={1.8} />
+          ) : item.artistId ? (
+            <Users size={22} strokeWidth={1.8} />
+          ) : item.albumId ? (
+            <Disc3 size={22} strokeWidth={1.8} />
+          ) : (
+            <Music2 size={22} strokeWidth={1.8} />
+          )}
         </div>
       )}
 
@@ -305,105 +376,216 @@ function QuickActionsShelf() {
     };
   }, []);
 
+  const speedDialEntries = useSpeedDialStore((s) => s.entries);
+  const { data: playlists = [] } = useMyPlaylists();
   const { data: recentTracks = [] } = useRecentlyPlayed();
   const { data: topTracks = [] } = useTopTracks("short_term");
   const { data: topArtists = [] } = useTopArtists("short_term");
-  const { data: newReleases = [] } = useNewReleases();
 
   const items = useMemo<QuickItem[]>(() => {
-    const result: QuickItem[] = [
+    const inAppMap = new Map<string, SpeedDialEntry>();
+    for (const entry of speedDialEntries) {
+      inAppMap.set(entry.id, entry);
+    }
+
+    interface ScoredCandidate {
+      item: QuickItem;
+      score: number;
+      lastPlayedAt: number;
+    }
+
+    const candidateMap = new Map<string, ScoredCandidate>();
+
+    function addOrUpdateCandidate(
+      item: QuickItem,
+      baseScore: number,
+      lastPlayedAt: number = 0
+    ) {
+      const inApp = inAppMap.get(item.id);
+      const inAppPlays = inApp?.playCount || 0;
+      const inAppLastPlayed = inApp?.lastPlayedAt || inApp?.timestamp || 0;
+      // In-app plays add heavy rotation weight (+5 pts per play)
+      const totalScore = baseScore + inAppPlays * 5;
+      const effectiveLastPlayed = Math.max(lastPlayedAt, inAppLastPlayed);
+
+      const existing = candidateMap.get(item.id);
+      if (!existing || totalScore > existing.score) {
+        candidateMap.set(item.id, {
+          item: {
+            ...item,
+            albumId: item.albumId || item.track?.album?.id,
+          },
+          score: totalScore,
+          lastPlayedAt: effectiveLastPlayed,
+        });
+      }
+    }
+
+    // 1. Liked Songs (Perennial user favorite with strong baseline)
+    addOrUpdateCandidate(
       {
         id: "liked-songs",
         title: "Liked Songs",
         to: "/library?tab=songs",
         isLikedSongs: true,
+        type: "liked-songs",
       },
-    ];
+      25,
+      Date.now()
+    );
 
-    const seen = new Set<string>(["liked-songs"]);
+    // 2. In-App Played Items from speedDialEntries (Albums, Playlists, Artists, Tracks)
+    for (const entry of speedDialEntries) {
+      if (entry.id === "liked-songs") continue;
+      addOrUpdateCandidate(
+        {
+          id: entry.id,
+          type: entry.type,
+          title: entry.title,
+          imageUrl: entry.imageUrl,
+          to: entry.to,
+          track: entry.track,
+          albumId: entry.albumId || entry.track?.album?.id,
+          playlistId: entry.playlistId,
+          artistId: entry.artistId,
+        },
+        0,
+        entry.lastPlayedAt || entry.timestamp || 0
+      );
+    }
 
-    // 1. Collect from recently played tracks (favoring distinct albums/tracks)
-    for (const track of recentTracks) {
-      if (result.length >= 6) break;
-      const key = track.album?.id ? `album-${track.album.id}` : `track-${track.id}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push({
-          id: key,
-          title: track.album?.name || track.name,
+    // 3. User's Top Tracks from Spotify (The user's official most-played songs)
+    const albumScoresFromTracks = new Map<string, { album: any; scoreSum: number; trackCount: number }>();
+    topTracks.slice(0, 20).forEach((track, index) => {
+      // Rank 0 is #1 most played track -> 22 points, down to min 4 points
+      const spotifyScore = Math.max(4, 22 - index);
+      addOrUpdateCandidate(
+        {
+          id: `track-${track.id}`,
+          type: "track",
+          title: track.name,
           imageUrl: track.album?.image_url,
           to: track.album?.id ? `/album/${track.album.id}` : "/library?tab=songs",
-          track: track,
+          track,
           albumId: track.album?.id,
-        });
+        },
+        spotifyScore,
+        0
+      );
+
+      if (track.album?.id) {
+        const existingAlbum = albumScoresFromTracks.get(track.album.id) || {
+          album: track.album,
+          scoreSum: 0,
+          trackCount: 0,
+        };
+        existingAlbum.scoreSum += spotifyScore;
+        existingAlbum.trackCount += 1;
+        albumScoresFromTracks.set(track.album.id, existingAlbum);
+      }
+    });
+
+    // 4. Albums with multiple top tracks or high listening frequency
+    for (const [albId, info] of albumScoresFromTracks.entries()) {
+      if (info.trackCount >= 2) {
+        const albumBaseScore = Math.round(info.scoreSum * 0.75);
+        addOrUpdateCandidate(
+          {
+            id: `album-${albId}`,
+            type: "album",
+            title: info.album.name,
+            imageUrl: info.album.image_url,
+            to: `/album/${albId}`,
+            albumId: albId,
+          },
+          albumBaseScore,
+          0
+        );
       }
     }
 
-    // 2. Weave in top artists
-    for (const artist of topArtists) {
-      if (result.length >= 6) break;
-      const key = `artist-${artist.id}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push({
-          id: key,
+    // 5. User's Saved Playlists
+    playlists.slice(0, 8).forEach((pl, index) => {
+      addOrUpdateCandidate(
+        {
+          id: `playlist-${pl.id}`,
+          type: "playlist",
+          title: pl.name,
+          imageUrl: pl.image_url,
+          to: `/playlist/${pl.id}`,
+          playlistId: pl.id,
+        },
+        Math.max(2, 10 - index),
+        0
+      );
+    });
+
+    // 6. Top Artists from Spotify
+    topArtists.slice(0, 6).forEach((artist, index) => {
+      addOrUpdateCandidate(
+        {
+          id: `artist-${artist.id}`,
+          type: "artist",
           title: artist.name,
           imageUrl: artist.image_url,
           to: `/artist/${artist.id}`,
           artistId: artist.id,
-        });
+        },
+        Math.max(2, 12 - index * 2),
+        0
+      );
+    });
+
+    // Sort all candidates primarily by MOST PLAYED score descending, then recency
+    const sortedCandidates = Array.from(candidateMap.values()).sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
       }
-    }
+      return b.lastPlayedAt - a.lastPlayedAt;
+    });
 
-    // 3. Fallbacks from topTracks
-    for (const track of topTracks) {
+    // Pick top 6 with STRICT Track & Album mutual exclusion deduplication:
+    // "if a track is in an album, dont put the TRACK AND THE ALBUM BOTH IN THE TOP 6"
+    const result: QuickItem[] = [];
+    const seenIds = new Set<string>();
+    const includedAlbumCards = new Set<string>(); // album IDs of album cards in top 6
+    const includedTrackAlbums = new Set<string>(); // album IDs of track cards in top 6
+
+    for (const { item } of sortedCandidates) {
       if (result.length >= 6) break;
-      const key = `track-${track.id}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push({
-          id: key,
-          title: track.name,
-          imageUrl: track.album?.image_url,
-          to: track.album?.id ? `/album/${track.album.id}` : "/library?tab=songs",
-          track: track,
-          albumId: track.album?.id,
-        });
+      if (seenIds.has(item.id)) continue;
+
+      if (item.type === "album" && item.albumId) {
+        // If a track from this album is already in the top 6, do NOT put this album in the top 6!
+        if (includedTrackAlbums.has(item.albumId)) {
+          continue;
+        }
+        if (includedAlbumCards.has(item.albumId)) {
+          continue;
+        }
+      } else if (item.type === "track") {
+        const trackAlbumId = item.track?.album?.id || item.albumId;
+        // If the album containing this track is already in the top 6, do NOT put this track in the top 6!
+        if (trackAlbumId && includedAlbumCards.has(trackAlbumId)) {
+          continue;
+        }
       }
-    }
 
-    // 4. Fallbacks from new releases
-    for (const album of newReleases) {
-      if (result.length >= 6) break;
-      const key = `album-${album.id}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push({
-          id: key,
-          title: album.name,
-          imageUrl: album.image_url,
-          to: `/album/${album.id}`,
-          albumId: album.id,
-        });
+      // Accepted!
+      seenIds.add(item.id);
+      if (item.type === "album" && item.albumId) {
+        includedAlbumCards.add(item.albumId);
+      } else if (item.type === "track") {
+        const trackAlbumId = item.track?.album?.id || item.albumId;
+        if (trackAlbumId) {
+          includedTrackAlbums.add(trackAlbumId);
+        }
       }
+      result.push(item);
     }
 
-    // 5. Default entries if history is completely empty
-    const defaults: QuickItem[] = [
-      { id: "def-daily", title: "Daily Mix 1", to: "/playlists" },
-      { id: "def-top", title: "Top Hits", to: "/library?tab=songs" },
-      { id: "def-disc", title: "Discover Weekly", to: "/playlists" },
-      { id: "def-chill", title: "Chill Mix", to: "/playlists" },
-      { id: "def-release", title: "Release Radar", to: "/playlists" },
-    ];
-
-    for (const def of defaults) {
-      if (result.length >= 6) break;
-      result.push(def);
-    }
-
-    return result.slice(0, 6);
-  }, [recentTracks, topArtists, topTracks, newReleases]);
+    return result;
+  }, [speedDialEntries, playlists, topTracks, topArtists]);
 
   return (
     <motion.section
@@ -433,7 +615,7 @@ function QuickActionsShelf() {
   );
 }
 
-// ─── section scaffolding ─────────────────────────────────────────────────────
+// --- section scaffolding ---
 
 function SectionTitle({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
@@ -469,7 +651,7 @@ function TileSkeleton() {
   return <EvenGridSkeleton minColWidth={140} gap={14} maxRows={1} />;
 }
 
-// ─── recommendation / track tile ─────────────────────────────────────────────
+// --- recommendation / track tile ---
 
 function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
   const [hover, setHover] = useState(false);
@@ -594,7 +776,8 @@ function MadeForYou() {
     queryKey:  ["recommendations", "home"],
     queryFn:   () => getRecommendations(undefined, 16),
     staleTime: 30 * 60_000,
-    gcTime:    5 * 60_000,
+    gcTime:    24 * 60 * 60_000,
+    placeholderData: (prev) => prev,
     refetchOnWindowFocus: false,
   });
 
@@ -795,7 +978,7 @@ export default function Home() {
                 transition: "opacity 0.15s ease",
               }}
             >
-              {loggingIn ? "Waiting for browser…" : "Log in with Spotify"}
+              {loggingIn ? "Waiting for browser..." : "Log in with Spotify"}
             </button>
           }
           hint={loggingIn ? "Finish signing in in your browser. The app is listening on port 8989." : undefined}

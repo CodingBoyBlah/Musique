@@ -41,3 +41,34 @@ export function fmtCountdown(ms: number): string {
   if (m > 0) return `${m}m ${sec}s`;
   return `${sec}s`;
 }
+
+// Strips raw HTML tags and decodes entities from Spotify playlist/album descriptions
+export function cleanDescription(raw: string | null | undefined): string {
+  if (!raw) return "";
+  try {
+    const withBreaks = raw
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|li)>/gi, "\n");
+    if (typeof DOMParser !== "undefined") {
+      const doc = new DOMParser().parseFromString(withBreaks, "text/html");
+      const text = doc.body.textContent || "";
+      return text
+        .replace(/[ \t]+/g, " ")
+        .replace(/\n\s*\n\s*\n+/g, "\n\n")
+        .trim();
+    }
+    return withBreaks
+      .replace(/<[^>]*>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&nbsp;/g, " ")
+      .replace(/[ \t]+/g, " ")
+      .trim();
+  } catch {
+    return (raw || "").replace(/<[^>]*>/g, "").trim();
+  }
+}

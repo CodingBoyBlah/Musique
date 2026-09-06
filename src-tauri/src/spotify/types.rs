@@ -2,12 +2,12 @@ use serde::{Deserialize, Serialize};
 
 // ─── spotify api internal types, deserialize only ────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct SpImage {
     pub url: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct SpArtistSimple {
     pub id:   String,
     pub name: String,
@@ -22,7 +22,7 @@ pub(crate) struct SpArtist {
     pub popularity: Option<i64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct SpAlbumSimple {
     pub id:           String,
     pub name:         String,
@@ -59,7 +59,7 @@ pub(crate) struct SpAlbumTrack {
     pub is_local:     Option<bool>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct SpTrack {
     pub id:           String,
     pub name:         String,
