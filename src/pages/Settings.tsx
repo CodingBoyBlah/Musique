@@ -17,7 +17,7 @@ import {
 import { usePrefsStore } from "../store/prefs.store";
 import { type AudioQuality } from "../api/playback";
 import { useUIStore } from "../store/ui.store";
-import { setDiscordEnabled } from "../api/media";
+import { setDiscordEnabled, requestNotificationPermission } from "../api/media";
 import {
   lastfmStatus,
   lastfmSaveApi,
@@ -430,7 +430,15 @@ function GeneralCard() {
       <SettingRow
         label="Playback notification"
         hint="Show a desktop notification when a new song starts."
-        control={<Switch checked={notifyOnTrack} onChange={setNotifyOnTrack} />}
+        control={
+          <Switch
+            checked={notifyOnTrack}
+            onChange={(v) => {
+              setNotifyOnTrack(v);
+              if (v) requestNotificationPermission();
+            }}
+          />
+        }
       />
       <Divider />
       <SettingRow

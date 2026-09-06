@@ -89,7 +89,9 @@ function AppInit() {
 
   // os notif permission
   useEffect(() => {
-    requestNotificationPermission();
+    if (usePrefsStore.getState().notifyOnTrack) {
+      requestNotificationPermission().catch(() => {});
+    }
   }, []);
 
   // push the saved discord presence pref down to the rust media thread on launch because it defalts to enabled (so if sum1 turned it off last time, it respects
@@ -214,9 +216,8 @@ Home recs so they're cached before the user gets there
           // Update dynamic speed dial
           const activeContextId = useQueueStore.getState().contextId;
           useSpeedDialStore.getState().recordTrack(currentTrack, activeContextId);
-          // notification disabled can be from settings general (os fucks it up too, TODO fix)
           if (usePrefsStore.getState().notifyOnTrack)
-            showTrackNotification(currentTrack);
+            showTrackNotification(currentTrack).catch(() => {});
 
           // last.fm: set nowplaying + scrobblekeeping for this track
           const artist = currentTrack.artists.map((a) => a.name).join(", ");

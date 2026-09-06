@@ -5,6 +5,7 @@ import {
   getAudioQuality,
   setAudioQuality as setApiAudioQuality,
 } from "../api/playback";
+import { requestNotificationPermission } from "../api/media";
 
 interface PrefsStore {
   // audio streaming bitrate (96: Normal, 160: High, 320: Very high)
@@ -38,7 +39,12 @@ export const usePrefsStore = create<PrefsStore>()(
       },
 
       notifyOnTrack: true,
-      setNotifyOnTrack: (v) => set({ notifyOnTrack: v }),
+      setNotifyOnTrack: (v) => {
+        set({ notifyOnTrack: v });
+        if (v) {
+          requestNotificationPermission().catch(() => {});
+        }
+      },
 
       promptOnClose: true,
       setPromptOnClose: (v) => set({ promptOnClose: v }),

@@ -19,6 +19,8 @@ pub enum AppError {
     Auth(String),
     #[error("playback error: {0}")]
     Playback(String),
+    #[error("notification error: {0}")]
+    Notification(String),
 }
 
 impl From<sqlx::Error> for AppError {

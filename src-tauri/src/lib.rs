@@ -587,7 +587,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            #[cfg(target_os = "windows")]
+            init_windows_aumid(app.handle());
+
             let mut backdrop_active = false;
 
             let mut main_hwnd: Option<isize> = None;
@@ -808,6 +812,7 @@ pub fn run() {
             commands::library::create_playlist,
             commands::media::update_now_playing,
             commands::media::set_discord_enabled,
+            commands::media::show_playback_notification,
             commands::window::set_window_effect,
             commands::window::get_backdrop_active,
             commands::lyrics::get_lyrics,
@@ -826,4 +831,112 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(target_os = "windows")]
+fn init_windows_aumid(app: &tauri::AppHandle) {
+    use std::os::windows::ffi::OsStrExt;
+    use tauri::Manager;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyW, RegSetValueExW, HKEY_CURRENT_USER, REG_DWORD, REG_SZ,
+    };
+    use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+
+    let app_id_str = "dev.boyblah.musique";
+    let app_id_wide: Vec<u16> = app_id_str
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // 1. Set current process AUMID
+    unsafe {
+        let _ = SetCurrentProcessExplicitAppUserModelID(app_id_wide.as_ptr());
+    }
+
+    // 2. Register HKCU\Software\Classes\AppUserModelId\dev.boyblah.musique
+    let subkey = format!("Software\\Classes\\AppUserModelId\\{}", app_id_str);
+    let subkey_wide: Vec<u16> = std::ffi::OsStr::new(&subkey)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut hkey: windows_sys::Win32::System::Registry::HKEY = std::ptr::null_mut();
+    let res = unsafe {
+        RegCreateKeyW(
+            HKEY_CURRENT_USER,
+            subkey_wide.as_ptr(),
+            &mut hkey,
+        )
+    };
+
+    if res == 0 && !hkey.is_null() {
+        // DisplayName: "Musique"
+        let display_name: Vec<u16> = "Musique".encode_utf16().chain(std::iter::once(0)).collect();
+        let name_val: Vec<u16> = "DisplayName".encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            let _ = RegSetValueExW(
+                hkey,
+                name_val.as_ptr(),
+                0,
+                REG_SZ,
+                display_name.as_ptr() as *const u8,
+                (display_name.len() * 2) as u32,
+            );
+        }
+
+        // ShowInSettings: 1
+        let show_in_settings_val: Vec<u16> = "ShowInSettings"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let show_val: u32 = 1;
+        unsafe {
+            let _ = RegSetValueExW(
+                hkey,
+                show_in_settings_val.as_ptr(),
+                0,
+                REG_DWORD,
+                &show_val as *const u32 as *const u8,
+                std::mem::size_of::<u32>() as u32,
+            );
+        }
+
+        // IconUri: resolve or extract icon to app data
+        if let Ok(app_dir) = app.path().app_local_data_dir() {
+            let _ = std::fs::create_dir_all(&app_dir);
+            let logo_path = app_dir.join("musique_logo.png");
+            if !logo_path.exists() {
+                let logo_bytes = include_bytes!("../icons/icon.png");
+                let _ = std::fs::write(&logo_path, logo_bytes);
+            }
+            let icon_path = app_dir.join("icon.ico");
+            if !icon_path.exists() {
+                let icon_bytes = include_bytes!("../icons/icon.ico");
+                let _ = std::fs::write(&icon_path, icon_bytes);
+            }
+            if icon_path.exists() {
+                let icon_uri_str = icon_path.to_string_lossy().to_string();
+                let icon_uri_wide: Vec<u16> = icon_uri_str
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+                let icon_val: Vec<u16> =
+                    "IconUri".encode_utf16().chain(std::iter::once(0)).collect();
+                unsafe {
+                    let _ = RegSetValueExW(
+                        hkey,
+                        icon_val.as_ptr(),
+                        0,
+                        REG_SZ,
+                        icon_uri_wide.as_ptr() as *const u8,
+                        (icon_uri_wide.len() * 2) as u32,
+                    );
+                }
+            }
+        }
+
+        unsafe {
+            let _ = RegCloseKey(hkey);
+        }
+    }
 }

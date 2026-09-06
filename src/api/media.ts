@@ -17,18 +17,46 @@ export function setDiscordEnabled(enabled: boolean): void {
   invoke("set_discord_enabled", { enabled }).catch(() => {});
 }
 
-export function requestNotificationPermission(): void {
-  if ("Notification" in window && Notification.permission === "default") {
-    Notification.requestPermission().catch(() => {});
+import {
+  isPermissionGranted,
+  requestPermission,
+} from "@tauri-apps/plugin-notification";
+
+export async function requestNotificationPermission(): Promise<boolean> {
+  try {
+    let granted = await isPermissionGranted();
+    if (!granted) {
+      const permission = await requestPermission();
+      granted = permission === "granted";
+    }
+    return granted;
+  } catch (e) {
+    console.warn("[notification] permission check/request failed:", e);
+    return false;
   }
 }
 
-export function showTrackNotification(track: TrackItem): void {
-  if (!("Notification" in window) || Notification.permission !== "granted") return;
-  const opts: NotificationOptions = {
-    body:   track.artists.map((a) => a.name).join(", "),
-    silent: true,
-  };
-  if (track.album?.image_url) opts.icon = track.album.image_url;
-  new Notification(track.name, opts);
+export async function showTrackNotification(track: TrackItem): Promise<void> {
+  const title = track.name;
+  const artist = track.artists.map((a) => a.name).join(", ");
+  const album = track.album?.name;
+  const body = album ? `${artist} • ${album}` : artist;
+  const icon = track.album?.image_url ?? null;
+
+  try {
+    const hasPermission = await requestNotificationPermission();
+    if (!hasPermission) return;
+  } catch (err) {
+    console.warn("[notification] permission check failed:", err);
+  }
+
+  try {
+    await invoke("show_playback_notification", {
+      title,
+      body,
+      icon,
+    });
+  } catch (err) {
+    console.error("[notification] backend notification error:", err);
+  }
 }
