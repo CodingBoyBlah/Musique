@@ -928,11 +928,12 @@ export default function Home() {
   useReflowPulse();
   const { loggedIn, displayName, isLoading, login, loggingIn } = useAuth();
   const hello = greeting();
+  const firstName = displayName ? displayName.trim().split(" ")[0] : null;
 
   if (isLoading) {
     return (
       <div>
-        <h1 style={{ margin: "0 0 16px", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--color-text-hi)" }}>{hello}</h1>
+        <h1 style={{ margin: "0 0 16px", fontSize: "clamp(28px, 3.8vw, 38px)", fontWeight: 400, letterSpacing: "-0.035em", color: "rgba(255, 255, 255, 0.62)" }}>{hello}</h1>
         <Loader fill={false} />
       </div>
     );
@@ -942,9 +943,8 @@ export default function Home() {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "clamp(24px, 3vw, 36px)" }}>
         <div>
-          <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 600, letterSpacing: "0.02em", color: "var(--color-text-dim)" }}>{hello}</p>
-          <h1 style={{ margin: 0, fontSize: "clamp(26px, 3.8vw, 34px)", fontWeight: 800, letterSpacing: "-0.03em", color: "var(--color-text-hi)" }}>
-            Welcome
+          <h1 style={{ margin: 0, fontSize: "clamp(28px, 3.8vw, 38px)", fontWeight: 800, letterSpacing: "-0.03em", color: "var(--color-text-hi)" }}>
+            Welcome to Musique
           </h1>
         </div>
 
@@ -989,10 +989,37 @@ export default function Home() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "clamp(26px, 3.4vw, 38px)" }}>
-      <motion.div layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }}>
-        <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 600, letterSpacing: "0.02em", color: "var(--color-text-dim)" }}>{hello}</p>
-        <h1 style={{ margin: 0, fontSize: "clamp(26px, 3.8vw, 34px)", fontWeight: 800, letterSpacing: "-0.03em", color: "var(--color-text-hi)", textWrap: "balance" } as React.CSSProperties}>
-          {displayName ? displayName.split(" ")[0] : "Welcome back"}
+      <motion.div
+        layout="position"
+        transformTemplate={zTransform}
+        transition={{ layout: REFLOW }}
+      >
+        <h1
+          style={{
+            margin: 0,
+            fontSize: "clamp(28px, 3.8vw, 38px)",
+            fontWeight: 400,
+            letterSpacing: "-0.035em",
+            lineHeight: 1.14,
+            color: "rgba(255, 255, 255, 0.62)",
+            textWrap: "balance",
+          } as React.CSSProperties}
+        >
+          {hello}
+          {firstName ? (
+            <>
+              ,{" "}
+              <span
+                style={{
+                  fontWeight: 800,
+                  color: "var(--color-text-hi)",
+                  letterSpacing: "-0.03em",
+                }}
+              >
+                {firstName}
+              </span>
+            </>
+          ) : null}
         </h1>
       </motion.div>
 

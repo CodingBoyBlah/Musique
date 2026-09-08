@@ -224,6 +224,7 @@ pub struct PlaybackInner {
     pub current_uri:       Arc<Mutex<Option<String>>>,
     pub is_ended:          Arc<AtomicBool>,
     pub is_playing_atomic: Arc<AtomicBool>,
+    pub needs_rebuild:     Arc<AtomicBool>,
     spirc:                 Spirc,
     session:               Session,
     _event_task:           tauri::async_runtime::JoinHandle<()>,
@@ -356,12 +357,25 @@ pub async fn create_inner(
 
     let creds_file = creds_dir.join("credentials.json");
 
+    let cache_limit_mb: u64 = sqlx::query_as::<_, (String,)>(
+        "SELECT value FROM settings WHERE key = 'audio_cache_limit_mb'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|(v,)| v.parse::<u64>().ok())
+    .unwrap_or(2048);
+
+    let cache_bytes = cache_limit_mb.saturating_mul(1024 * 1024);
+    eprintln!("[playback] configured cache limit = {cache_limit_mb} MB");
+
     let open_cache = || {
         Cache::new(
             Some(&creds_dir),
             Some(&vol_dir),
             Some(&cache_dir),
-            Some(500 * 1024 * 1024),
+            Some(cache_bytes),
         ).ok()
     };
 
@@ -612,6 +626,7 @@ pub async fn create_inner(
         current_uri,
         is_ended,
         is_playing_atomic,
+        needs_rebuild:     Arc::new(AtomicBool::new(false)),
         spirc,
         session,
         _event_task:       event_task,

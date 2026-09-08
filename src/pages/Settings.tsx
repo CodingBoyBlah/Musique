@@ -393,12 +393,19 @@ const QUALITY_OPTIONS: { value: AudioQuality; label: string }[] = [
 function PlaybackCard() {
   const audioQuality = usePrefsStore((s) => s.audioQuality);
   const setAudioQuality = usePrefsStore((s) => s.setAudioQuality);
+  const audioCacheLimitMb = usePrefsStore((s) => s.audioCacheLimitMb);
+  const setAudioCacheLimitMb = usePrefsStore((s) => s.setAudioCacheLimitMb);
+
+  const cfill = Math.round(
+    ((Math.max(512, Math.min(8192, audioCacheLimitMb)) - 512) / (8192 - 512)) * 100
+  );
+  const gbLabel = (audioCacheLimitMb / 1024).toFixed(1) + " GB";
 
   return (
     <Card title="Playback">
       <SettingRow
         label="Audio quality"
-        hint="Higher bitrates use more data and cache space."
+        hint="Higher bitrates use more data. Applied on next track."
         control={
           <Segmented
             value={audioQuality}
@@ -406,6 +413,89 @@ function PlaybackCard() {
             onChange={setAudioQuality}
             layoutId="settings-audio-quality"
           />
+        }
+      />
+      <SettingRow
+        label="Disk cache limit"
+        hint="Storage reserved for tracks & keys for instant repeat playback."
+        control={
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              width: "100%",
+              minWidth: "min(196px, 100%)",
+              maxWidth: 290,
+              boxSizing: "border-box",
+            }}
+          >
+            <input
+              className="vol"
+              type="range"
+              min={512}
+              max={8192}
+              step={256}
+              value={audioCacheLimitMb}
+              onChange={(e) => setAudioCacheLimitMb(Number(e.target.value))}
+              aria-label="Disk cache limit"
+              style={
+                {
+                  flex: 1,
+                  ["--vol" as string]: `${cfill}%`,
+                } as React.CSSProperties
+              }
+            />
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--color-text-hi)",
+                minWidth: 46,
+                textAlign: "right",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {gbLabel}
+            </span>
+            <Tooltip label="Revert to default (2 GB)" side="top">
+              <motion.button
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={() => setAudioCacheLimitMb(2048)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 24,
+                  height: 24,
+                  borderRadius: 6,
+                  border: "none",
+                  background: "transparent",
+                  color:
+                    audioCacheLimitMb === 2048
+                      ? "rgba(255,255,255,0.22)"
+                      : "var(--color-text-dim)",
+                  cursor: audioCacheLimitMb === 2048 ? "default" : "pointer",
+                  padding: 0,
+                  flexShrink: 0,
+                  transition: "color 0.12s",
+                }}
+                onMouseEnter={(e) => {
+                  if (audioCacheLimitMb !== 2048)
+                    (e.currentTarget as HTMLButtonElement).style.color =
+                      "var(--color-text-hi)";
+                }}
+                onMouseLeave={(e) => {
+                  if (audioCacheLimitMb !== 2048)
+                    (e.currentTarget as HTMLButtonElement).style.color =
+                      "var(--color-text-dim)";
+                }}
+              >
+                <RotateCcw size={13} strokeWidth={2.2} />
+              </motion.button>
+            </Tooltip>
+          </div>
         }
       />
     </Card>

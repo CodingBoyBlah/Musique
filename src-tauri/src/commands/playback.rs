@@ -65,7 +65,7 @@ async fn ensure_inner(app: &AppHandle) -> Result<(), AppError> {
     // the ui says "playing" but no audio comes out. healing here fixes that
     let rebuild = match guard.as_ref() {
         None        => true,
-        Some(inner) => inner.session_invalid(),
+        Some(inner) => inner.session_invalid() || inner.needs_rebuild.load(Ordering::Relaxed),
     };
     if rebuild {
         let vol   = read_vol(&db).await;
@@ -335,6 +335,46 @@ pub async fn set_audio_quality(app: AppHandle, quality: String) -> Result<(), Ap
     let playing = guard.as_ref().map(|i| i.is_playing()).unwrap_or(false);
     if !playing {
         *guard = None;
+    } else if let Some(inner) = guard.as_ref() {
+        inner.needs_rebuild.store(true, Ordering::Relaxed);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_audio_cache_limit(app: AppHandle) -> Result<u64, AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    drop(s);
+
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = 'audio_cache_limit_mb'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+
+    let limit = row.and_then(|(v,)| v.parse::<u64>().ok()).unwrap_or(2048);
+    Ok(limit)
+}
+
+#[tauri::command]
+pub async fn set_audio_cache_limit(app: AppHandle, limit_mb: u64) -> Result<(), AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    let playback = s.playback.clone();
+    drop(s);
+
+    save_setting(&pool, "audio_cache_limit_mb", &limit_mb.to_string()).await?;
+
+    let mut guard = playback.lock().await;
+    let playing = guard.as_ref().map(|i| i.is_playing()).unwrap_or(false);
+    if !playing {
+        *guard = None;
+    } else if let Some(inner) = guard.as_ref() {
+        inner.needs_rebuild.store(true, Ordering::Relaxed);
     }
 
     Ok(())

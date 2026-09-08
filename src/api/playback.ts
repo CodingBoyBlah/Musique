@@ -23,3 +23,9 @@ export const getAudioQuality = (): Promise<AudioQuality> =>
 
 export const setAudioQuality = (quality: AudioQuality): Promise<void> =>
   invoke("set_audio_quality", { quality });
+
+export const getAudioCacheLimit = (): Promise<number> =>
+  invoke("get_audio_cache_limit");
+
+export const setAudioCacheLimit = (limitMb: number): Promise<void> =>
+  invoke("set_audio_cache_limit", { limitMb });

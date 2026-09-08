@@ -791,6 +791,8 @@ pub fn run() {
             commands::playback::get_volume,
             commands::playback::get_audio_quality,
             commands::playback::set_audio_quality,
+            commands::playback::get_audio_cache_limit,
+            commands::playback::set_audio_cache_limit,
             commands::library::sync_library,
             commands::library::get_liked_songs,
             commands::library::get_liked_songs_count,

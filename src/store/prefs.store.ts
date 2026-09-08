@@ -4,6 +4,8 @@ import {
   type AudioQuality,
   getAudioQuality,
   setAudioQuality as setApiAudioQuality,
+  getAudioCacheLimit,
+  setAudioCacheLimit as setApiAudioCacheLimit,
 } from "../api/playback";
 import { requestNotificationPermission } from "../api/media";
 
@@ -11,6 +13,10 @@ interface PrefsStore {
   // audio streaming bitrate (96: Normal, 160: High, 320: Very high)
   audioQuality: AudioQuality;
   setAudioQuality: (v: AudioQuality) => void;
+
+  // audio cache limit on disk in megabytes
+  audioCacheLimitMb: number;
+  setAudioCacheLimitMb: (v: number) => void;
 
   // os notification each time a new track starts
   notifyOnTrack: boolean;
@@ -38,6 +44,16 @@ export const usePrefsStore = create<PrefsStore>()(
         });
       },
 
+      audioCacheLimitMb: 2048,
+      setAudioCacheLimitMb: (v) => {
+        const prev = get().audioCacheLimitMb;
+        set({ audioCacheLimitMb: v });
+        setApiAudioCacheLimit(v).catch((err) => {
+          console.error("[prefs] set_audio_cache_limit failed:", err);
+          set({ audioCacheLimitMb: prev });
+        });
+      },
+
       notifyOnTrack: true,
       setNotifyOnTrack: (v) => {
         set({ notifyOnTrack: v });
@@ -61,6 +77,14 @@ getAudioQuality()
   .then((q) => {
     if (q === "96" || q === "160" || q === "320") {
       usePrefsStore.setState({ audioQuality: q });
+    }
+  })
+  .catch(() => {});
+
+getAudioCacheLimit()
+  .then((mb) => {
+    if (typeof mb === "number" && mb > 0) {
+      usePrefsStore.setState({ audioCacheLimitMb: mb });
     }
   })
   .catch(() => {});

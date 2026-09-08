@@ -223,16 +223,24 @@ Home recs so they're cached before the user gets there
           const artist = currentTrack.artists.map((a) => a.name).join(", ");
           const album = currentTrack.album?.name ?? "";
           lastfmNowPlaying(artist, currentTrack.name, album);
-          scrobbleRef.current = {
-            artist,
-            track: currentTrack.name,
-            album,
-            startedAt: Math.floor(Date.now() / 1000),
-            durationMs: currentTrack.duration_ms,
-            scrobbled: false,
-          };
+            scrobbleRef.current = {
+              artist,
+              track: currentTrack.name,
+              album,
+              startedAt: Math.floor(Date.now() / 1000),
+              durationMs: currentTrack.duration_ms,
+              scrobbled: false,
+            };
+
+            // Proactively preload next track so skips and transitions are instant
+            const next = useQueueStore.getState().peek(currentTrack);
+            if (next) {
+              setTimeout(() => {
+                preloadTrack(next.id).catch(() => {});
+              }, 1200);
+            }
+          }
         }
-      }
 
       if (msg.type === "unavailable") {
         /* librespot connected but the track didn't load. usually transient: a

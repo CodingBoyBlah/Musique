@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import {
-  pausePlayback, resumeOrPlay, seekPlayback, playTrack,
+  pausePlayback, resumeOrPlay, seekPlayback, playTrack, preloadTrack,
 } from "../api/playback";
 import { replenishQueue } from "../utils/radio";
 import { toast } from "../store/toast.store";
@@ -10,6 +10,18 @@ import { errMsg } from "../lib/err";
 
 let transportInFlight = false;
 let pendingTarget: "play" | "pause" | null = null;
+let playDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let lastTargetTrackId: string | null = null;
+
+export function safePlayTrack(id: string, debounceMs = 40): void {
+  lastTargetTrackId = id;
+  if (playDebounceTimer) clearTimeout(playDebounceTimer);
+  playDebounceTimer = setTimeout(() => {
+    if (lastTargetTrackId === id) {
+      playTrack(id).catch((e) => console.error("[transport] safePlayTrack error:", e));
+    }
+  }, debounceMs);
+}
 
 async function executeTransport() {
   if (transportInFlight) return;
@@ -78,8 +90,12 @@ export function transportNext(): void {
     setCurrentTrack(n);
     usePlayerStore.getState().setPlaying(true);
     usePlayerStore.getState().setTargetState("playing");
-    playTrack(n.id).catch((e) => console.error("[transport] playTrack error:", e));
+    safePlayTrack(n.id);
     replenishQueue(n).catch(() => {});
+    const upcoming = useQueueStore.getState().peek(n);
+    if (upcoming) {
+      setTimeout(() => preloadTrack(upcoming.id).catch(() => {}), 1500);
+    }
   }
 }
 
@@ -93,7 +109,11 @@ export function transportPrev(): void {
       setCurrentTrack(p);
       usePlayerStore.getState().setPlaying(true);
       usePlayerStore.getState().setTargetState("playing");
-      playTrack(p.id).catch((e) => console.error("[transport] prev error:", e));
+      safePlayTrack(p.id);
+      const upcoming = useQueueStore.getState().peek(p);
+      if (upcoming) {
+        setTimeout(() => preloadTrack(upcoming.id).catch(() => {}), 1500);
+      }
     }
   }
 }
