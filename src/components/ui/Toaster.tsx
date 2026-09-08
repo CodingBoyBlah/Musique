@@ -22,15 +22,16 @@ export function Toaster() {
             initial={{ opacity: 0, y: 14, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.97 }}
-            transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
+            transition={{ type: "spring", stiffness: 450, damping: 28 }}
             style={{
               display: "flex", alignItems: "center", gap: 9,
-              padding: "10px 16px", borderRadius: 99,
-              background: "rgba(28,28,34,0.96)",
+              padding: "10px 18px", borderRadius: 99,
+              background: "rgba(24,24,28,0.94)",
               backdropFilter: "blur(30px)", WebkitBackdropFilter: "blur(30px)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+              border: "1px solid rgba(255,255,255,0.14)",
+              boxShadow: "0 12px 36px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05)",
               color: "var(--color-text-hi)", fontSize: 13, fontWeight: 600,
+              letterSpacing: "-0.01em",
             }}
           >
             <Check size={15} strokeWidth={2.6} style={{ color: "var(--color-accent)" }} />

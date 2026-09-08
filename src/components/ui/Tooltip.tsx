@@ -1,4 +1,4 @@
-import { useState, useRef, type ReactNode } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface Props {
@@ -21,7 +21,14 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
   const [open, setOpen] = useState(false);
   const [effectiveAlign, setEffectiveAlign] = useState(align);
   const triggerRef = useRef<HTMLSpanElement>(null);
+  const timerRef = useRef<number | undefined>(undefined);
   const off = side === "top" ? 5 : -5;
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+    };
+  }, []);
 
   const handleMouseEnter = () => {
     if (triggerRef.current && align === "center") {
@@ -36,7 +43,18 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
     } else {
       setEffectiveAlign(align);
     }
-    setOpen(true);
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => {
+      setOpen(true);
+    }, 140);
+  };
+
+  const handleMouseLeave = () => {
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = undefined;
+    }
+    setOpen(false);
   };
 
   const isRight = side === "right";
@@ -59,7 +77,7 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
         zIndex: open ? 60 : undefined,
       }}
       onMouseEnter={handleMouseEnter}
-      onMouseLeave={() => setOpen(false)}
+      onMouseLeave={handleMouseLeave}
     >
       {children}
       <AnimatePresence>

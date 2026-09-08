@@ -1,3 +1,4 @@
+import { motion } from "framer-motion";
 import { Play, Pause, Volume2, Volume1, VolumeX, Heart } from "lucide-react";
 
 export function AnimatedPlayPause({
@@ -96,7 +97,9 @@ export function AnimatedHeart({
   size?: number;
 }) {
   return (
-    <span
+    <motion.span
+      animate={liked ? { scale: [1, 1.36, 0.92, 1] } : { scale: 1 }}
+      transition={{ duration: 0.32, ease: [0.175, 0.885, 0.32, 1.275] }}
       style={{
         position: "relative",
         width: size,
@@ -106,11 +109,9 @@ export function AnimatedHeart({
         justifyContent: "center",
         flexShrink: 0,
         color: liked ? "var(--color-accent)" : "inherit",
-        transform: liked ? "scale(1.08)" : "scale(1)",
-        transition: "transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), color 0.15s ease",
       }}
     >
       <Heart size={size} strokeWidth={liked ? 0 : 2} fill={liked ? "currentColor" : "none"} />
-    </span>
+    </motion.span>
   );
 }

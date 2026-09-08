@@ -48,6 +48,7 @@ function NavItem({
       transformTemplate={zTransform}
       style={{
         ...gpuLayer,
+        position:      "relative",
         display:       "flex",
         alignItems:    "center",
         justifyContent: collapsed ? "center" : "flex-start",
@@ -60,20 +61,35 @@ function NavItem({
         fontSize:      14,
         fontWeight:    active ? 600 : 500,
         color:         active ? "var(--color-text-hi)" : "var(--color-text)",
-        background:    active ? "var(--color-active)" : "transparent",
+        background:    "transparent",
         cursor:        "pointer",
-        transition:    "background 0.12s, color 0.12s",
         textAlign:     collapsed ? "center" : "left",
       }}
     >
+      {active && (
+        <motion.div
+          layoutId="activeNavPill"
+          transition={{ type: "spring", stiffness: 500, damping: 36 }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: 8,
+            background: "var(--color-active)",
+            zIndex: 0,
+          }}
+        />
+      )}
       <span style={{
+        position: "relative",
+        zIndex: 1,
         width: 20, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
         color: active ? "var(--color-accent)" : "inherit",
+        transition: "color 0.15s ease",
       }}>
         {icon}
       </span>
       {!collapsed && (
-        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        <span style={{ position: "relative", zIndex: 1, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
       )}
     </motion.button>
   );

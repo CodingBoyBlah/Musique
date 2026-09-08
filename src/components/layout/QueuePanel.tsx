@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { X, GripVertical, ListMusic } from "lucide-react";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
@@ -197,7 +197,7 @@ export function QueuePanel() {
       // by the spacer in Layout.tsx so the grid reflows once, both ways.
       initial={{ x: WIDTH }}
       animate={{ x: 0 }}
-      exit={{ x: WIDTH }}
+      exit={{ x: WIDTH, transition: { duration: 0.18, ease: [0.32, 0, 0.67, 0] } }}
       transition={{ type: "spring", stiffness: 340, damping: 38 }}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
@@ -244,20 +244,31 @@ export function QueuePanel() {
             </div>
           ) : (
             <div style={{ padding: "0 4px" }}>
-              {queue.map((track, i) => (
-                <QueueTrackRow
-                  key={track.id + i}
-                  track={track}
-                  draggable
-                  onDragStart={() => { dragIdx.current = i; }}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={() => {
-                    if (dragIdx.current !== null && dragIdx.current !== i) reorder(dragIdx.current, i);
-                    dragIdx.current = null;
-                  }}
-                  onRemove={() => removeAt(i)}
-                />
-              ))}
+              <AnimatePresence initial={false}>
+                {queue.map((track, i) => (
+                  <motion.div
+                    key={`${track.id}-${i}`}
+                    layout
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
+                    style={{ overflow: "hidden" }}
+                  >
+                    <QueueTrackRow
+                      track={track}
+                      draggable
+                      onDragStart={() => { dragIdx.current = i; }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={() => {
+                        if (dragIdx.current !== null && dragIdx.current !== i) reorder(dragIdx.current, i);
+                        dragIdx.current = null;
+                      }}
+                      onRemove={() => removeAt(i)}
+                    />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
           )}
 
