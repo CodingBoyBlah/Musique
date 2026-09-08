@@ -42,6 +42,9 @@
     "active": true,
     "createUpdaterArtifacts": true,
     "targets": "all",
+    "category": "Audio",
+    "shortDescription": "Musique Spotify desktop player",
+    "longDescription": "A native Spotify desktop client with lossless playback, Discord Rich Presence, and synchronized lyrics.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -52,6 +55,16 @@
     "macOS": {
       "signingIdentity": "-",
       "minimumSystemVersion": "10.15"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libasound2"
+        ],
+        "section": "sound"
+      }
     }
   }
 }

@@ -15,7 +15,7 @@ pub async fn lastfm_save_api(_app: AppHandle, api_key: String, api_secret: Strin
 
 
 #[tauri::command]
-pub async fn lastfm_start_auth(app: AppHandle) -> Result<String, AppError> {
+pub async fn lastfm_start_auth(_app: AppHandle) -> Result<String, AppError> {
     let (token, url) = lastfm::start_auth().await?;
 
     
@@ -24,7 +24,7 @@ pub async fn lastfm_start_auth(app: AppHandle) -> Result<String, AppError> {
     #[cfg(not(target_os = "linux"))]
     {
         use tauri_plugin_opener::OpenerExt;
-        app.opener()
+        _app.opener()
             .open_url(&url, None::<&str>)
             .map_err(|e| AppError::Auth(format!("Cannot open browser: {e}")))?;
     }

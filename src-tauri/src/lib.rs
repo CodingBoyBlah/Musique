@@ -592,8 +592,10 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             init_windows_aumid(app.handle());
 
+            #[allow(unused_mut)]
             let mut backdrop_active = false;
 
+            #[allow(unused_mut)]
             let mut main_hwnd: Option<isize> = None;
             if let Some(window) = app.get_webview_window("main") {
                 #[cfg(not(target_os = "macos"))]

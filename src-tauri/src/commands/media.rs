@@ -109,7 +109,7 @@ pub async fn show_playback_notification(
             }
             #[cfg(target_os = "linux")]
             {
-                notification.app_id("dev.boyblah.musique");
+                notification.appname("Musique");
             }
 
             if let Some(ref p) = local_icon {
