@@ -1,8 +1,27 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { TrackItem } from "../types/spotify";
+import type { SpotifyDevice, RemotePlaybackState } from "../api/connect";
 
 interface PlayerStore {
+  devicesOpen: boolean;
+  toggleDevices: () => void;
+  setDevicesOpen: (open: boolean) => void;
+
+  devices: SpotifyDevice[];
+  setDevices: (devices: SpotifyDevice[]) => void;
+
+  activeDevice: SpotifyDevice | null;
+  setActiveDevice: (device: SpotifyDevice | null) => void;
+
+  musiqueDeviceId: string | null;
+  setMusiqueDeviceId: (id: string | null) => void;
+
+  isRemotePlayback: boolean;
+  setIsRemotePlayback: (isRemote: boolean) => void;
+
+  syncRemotePlayback: (state: RemotePlaybackState | null) => void;
+
   queueOpen:    boolean;
   toggleQueue:  () => void;
 
@@ -47,6 +66,7 @@ interface PlayerStore {
 
   setCurrentTrack: (track: TrackItem | null) => void;
   setPlaying:      (playing: boolean) => void;
+  setLastPlayingAt: (time: number) => void;
   onEvent:         (payload: unknown) => void;
   incrementPos:    () => void;
   setPosition:     (ms: number) => void;
@@ -57,7 +77,85 @@ interface PlayerStore {
 
 export const usePlayerStore = create<PlayerStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
+      devicesOpen: false,
+      toggleDevices: () => set((s) => ({ devicesOpen: !s.devicesOpen })),
+      setDevicesOpen: (open) => set({ devicesOpen: open }),
+
+      devices: [],
+      setDevices: (devices) => set({ devices }),
+
+      activeDevice: null,
+      setActiveDevice: (device) => set({ activeDevice: device }),
+
+      musiqueDeviceId: null,
+      setMusiqueDeviceId: (id) => set({ musiqueDeviceId: id }),
+
+      isRemotePlayback: false,
+      setIsRemotePlayback: (isRemote) => set({ isRemotePlayback: isRemote }),
+
+      syncRemotePlayback: (state) =>
+        set((s) => {
+          if (!state || !state.device || !state.device.is_active) {
+            // Keep remote session stable across transient 204s / buffering dips
+            return s;
+          }
+
+          const devName = state.device.name?.toLowerCase() ?? "";
+          const isThisDevice =
+            Boolean(s.musiqueDeviceId && state.device.id === s.musiqueDeviceId) ||
+            devName === "musique";
+
+          // If local Librespot started playing within 5s, ignore stale poll snapshots from other devices
+          const localJustStarted = !s.isRemotePlayback && (Date.now() - s.lastPlayingAt < 5000);
+          if (localJustStarted && !isThisDevice) {
+            return s;
+          }
+
+          // Only maintain or enter remote playback mode if:
+          // 1. We are already in remote playback mode (s.isRemotePlayback), OR
+          // 2. Music is genuinely actively playing on an external device (state.is_playing && !isThisDevice)
+          const shouldBeRemote = !isThisDevice && (s.isRemotePlayback || state.is_playing);
+
+          if (!shouldBeRemote) {
+            return {
+              isRemotePlayback: false,
+              activeDevice: state.device,
+            };
+          }
+
+          // Estimate position with network latency compensation from snapshot timestamp
+          let remotePos = s.positionMs;
+          if (state.progress_ms != null) {
+            const rawPos = Number(state.progress_ms);
+            const latencyOffset = state.timestamp
+              ? Math.max(0, Math.min(3000, Date.now() - Number(state.timestamp)))
+              : 0;
+            const estimatedPos = rawPos + (state.is_playing ? latencyOffset : 0);
+
+            const isTrackChange = state.track?.id !== s.currentId;
+            const isPlayStateChange = state.is_playing !== s.isPlaying;
+            const drift = Math.abs(s.positionMs - estimatedPos);
+
+            // Sync position on track change, play/pause change, or significant drift (> 2500ms)
+            // Otherwise preserve local smooth 1s increment to prevent scrubber jitter
+            if (isTrackChange || isPlayStateChange || drift > 2500) {
+              remotePos = estimatedPos;
+            }
+          }
+
+          return {
+            isRemotePlayback: true,
+            activeDevice: state.device,
+            isPlaying: state.is_playing,
+            currentTrack: state.track ?? s.currentTrack,
+            currentId: state.track?.id ?? s.currentId,
+            durationMs: state.track?.duration_ms ?? s.durationMs,
+            positionMs: remotePos,
+            volume: state.device.volume_percent != null ? state.device.volume_percent : s.volume,
+          };
+        }),
+
       queueOpen:    false,
       // queue + lyrics share the right rail, so opening one closes the other
       toggleQueue:  () => set((s) => ({ queueOpen: !s.queueOpen, lyricsOpen: false })),
@@ -108,14 +206,24 @@ export const usePlayerStore = create<PlayerStore>()(
           queueOpen: false,
           lyricsOpen: false,
           immersiveOpen: false,
+          devicesOpen: false,
+          isRemotePlayback: false,
+          activeDevice: null,
         }),
 
       setSessionReady: () => set({ sessionReady: true }),
 
-      setPlaying: (playing) => set({ isPlaying: playing }),
+      setPlaying: (playing) =>
+        set((s) => ({
+          isPlaying: playing,
+          lastPlayingAt: playing ? Date.now() : s.lastPlayingAt,
+        })),
+
+      setLastPlayingAt: (time) => set({ lastPlayingAt: time }),
 
       setCurrentTrack: (track) =>
         set(() => ({
+          isRemotePlayback: false,
           currentTrack: track,
           currentId:    track?.id ?? null,
           durationMs:   track?.duration_ms ?? 0,
@@ -129,6 +237,12 @@ export const usePlayerStore = create<PlayerStore>()(
           position_ms?: number;
           duration_ms?: number;
         };
+        // If we are currently controlling a remote device, ignore local audio sink events
+        // (like stopped/paused/position_changed from shutting down the local sink)
+        // so remote state isn't wiped out.
+        if (get().isRemotePlayback && msg.type !== "playing") {
+          return;
+        }
         switch (msg.type) {
           case "playing":
             set((s) => {
@@ -137,6 +251,7 @@ export const usePlayerStore = create<PlayerStore>()(
                 return s;
               }
               return {
+                isRemotePlayback: false,
                 isPlaying:       true,
                 sessionReady:    true,
                 lastPlayingAt:   Date.now(),
@@ -151,7 +266,7 @@ export const usePlayerStore = create<PlayerStore>()(
           case "paused":
             set((s) => {
               // Ignore stale paused event if user recently requested play
-              if (s.targetState === "playing" && Date.now() - s.targetStateTime < 1500) {
+              if (s.targetState === "playing" && Date.now() - s.targetStateTime < 3000) {
                 return s;
               }
               return {
@@ -172,6 +287,14 @@ export const usePlayerStore = create<PlayerStore>()(
             }));
             break;
           case "stopped":
+            set((s) => {
+              // Ignore stale stopped event if user recently requested play (e.g. previous track tearing down)
+              if (s.targetState === "playing" && Date.now() - s.targetStateTime < 3000) {
+                return s;
+              }
+              return { isPlaying: false, positionMs: 0 };
+            });
+            break;
           case "unavailable":
             set(() => ({ isPlaying: false, positionMs: 0 }));
             break;

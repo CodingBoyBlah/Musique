@@ -831,6 +831,17 @@ pub fn run() {
             commands::lastfm::lastfm_scrobble,
             commands::theme::get_wallpaper_data_url,
             commands::theme::get_system_accent,
+            commands::connect::get_devices,
+            commands::connect::get_playback_state,
+            commands::connect::transfer_playback,
+            commands::connect::remote_play,
+            commands::connect::remote_play_track,
+            commands::connect::remote_pause,
+            commands::connect::remote_next,
+            commands::connect::remote_previous,
+            commands::connect::remote_seek,
+            commands::connect::remote_set_volume,
+            commands::connect::get_musique_device_id,
             mem_trim::trim_memory,
         ])
         .run(tauri::generate_context!())

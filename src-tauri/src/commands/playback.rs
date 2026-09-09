@@ -187,7 +187,7 @@ pub async fn resume_or_play(app: AppHandle, id: String, position_ms: u32) -> Res
         let same_uri = inner.current_uri().as_deref() == Some(&uri);
         let ended = inner.is_ended();
 
-        if loaded && same_uri && !ended {
+        if loaded && same_uri && !ended && position_ms == 0 {
             if let Err(e) = inner.resume() {
                 eprintln!("[playback cmd] resume failed ({e}), falling back to play_uri");
                 inner.play_uri(uri, position_ms)?;

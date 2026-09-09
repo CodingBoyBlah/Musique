@@ -8,6 +8,7 @@ import {
   Shuffle, Repeat, Repeat1,
   Volume2, Volume1, VolumeX,
   ListMusic, Captions, Maximize2,
+  MonitorSpeaker,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { usePlayerStore } from "../../store/player.store";
@@ -15,6 +16,9 @@ import { useQueueStore } from "../../store/queue.store";
 import {
   setVolume as apiSetVolume, setMuted as apiSetMuted,
 } from "../../api/playback";
+import { remoteSetVolume } from "../../api/connect";
+import { useDevices } from "../../hooks/useDevices";
+import { DevicesPopover } from "./DevicesPopover";
 import { CoverArt } from "../ui/CoverArt";
 import { Tooltip } from "../ui/Tooltip";
 import { fmtMs } from "../../utils/fmt";
@@ -262,6 +266,7 @@ export function PlayerBar() {
   const storeSetMuted   = usePlayerStore((s) => s.setMuted);
   const setImmersiveOpen = usePlayerStore((s) => s.setImmersiveOpen);
   const { togglePlay, next: handleNext, prev: handlePrev, seek: doSeek } = usePlayerControls();
+  const { activeDevice, isRemotePlayback, devicesOpen, toggleDevices } = useDevices();
   const { shuffle, repeat, toggleShuffle, cycleRepeat, queueLength } = useQueueStore(
     useShallow((s) => ({
       shuffle: s.shuffle,
@@ -309,12 +314,22 @@ export function PlayerBar() {
     const v = Number(e.target.value);
     storeSetVolume(v);
     if (volDebounce.current) clearTimeout(volDebounce.current);
-    volDebounce.current = setTimeout(() => { apiSetVolume(v).catch(() => {}); }, 80);
+    volDebounce.current = setTimeout(() => {
+      if (usePlayerStore.getState().isRemotePlayback) {
+        remoteSetVolume(v).catch(() => {});
+      } else {
+        apiSetVolume(v).catch(() => {});
+      }
+    }, 80);
   }
   function handleMuteToggle() {
     const next = !muted;
     storeSetMuted(next);
-    apiSetMuted(next).catch(() => {});
+    if (usePlayerStore.getState().isRemotePlayback) {
+      remoteSetVolume(next ? 0 : volume).catch(() => {});
+    } else {
+      apiSetMuted(next).catch(() => {});
+    }
   }
 
   const VolumeIcon = (muted || volume === 0) ? VolumeX : volume < 50 ? Volume1 : Volume2;
@@ -325,18 +340,50 @@ export function PlayerBar() {
     : "Repeat off";
 
   return (
-    <div
-      style={{
-        height:     72,
-        background: "var(--color-player)",
-        borderTop:  "1px solid var(--color-border)",
-        display:    "flex",
-        alignItems: "center",
-        gap:        "clamp(8px, 1.6vw, 16px)",
-        padding:    "0 clamp(10px, 1.8vw, 18px)",
-        flexShrink: 0,
-      }}
-    >
+    <div style={{ display: "flex", flexDirection: "column", flexShrink: 0, position: "relative" }}>
+      <AnimatePresence>
+        {isRemotePlayback && activeDevice && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 26, opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            onClick={toggleDevices}
+            data-devices-trigger="true"
+            style={{
+              background: "rgba(255, 255, 255, 0.05)",
+              borderBottom: "1px solid var(--color-glass-border)",
+              color: "var(--color-text-hi)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              fontSize: 11.5,
+              fontWeight: 500,
+              cursor: "pointer",
+              userSelect: "none",
+              overflow: "hidden",
+            }}
+          >
+            <MonitorSpeaker size={13} strokeWidth={2} style={{ color: "var(--color-text-dim)" }} />
+            <span>Listening on <strong style={{ fontWeight: 600 }}>{activeDevice.name}</strong></span>
+            <span style={{ fontSize: 10.5, color: "var(--color-text-dim)", textDecoration: "underline", marginLeft: 4 }}>Change</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div
+        style={{
+          height:     72,
+          background: "var(--color-player)",
+          borderTop:  "1px solid var(--color-border)",
+          display:    "flex",
+          alignItems: "center",
+          gap:        "clamp(8px, 1.6vw, 16px)",
+          padding:    "0 clamp(10px, 1.8vw, 18px)",
+          flexShrink: 0,
+        }}
+      >
       {/* left: track info */}
       <div style={{ flex: "1 1 0%", minWidth: 160, display: "flex", alignItems: "center", gap: 10, overflow: "hidden" }}>
         {/* art swaps (eg on skip) ease in through a slight blur so the change isn't an abrupt cut */}
@@ -555,7 +602,38 @@ export function PlayerBar() {
             )}
           </motion.button>
         </Tooltip>
+        <Tooltip label={isRemotePlayback && activeDevice ? `Connected: ${activeDevice.name}` : "Devices"}>
+          <motion.button
+            data-devices-trigger="true"
+            onClick={toggleDevices}
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.92 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            transformTemplate={zTransform}
+            style={{
+              ...gpuLayer,
+              display:        "flex",
+              alignItems:     "center",
+              justifyContent: "center",
+              width:          28,
+              height:         28,
+              borderRadius:   5,
+              border:         "none",
+              background:     devicesOpen
+                ? "var(--color-active, rgba(255,255,255,0.11))"
+                : isRemotePlayback
+                  ? "var(--color-surface-2, rgba(255,255,255,0.06))"
+                  : "transparent",
+              color:          (devicesOpen || isRemotePlayback) ? "var(--color-text-hi)" : "var(--color-text)",
+              cursor:         "pointer",
+            }}
+          >
+            <MonitorSpeaker size={15} strokeWidth={2} />
+          </motion.button>
+        </Tooltip>
       </div>
     </div>
+    <DevicesPopover />
+  </div>
   );
 }

@@ -1,0 +1,171 @@
+import { useEffect, useCallback, useRef, useState } from "react";
+import { usePlayerStore } from "../store/player.store";
+import {
+  getDevices,
+  getPlaybackState,
+  transferPlayback,
+  remotePlayTrack,
+  getMusiqueDeviceId,
+} from "../api/connect";
+import { pausePlayback, resumeOrPlay } from "../api/playback";
+import { toast } from "../store/toast.store";
+import { errMsg } from "../lib/err";
+
+export function useDevices() {
+  const devices = usePlayerStore((s) => s.devices);
+  const setDevices = usePlayerStore((s) => s.setDevices);
+  const activeDevice = usePlayerStore((s) => s.activeDevice);
+  const setActiveDevice = usePlayerStore((s) => s.setActiveDevice);
+  const musiqueDeviceId = usePlayerStore((s) => s.musiqueDeviceId);
+  const setMusiqueDeviceId = usePlayerStore((s) => s.setMusiqueDeviceId);
+  const isRemotePlayback = usePlayerStore((s) => s.isRemotePlayback);
+  const devicesOpen = usePlayerStore((s) => s.devicesOpen);
+  const toggleDevices = usePlayerStore((s) => s.toggleDevices);
+  const setDevicesOpen = usePlayerStore((s) => s.setDevicesOpen);
+  const syncRemotePlayback = usePlayerStore((s) => s.syncRemotePlayback);
+
+  const [transferringId, setTransferringId] = useState<string | null>(null);
+  const isPollingPlaybackRef = useRef(false);
+
+  // Initialize Musique device ID once
+  useEffect(() => {
+    if (!musiqueDeviceId) {
+      getMusiqueDeviceId()
+        .then((id) => {
+          if (id) setMusiqueDeviceId(id);
+        })
+        .catch(() => {});
+    }
+  }, [musiqueDeviceId, setMusiqueDeviceId]);
+
+  const refreshDevices = useCallback(async () => {
+    try {
+      const payload = await getDevices();
+      if (payload) {
+        if (payload.musique_device_id && !usePlayerStore.getState().musiqueDeviceId) {
+          setMusiqueDeviceId(payload.musique_device_id);
+        }
+        setDevices(payload.devices ?? []);
+        const currentActive = payload.devices?.find((d) => d.is_active) ?? null;
+        if (currentActive) {
+          setActiveDevice(currentActive);
+        }
+      }
+    } catch {
+      // Quietly ignore network/auth errors in background poll
+    }
+  }, [setDevices, setActiveDevice, setMusiqueDeviceId]);
+
+  const refreshPlayback = useCallback(async () => {
+    if (isPollingPlaybackRef.current) return;
+    isPollingPlaybackRef.current = true;
+    try {
+      const state = await getPlaybackState();
+      syncRemotePlayback(state);
+    } catch {
+      // Quietly ignore
+    } finally {
+      isPollingPlaybackRef.current = false;
+    }
+  }, [syncRemotePlayback]);
+
+  // Initial load on mount
+  useEffect(() => {
+    refreshDevices();
+    refreshPlayback();
+  }, [refreshDevices, refreshPlayback]);
+
+  // Devices panel polling: faster when panel is open
+  useEffect(() => {
+    if (!devicesOpen) return;
+    refreshDevices();
+    const timer = setInterval(refreshDevices, 3000);
+    return () => clearInterval(timer);
+  }, [devicesOpen, refreshDevices]);
+
+  // Playback sync polling:
+  // - 2500ms when devices panel is open
+  // - 3000ms when remote playback is active
+  // - 10000ms idle heartbeat when not playing locally, to detect remote playback started elsewhere
+  useEffect(() => {
+    const store = usePlayerStore.getState();
+    const isPlayingLocal = store.isPlaying && !isRemotePlayback;
+    if (isPlayingLocal && !devicesOpen) return;
+
+    const intervalMs = devicesOpen ? 2500 : isRemotePlayback ? 3000 : 10000;
+    const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      refreshPlayback();
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [isRemotePlayback, devicesOpen, refreshPlayback]);
+
+  const transfer = useCallback(
+    async (deviceId: string) => {
+      setTransferringId(deviceId);
+      try {
+        const store = usePlayerStore.getState();
+        const targetDevice = store.devices.find((d) => d.id === deviceId);
+        const isMusique =
+          Boolean(store.musiqueDeviceId && deviceId === store.musiqueDeviceId) ||
+          targetDevice?.name.toLowerCase() === "musique";
+
+        if (isMusique) {
+          // Transferring to THIS computer
+          const track = store.currentTrack;
+          const pos = Math.max(0, Math.floor(store.positionMs || 0));
+          store.setIsRemotePlayback(false);
+          store.setTargetState("playing");
+          store.setPlaying(true);
+          store.setPosition(pos);
+          store.setLastPlayingAt(Date.now());
+
+          if (track) {
+            // Instantly start local playback at the exact same position without starting over
+            await resumeOrPlay(track.id, pos).catch((e) => {
+              console.error("[useDevices] resumeOrPlay error:", e);
+            });
+          } else {
+            // Transfer device if no track was loaded
+            await transferPlayback(deviceId, true).catch(() => {});
+          }
+        } else {
+          // Transferring from Musique to a remote device (phone, etc.)
+          const track = store.currentTrack;
+          const pos = Math.max(0, Math.floor(store.positionMs || 0));
+          store.setIsRemotePlayback(true);
+          await pausePlayback().catch(() => {});
+          await remotePlayTrack(deviceId, track?.id, pos);
+        }
+
+        setTimeout(() => {
+          refreshPlayback();
+          refreshDevices();
+        }, 1500);
+        setTimeout(() => {
+          refreshPlayback();
+          refreshDevices();
+        }, 3500);
+      } catch (e) {
+        toast(`Could not transfer playback: ${errMsg(e)}`);
+      } finally {
+        setTransferringId(null);
+      }
+    },
+    [refreshPlayback, refreshDevices]
+  );
+
+  return {
+    devices,
+    activeDevice,
+    musiqueDeviceId,
+    isRemotePlayback,
+    devicesOpen,
+    toggleDevices,
+    setDevicesOpen,
+    transferringId,
+    refreshDevices,
+    refreshPlayback,
+    transfer,
+  };
+}

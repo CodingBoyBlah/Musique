@@ -4,6 +4,9 @@ import { useQueueStore } from "../store/queue.store";
 import {
   pausePlayback, resumeOrPlay, seekPlayback, playTrack, preloadTrack,
 } from "../api/playback";
+import {
+  remotePlay, remotePause, remoteNext, remotePrevious, remoteSeek, getPlaybackState,
+} from "../api/connect";
 import { replenishQueue } from "../utils/radio";
 import { toast } from "../store/toast.store";
 import { errMsg } from "../lib/err";
@@ -14,6 +17,7 @@ let playDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let lastTargetTrackId: string | null = null;
 
 export function safePlayTrack(id: string, debounceMs = 40): void {
+  usePlayerStore.getState().setIsRemotePlayback(false);
   lastTargetTrackId = id;
   if (playDebounceTimer) clearTimeout(playDebounceTimer);
   playDebounceTimer = setTimeout(() => {
@@ -56,6 +60,44 @@ async function executeTransport() {
 
 export function transportTogglePlay(): void {
   const s = usePlayerStore.getState();
+  if (s.isRemotePlayback) {
+    const targetPlay = !s.isPlaying;
+    s.setPlaying(targetPlay);
+    if (targetPlay) {
+      remotePlay()
+        .then(() => {
+          setTimeout(async () => {
+            const st = await getPlaybackState().catch(() => null);
+            if (st) usePlayerStore.getState().syncRemotePlayback(st);
+          }, 300);
+        })
+        .catch((e) => {
+          console.error("[transport] remote play error, falling back to local playback:", e);
+          const store = usePlayerStore.getState();
+          store.setIsRemotePlayback(false);
+          if (store.currentTrack) {
+            resumeOrPlay(store.currentTrack.id, store.positionMs).catch(() => {});
+          } else {
+            store.setPlaying(false);
+            toast("Remote device unavailable");
+          }
+        });
+    } else {
+      remotePause()
+        .then(() => {
+          setTimeout(async () => {
+            const st = await getPlaybackState().catch(() => null);
+            if (st) usePlayerStore.getState().syncRemotePlayback(st);
+          }, 300);
+        })
+        .catch((e) => {
+          console.error("[transport] remote pause error:", e);
+          usePlayerStore.getState().setPlaying(true);
+          toast("Unable to control remote device");
+        });
+    }
+    return;
+  }
   if (!s.currentTrack) return;
 
   const targetPlay = !s.isPlaying;
@@ -68,6 +110,28 @@ export function transportTogglePlay(): void {
 
 export function transportPlay(): void {
   const s = usePlayerStore.getState();
+  if (s.isRemotePlayback) {
+    s.setPlaying(true);
+    remotePlay()
+      .then(() => {
+        setTimeout(async () => {
+          const st = await getPlaybackState().catch(() => null);
+          if (st) usePlayerStore.getState().syncRemotePlayback(st);
+        }, 300);
+      })
+      .catch((e) => {
+        console.error("[transport] remote play error, falling back to local playback:", e);
+        const store = usePlayerStore.getState();
+        store.setIsRemotePlayback(false);
+        if (store.currentTrack) {
+          resumeOrPlay(store.currentTrack.id, store.positionMs).catch(() => {});
+        } else {
+          store.setPlaying(false);
+          toast("Remote device unavailable");
+        }
+      });
+    return;
+  }
   if (!s.currentTrack) return;
   s.setTargetState("playing");
   s.setPlaying(true);
@@ -77,6 +141,22 @@ export function transportPlay(): void {
 
 export function transportPause(): void {
   const s = usePlayerStore.getState();
+  if (s.isRemotePlayback) {
+    s.setPlaying(false);
+    remotePause()
+      .then(() => {
+        setTimeout(async () => {
+          const st = await getPlaybackState().catch(() => null);
+          if (st) usePlayerStore.getState().syncRemotePlayback(st);
+        }, 300);
+      })
+      .catch((e) => {
+        console.error("[transport] remote pause error:", e);
+        usePlayerStore.getState().setPlaying(true);
+        toast("Unable to pause remote device");
+      });
+    return;
+  }
   s.setTargetState("paused");
   s.setPlaying(false);
   pendingTarget = "pause";
@@ -84,7 +164,22 @@ export function transportPause(): void {
 }
 
 export function transportNext(): void {
-  const { currentTrack, setCurrentTrack } = usePlayerStore.getState();
+  const s = usePlayerStore.getState();
+  if (s.isRemotePlayback) {
+    remoteNext()
+      .then(() => {
+        setTimeout(async () => {
+          const st = await getPlaybackState().catch(() => null);
+          if (st) usePlayerStore.getState().syncRemotePlayback(st);
+        }, 350);
+      })
+      .catch((e) => {
+        console.error("[transport] remote next error:", e);
+        toast("Unable to skip on remote device");
+      });
+    return;
+  }
+  const { currentTrack, setCurrentTrack } = s;
   const n = useQueueStore.getState().advance(currentTrack);
   if (n) {
     setCurrentTrack(n);
@@ -100,7 +195,26 @@ export function transportNext(): void {
 }
 
 export function transportPrev(): void {
-  const { currentTrack, positionMs, setCurrentTrack } = usePlayerStore.getState();
+  const s = usePlayerStore.getState();
+  if (s.isRemotePlayback) {
+    if (s.positionMs > 3000) {
+      transportSeek(0);
+    } else {
+      remotePrevious()
+        .then(() => {
+          setTimeout(async () => {
+            const st = await getPlaybackState().catch(() => null);
+            if (st) usePlayerStore.getState().syncRemotePlayback(st);
+          }, 350);
+        })
+        .catch((e) => {
+          console.error("[transport] remote prev error:", e);
+          toast("Unable to skip on remote device");
+        });
+    }
+    return;
+  }
+  const { currentTrack, positionMs, setCurrentTrack } = s;
   if (positionMs > 3000) {
     transportSeek(0);
   } else {
@@ -119,8 +233,23 @@ export function transportPrev(): void {
 }
 
 export function transportSeek(ms: number): void {
-  usePlayerStore.getState().setPosition(ms);
-  seekPlayback(ms).catch(() => {});
+  const s = usePlayerStore.getState();
+  s.setPosition(ms);
+  if (s.isRemotePlayback) {
+    remoteSeek(ms)
+      .then(() => {
+        setTimeout(async () => {
+          const st = await getPlaybackState().catch(() => null);
+          if (st) usePlayerStore.getState().syncRemotePlayback(st);
+        }, 400);
+      })
+      .catch((e) => {
+        console.error("[transport] remote seek error:", e);
+        toast("Unable to seek on remote device");
+      });
+  } else {
+    seekPlayback(ms).catch(() => {});
+  }
 }
 
 // transport actions (play/pause/next/prev/seek) shared across PlayerBar + Immersive.

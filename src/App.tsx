@@ -198,7 +198,12 @@ Home recs so they're cached before the user gets there
   const handlePlayerEvent = useCallback(
     (payload: unknown) => {
       onEvent(payload);
+      const isRemote = usePlayerStore.getState().isRemotePlayback;
       const msg = payload as { type: string; track_id?: string | null };
+
+      if (isRemote && msg.type !== "playing") {
+        return;
+      }
 
       if (msg.type === "playing") {
         const { currentTrack } = usePlayerStore.getState();
