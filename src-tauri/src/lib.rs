@@ -430,6 +430,7 @@ mod library;
 mod lyrics;
 mod media_controls;
 mod playback;
+mod recommend;
 mod resample;
 mod sink;
 mod spotify;
@@ -777,6 +778,7 @@ pub fn run() {
             commands::spotify::get_track,
             commands::spotify::get_playlist,
             commands::spotify::get_recommendations,
+            commands::spotify::record_listen_event,
             commands::playback::warmup_playback,
             commands::playback::play_track,
             commands::playback::retry_play_track,

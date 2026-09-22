@@ -257,6 +257,8 @@ pub async fn logout(app: AppHandle, state: State<'_, AppState>) -> Result<(), Ap
     sqlx::query("DELETE FROM top_artists").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM recently_played").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM new_releases").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM listen_events").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM track_stats").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM lyrics").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM tracks").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM albums").execute(&mut *tx).await?;

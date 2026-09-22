@@ -27,3 +27,22 @@ export const getRecommendations = (
     excludeTrackIds: excludeTrackIds ?? null,
     limit:           limit           ?? null,
   });
+
+// feed the self-improving taste engine. fire-and-forget: a dropped signal must
+// never affect playback.
+export const recordListenEvent = (
+  trackId: string,
+  eventType: "play" | "complete" | "skip",
+  msPlayed = 0,
+  durationMs = 0,
+  contextType?: string | null,
+  contextId?: string | null,
+): Promise<void> =>
+  invoke("record_listen_event", {
+    trackId,
+    eventType,
+    msPlayed,
+    durationMs,
+    contextType: contextType ?? null,
+    contextId:   contextId   ?? null,
+  });

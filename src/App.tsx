@@ -48,6 +48,7 @@ import { usePrefsStore } from "./store/prefs.store";
 import { toast } from "./store/toast.store";
 import { useInvalidateLibrary } from "./hooks/useLibrary";
 import { startRadio, replenishQueue } from "./utils/radio";
+import { trackStarted, trackCompleted } from "./utils/listenTracker";
 import {
   transportPlay,
   transportPause,
@@ -154,7 +155,7 @@ Home recs so they're cached before the user gets there
         .prefetchQuery({
           queryKey: ["recommendations", "home"],
           queryFn: () => getRecommendations(undefined, 16),
-          staleTime: 30 * 60_000,
+          staleTime: 10 * 60_000,
         })
         .catch(() => {});
     }
@@ -221,6 +222,8 @@ Home recs so they're cached before the user gets there
           // Update dynamic speed dial
           const activeContextId = useQueueStore.getState().contextId;
           useSpeedDialStore.getState().recordTrack(currentTrack, activeContextId);
+          // behavioural signal for the taste engine
+          trackStarted(currentTrack, "player", activeContextId);
           if (usePrefsStore.getState().notifyOnTrack)
             showTrackNotification(currentTrack).catch(() => {});
 
@@ -291,6 +294,7 @@ Home recs so they're cached before the user gets there
       if (msg.type === "end_of_track") {
         maybeScrobble();
         const { currentTrack, setCurrentTrack } = usePlayerStore.getState();
+        trackCompleted(currentTrack);
         const next = useQueueStore.getState().advance(currentTrack);
         if (next) {
           setCurrentTrack(next);
