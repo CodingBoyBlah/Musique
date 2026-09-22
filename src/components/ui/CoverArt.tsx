@@ -1,4 +1,4 @@
-import { Music } from "lucide-react";
+import { Music } from "@/lib/icons";
 import type { CSSProperties } from "react";
 
 interface Props {

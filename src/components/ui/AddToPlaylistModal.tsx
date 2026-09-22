@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
-import { ListMusic, Plus, Search, X } from "lucide-react";
+import { ListMusic, Plus, Search, X } from "@/lib/icons";
 import { useAddToPlaylistStore } from "../../store/addToPlaylist.store";
 import { useMyPlaylists, LIBRARY_KEYS } from "../../hooks/useLibrary";
 import { addTrackToPlaylist, createPlaylist } from "../../api/library";

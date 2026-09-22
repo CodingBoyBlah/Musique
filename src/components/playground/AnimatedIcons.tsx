@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Play, Pause, Volume2, Volume1, VolumeX, Heart } from "lucide-react";
+import { Play, Pause, Volume2, Volume1, VolumeX, Heart } from "@/lib/icons";
 
 export function AnimatedPlayPause({
   isPlaying,

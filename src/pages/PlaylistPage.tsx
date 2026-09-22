@@ -1,6 +1,6 @@
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Pin } from "lucide-react";
+import { Pin } from "@/lib/icons";
 import { usePlaylist } from "../hooks/usePlaylist";
 import { TrackRow } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";

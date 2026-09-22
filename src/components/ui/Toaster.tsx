@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Check } from "lucide-react";
+import { Check } from "@/lib/icons";
 import { useToastStore } from "../../store/toast.store";
 
 // bottom-centre toast stack. mounted once in Layout.
@@ -9,7 +9,7 @@ export function Toaster() {
   return (
     <div
       style={{
-        position: "fixed", left: 0, right: 0, bottom: 96, zIndex: 1100,
+        position: "fixed", left: 0, right: 0, bottom: 96, zIndex: 10000,
         display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
         pointerEvents: "none",
       }}

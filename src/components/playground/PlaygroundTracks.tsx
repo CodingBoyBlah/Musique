@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Plus } from "lucide-react";
+import { Plus } from "@/lib/icons";
 import { AnimatedPlayPause, AnimatedHeart } from "./AnimatedIcons";
 
 const SAMPLE_TRACKS = [

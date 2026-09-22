@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Check } from "lucide-react";
+import { ChevronDown, Check } from "@/lib/icons";
 import { gpuLayer, zTransform } from "../../lib/motion";
 
 export interface DropdownOption<T extends string> {

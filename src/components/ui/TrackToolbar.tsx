@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Search, X } from "lucide-react";
+import { Search, X } from "@/lib/icons";
 import type { TrackItem } from "../../types/spotify";
 import { Dropdown, type DropdownOption } from "./Dropdown";
 import { Tooltip } from "./Tooltip";

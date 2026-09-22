@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, RotateCcw, ChevronDown } from "lucide-react";
+import { Eye, EyeOff, RotateCcw, ChevronDown } from "@/lib/icons";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { Tooltip } from "../components/ui/Tooltip";
 import {

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, RotateCw, AlertTriangle } from "lucide-react";
+import { Sparkles, RotateCw, AlertTriangle } from "@/lib/icons";
 import { useUpdaterStore } from "../store/updater.store";
 import { runUpdateCheck, startDownload, restartApp } from "../lib/updater";
 

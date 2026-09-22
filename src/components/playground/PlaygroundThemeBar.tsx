@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { RefreshCw, Check, Sparkles } from "lucide-react";
+import { RefreshCw, Check, Sparkles } from "@/lib/icons";
 import { applyAccent } from "../../lib/color";
 
 export const PRESET_ACCENTS = [
@@ -89,7 +89,7 @@ export function PlaygroundThemeBar() {
                 border: isSelected ? `1.5px solid ${preset.hex}` : "1px solid rgba(255, 255, 255, 0.1)",
                 background: isSelected ? "rgba(255, 255, 255, 0.08)" : "rgba(255, 255, 255, 0.02)",
                 cursor: "pointer",
-                transition: "all 0.15s ease",
+                transition: "border-color 0.15s ease, background 0.15s ease",
               }}
             >
               <span
