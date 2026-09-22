@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, Spirc};
@@ -200,8 +200,19 @@ fn running_under_hypervisor() -> bool {
 // device is unsafe -> the main app uses the (real-time-paced) NullSink and NEVER
 // touches CoreAudio, staying alive and usable. On a healthy machine the child
 // exits 0 and we use the real backend like normal.
+//
+// macOS ONLY. On Windows and Linux there is nothing to probe for: our own
+// `RodioSink` opens the device lazily and a failure comes back as a clean
+// `SinkError::ConnectionRefused` (see sink.rs), never a panic and never a
+// native fault. Running the probe there just bolted a full process spawn -
+// loading the whole app binary again, opening and closing the audio device,
+// waiting for it to exit - onto the front of the FIRST PLAY, for a verdict that
+// was always `true`. The uncatchable-SIGSEGV problem this guards against is
+// specific to cpal + CoreAudio's HAL proxy, so the probe now runs only where
+// that fault can actually happen.
+#[cfg(target_os = "macos")]
 fn audio_device_safe() -> bool {
-    static SAFE: OnceLock<bool> = OnceLock::new();
+    static SAFE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SAFE.get_or_init(|| {
         let exe = match std::env::current_exe() {
             Ok(e) => e,
@@ -416,7 +427,7 @@ pub async fn create_inner(
     #[cfg(target_os = "macos")]
     let force_null_sink = running_under_hypervisor() || !audio_device_safe();
     #[cfg(not(target_os = "macos"))]
-    let force_null_sink = !audio_device_safe();
+    let force_null_sink = false;
     if force_null_sink {
         eprintln!("[playback] audio device unavailable/unsafe - using silent sink");
     }
@@ -522,11 +533,15 @@ pub async fn create_inner(
     // empty EVERY track gets rejected as NotWhitelisted -> PlayerEvent::Unavailable
     // ("content may not be available in your region"). a play fired right after a
     // fresh connect races those packets, so wait a sec for the country to land.
-    for _ in 0..50 {
+    // Poll finely. The country packet usually lands within a few ms of the
+    // connect, but at 100ms granularity we slept out the rest of the tick every
+    // time and added up to ~100ms of dead wait to every session build (and so to
+    // the first play). Same 5s ceiling, 20x finer resolution.
+    for _ in 0..1000 {
         if !session.country().is_empty() {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     eprintln!("[playback] STEP country = {:?}", session.country());
 

@@ -116,11 +116,19 @@ opt-level = 2
 [profile.release]
 codegen-units = 1
 lto = true
-opt-level = "s"
+# Optimize for SPEED, not size. This was "s", which holds back inlining and
+# auto-vectorization - including in the code that runs continuously while music
+# is playing: Vorbis decode, the resampler in resample.rs, and the sample
+# conversion the sink does for every audio packet. Trading a somewhat larger
+# binary for lower CPU during playback (and more headroom before the output
+# buffer underruns) is the right way round for a music player.
+opt-level = 3
 # `unwind` (not `abort`) so the audio-device-open guard in playback/mod.rs
 # (std::panic::catch_unwind) actually works: on a Mac/box with a broken or
 # missing audio device, opening the output can panic - with `abort` that killed
 # the whole app ("crashes when you play"); with `unwind` it's caught and we fall
 # back to the silent sink so the app stays usable. (A hard CoreAudio SIGSEGV is
-# still uncatchable - that's an environment fault.)
+# still uncatchable - that's an environment fault.) Pinned rather than left to
+# the default so a future profile change can't silently break it.
+panic = "unwind"
 strip = true

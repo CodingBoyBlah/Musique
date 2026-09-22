@@ -86,6 +86,56 @@ pub async fn warmup_playback(app: AppHandle) -> Result<(), AppError> {
     ensure_inner(&app).await
 }
 
+/// Startup warm-up, fired from `setup()` the moment app state exists.
+///
+/// The frontend also calls `warmup_playback`, but only after the webview has
+/// booted, mounted React, round-tripped `get_auth_status` over IPC and flipped
+/// `isLoggedIn`. Building the session is the expensive part of the first play -
+/// connecting to the access point, registering the Connect device, waiting on
+/// the country packet - and none of it depends on the UI. Starting it here runs
+/// it concurrently with webview startup, so by the time there is something to
+/// click, the session is usually already up.
+///
+/// Deliberately conservative: this returns early unless everything needed is
+/// already on disk. `create_inner` will launch an interactive browser
+/// authorization if it has neither cached librespot credentials nor a stored
+/// playback token, and a background task must never do that unprompted.
+pub async fn warm_session_if_possible(app: AppHandle) {
+    use tauri::Manager;
+
+    let s = app.state::<AppState>();
+    let db = s.db.clone();
+    let auth = s.auth.clone();
+    drop(s);
+
+    // not logged in yet -> nothing to warm, and get_valid_token would just fail
+    if auth.read().await.refresh_token.is_none() {
+        return;
+    }
+
+    // would create_inner have to go interactive? if so, leave it to the user's
+    // first real play (or the frontend's warmup after an explicit login).
+    let has_cached_creds = app
+        .path()
+        .app_data_dir()
+        .map(|d| d.join("credentials").join("credentials.json").exists())
+        .unwrap_or(false);
+    if !has_cached_creds {
+        let has_token = crate::auth::get_setting_value(&db, "spotify_playback_token")
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|t| !t.trim().is_empty());
+        if !has_token {
+            return;
+        }
+    }
+
+    if let Err(e) = ensure_inner(&app).await {
+        eprintln!("[playback] startup warm-up skipped: {e}");
+    }
+}
+
 #[tauri::command]
 pub async fn play_track(app: AppHandle, id: String) -> Result<(), AppError> {
     eprintln!("[playback cmd] play_track id={id}");
