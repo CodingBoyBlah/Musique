@@ -392,6 +392,7 @@ pub async fn create_inner(
 
     let cache = open_cache();
     let cached_creds = cache.as_ref().and_then(|c| c.credentials());
+    let used_cached_creds = cached_creds.is_some();
     let credentials = match cached_creds {
         Some(c) => {
             eprintln!("[playback] using cached librespot credentials from disk");
@@ -500,20 +501,71 @@ pub async fn create_inner(
             eprintln!("[playback] cached credentials rejected; deleting bad credentials file");
             let _ = std::fs::remove_file(&creds_file);
 
-            eprintln!("[playback] initiating playback authorization flow");
-            if let Ok(fresh_token) = crate::commands::auth::authorize_playback_token(&app).await {
+            // Recover in order of how much it costs the user. A credentials
+            // file left behind by a previous account is the common case, and
+            // the playback token we already hold usually fixes it silently -
+            // going straight to the browser opened a surprise authorization tab
+            // (and, when a sign-in was already in flight, one that could not
+            // even bind its port).
+            let stored_token = if used_cached_creds {
+                auth::get_setting_value(&pool, "spotify_playback_token")
+                    .await
+                    .ok()
+                    .flatten()
+                    .filter(|t| !t.trim().is_empty())
+            } else {
+                None
+            };
+
+            enum Recovery {
+                Stored(String),
+                Interactive,
+            }
+
+            let mut attempts = Vec::new();
+            if let Some(token) = stored_token {
+                attempts.push(Recovery::Stored(token));
+            }
+            attempts.push(Recovery::Interactive);
+
+            for attempt in attempts {
+                let (label, token) = match attempt {
+                    Recovery::Stored(token) => ("stored playback token", token),
+                    Recovery::Interactive => {
+                        eprintln!("[playback] initiating playback authorization flow");
+                        match crate::commands::auth::authorize_playback_token(&app).await {
+                            Ok(token) => ("browser authorization", token),
+                            Err(e) => {
+                                eprintln!("[playback] playback authorization failed: {e}");
+                                break;
+                            }
+                        }
+                    }
+                };
+
+                eprintln!("[playback] retrying spirc with {label}");
                 let fresh_cache = open_cache();
                 let fresh_session = Session::new(session_config.clone(), fresh_cache);
                 spirc_attempt = Spirc::new(
                     connect_config.clone(),
                     fresh_session.clone(),
-                    Credentials::with_access_token(&fresh_token),
+                    Credentials::with_access_token(&token),
                     player.clone(),
                     mixer.clone(),
                 )
                 .await;
                 if spirc_attempt.is_ok() {
                     session = fresh_session;
+                    break;
+                }
+
+                if label == "stored playback token" {
+                    // It is spent; stop offering it to every later attempt.
+                    eprintln!("[playback] stored playback token rejected; discarding it");
+                    let _ = sqlx::query("DELETE FROM settings WHERE key = 'spotify_playback_token'")
+                        .execute(&pool)
+                        .await;
+                    let _ = std::fs::remove_file(&creds_file);
                 }
             }
         }

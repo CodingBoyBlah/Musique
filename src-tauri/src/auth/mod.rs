@@ -46,6 +46,74 @@ pub const DEFAULT_DEVICE_NAME: &str = "Musique";
 pub const PLAYBACK_DEVICE_ID: &str = "fbdc061e6e145fffdaac1e916106ec81f4503c13";
 pub const PLAYBACK_SCOPES: &str = "app-remote-control streaming user-modify-playback-state user-read-currently-playing user-read-playback-state user-read-private";
 
+// ─── auth epoch ──────────────────────────────────────────────────────────────
+//
+// Bumped every time the signed-in identity changes (login, logout, account
+// switch). Long-running background work that writes account-scoped rows - the
+// library sync above all - captures the epoch when it starts and stops writing
+// as soon as it changes. Without this, a sync that was already in flight when
+// you signed out happily re-inserted the old account's playlists *after*
+// logout had purged them, which is why signing out looked like it did nothing.
+static AUTH_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn auth_epoch() -> u64 {
+    AUTH_EPOCH.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Invalidate everything that belongs to the previous identity.
+pub fn bump_auth_epoch() -> u64 {
+    AUTH_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+}
+
+/// True while `epoch` still describes the signed-in identity.
+pub fn epoch_is_current(epoch: u64) -> bool {
+    auth_epoch() == epoch
+}
+
+/// Settings rows that belong to the signed-in Spotify account and must not
+/// survive a logout or an account switch.
+///
+/// Deliberately a denylist: everything else in `settings` describes the *device
+/// or the app* - volume, audio quality, cache size, device name, the user's own
+/// Spotify application credentials - and wiping those on logout was itself a
+/// bug. Clearing `spotify_client_id` in particular left the keyring mirror
+/// behind, so the UI kept showing a custom app while logins silently used the
+/// shared one, and the resulting refresh tokens came back `invalid_client`.
+pub const ACCOUNT_SETTING_KEYS: &[&str] = &[
+    "spotify_user_id",
+    "spotify_display_name",
+    "spotify_email",
+    "spotify_product",
+    "spotify_image_url",
+    "spotify_country",
+    "spotify_followers",
+    "spotify_explicit_filter",
+    "spotify_token_expires_at",
+    "spotify_playback_token",
+    "spotify_auth_client_id",
+    "library_last_synced",
+];
+// last.fm is deliberately absent: it is a separate account the user linked
+// themselves, its session key lives in the keyring rather than here, and
+// clearing only the settings half of it would leave scrobbling live while the
+// UI claimed it was disconnected. It has its own disconnect in Settings.
+
+/// The subset of `ACCOUNT_SETTING_KEYS` that describes the *current* session
+/// rather than the account's cached data. Kept when a fresh login has already
+/// written the new account's rows and we are only clearing out the old one's.
+pub const SESSION_SETTING_KEYS: &[&str] = &[
+    "spotify_user_id",
+    "spotify_display_name",
+    "spotify_email",
+    "spotify_product",
+    "spotify_image_url",
+    "spotify_country",
+    "spotify_followers",
+    "spotify_explicit_filter",
+    "spotify_token_expires_at",
+    "spotify_auth_client_id",
+];
+
 pub fn compute_device_id(device_name: &str) -> String {
     use sha1::{Digest, Sha1};
     let hash = Sha1::digest(device_name.as_bytes());
@@ -177,6 +245,7 @@ async fn do_refresh(pool: &SqlitePool, auth: &RwLock<AuthState>) -> Result<Strin
         Err(e) => {
             let err_str = e.to_string();
             if err_str.contains("invalid_grant") || err_str.contains("invalid_client") {
+                bump_auth_epoch();
                 let _ = token::clear_tokens();
                 *auth.write().await = AuthState::default();
                 return Err(AppError::Auth(
@@ -262,6 +331,20 @@ async fn fetch_profile(access_token: &str) -> Result<SpotifyProfile, AppError> {
         .map_err(|e| AppError::Network(e.to_string()))
 }
 
+/// `fetch_profile` with one retry. A flaky first call here used to fail the
+/// whole login *after* the tokens had already been stored, leaving the app
+/// half-signed-in: an error on screen, a live session underneath.
+async fn fetch_profile_retrying(access_token: &str) -> Result<SpotifyProfile, AppError> {
+    match fetch_profile(access_token).await {
+        Ok(p) => Ok(p),
+        Err(first) => {
+            eprintln!("[auth] profile fetch failed ({first}); retrying once");
+            tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+            fetch_profile(access_token).await
+        }
+    }
+}
+
 // full login, swap the code for tokens then grab the profile then save it all
 
 pub async fn complete_login(
@@ -285,6 +368,10 @@ pub async fn complete_login(
         .refresh_token
         .ok_or_else(|| AppError::Auth("Spotify did not return a refresh token".into()))?;
 
+    // A new identity is taking over from here on: anything still running for the
+    // previous one must stop writing.
+    bump_auth_epoch();
+
     token::store_token("access_token",  &resp.access_token)?;
     token::store_token("refresh_token", &refresh_token)?;
 
@@ -298,7 +385,28 @@ pub async fn complete_login(
         g.expires_at    = Some(expires_at);
     }
 
-    let profile   = fetch_profile(&resp.access_token).await?;
+    // The session is live and stored at this point. If the profile call fails
+    // anyway, stay signed in with whatever the caller can refresh later rather
+    // than reporting a failed login over a working session.
+    let profile = match fetch_profile_retrying(&resp.access_token).await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[auth] signed in but could not read the profile: {e}");
+            // We cannot confirm *whose* session this now is, so the previous
+            // account's cached identity must not be left on screen next to it.
+            for key in ["spotify_user_id", "spotify_display_name", "spotify_email",
+                        "spotify_product", "spotify_image_url", "spotify_country",
+                        "spotify_followers"] {
+                let _ = sqlx::query("DELETE FROM settings WHERE key = ?")
+                    .bind(key)
+                    .execute(pool)
+                    .await;
+            }
+            upsert_setting(pool, "spotify_auth_client_id", client_id).await?;
+            return build_auth_status(pool, true).await;
+        }
+    };
+
     let image_url = profile
         .images
         .as_ref()

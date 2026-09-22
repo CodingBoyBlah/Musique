@@ -30,9 +30,13 @@ pub async fn sync_library(app: AppHandle) -> Result<SyncResult, AppError> {
     let s = app.state::<AppState>();
     let pool = s.db.clone();
     let auth = s.auth.clone();
+    let gate = s.sync_gate.clone();
     drop(s);
 
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
+    // held for the whole sync so a sign-out waits for it instead of purging
+    // underneath it - see `AppState::sync_gate`
+    let _syncing = gate.read().await;
     sync_all(&pool, &token).await
 }
 

@@ -705,6 +705,7 @@ pub fn run() {
                     auth: Arc::new(RwLock::new(auth_state)),
                     playback: Arc::new(tokio::sync::Mutex::new(None)),
                     media_tx,
+                    sync_gate: Arc::new(RwLock::new(())),
                     backdrop_active,
                 });
                 Ok::<(), Box<dyn std::error::Error>>(())
