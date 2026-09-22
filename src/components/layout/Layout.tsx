@@ -12,6 +12,7 @@ import { QuitConfirm } from "../ui/QuitConfirm";
 import { Toaster } from "../ui/Toaster";
 import { Immersive } from "./Immersive";
 import { AddToPlaylistModal } from "../ui/AddToPlaylistModal";
+import { YtMatchModal } from "../ui/YtMatchModal";
 import { DevicesPopover } from "./DevicesPopover";
 import { usePlayerStore } from "../../store/player.store";
 import { useUIStore } from "../../store/ui.store";
@@ -386,6 +387,7 @@ export default function Layout() {
       <Immersive />
       <QuitConfirm />
       <AddToPlaylistModal />
+      <YtMatchModal />
       <Toaster />
       {/* always at the window's own top-right corner, never inside the card,
           so the buttons sit on the OS material and the close button owns the

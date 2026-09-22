@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AnimatedPlayPause } from "./AnimatedIcons";
 
@@ -119,11 +119,18 @@ export function SegmentedControl({
   value,
   onChange,
   layoutId = "segmented-pill",
+  disabled,
+  adornments,
 }: {
   options?: string[];
   value: string;
   onChange: (val: string) => void;
   layoutId?: string;
+  /** Labels that render greyed out and cannot be selected or dragged to. */
+  disabled?: string[];
+  /** Extra content rendered after a label, keyed by label - e.g. an info icon
+   *  explaining why that option is unavailable. */
+  adornments?: Record<string, ReactNode>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -132,15 +139,21 @@ export function SegmentedControl({
   const isDraggingRef = useRef(false);
   const startXRef = useRef(0);
 
+  const isDisabled = (opt: string) => disabled?.includes(opt) ?? false;
+
   // Active option is either the magnetically attracted drag target or the committed value
   const activeOption = dragIndex !== null ? options[dragIndex] : value;
 
+  // Falls back to the committed value's index so a control whose options are
+  // all disabled can't snap the pill somewhere unselectable.
   const getClosestIndex = (clientX: number) => {
-    let closest = 0;
+    let closest = Math.max(0, options.indexOf(value));
     let minDistance = Infinity;
 
     tabRefs.current.forEach((tab, idx) => {
-      if (!tab) return;
+      // Skip unavailable options so dragging glides past them rather than
+      // snapping onto something that can't be chosen.
+      if (!tab || isDisabled(options[idx])) return;
       const rect = tab.getBoundingClientRect();
       const tabCenter = rect.left + rect.width / 2;
       const dist = Math.abs(clientX - tabCenter);
@@ -219,7 +232,9 @@ export function SegmentedControl({
       }}
     >
       {options.map((opt, idx) => {
-        const active = opt === activeOption;
+        const off = isDisabled(opt);
+        const active = opt === activeOption && !off;
+        const adornment = adornments?.[opt];
 
         return (
           <button
@@ -227,9 +242,17 @@ export function SegmentedControl({
             ref={(el) => {
               tabRefs.current[idx] = el;
             }}
-            onClick={() => onChange(opt)}
+            // aria-disabled rather than the `disabled` attribute on purpose:
+            // a disabled button swallows pointer events, which would stop any
+            // adornment tooltip from opening - exactly when it's the only
+            // thing explaining why the option is greyed out.
+            aria-disabled={off || undefined}
+            onClick={() => { if (!off) onChange(opt); }}
             style={{
               position: "relative",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
               padding: "7px clamp(8px, 1.4vw, 16px)",
               borderRadius: 8,
               border: "none",
@@ -237,9 +260,10 @@ export function SegmentedControl({
               fontSize: "clamp(11.5px, 1.2vw, 12.5px)",
               fontWeight: 600,
               color: active ? "var(--color-accent-text)" : "var(--color-text-dim)",
-              cursor: "pointer",
+              opacity: off ? 0.45 : 1,
+              cursor: off ? "default" : "pointer",
               zIndex: 1,
-              transition: "color 0.15s ease",
+              transition: "color 0.15s ease, opacity 0.15s ease",
               outline: "none",
               userSelect: "none",
               whiteSpace: "nowrap",
@@ -265,6 +289,17 @@ export function SegmentedControl({
               />
             )}
             <span style={{ position: "relative", zIndex: 1 }}>{opt}</span>
+            {adornment && (
+              <span
+                style={{ position: "relative", zIndex: 1, display: "inline-flex", alignItems: "center" }}
+                // The adornment is its own affordance (a tooltip trigger), so a
+                // click on it shouldn't also pick the option.
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                {adornment}
+              </span>
+            )}
           </button>
         );
       })}

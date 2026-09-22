@@ -188,6 +188,7 @@ export const MonitorSpeaker = createRuneIcon("MonitorSpeaker", `<path d="M5.5 20
 export const MoreHorizontal = createRuneIcon("MoreHorizontal", `<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>`);
 
 export const Music = createRuneIcon("Music", `<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>`);
+export const Info = createRuneIcon("Info", `<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>`);
 
 export const Music2 = createRuneIcon("Music2", `<circle cx="8" cy="18" r="4"/><path d="M12 18V2l7 4"/>`);
 
@@ -255,6 +256,7 @@ const ICONS: Record<string, LucideIcon> = {
   "MonitorSpeaker": MonitorSpeaker,
   "MoreHorizontal": MoreHorizontal,
   "Music": Music,
+  "Info": Info,
   "Music2": Music2,
   "PanelLeft": PanelLeft,
   "PanelLeftClose": PanelLeftClose,

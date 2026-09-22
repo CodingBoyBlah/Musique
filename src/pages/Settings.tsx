@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, RotateCcw, ChevronDown } from "@/lib/icons";
+import { Eye, EyeOff, RotateCcw, ChevronDown, Info } from "@/lib/icons";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { Tooltip } from "../components/ui/Tooltip";
 import {
@@ -15,7 +15,14 @@ import {
   type ConnectionStatus,
 } from "../store/credentials.store";
 import { usePrefsStore } from "../store/prefs.store";
-import { type AudioQuality } from "../api/playback";
+import {
+  type AudioQuality,
+  type PlaybackBackend,
+  setPlaybackBackend,
+} from "../api/playback";
+import { usePlaybackBackend } from "../hooks/usePlaybackBackend";
+import { toast } from "../store/toast.store";
+import { errMsg } from "../lib/err";
 import { useUIStore } from "../store/ui.store";
 import { setDiscordEnabled, requestNotificationPermission } from "../api/media";
 import {
@@ -308,13 +315,25 @@ function Segmented<T extends string>({
   layoutId = "settings-segmented",
 }: {
   value: T;
-  options: { value: T; label: string }[];
+  options: {
+    value: T;
+    label: string;
+    /** Renders greyed out and unselectable. */
+    disabled?: boolean;
+    /** Extra content after the label, e.g. an info icon saying why it's off. */
+    info?: React.ReactNode;
+  }[];
   onChange: (v: T) => void;
   layoutId?: string;
 }) {
   const labelToValue = new Map(options.map((o) => [o.label, o.value]));
   const currentOption = options.find((o) => o.value === value);
   const currentLabel = currentOption ? currentOption.label : options[0]?.label || "";
+
+  const disabled = options.filter((o) => o.disabled).map((o) => o.label);
+  const adornments = Object.fromEntries(
+    options.filter((o) => o.info).map((o) => [o.label, o.info]),
+  );
 
   return (
     <SegmentedControl
@@ -325,6 +344,8 @@ function Segmented<T extends string>({
         if (targetVal !== undefined) onChange(targetVal);
       }}
       layoutId={layoutId}
+      disabled={disabled.length ? disabled : undefined}
+      adornments={Object.keys(adornments).length ? adornments : undefined}
     />
   );
 }
@@ -390,11 +411,53 @@ const QUALITY_OPTIONS: { value: AudioQuality; label: string }[] = [
   { value: "320", label: "Very high · 320 kbps" },
 ];
 
+/* The "Requires Premium" marker on the Spotify option. Rendered even when that
+   option is selectable, so the constraint is discoverable before someone loses
+   Premium rather than only after. */
+const PREMIUM_INFO = (
+  <Tooltip label="Requires Premium">
+    <span
+      style={{ display: "inline-flex", alignItems: "center", cursor: "help" }}
+    >
+      <Info size={12} strokeWidth={2.2} />
+    </span>
+  </Tooltip>
+);
+
+function backendOptions(spotifyAvailable: boolean): {
+  value: PlaybackBackend;
+  label: string;
+  disabled?: boolean;
+  info?: React.ReactNode;
+}[] {
+  return [
+    {
+      value: "spotify",
+      label: "Spotify",
+      // Spotify only streams audio to Premium, so a free account can't pick it.
+      disabled: !spotifyAvailable,
+      info: PREMIUM_INFO,
+    },
+    { value: "youtube", label: "YouTube Music" },
+  ];
+}
+
 function PlaybackCard() {
   const audioQuality = usePrefsStore((s) => s.audioQuality);
   const setAudioQuality = usePrefsStore((s) => s.setAudioQuality);
   const audioCacheLimitMb = usePrefsStore((s) => s.audioCacheLimitMb);
   const setAudioCacheLimitMb = usePrefsStore((s) => s.setAudioCacheLimitMb);
+
+  // Free Spotify accounts can't stream through librespot, so "Automatic"
+  // routes them to YouTube Music. The explicit options exist mainly so the
+  // YouTube path can be tried on a Premium account without downgrading it.
+  const qcBackend = useQueryClient();
+  const { data: backend } = usePlaybackBackend();
+  const changeBackend = (mode: PlaybackBackend) => {
+    setPlaybackBackend(mode)
+      .then(() => qcBackend.invalidateQueries({ queryKey: ["playback-backend"] }))
+      .catch((e) => toast(errMsg(e)));
+  };
 
   const cfill = Math.round(
     ((Math.max(512, Math.min(8192, audioCacheLimitMb)) - 512) / (8192 - 512)) * 100
@@ -403,6 +466,22 @@ function PlaybackCard() {
 
   return (
     <Card title="Playback">
+      <SettingRow
+        label="Audio source"
+        hint={
+          backend && !backend.spotify_available
+            ? "Your Spotify plan can't stream audio, so playback uses YouTube Music. Metadata, artwork and lyrics still come from Spotify."
+            : "Where audio is streamed from. Metadata, artwork and lyrics always come from Spotify."
+        }
+        control={
+          <Segmented
+            value={backend?.active ?? "youtube"}
+            options={backendOptions(backend?.spotify_available ?? false)}
+            onChange={changeBackend}
+            layoutId="settings-playback-backend"
+          />
+        }
+      />
       <SettingRow
         label="Audio quality"
         hint="Higher bitrates use more data. Applied on next track."

@@ -11,6 +11,8 @@ import { prefetchArtist, prefetchAlbum } from "../../lib/prefetch";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
 import { shareSpotifyLink, shareUniversalLink } from "../../lib/share";
 import { useAddToPlaylistStore } from "../../store/addToPlaylist.store";
+import { useYtMatchStore } from "../../store/ytMatch.store";
+import { usePlaybackBackend } from "../../hooks/usePlaybackBackend";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { toast } from "../../store/toast.store";
@@ -78,6 +80,10 @@ function TrackRowImpl({
   const qc = useQueryClient();
   const navigate = useNavigate();
   const openAddToPlaylist = useAddToPlaylistStore((s) => s.open);
+  const openYtMatch = useYtMatchStore((s) => s.open);
+  // Cached hard and shared across every row, so this is one query for the
+  // whole list rather than per-row work.
+  const { data: backend } = usePlaybackBackend();
   const { open: openMenu, element: menuEl } = useContextMenu();
 
   const isThisCurrent = usePlayerStore((s) => s.currentTrack?.id === track.id);
@@ -132,6 +138,16 @@ function TrackRowImpl({
   });
   if (track.artists[0]) menuEntries.push({ label: "Go to artist", icon: <User size={14} />, onSelect: () => navigate(`/artist/${track.artists[0].id}`) });
   if (track.album) menuEntries.push({ label: "Go to album", icon: <Disc3 size={14} />, onSelect: () => navigate(`/album/${track.album!.id}`) });
+  // Only meaningful while audio actually comes from YouTube. This is the
+  // escape hatch for a bad automatic match - matching refuses rather than
+  // guessing, so a track that won't play needs somewhere to be corrected.
+  if (backend?.active === "youtube") {
+    menuEntries.push({
+      label: "Change YouTube source…",
+      icon: <Music size={14} />,
+      onSelect: () => openYtMatch(track.id, track.name),
+    });
+  }
   menuEntries.push({ label: "Copy Spotify link",   icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("track", track.id) });
   menuEntries.push({ label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("track", track.id) });
 
