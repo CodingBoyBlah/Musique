@@ -38,12 +38,15 @@ interface PlayerStore {
   immersivePanel: "lyrics" | "queue";
   setImmersivePanel: (p: "lyrics" | "queue") => void;
 
-  // manual sync nudge for lyrics, in ms. negative = highlight later (the common
-  // case - reported playback position runs ahead of what you actually hear
-  // because of the audio output buffer, so LRC lines light up early). persisted.
+  // manual sync nudge for lyrics, in ms. purely a personal preference now:
+  // the systematic error it used to paper over (reported position runs ahead of
+  // what you hear, by however much is sitting in the sink queue + device buffer)
+  // is measured for real and corrected in useLyricClock, so this defaults to 0.
+  // negative = highlight later. persisted.
   lyricsOffsetMs: number;
   adjustLyricsOffset: (deltaMs: number) => void;
   setLyricsOffset: (ms: number) => void;
+
 
   isPlaying:    boolean;
   sessionReady: boolean;  // true once we've gotten any player event
@@ -171,11 +174,15 @@ export const usePlayerStore = create<PlayerStore>()(
       immersivePanel:    "lyrics",
       setImmersivePanel: (p) => set({ immersivePanel: p }),
 
-      lyricsOffsetMs: -250,
+      // 0, because the drift this used to cancel is now measured and removed
+      // in useLyricClock (see lib/outputLatency.ts). a non-zero value here would
+      // be corrected twice.
+      lyricsOffsetMs: 0,
       adjustLyricsOffset: (deltaMs) =>
         set((s) => ({ lyricsOffsetMs: Math.max(-5000, Math.min(5000, s.lyricsOffsetMs + deltaMs)) })),
       setLyricsOffset: (ms) =>
         set({ lyricsOffsetMs: Math.max(-5000, Math.min(5000, Math.round(ms))) }),
+
 
       isPlaying:    false,
       sessionReady: false,
@@ -328,6 +335,22 @@ export const usePlayerStore = create<PlayerStore>()(
     {
       name: "spotify-player",
       storage: dedupedStorage(),
+      /* v1 moved output-latency compensation out of `lyricsOffsetMs` and into a
+         real measurement. Anyone upgrading still has the old value persisted,
+         and leaving it would subtract the buffer twice - lyrics would land as
+         far LATE as they used to be early. The legacy default (-250) becomes 0;
+         a value the user actually tuned keeps its intent by having the old
+         assumed baseline added back, leaving just their personal part. */
+      version: 1,
+      migrate: (persisted, version) => {
+        const st = (persisted ?? {}) as Partial<PlayerStore>;
+        if (version < 1 && typeof st.lyricsOffsetMs === "number") {
+          const LEGACY_BASELINE_MS = -250;
+          st.lyricsOffsetMs =
+            st.lyricsOffsetMs === LEGACY_BASELINE_MS ? 0 : st.lyricsOffsetMs - LEGACY_BASELINE_MS;
+        }
+        return st as PlayerStore;
+      },
       partialize: (s) => ({
         volume: s.volume,
         muted:  s.muted,

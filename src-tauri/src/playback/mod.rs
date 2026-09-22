@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, Spirc};
 use librespot_core::{
@@ -236,6 +236,7 @@ pub struct PlaybackInner {
     pub is_ended:          Arc<AtomicBool>,
     pub is_playing_atomic: Arc<AtomicBool>,
     pub needs_rebuild:     Arc<AtomicBool>,
+    pub output_latency:    Arc<AtomicI64>,
     spirc:                 Spirc,
     session:               Session,
     _event_task:           tauri::async_runtime::JoinHandle<()>,
@@ -248,8 +249,33 @@ fn spirc_err(e: LibrespotError) -> AppError {
 }
 
 impl PlaybackInner {
+    /// Audio output latency in milliseconds (queued frames in sink + device buffer).
+    /// Returns 0 for the null/silent fallback sink or if playback has not started.
+    pub fn output_latency_ms(&self) -> i64 {
+        self.output_latency.load(Ordering::Relaxed)
+    }
+
     pub fn is_playing(&self) -> bool {
         self.is_playing_atomic.load(Ordering::Relaxed)
+    }
+
+    /// Tear the librespot session down for real.
+    ///
+    /// Dropping `PlaybackInner` is not enough. Both background tasks were
+    /// spawned onto the runtime and dropping a `JoinHandle` only *detaches* the
+    /// task, so after a logout the previous account's Connect device stayed
+    /// registered, kept answering remote commands, and kept rewriting its
+    /// credentials cache - which then got picked up as "cached credentials" on
+    /// the next sign-in and put the old account straight back.
+    pub async fn shutdown(&self) {
+        if let Err(e) = self.spirc.shutdown() {
+            eprintln!("[playback] spirc shutdown request failed: {e}");
+        }
+        self.player.stop();
+        // give spirc a moment to send its goodbye and unregister the device
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        self._spirc_task.abort();
+        self._event_task.abort();
     }
 
     pub fn is_ended(&self) -> bool {
@@ -433,6 +459,9 @@ pub async fn create_inner(
     let volume    = SharedVolume::new(initial_volume, initial_muted);
     let vol_clone = volume.clone();
 
+    let output_latency = Arc::new(AtomicI64::new(0));
+    let latency_sink = Arc::clone(&output_latency);
+
     #[cfg(target_os = "macos")]
     let force_null_sink = running_under_hypervisor() || !audio_device_safe();
     #[cfg(not(target_os = "macos"))]
@@ -454,7 +483,7 @@ pub async fn create_inner(
             on_err,
             Box::new(vol_clone),
             crate::sink::DEFAULT_BUFFER_MS,
-        )) as Box<dyn Sink>
+        ).with_latency_tracker(Arc::clone(&latency_sink))) as Box<dyn Sink>
     };
 
     let bitrate_setting: Option<(String,)> = sqlx::query_as(
@@ -702,6 +731,7 @@ pub async fn create_inner(
         is_ended,
         is_playing_atomic,
         needs_rebuild:     Arc::new(AtomicBool::new(false)),
+        output_latency,
         spirc,
         session,
         _event_task:       event_task,

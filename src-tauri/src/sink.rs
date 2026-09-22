@@ -8,7 +8,7 @@
 //! device only when playback starts, reports failures gracefully, resamples
 //! cleanly to the device's native rate, and handles thread priority.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
@@ -53,6 +53,33 @@ fn engine_buffer(
     }
 }
 
+/// Computes output latency in milliseconds from frames queued in the sink,
+/// the output sample rate, and the granted device buffer duration.
+///
+/// Returns 0 if `sample_rate` is 0 and no device buffer duration is provided.
+pub fn calculate_latency_ms(
+    queued_frames: usize,
+    sample_rate: u32,
+    device_buffer_ms: Option<u32>,
+) -> i64 {
+    let sink_ms = if sample_rate > 0 {
+        (queued_frames as u64 * 1000) / sample_rate as u64
+    } else {
+        0
+    };
+    let device_ms = device_buffer_ms.unwrap_or(0) as u64;
+    (sink_ms + device_ms) as i64
+}
+
+/// Convenience alias for `calculate_latency_ms`.
+pub fn latency_ms(
+    queued_frames: usize,
+    sample_rate: u32,
+    device_buffer_ms: Option<u32>,
+) -> i64 {
+    calculate_latency_ms(queued_frames, sample_rate, device_buffer_ms)
+}
+
 pub struct RodioSink {
     /// The output device name; `None` means the default.
     device: Option<String>,
@@ -65,6 +92,9 @@ pub struct RodioSink {
     /// Keeps asking which output the system calls its default.
     watch: Option<DefaultWatch>,
     buffer_ms: u32,
+    /// Total output latency in milliseconds (queued frames in sink + device buffer).
+    /// Updated on every audio append so reads on a timer are cheap atomic loads.
+    latency: Arc<AtomicI64>,
 }
 
 struct Output {
@@ -78,6 +108,12 @@ struct Output {
     /// not Spotify's.
     sample_rate: u32,
     resampler: Option<Resampler>,
+    /// Duration of the audio device buffer in milliseconds granted by cpal / engine_buffer.
+    device_buffer_ms: u32,
+    /// Ring buffer of frame counts for recently appended chunks.
+    recent_chunk_frames: [u32; 32],
+    recent_chunk_idx: usize,
+    recent_chunk_count: usize,
 }
 
 impl Output {
@@ -101,7 +137,25 @@ impl RodioSink {
             applied_volume: -1.0,
             watch: None,
             buffer_ms,
+            latency: Arc::new(AtomicI64::new(0)),
         }
+    }
+
+    /// Attaches an external atomic tracker so callers can observe output
+    /// latency updates without locking the sink.
+    pub fn with_latency_tracker(mut self, latency: Arc<AtomicI64>) -> Self {
+        self.latency = latency;
+        self
+    }
+
+    /// Returns a handle to the latency tracker atomic.
+    pub fn latency_tracker(&self) -> Arc<AtomicI64> {
+        Arc::clone(&self.latency)
+    }
+
+    /// Current output latency in milliseconds.
+    pub fn output_latency_ms(&self) -> i64 {
+        self.latency.load(Ordering::Relaxed)
     }
 
     fn follow_default(&mut self, at_once: bool) {
@@ -193,6 +247,15 @@ impl Sink for RodioSink {
             Some(resampler) => resampler.process(&samples),
             None => samples,
         };
+        // track the frame count of this chunk before appending to rodio
+        let chunk_frames = (samples.len() / NUM_CHANNELS as usize) as u32;
+        let slot = output.recent_chunk_idx;
+        output.recent_chunk_frames[slot] = chunk_frames;
+        output.recent_chunk_idx = (slot + 1) % 32;
+        if output.recent_chunk_count < 32 {
+            output.recent_chunk_count += 1;
+        }
+
         output.sink.append(rodio::buffer::SamplesBuffer::new(
             NUM_CHANNELS as rodio::ChannelCount,
             output.sample_rate as rodio::SampleRate,
@@ -207,6 +270,35 @@ impl Sink for RodioSink {
             }
             thread::sleep(Duration::from_millis(10));
         }
+
+        // compute current output latency: rodio's queued frames plus the
+        // device buffer duration. rodio::Sink::len() tells us how many
+        // sources remain in the FIFO queue; summing the last `len` entries
+        // gives the honest frame count without guessing.
+        let queued_sources = output.sink.len();
+        let queued_frames = if queued_sources == 0 {
+            0
+        } else {
+            let n = queued_sources.min(output.recent_chunk_count);
+            let mut sum: u64 = 0;
+            for i in 0..n {
+                let idx = (output.recent_chunk_idx + 32 - 1 - i) % 32;
+                sum += output.recent_chunk_frames[idx] as u64;
+            }
+            if queued_sources > n && n > 0 {
+                let avg = sum / n as u64;
+                sum += (queued_sources - n) as u64 * avg;
+            }
+            sum as usize
+        };
+
+        let latency_ms = calculate_latency_ms(
+            queued_frames,
+            output.sample_rate,
+            Some(output.device_buffer_ms),
+        );
+        self.latency.store(latency_ms, Ordering::Relaxed);
+
         Ok(())
     }
 }
@@ -339,6 +431,22 @@ fn open_output(preferred: Option<&str>, buffer_ms: u32) -> Result<Output, OpenEr
     let mut stream = open_stream(&device, on_error, buffer_ms)?;
     stream.log_on_drop(false);
     let sample_rate = stream.config().sample_rate();
+
+    // read the actual negotiated buffer size from the output stream.
+    // cpal clamped the requested buffer_ms against the device's hardware
+    // supported range inside engine_buffer(); on many audio interfaces
+    // the granted buffer size is constrained to hardware periods and
+    // differs from the requested 100ms. If cpal reports BufferSize::Default
+    // (e.g. on fallback or backends that do not expose buffer size), we
+    // cannot query the driver's true buffer size from cpal once running,
+    // so fall back to the configured buffer_ms.
+    let device_buffer_ms = match stream.config().buffer_size() {
+        cpal::BufferSize::Fixed(frames) if sample_rate > 0 => {
+            ((u64::from(*frames) * 1000 + u64::from(sample_rate) / 2) / u64::from(sample_rate)) as u32
+        }
+        _ => buffer_ms,
+    };
+
     let resampler = Resampler::new(SAMPLE_RATE, sample_rate, NUM_CHANNELS as usize);
     if resampler.is_some() {
         log::info!(
@@ -353,5 +461,64 @@ fn open_output(preferred: Option<&str>, buffer_ms: u32) -> Result<Output, OpenEr
         failed,
         sample_rate,
         resampler,
+        device_buffer_ms,
+        recent_chunk_frames: [0; 32],
+        recent_chunk_idx: 0,
+        recent_chunk_count: 0,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_latency_arithmetic_standard() {
+        // 4410 frames at 44.1 kHz is exactly 100ms in the sink queue.
+        // With a 100ms device buffer, total latency is 200ms.
+        let latency = calculate_latency_ms(4410, 44100, Some(100));
+        assert_eq!(latency, 200);
+    }
+
+    #[test]
+    fn test_latency_arithmetic_48k() {
+        // 4800 frames at 48 kHz is 100ms. With a 42ms hardware buffer,
+        // total latency is 142ms.
+        let latency = calculate_latency_ms(4800, 48000, Some(42));
+        assert_eq!(latency, 142);
+    }
+
+    #[test]
+    fn test_latency_arithmetic_zero_frames() {
+        // Queue empty, but device buffer still holds audio.
+        let latency = calculate_latency_ms(0, 48000, Some(50));
+        assert_eq!(latency, 50);
+    }
+
+    #[test]
+    fn test_latency_arithmetic_none_buffer() {
+        // Device buffer unknown / None, only queued frames contribute.
+        let latency = calculate_latency_ms(4410, 44100, None);
+        assert_eq!(latency, 100);
+    }
+
+    #[test]
+    fn test_latency_arithmetic_zero_and_none() {
+        // Zero frames, valid rate, None buffer -> 0ms.
+        let latency = calculate_latency_ms(0, 44100, None);
+        assert_eq!(latency, 0);
+
+        // Zero frames, zero rate, None buffer -> 0ms (no divide-by-zero).
+        let latency = calculate_latency_ms(0, 0, None);
+        assert_eq!(latency, 0);
+
+        // Zero rate with device buffer -> returns device buffer safely.
+        let latency = calculate_latency_ms(0, 0, Some(100));
+        assert_eq!(latency, 100);
+    }
+
+    #[test]
+    fn test_latency_ms_alias() {
+        assert_eq!(latency_ms(2205, 44100, Some(50)), 100);
+    }
 }

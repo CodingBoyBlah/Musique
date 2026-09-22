@@ -429,3 +429,30 @@ pub async fn set_audio_cache_limit(app: AppHandle, limit_mb: u64) -> Result<(), 
 
     Ok(())
 }
+
+/// Returns the current audio output latency in milliseconds.
+///
+/// Accounts for both the audio chunks queued in rodio's sink and the
+/// negotiated hardware buffer duration granted to cpal. Returns 0 when
+/// playback is not initialized or when running through the null sink.
+#[tauri::command]
+pub async fn get_output_latency_ms(app: AppHandle) -> Result<i64, AppError> {
+    // Has to follow the active backend. The librespot sink only updates its
+    // figure while it is actually writing audio, so on the YouTube path it
+    // reports 0 - and `lib/outputLatency.ts` reads 0 as "no sink" and keeps its
+    // 250ms placeholder. That placeholder is what was desyncing lyrics, since
+    // the real buffer is nothing like 250ms.
+    if uses_youtube(&app).await {
+        let yt = app.state::<AppState>().yt.clone();
+        let guard = yt.lock().await;
+        return Ok(guard.as_ref().map(|p| p.output_latency_ms()).unwrap_or(0));
+    }
+
+    let playback = app.state::<AppState>().playback.clone();
+    let guard = playback.lock().await;
+    let latency = guard
+        .as_ref()
+        .map(|inner| inner.output_latency_ms())
+        .unwrap_or(0);
+    Ok(latency)
+}

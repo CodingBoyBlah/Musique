@@ -850,6 +850,7 @@ pub fn run() {
             commands::playback::set_audio_quality,
             commands::playback::get_audio_cache_limit,
             commands::playback::set_audio_cache_limit,
+            commands::playback::get_output_latency_ms,
             commands::library::sync_library,
             commands::library::get_liked_songs,
             commands::library::get_liked_songs_count,
