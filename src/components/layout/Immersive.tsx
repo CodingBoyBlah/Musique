@@ -4,7 +4,7 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   X, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1,
   Captions, ListMusic, Music,
-} from "lucide-react";
+} from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
@@ -128,11 +128,15 @@ function ImmersiveLyrics() {
             ref={(el) => { rowRefs.current[ri] = el; }}
             onClick={() => seekTo(ri)}
             style={{
-              cursor: synced ? "pointer" : "default", padding: "7px 4px", borderRadius: 10,
-              transition: "opacity 0.3s ease, transform 0.4s cubic-bezier(0.23,1,0.32,1)",
+              cursor: synced ? "pointer" : "default",
+              padding: isActive ? "10px 8px" : "6px 8px",
+              margin: isActive ? "4px 0" : "0",
+              borderRadius: 12,
+              transition: "opacity 0.38s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), filter 0.38s ease",
               transformOrigin: "left center",
-              transform: isActive ? "scale(1.03)" : "scale(1)",
-              opacity: !synced ? 0.9 : isActive ? 1 : isPast ? 0.32 : 0.5,
+              transform: isActive ? "scale(1.12)" : "scale(0.95)",
+              opacity: !synced ? 0.9 : isActive ? 1 : isPast ? 0.26 : 0.40,
+              filter: !synced || isActive ? "none" : "blur(2px)",
               display: "flex", flexDirection: "column", gap: multi ? 4 : 0,
             }}
           >
@@ -151,13 +155,13 @@ function ImmersiveLyrics() {
                 >
                   {isActive && voice.words.length ? (
                     // word-by-word brightness sweep (real musixmatch/netease timings)
-                    <ActiveLine words={mapWords(voice)} getClock={getClock} size={size} weight={weight} halo={0.18} />
+                    <ActiveLine words={mapWords(voice)} getClock={getClock} size={size} weight={weight} halo={0.35} />
                   ) : (
                     <p
                       style={{
                         margin: 0, fontSize: size, fontWeight: weight, lineHeight: 1.3, letterSpacing: "-0.01em",
                         color: isActive ? "#fff" : "rgba(255,255,255,0.82)",
-                        textShadow: isActive ? "0 0 24px rgba(255,255,255,0.18)" : "none",
+                        textShadow: isActive ? "0 0 28px rgba(255, 255, 255, 0.40)" : "none",
                       }}
                     >
                       {voice.text || "♪"}
@@ -289,6 +293,7 @@ function Ctl({ children, onClick, active, big, title }: { children: React.ReactN
         width: big ? 64 : 44, height: big ? 64 : 44, borderRadius: "50%", border: "none",
         background: big ? "#fff" : "transparent",
         color: big ? "#0a0a0f" : active ? "#fff" : "rgba(255,255,255,0.75)",
+        boxShadow: big ? "0 4px 20px rgba(0, 0, 0, 0.45)" : "none",
         cursor: "pointer",
       }}
     >
@@ -323,10 +328,10 @@ export function Immersive() {
     <AnimatePresence>
       {open && track && (
         <motion.div
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 24 }}
-          transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
+          initial={{ opacity: 0, scale: 0.94, filter: "blur(16px)" }}
+          animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+          exit={{ opacity: 0, scale: 0.96, filter: "blur(12px)" }}
+          transition={{ duration: 0.38, ease: [0.16, 1, 0.3, 1] }}
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b" }}
         >
           <GradientBg url={track.album?.image_url} />
@@ -369,7 +374,9 @@ export function Immersive() {
             <div style={{ flex: "1 1 420px", minWidth: 0, maxWidth: 620, display: "flex", flexDirection: "column", gap: "clamp(18px, 3vh, 32px)", margin: "0 auto" }}>
               <motion.div
                 layout
-                style={{ width: "min(46vh, 100%)", aspectRatio: "1 / 1", alignSelf: "center", borderRadius: 16, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,0.55)" }}
+                animate={{ scale: isPlaying ? 1 : 0.96 }}
+                transition={{ type: "spring", stiffness: 300, damping: 26 }}
+                style={{ width: "min(46vh, 100%)", aspectRatio: "1 / 1", alignSelf: "center", borderRadius: 20, overflow: "hidden", boxShadow: "0 28px 80px rgba(0,0,0,0.65), 0 0 40px rgba(255,255,255,0.06)" }}
               >
                 <CoverArt url={track.album?.image_url} alt={track.name} size={520} style={{ width: "100%", height: "100%" }} />
               </motion.div>
@@ -418,6 +425,13 @@ export function Immersive() {
                     </span>
                   ))}
                 </p>
+                {track.album?.name && (
+                  <div style={{ marginTop: 8 }}>
+                    <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {track.album.name}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <Progress />
@@ -433,9 +447,26 @@ export function Immersive() {
               </div>
             </div>
 
-            {/* right: lyrics / queue switcher */}
-            <div style={{ flex: "1 1 380px", minWidth: 0, height: "100%", maxHeight: "82vh", display: "flex", flexDirection: "column", minHeight: 0 }}>
-              <div style={{ display: "flex", gap: 4, padding: 4, borderRadius: 99, background: "rgba(255,255,255,0.08)", alignSelf: "flex-start", marginBottom: 8 }}>
+            {/* right: Cider frosted card container for lyrics / queue */}
+            <div
+              style={{
+                flex: "1 1 420px",
+                minWidth: 0,
+                height: "100%",
+                maxHeight: "82vh",
+                display: "flex",
+                flexDirection: "column",
+                minHeight: 0,
+                borderRadius: 28,
+                background: "rgba(28, 28, 34, 0.60)",
+                backdropFilter: "blur(48px) saturate(180%)",
+                WebkitBackdropFilter: "blur(48px) saturate(180%)",
+                border: "1px solid rgba(255, 255, 255, 0.08)",
+                boxShadow: "0 28px 70px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.10)",
+                padding: "24px 28px",
+              }}
+            >
+              <div style={{ display: "flex", gap: 4, padding: 4, borderRadius: 99, background: "rgba(255,255,255,0.08)", alignSelf: "flex-start", marginBottom: 12 }}>
                 <PanelTab active={panel === "lyrics"} onClick={() => setPanel("lyrics")} icon={<Captions size={15} />} label="Lyrics" />
                 <PanelTab active={panel === "queue"} onClick={() => setPanel("queue")} icon={<ListMusic size={15} />} label="Queue" />
               </div>

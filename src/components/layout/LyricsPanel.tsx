@@ -1,14 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
-  X,
   Languages,
   Music2,
   RefreshCw,
-  Minus,
-  Plus,
-  Clock,
-} from "lucide-react";
+} from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useLyrics } from "../../hooks/useLyrics";
 import { seekPlayback } from "../../api/playback";
@@ -33,85 +29,11 @@ import {
 
 const WIDTH = 366;
 
-// living background: the actual cover art, blurred + drifting TODO - reuse in immersive - DONEN
-
-function CoverBg({ url }: { url: string | null | undefined }) {
-  const reduceMotion = useReducedMotion();
-  if (!url) {
-    return (
-      <div
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: "#0a0a12",
-          zIndex: 0,
-        }}
-      />
-    );
-  }
-  /* perf: two translucent blurred copies of the cover, drifting so this song's
-  colours churn like a slow living gradient (APLE MUSIC MOBILE). only translate/rotate animated
-   (NEVER scale or filter) so the heavy blur rasterizes once and just
-   composites after - animating scale re-blurs every frame and was a real jank
-   source stays translucent so the os Mica/acrylic reads through.
-   no transform here, framer owns it scale goes through framer (constant) so
-   the blur rasterizes once and only translate/rotate composite per frame */
-
-/* UPDATE REUSED IN IMMERSIVE LYRICS PANEL TOO, TODO DONE */
-  const layer = (opacity: number): React.CSSProperties => ({
-    position: "absolute",
-    inset: "-35%",
-    backgroundImage: `url(${url})`,
-    backgroundSize: "cover",
-    backgroundPosition: "center",
-    filter: "blur(52px) saturate(1.9)",
-    opacity,
-    willChange: "transform",
-    backfaceVisibility: "hidden",
-  });
-  return (
-    <div
-      aria-hidden
-      style={{ position: "absolute", inset: 0, overflow: "hidden", zIndex: 0, pointerEvents: "none" }}
-    >
-      <motion.div
-        initial={false}
-        transformTemplate={zTransform}
-        animate={reduceMotion ? { scale: 1.45 } : { scale: 1.45, x: [0, 54, -38, 0], y: [0, -42, 32, 0], rotate: [0, 6, -5, 0] }}
-        transition={{ duration: 26, repeat: Infinity, ease: "easeInOut" }}
-        style={layer(0.5)}
-      />
-      <motion.div
-        initial={false}
-        transformTemplate={zTransform}
-        animate={reduceMotion ? { scale: 1.7 } : { scale: 1.7, x: [0, -48, 40, 0], y: [0, 36, -30, 0], rotate: [0, -7, 5, 0] }}
-        transition={{ duration: 38, repeat: Infinity, ease: "easeInOut" }}
-        style={layer(0.34)}
-      />
-      {/* legibility scrim = darken header + bottom for text contrast; middle
-          stays light so the moving colour appears through clearly */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background:
-            "linear-gradient(180deg, rgba(6,6,10,0.42) 0%, rgba(6,6,10,0.10) 18%, rgba(6,6,10,0.08) 78%, rgba(6,6,10,0.48) 100%)",
-        }}
-      />
-    </div>
-  );
-}
-
 // panel
 
 export function LyricsPanel() {
-  const setLyricsOpen = usePlayerStore((s) => s.setLyricsOpen);
   const track = usePlayerStore((s) => s.currentTrack);
   const setPosition = usePlayerStore((s) => s.setPosition);
-  const offset = usePlayerStore((s) => s.lyricsOffsetMs);
-  const adjustOffset = usePlayerStore((s) => s.adjustLyricsOffset);
-  const setOffset = usePlayerStore((s) => s.setLyricsOffset);
   const reduceMotion = useReducedMotion();
 
   const { data, isLoading, isError, isFetching, refetch } = useLyrics(track);
@@ -195,12 +117,6 @@ export function LyricsPanel() {
 
   const hasLyrics = rows.length > 0;
 
-  // TODO sync controls live in a popover off the clock icon (not always on screen) (DONE)
-  const [syncOpen, setSyncOpen] = useState(false);
-  useEffect(() => {
-    setSyncOpen(false);
-  }, [track?.id]);
-
   return (
     <motion.div
       // Absolute OVERLAY that slides in/out via a transform (x). The layout space
@@ -208,19 +124,19 @@ export function LyricsPanel() {
       // open AND close), so the grid reflows in one step and the cards glide via
       // framer `layout` both ways. This panel just slides over that region; its
       // width never animates, so nothing reflows per-frame.
-      initial={{ x: WIDTH }}
-      animate={{ x: 0 }}
-      exit={{ x: WIDTH }}
+      initial={{ opacity: 0, x: 60, scale: 0.96 }}
+      animate={{ opacity: 1, x: 0, scale: 1 }}
+      exit={{ opacity: 0, x: 60, scale: 0.96 }}
       transformTemplate={zTransform}
-      transition={{ type: "spring", stiffness: 340, damping: 38 }}
+      transition={{ type: "spring", stiffness: 320, damping: 32 }}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH,
         maxWidth: "100vw",
         overflow: "hidden",
-        borderLeft: "1px solid var(--color-border)",
-        background: "var(--color-sidebar, #0a0a12)",
-        boxShadow: "-8px 0 32px rgba(0,0,0,0.36)",
+        borderLeft: "none",
+        background: "transparent",
+        boxShadow: "none",
         contain: "paint",
         willChange: "transform",
       }}
@@ -235,195 +151,55 @@ export function LyricsPanel() {
           overflow: "hidden",
         }}
       >
-        <CoverBg url={track?.album?.image_url} />
-
-        {/* header */}
-        <div
-          style={{
-            position: "relative",
-            zIndex: 2,
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: isMac ? "0 12px" : "0 146px 0 14px",
-            height: 48,
-            borderBottom: "1px solid rgba(255,255,255,0.08)",
-          }}
-        >
-          <span
+        {/* header - only pronunciation toggle if applicable */}
+        {canPron && (
+          <div
             style={{
-              fontSize: 16,
-              fontWeight: 700,
-              letterSpacing: "-0.02em",
-              color: "#ffffff",
-              userSelect: "none",
+              position: "relative",
+              zIndex: 2,
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              padding: isMac ? "4px 12px 0" : "4px 140px 0 14px",
+              height: 36,
             }}
           >
-            Lyrics
-          </span>
-
-          <div style={{ flex: 1 }} />
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {canPron && (
-              <Tooltip
-                label={
-                  pron ? "Hide pronunciation" : `Show ${scriptLabel(script)}`
-                }
-                side="bottom"
-              >
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  transition={{ type: "spring", stiffness: 450, damping: 25 }}
-                  onClick={() => setPron((v) => !v)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                    height: 28,
-                    padding: "0 10px",
-                    borderRadius: 99,
-                    cursor: "pointer",
-                    border: "none",
-                    background: pron
-                      ? "var(--color-accent)"
-                      : "rgba(255, 255, 255, 0.14)",
-                    color: pron ? "var(--color-accent-text, #ffffff)" : "#ffffff",
-                    fontSize: 11.5,
-                    fontWeight: 650,
-                    outline: "none",
-                    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.25)",
-                  }}
-                >
-                  <Languages size={13} strokeWidth={2.4} />
-                  <span>{scriptLabel(script)}</span>
-                </motion.button>
-              </Tooltip>
-            )}
-
-            {synced && (
-              <Tooltip
-                label={syncOpen ? "Close sync timing" : "Adjust sync timing"}
-                side="bottom"
-              >
-                <motion.button
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.92 }}
-                  transition={{ type: "spring", stiffness: 450, damping: 25 }}
-                  onClick={() => setSyncOpen((v) => !v)}
-                  style={{
-                    position: "relative",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 28,
-                    height: 28,
-                    borderRadius: 6,
-                    border: "none",
-                    background: "transparent",
-                    color: syncOpen ? "var(--color-accent)" : "rgba(255, 255, 255, 0.75)",
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    outline: "none",
-                    boxShadow: "none",
-                    padding: 0,
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!syncOpen) (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!syncOpen) (e.currentTarget as HTMLButtonElement).style.color = "rgba(255, 255, 255, 0.75)";
-                  }}
-                >
-                  <Clock size={16} strokeWidth={2.2} />
-                  {offset !== 0 && !syncOpen && (
-                    <span
-                      style={{
-                        position: "absolute",
-                        top: 2,
-                        right: 2,
-                        width: 5,
-                        height: 5,
-                        borderRadius: "50%",
-                        background: "var(--color-accent)",
-                        boxShadow: "0 0 5px var(--color-accent)",
-                      }}
-                    />
-                  )}
-                </motion.button>
-              </Tooltip>
-            )}
-
-            <Tooltip label="Close lyrics" side="bottom" align="end">
+            <Tooltip
+              label={
+                pron ? "Hide pronunciation" : `Show ${scriptLabel(script)}`
+              }
+              side="bottom"
+            >
               <motion.button
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.92 }}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 transition={{ type: "spring", stiffness: 450, damping: 25 }}
-                onClick={() => setLyricsOpen(false)}
+                onClick={() => setPron((v) => !v)}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "center",
-                  width: 28,
+                  gap: 5,
                   height: 28,
-                  borderRadius: 6,
-                  border: "none",
-                  background: "transparent",
-                  color: "rgba(255, 255, 255, 0.75)",
+                  padding: "0 10px",
+                  borderRadius: 99,
                   cursor: "pointer",
-                  flexShrink: 0,
+                  border: "none",
+                  background: pron
+                    ? "var(--color-accent)"
+                    : "rgba(255, 255, 255, 0.14)",
+                  color: pron ? "var(--color-accent-text, #ffffff)" : "#ffffff",
+                  fontSize: 11.5,
+                  fontWeight: 650,
                   outline: "none",
-                  boxShadow: "none",
-                  padding: 0,
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.color = "rgba(255, 255, 255, 0.75)";
+                  boxShadow: "0 2px 8px rgba(0, 0, 0, 0.25)",
                 }}
               >
-                <X size={16} strokeWidth={2.2} />
+                <Languages size={13} strokeWidth={2.4} />
+                <span>{scriptLabel(script)}</span>
               </motion.button>
             </Tooltip>
           </div>
-        </div>
-
-        {/* sync calibration popover (off the clock icon) */}
-        {synced && syncOpen && (
-          <>
-            <div
-              onClick={() => setSyncOpen(false)}
-              style={{ position: "absolute", inset: 0, zIndex: 5 }}
-            />
-            <motion.div
-              initial={{ opacity: 0, y: -6, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ duration: 0.16, ease: [0.23, 1, 0.32, 1] }}
-              style={{
-                position: "absolute",
-                top: 52,
-                left: 12,
-                right: 12,
-                zIndex: 6,
-                padding: "11px 13px 12px",
-                borderRadius: 12,
-                background: "rgba(18,18,24,0.94)",
-                backdropFilter: "blur(24px) saturate(1.4)",
-                WebkitBackdropFilter: "blur(24px) saturate(1.4)",
-                border: "1px solid rgba(255,255,255,0.12)",
-                boxShadow: "0 14px 44px rgba(0,0,0,0.5)",
-              }}
-            >
-              <SyncBar
-                offset={offset}
-                adjust={adjustOffset}
-                setOffset={setOffset}
-              />
-            </motion.div>
-          </>
         )}
 
         {/* lyrics body */}
@@ -463,7 +239,7 @@ export function LyricsPanel() {
               style={{
                 display: "flex",
                 flexDirection: "column",
-                gap: 9,
+                gap: 14,
                 width: "100%",
                 minWidth: 0,
               }}
@@ -479,20 +255,24 @@ export function LyricsPanel() {
                     }}
                     onClick={() => seekTo(ri)}
                     style={{
-                      padding: "5px 8px",
-                      borderRadius: 9,
+                      padding: isActive ? "8px 10px" : "4px 10px",
+                      margin: isActive ? "3px 0" : "0",
+                      borderRadius: 10,
                       cursor: synced ? "pointer" : "default",
                       transition:
-                        "opacity 0.32s ease, transform 0.4s cubic-bezier(0.23,1,0.32,1)",
-                      transform: isActive ? "scale(1.015)" : "scale(1)",
+                        "opacity 0.35s ease, transform 0.48s cubic-bezier(0.16, 1, 0.3, 1), filter 0.35s ease",
+                      transform: isActive ? "scale(1.09)" : "scale(0.96)",
                       transformOrigin: "left center",
                       opacity: !synced
-                        ? 0.9
+                        ? 0.92
                         : isActive
                           ? 1
                           : ri < active
-                            ? 0.32
-                            : 0.5,
+                            ? 0.28
+                            : 0.42,
+                      filter: !synced || isActive ? "none" : "blur(1.6px)",
+                      contentVisibility: "auto",
+                      containIntrinsicSize: "0 40px",
                       display: "flex",
                       flexDirection: "column",
                       gap: multi ? 3 : 0,
@@ -512,8 +292,8 @@ export function LyricsPanel() {
                   >
                     {row.voices.map((voice, vi) => {
                       // secondary voices (backing vocals) read smaller + indented
-                      const size = vi === 0 ? 21 : 17;
-                      const weight = vi === 0 ? (synced ? 800 : 600) : 700;
+                      const size = vi === 0 ? 25 : 19;
+                      const weight = vi === 0 ? 800 : 700;
                       const indent = vi === 0 ? 0 : 16;
                       const romIdx = rowOffsets[ri] + vi;
                       return (
@@ -538,6 +318,7 @@ export function LyricsPanel() {
                               getClock={getClock}
                               size={size}
                               weight={weight}
+                              halo={0.35}
                             />
                           ) : isActive ? (
                             // line level source (LRCLIB) = whole line lit, no word sweep, no estimation
@@ -550,7 +331,7 @@ export function LyricsPanel() {
                                 letterSpacing: "-0.01em",
                                 fontWeight: weight,
                                 color: "var(--color-text-hi)",
-                                textShadow: "0 0 18px rgba(255,255,255,0.14)",
+                                textShadow: "0 0 32px rgba(255,255,255,0.45), 0 2px 10px rgba(0,0,0,0.3)",
                                 whiteSpace: "pre-wrap",
                                 wordBreak: "break-word",
                                 overflowWrap: "break-word",
@@ -566,7 +347,7 @@ export function LyricsPanel() {
                                 lineHeight: 1.3,
                                 letterSpacing: "-0.01em",
                                 fontWeight: weight,
-                                color: "rgba(255,255,255,0.82)",
+                                color: "rgba(255,255,255,0.72)",
                                 whiteSpace: "pre-wrap",
                                 wordBreak: "break-word",
                                 overflowWrap: "break-word",
@@ -628,177 +409,6 @@ export function LyricsPanel() {
   );
 }
 
-// sync calibration
-
-const SYNC_RANGE = 3000; // +- 3s on the slider (store clamps at +-5s)
-
-function SyncBar({
-  offset,
-  adjust,
-  setOffset,
-}: {
-  offset: number;
-  adjust: (d: number) => void;
-  setOffset: (ms: number) => void;
-}) {
-  const label = `${offset >= 0 ? "+" : "−"}${(Math.abs(offset) / 1000).toFixed(2)}s`;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Clock
-          size={13}
-          strokeWidth={2}
-          style={{ color: "var(--color-text-dim)" }}
-        />
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            color: "var(--color-text-dim)",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
-          }}
-        >
-          Sync
-        </span>
-        <span
-          style={{
-            fontSize: 12,
-            fontWeight: 700,
-            fontVariantNumeric: "tabular-nums",
-            color:
-              offset === 0 ? "var(--color-text-dim)" : "var(--color-text-hi)",
-          }}
-        >
-          {label}
-        </span>
-        <div style={{ flex: 1 }} />
-        <Tooltip label="Reset offset to 0s" side="top">
-          <button
-            onClick={() => setOffset(0)}
-            disabled={offset === 0}
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color:
-                offset === 0 ? "rgba(255,255,255,0.25)" : "var(--color-text)",
-              background: "none",
-              border: "none",
-              cursor: offset === 0 ? "default" : "pointer",
-              padding: "0 2px",
-            }}
-          >
-            Reset
-          </button>
-        </Tooltip>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Tooltip label="Lyrics later (-50ms)" side="top">
-          <RepeatBtn onStep={() => adjust(-50)} title="">
-            <Minus size={13} strokeWidth={2.4} />
-          </RepeatBtn>
-        </Tooltip>
-        <input
-          type="range"
-          min={-SYNC_RANGE}
-          max={SYNC_RANGE}
-          step={10}
-          value={Math.max(-SYNC_RANGE, Math.min(SYNC_RANGE, offset))}
-          onChange={(e) => setOffset(Number(e.target.value))}
-          aria-label="Lyrics sync offset"
-          style={{
-            flex: 1,
-            accentColor: "#fff",
-            height: 18,
-            cursor: "pointer",
-          }}
-        />
-        <Tooltip label="Lyrics earlier (+50ms)" side="top">
-          <RepeatBtn onStep={() => adjust(50)} title="">
-            <Plus size={13} strokeWidth={2.4} />
-          </RepeatBtn>
-        </Tooltip>
-      </div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          fontSize: 9.5,
-          fontWeight: 600,
-          letterSpacing: "0.04em",
-          textTransform: "uppercase",
-          color: "rgba(255,255,255,0.26)",
-          padding: "0 30px",
-        }}
-      >
-        <span>Later</span>
-        <span>Earlier</span>
-      </div>
-    </div>
-  );
-}
-
-// press and holdhold accelerating stepped so tap = one fine step, hold to ramp up.
-function RepeatBtn({
-  onStep,
-  children,
-  title,
-}: {
-  onStep: () => void;
-  children: React.ReactNode;
-  title: string;
-}) {
-  const timer = useRef<number | undefined>(undefined);
-  const stop = useCallback(() => {
-    if (timer.current !== undefined) {
-      window.clearTimeout(timer.current);
-      timer.current = undefined;
-    }
-  }, []);
-  const start = useCallback(() => {
-    onStep();
-    let delay = 340;
-    const run = () => {
-      onStep();
-      delay = Math.max(55, delay * 0.8);
-      timer.current = window.setTimeout(run, delay);
-    };
-    timer.current = window.setTimeout(run, 340);
-  }, [onStep]);
-  useEffect(() => stop, [stop]);
-  return (
-    <button
-      onPointerDown={start}
-      onPointerUp={stop}
-      onPointerLeave={stop}
-      onPointerCancel={stop}
-      title={title}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 26,
-        height: 24,
-        borderRadius: 6,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "transparent",
-        color: "var(--color-text-hi)",
-        cursor: "pointer",
-        flexShrink: 0,
-        touchAction: "none",
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background =
-          "rgba(255,255,255,0.08)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-      }}
-    >
-      {children}
-    </button>
-  );
-}
 
 function CenterNote({
   icon,

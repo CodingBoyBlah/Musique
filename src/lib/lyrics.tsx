@@ -118,23 +118,41 @@ export function useLyricClock() {
   return { getClock, resync };
 }
 
-// track the active row index by polling the interpolated clock each frame
+// track the active row index by polling the interpolated clock efficiently
 export function useActiveRow(rowStarts: number[], getClock: () => number, synced: boolean) {
   const [active, setActive] = useState(-1);
+  const activeRef = useRef(-1);
+
   useEffect(() => {
-    if (!synced) {
+    if (!synced || !rowStarts.length) {
+      activeRef.current = -1;
       setActive(-1);
       return;
     }
     let raf = 0;
-    const tick = () => {
-      const t = getClock();
-      let idx = -1;
-      for (let i = 0; i < rowStarts.length; i++) {
-        if (rowStarts[i] <= t) idx = i;
-        else break;
+    let lastCheck = 0;
+    const tick = (now: number) => {
+      // Throttle check to ~35ms (around 28/sec) to avoid high-refresh frame churn
+      if (now - lastCheck >= 35) {
+        lastCheck = now;
+        const t = getClock();
+        let low = 0;
+        let high = rowStarts.length - 1;
+        let idx = -1;
+        while (low <= high) {
+          const mid = (low + high) >> 1;
+          if (rowStarts[mid] <= t) {
+            idx = mid;
+            low = mid + 1;
+          } else {
+            high = mid - 1;
+          }
+        }
+        if (idx !== activeRef.current) {
+          activeRef.current = idx;
+          setActive(idx);
+        }
       }
-      setActive((prev) => (prev === idx ? prev : idx));
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -162,9 +180,11 @@ export function ActiveLine({
   halo?: number;
 }) {
   const spans = useRef<(HTMLSpanElement | null)[]>([]);
+  const lastProps = useRef<{ a: string; b: string }[]>([]);
 
   useEffect(() => {
     let raf = 0;
+    lastProps.current = [];
     const tick = () => {
       const t = getClock();
       for (let i = 0; i < words.length; i++) {
@@ -175,8 +195,14 @@ export function ActiveLine({
         const local = raw < 0 ? 0 : raw > 1 ? 1 : raw;
         const fill = local * local * (3 - 2 * local); // smoothstep
         const p = fill * 112 - 6;
-        el.style.setProperty("--a", `${p.toFixed(2)}%`);
-        el.style.setProperty("--b", `${(p + 13).toFixed(2)}%`);
+        const aVal = `${p.toFixed(1)}%`;
+        const bVal = `${(p + 13).toFixed(1)}%`;
+        const prev = lastProps.current[i];
+        if (!prev || prev.a !== aVal || prev.b !== bVal) {
+          lastProps.current[i] = { a: aVal, b: bVal };
+          el.style.setProperty("--a", aVal);
+          el.style.setProperty("--b", bVal);
+        }
       }
       raf = requestAnimationFrame(tick);
     };
