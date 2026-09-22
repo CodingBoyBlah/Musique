@@ -8,6 +8,15 @@ pub struct AppState {
     pub db:       SqlitePool,
     pub auth:     Arc<RwLock<AuthState>>,
     pub playback: Arc<Mutex<Option<crate::playback::PlaybackInner>>>,
+    /// Audio backend for free accounts, which cannot stream through librespot.
+    ///
+    /// Held alongside `playback` rather than replacing it because the two are
+    /// not interchangeable: the librespot session also backs Spotify Connect
+    /// and the spclient calls the lyrics pipeline makes, and those stay
+    /// meaningful on a free account even when its audio comes from elsewhere.
+    /// Exactly one of the two drives audio at a time - see
+    /// `commands::playback::uses_youtube`.
+    pub yt:       Arc<Mutex<Option<crate::playback::youtube::YtPlayback>>>,
     pub media_tx: mpsc::SyncSender<MediaMsg>,
 
     /// Held for reading while a library sync runs, and for writing while a

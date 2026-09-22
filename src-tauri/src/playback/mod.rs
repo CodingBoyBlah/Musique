@@ -1,3 +1,5 @@
+pub mod youtube;
+
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
