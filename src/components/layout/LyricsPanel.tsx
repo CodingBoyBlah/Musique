@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
+  Globe,
   Languages,
   Music2,
   RefreshCw,
 } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useLyrics } from "../../hooks/useLyrics";
+import { sourceLabel } from "../../lib/lyricsSource";
 import { useAmbient } from "../../hooks/useAmbient";
 import { seekPlayback } from "../../api/playback";
 import { Loader } from "../ui/Loader";
@@ -41,6 +43,16 @@ export function LyricsPanel() {
   const { data, isLoading, isError, isFetching, refetch } = useLyrics(track);
   const { glow, ink } = useAmbient(track?.album?.image_url);
 
+  /* provider-supplied translation / romanization. persisted, and only ever
+     offered when the source actually carries them for this track. */
+  const showTranslation = usePlayerStore((s) => s.lyricsShowTranslation);
+  const setShowTranslation = usePlayerStore((s) => s.setLyricsShowTranslation);
+  const showRoman = usePlayerStore((s) => s.lyricsShowRoman);
+  const setShowRoman = usePlayerStore((s) => s.setLyricsShowRoman);
+
+  const hasTranslation = !!data?.has_translation;
+  const hasRoman = !!data?.has_roman;
+
   const synced = !!data?.lines.length;
 
   // build rows via the shared engine (same grouping the Immersive view uses)
@@ -63,7 +75,9 @@ export function LyricsPanel() {
   }, [rows]);
 
   const script = useMemo(() => detectLyricScript(flatTexts), [flatTexts]);
-  const canPron = canRomanize(script);
+  /* our own transliteration is a fallback. when the source ships a real
+     romanization there is no reason to offer a guess beside it. */
+  const canPron = canRomanize(script) && !hasRoman;
 
   // pronunciation (romaijin/pinyin) - has secondary toggle
   const [pron, setPron] = useState(false);
@@ -154,8 +168,10 @@ export function LyricsPanel() {
           overflow: "hidden",
         }}
       >
-        {/* header - only pronunciation toggle if applicable */}
-        {canPron && (
+        {/* header - every control here is conditional on the track actually
+            having something to offer, so a plain LRCLIB track shows none of
+            them and the panel looks exactly as it always did */}
+        {(canPron || hasRoman || hasTranslation) && (
           <div
             style={{
               position: "relative",
@@ -164,44 +180,50 @@ export function LyricsPanel() {
               display: "flex",
               alignItems: "center",
               justifyContent: "flex-end",
+              gap: 6,
               padding: isMac ? "4px 12px 0" : "4px 140px 0 14px",
               height: 36,
             }}
           >
-            <Tooltip
-              label={
-                pron ? "Hide pronunciation" : `Show ${scriptLabel(script)}`
-              }
-              side="bottom"
-            >
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                transition={{ type: "spring", stiffness: 450, damping: 25 }}
-                onClick={() => setPron((v) => !v)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  height: 28,
-                  padding: "0 10px",
-                  borderRadius: 99,
-                  cursor: "pointer",
-                  border: "none",
-                  background: pron
-                    ? "var(--color-accent)"
-                    : "rgba(255, 255, 255, 0.14)",
-                  color: pron ? "var(--color-accent-text, #ffffff)" : "#ffffff",
-                  fontSize: 11.5,
-                  fontWeight: 650,
-                  outline: "none",
-                  boxShadow: "0 2px 8px rgba(0, 0, 0, 0.25)",
-                }}
+
+            {hasRoman && (
+              <Tooltip
+                label={showRoman ? "Hide romanization" : "Show romanization"}
+                side="bottom"
               >
-                <Languages size={13} strokeWidth={2.4} />
-                <span>{scriptLabel(script)}</span>
-              </motion.button>
-            </Tooltip>
+                <Pill on={showRoman} onClick={() => setShowRoman(!showRoman)}>
+                  <Languages size={13} strokeWidth={2.4} />
+                </Pill>
+              </Tooltip>
+            )}
+
+            {hasTranslation && (
+              <Tooltip
+                label={showTranslation ? "Hide translation" : "Show translation"}
+                side="bottom"
+              >
+                <Pill
+                  on={showTranslation}
+                  onClick={() => setShowTranslation(!showTranslation)}
+                >
+                  <Globe size={13} strokeWidth={2.4} />
+                </Pill>
+              </Tooltip>
+            )}
+
+            {canPron && (
+              <Tooltip
+                label={
+                  pron ? "Hide pronunciation" : `Show ${scriptLabel(script)}`
+                }
+                side="bottom"
+              >
+                <Pill on={pron} onClick={() => setPron((v) => !v)}>
+                  <Languages size={13} strokeWidth={2.4} />
+                  <span>{scriptLabel(script)}</span>
+                </Pill>
+              </Tooltip>
+            )}
           </div>
         )}
 
@@ -295,14 +317,18 @@ export function LyricsPanel() {
                     }}
                   >
                     {row.voices.map((voice, vi) => {
-                      // secondary voices (backing vocals) read smaller + indented
-                      const size = vi === 0 ? 25 : 19;
-                      const weight = vi === 0 ? 800 : 700;
-                      const indent = vi === 0 ? 0 : 16;
+                      const isDuet = voice.role === "duet";
+                      const isSecondary = vi > 0 && !isDuet;
+                      // Apple Music: lead voice stays left, duet voice gets opposite horizontal alignment (right).
+                      // If duet is the solo voice of a row (vi === 0 && isDuet), it also aligns right.
+                      // If duet is concurrent (vi > 0 && isDuet), it aligns right opposite the lead.
+                      const align: "left" | "right" = isDuet ? "right" : "left";
+
+                      // Lead voice is primary; bg voice is visually subordinate (smaller, lower opacity, indented)
+                      const size = isSecondary ? 19 : isDuet && vi > 0 ? 22 : 25;
+                      const weight = isSecondary ? 700 : 800;
+                      const indent = isSecondary ? 16 : 0;
                       const romIdx = rowOffsets[ri] + vi;
-                      // built for every row, not just the lit one: both states
-                      // render the same spans, so a line can never re-wrap at
-                      // the moment it lights up
                       const words = lyricWords(voice, row.startMs, row.endMs);
                       return (
                         <div
@@ -310,13 +336,15 @@ export function LyricsPanel() {
                           style={{
                             marginLeft: indent,
                             borderLeft:
-                              vi === 0
-                                ? "none"
-                                : "2px solid rgba(255,255,255,0.18)",
-                            paddingLeft: vi === 0 ? 0 : 8,
+                              isSecondary
+                                ? "2px solid rgba(255,255,255,0.18)"
+                                : "none",
+                            paddingLeft: isSecondary ? 8 : 0,
+                            opacity: isSecondary ? 0.78 : 1,
                             width: "100%",
                             minWidth: 0,
                             boxSizing: "border-box",
+                            textAlign: align,
                           }}
                         >
                           <LyricRowText
@@ -328,21 +356,19 @@ export function LyricsPanel() {
                             weight={weight}
                             glowRgb={glow}
                             inkRgb={ink}
+                            align={align}
                           />
+                          {/* what the source itself shipped, in the same
+                              quiet key as the pronunciation line that was
+                              already here - they stack rather than compete */}
+                          {showRoman && voice.roman && (
+                            <p style={subText(isActive, align)}>{voice.roman}</p>
+                          )}
+                          {showTranslation && voice.translation && (
+                            <p style={subText(isActive, align)}>{voice.translation}</p>
+                          )}
                           {pron && (
-                            <p
-                              style={{
-                                margin: "2px 0 0",
-                                fontSize: 12.5,
-                                fontWeight: 600,
-                                color: isActive
-                                  ? "rgba(255,255,255,0.7)"
-                                  : "rgba(255,255,255,0.4)",
-                                whiteSpace: "pre-wrap",
-                                wordBreak: "break-word",
-                                overflowWrap: "break-word",
-                              }}
-                            >
+                            <p style={subText(isActive, align)}>
                               {romaji ? romaji[romIdx] : romanizing ? "…" : ""}
                             </p>
                           )}
@@ -368,11 +394,7 @@ export function LyricsPanel() {
                     : "Synced"
                   : "Lyrics"}{" "}
                 ·{" "}
-                {data?.source === "musixmatch"
-                  ? "Musixmatch"
-                  : data?.source === "netease"
-                    ? "NetEase"
-                    : "LRCLIB"}
+                {sourceLabel(data?.source)}
               </p>
             </div>
           )}
@@ -382,6 +404,60 @@ export function LyricsPanel() {
   );
 }
 
+
+/* the quiet line under a lyric. pronunciation, romanization and translation
+all read at the same weight, so stacking two of them never competes with the
+lead text above. */
+function subText(active: boolean, align: "left" | "right" = "left"): React.CSSProperties {
+  return {
+    margin: "2px 0 0",
+    fontSize: 12.5,
+    fontWeight: 600,
+    color: active ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.4)",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    overflowWrap: "break-word",
+    textAlign: align,
+  };
+}
+
+/* the panel's one button shape, shared by every header control */
+function Pill({
+  on,
+  onClick,
+  children,
+}: {
+  on: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <motion.button
+      whileHover={{ scale: 1.05 }}
+      whileTap={{ scale: 0.95 }}
+      transition={{ type: "spring", stiffness: 450, damping: 25 }}
+      onClick={onClick}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        height: 28,
+        padding: "0 10px",
+        borderRadius: 99,
+        cursor: "pointer",
+        border: "none",
+        background: on ? "var(--color-accent)" : "rgba(255, 255, 255, 0.14)",
+        color: on ? "var(--color-accent-text, #ffffff)" : "#ffffff",
+        fontSize: 11.5,
+        fontWeight: 650,
+        outline: "none",
+        boxShadow: "0 2px 8px rgba(0, 0, 0, 0.25)",
+      }}
+    >
+      {children}
+    </motion.button>
+  );
+}
 
 function CenterNote({
   icon,

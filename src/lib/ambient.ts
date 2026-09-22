@@ -146,17 +146,22 @@ function read(img: HTMLImageElement): Ambient | null {
     /* Lyrics are not pure white - a trace of the cover's hue is what makes the
        type sit in the picture rather than on top of it.
 
-       Lightness is the lever here, not saturation. Measuring the reference: a
-       warm sleeve gives roughly #f2e3c4, which is HSL 40deg 64% 86%, and a green
-       one #edf2dc at 46% 91%. This sat at 91% lightness, where the gap between
-       the lightest and darkest channel is about 19/255 however far saturation is
-       pushed - so it read as white no matter what. At 86.5% the gap opens to
-       around 43/255 and the hue is plainly there, while the type still reads as
-       ink rather than as coloured text. It is deliberately a notch under the
-       reference's #f2e3c4: the ambient is sampled from the same artwork, so on a
-       strongly single-hued sleeve the lyrics and the room behind them share a
-       hue, and the tint carries further than the swatch alone suggests. */
-    ink: hasColour ? trip(grade(vivid, [0.38, 0.62], 0.865)) : "246, 245, 250",
+       Deliberately faint. The reference swatches are stronger than this: a warm
+       sleeve reads about #f2e3c4, which is HSL 40deg 64% 86%, and a green one
+       #edf2dc at 46% 91%. Matching them was tried and pulled back twice, because
+       a swatch in isolation is the wrong thing to match - the ambient behind the
+       lyrics is sampled from the same artwork, so on a strongly single-hued
+       sleeve the type and the room share a hue and the tint carries much further
+       in place than the colour on its own suggests.
+
+       At 93% lightness the gap between the lightest and darkest channel is about
+       11/255 whatever saturation does, which is the point: a warm record lands on
+       #f3eee8 and a cold one on #e8ebf3. Read as swatches those are all but white.
+       In place they are not, because the whole panel behind them is the same hue -
+       the eye reads the type against that, not against paper. If this is ever
+       raised again, judge it in the view on a monochrome-ish blue sleeve, where
+       type and room share a hue, and not against a swatch. */
+    ink: hasColour ? trip(grade(vivid, [0.16, 0.30], 0.93)) : "246, 245, 250",
   };
 }
 

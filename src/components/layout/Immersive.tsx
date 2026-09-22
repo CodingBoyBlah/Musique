@@ -236,7 +236,10 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
               padding: "5px 0",
               opacity: tone.alpha,
               transform: isActive ? "scale(1)" : "scale(0.79)",
-              transformOrigin: "left center",
+              transformOrigin:
+                row.voices.length === 1 && row.voices[0].role === "duet"
+                  ? "right center"
+                  : "left center",
               transition: reduceMotion
                 ? "none"
                 : "opacity 0.44s cubic-bezier(0.22, 1, 0.36, 1), transform 0.56s cubic-bezier(0.22, 1, 0.36, 1)",
@@ -244,8 +247,19 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
             }}
           >
             {row.voices.map((voice, vi) => {
-              const size = vi === 0 ? "clamp(28px, 2.9vw, 46px)" : "clamp(21px, 2.15vw, 34px)";
-              const weight = vi === 0 ? 800 : 700;
+              const isDuet = voice.role === "duet";
+              const isSecondary = vi > 0 && !isDuet;
+              // Apple Music: lead voice stays left, duet voice gets opposite horizontal alignment (right).
+              // If duet is solo in row (vi === 0 && isDuet), it also aligns right.
+              // If duet is concurrent (vi > 0 && isDuet), it aligns right opposite lead.
+              const align: "left" | "right" = isDuet ? "right" : "left";
+
+              const size = isSecondary
+                ? "clamp(21px, 2.15vw, 34px)"
+                : isDuet && vi > 0
+                ? "clamp(24px, 2.5vw, 40px)"
+                : "clamp(28px, 2.9vw, 46px)";
+              const weight = isSecondary ? 700 : 800;
               // built for every row, not just the lit one: both states render
               // the same spans so the line can never re-wrap when it lights up
               const words = lyricWords(voice, row.startMs, row.endMs);
@@ -253,9 +267,11 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                 <div
                   key={vi}
                   style={{
-                    marginLeft: vi === 0 ? 0 : 18,
-                    borderLeft: vi === 0 ? "none" : "2px solid rgba(255,255,255,0.18)",
-                    paddingLeft: vi === 0 ? 0 : 12,
+                    marginLeft: isSecondary ? 18 : 0,
+                    borderLeft: isSecondary ? "2px solid rgba(255,255,255,0.18)" : "none",
+                    paddingLeft: isSecondary ? 12 : 0,
+                    opacity: isSecondary ? 0.78 : 1,
+                    textAlign: align,
                   }}
                 >
                   <LyricRowText
@@ -267,6 +283,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                     weight={weight}
                     glowRgb={glow}
                     inkRgb={ink}
+                    align={align}
                   />
                 </div>
               );

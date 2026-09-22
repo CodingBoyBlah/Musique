@@ -1,53 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import type { Lyrics, LyricLine } from "../api/lyrics";
+import type { LyricLine } from "../api/lyrics";
 import { usePlayerStore } from "../store/player.store";
+import { getOutputLatencyMs, startLatencyPolling } from "./outputLatency";
 import { useWindowActive } from "../hooks/useWindowActive";
 
 
-export const CONCURRENT_TOL_MS = 60;
-
-// row model
-
-export type Row = { startMs: number; endMs: number; voices: LyricLine[] };
+export { CONCURRENT_TOL_MS, buildRows, type Row } from "./lyricsRows";
 
 const cleanSpaces = (s: string) => (s || "").replace(/[\u00A0\u200B\u202F\uFEFF]/g, " ");
-
-/* group near-simultaneous synced lines into rows of concurrent voices, or one
-row per plain (untimed) line. same logic for every consumer. */
-export function buildRows(data: Lyrics | undefined): Row[] {
-  if (data?.lines.length) {
-    const out: Row[] = [];
-    for (const rawLine of data.lines) {
-      const l: LyricLine = {
-        ...rawLine,
-        text: cleanSpaces(rawLine.text),
-        words: (rawLine.words || []).map((w) => ({
-          ...w,
-          text: cleanSpaces(w.text),
-        })),
-      };
-      const last = out[out.length - 1];
-      if (last && Math.abs(l.time_ms - last.startMs) <= CONCURRENT_TOL_MS) {
-        last.voices.push(l);
-      } else {
-        out.push({ startMs: l.time_ms, endMs: 0, voices: [l] });
-      }
-    }
-    for (let i = 0; i < out.length; i++) {
-      out[i].endMs = i + 1 < out.length ? out[i + 1].startMs : out[i].startMs + 4000;
-    }
-    return out;
-  }
-  if (data?.plain) {
-    return data.plain.split(/\r?\n/).map((t) => ({
-      startMs: -1,
-      endMs: -1,
-      voices: [{ time_ms: -1, text: cleanSpaces(t), words: [] }],
-    }));
-  }
-  return [];
-}
 
 // word model
 
@@ -63,51 +24,6 @@ export function mapWords(line: LyricLine): RenderWord[] {
   }));
 }
 
-/* Pace a line that only has a start and an end across its own words.
- *
- * Musixmatch and NetEase ship real per-word timings; LRCLIB, which is where
- * most tracks resolve, only ever gives a timestamp per line. This used to mean
- * those tracks got no sweep at all - the line simply switched on, sat there,
- * and switched off, which is what makes the panel feel dead on most of the
- * catalogue.
- *
- * So the line is paced instead: each word is given a share of the line's
- * duration proportional to how long it is, plus a small fixed cost per word so
- * that "a" and "I" do not flash past. It is an estimate and it is not claimed
- * to be anything else - it will not line up with the vocal the way real word
- * data does. What it does do is move at the speed the line is actually being
- * sung at, which is the difference between a lyric that is playing and a lyric
- * that is printed. The last word is pinned to the line's true end, so the sweep
- * always finishes exactly when the next line takes over. */
-const PER_WORD_MS = 90;
-
-export function paceWords(text: string, startMs: number, endMs: number): RenderWord[] {
-  const parts = cleanSpaces(text).split(/(\s+)/).filter((t) => t.length);
-  const words = parts.filter((t) => t.trim().length);
-  if (!words.length) return [];
-
-  const span = Math.max(endMs - startMs, 400);
-  const fixed = Math.min(span * 0.5, words.length * PER_WORD_MS);
-  const perChar = (span - fixed) / Math.max(words.reduce((n, w) => n + w.trim().length, 0), 1);
-  const each = fixed / words.length;
-
-  const out: RenderWord[] = [];
-  let t = startMs;
-  let wi = 0;
-  for (const part of parts) {
-    if (!part.trim().length) {
-      // whitespace rides with the word before it, so the gap does not flash
-      if (out.length) out[out.length - 1].text += part;
-      continue;
-    }
-    const dur = each + part.trim().length * perChar;
-    const isLast = wi === words.length - 1;
-    out.push({ text: part, startMs: t, endMs: isLast ? endMs : t + dur });
-    t += dur;
-    wi++;
-  }
-  return out;
-}
 
 // interpolated clock
 
@@ -123,6 +39,10 @@ export function useLyricClock() {
   const baseRef = useRef({ pos: positionMs, at: performance.now() });
   const playingRef = useRef(isPlaying);
   const offsetRef = useRef(offset);
+
+  // ref-counted, shared with any other lyric surface; polls slowly in the
+  // background and never re-renders us
+  useEffect(() => startLatencyPolling(), []);
   useEffect(() => {
     offsetRef.current = offset;
   }, [offset]);
@@ -155,7 +75,11 @@ export function useLyricClock() {
     const c = playingRef.current
       ? baseRef.current.pos + (performance.now() - baseRef.current.at)
       : baseRef.current.pos;
-    return c + offsetRef.current;
+    /* the reported position is where the DECODER is; the listener is hearing
+       whatever left it a buffer ago. subtracting the measured output latency is
+       what actually puts the highlight on the beat - the manual offset on top
+       is now purely taste, not compensation. */
+    return c - getOutputLatencyMs() + offsetRef.current;
   }, []);
 
   const resync = useCallback((ms: number) => {
@@ -402,15 +326,28 @@ export function weldPunctuation(words: RenderWord[]): RenderWord[] {
 }
 
 
-/* The tokens a line is drawn from, whatever its source.
+/* The tokens a line is drawn from.
  *
- * Real per-word timings where Musixmatch or NetEase provide them, the line
- * paced across its own words where it does not. Both come back in the same
- * shape, so the renderer never has to care which it got. */
+ * Real per-word timings, or nothing. There used to be a third option: when a
+ * source only gave line-level timings we spread the line's duration across its
+ * words by character count and swept the light along that. It looked like
+ * word-by-word and it was not - it was a guess about where in the line the
+ * singer was, and it drifted against the vocal on every line long enough to
+ * notice. That is what "word by word is often unsynced" actually was: not a bad
+ * provider, an invented timing.
+ *
+ * So a line-level line now lights as a whole line, the instant it starts, which
+ * is what Apple Music does with line-synced lyrics and what the sync-over-
+ * richness rule demands. A single token starting and ending at the line's onset
+ * makes `charPos` jump straight to fully-lit. Word-by-word is now only ever
+ * shown when a provider actually measured the words. */
 export function lyricWords(line: LyricLine, startMs: number, endMs: number): RenderWord[] {
-  return weldPunctuation(
-    line.words.length ? mapWords(line) : paceWords(line.text, startMs, endMs),
-  );
+  const effectiveStart = line.time_ms >= 0 ? line.time_ms : startMs;
+  if (line.words.length) {
+    return weldPunctuation(mapWords(line));
+  }
+  void endMs; // a line-level line has no interior timing to sweep across
+  return [{ text: cleanSpaces(line.text), startMs: effectiveStart, endMs: effectiveStart }];
 }
 
 // one line, in every state
@@ -475,6 +412,7 @@ export function LyricRowText({
   dim = 0.42,
   glowRgb = "255, 255, 255",
   inkRgb = "255, 255, 255",
+  align = "left",
 }: {
   words: RenderWord[];
   active: boolean;
@@ -487,6 +425,7 @@ export function LyricRowText({
   glowRgb?: string;
   /** near-white carrying the cover's hue - see lib/ambient */
   inkRgb?: string;
+  align?: "left" | "right" | "center";
 }) {
   const spans = useRef<(HTMLSpanElement | null)[]>([]);
   const lastProps = useRef<{ a: string; b: string; g: string }[]>([]);
@@ -584,6 +523,7 @@ export function LyricRowText({
         lineHeight: 1.26,
         letterSpacing: "-0.022em",
         fontWeight: weight,
+        textAlign: align,
         ["--glow" as string]: glowRgb,
       }}
     >

@@ -47,6 +47,12 @@ interface PlayerStore {
   adjustLyricsOffset: (deltaMs: number) => void;
   setLyricsOffset: (ms: number) => void;
 
+  // provider-supplied translation / romanization, shown under each line when
+  // the source ships them. persisted, off by default.
+  lyricsShowTranslation: boolean;
+  setLyricsShowTranslation: (on: boolean) => void;
+  lyricsShowRoman: boolean;
+  setLyricsShowRoman: (on: boolean) => void;
 
   isPlaying:    boolean;
   sessionReady: boolean;  // true once we've gotten any player event
@@ -183,6 +189,10 @@ export const usePlayerStore = create<PlayerStore>()(
       setLyricsOffset: (ms) =>
         set({ lyricsOffsetMs: Math.max(-5000, Math.min(5000, Math.round(ms))) }),
 
+      lyricsShowTranslation: false,
+      setLyricsShowTranslation: (on) => set({ lyricsShowTranslation: on }),
+      lyricsShowRoman: false,
+      setLyricsShowRoman: (on) => set({ lyricsShowRoman: on }),
 
       isPlaying:    false,
       sessionReady: false,
@@ -355,6 +365,8 @@ export const usePlayerStore = create<PlayerStore>()(
         volume: s.volume,
         muted:  s.muted,
         lyricsOffsetMs: s.lyricsOffsetMs,
+        lyricsShowTranslation: s.lyricsShowTranslation,
+        lyricsShowRoman: s.lyricsShowRoman,
         // persist the identity of what's loaded so a webview reload (HMR,
         // alt-tab + ctrl+s in dev) repopulates the player bar instantly
         // instead of going blank. isPlaying/position stay live, they reconcile
