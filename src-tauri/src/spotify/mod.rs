@@ -48,7 +48,7 @@ pub(crate) async fn spotify_get<T: serde::de::DeserializeOwned>(
     token: &str,
     url:   &str,
 ) -> Result<T, AppError> {
-    let resp = send_request(reqwest::Client::new().get(url).bearer_auth(token)).await?;
+    let resp = send_request(crate::http::client().get(url).bearer_auth(token)).await?;
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
@@ -56,11 +56,13 @@ pub(crate) async fn spotify_get<T: serde::de::DeserializeOwned>(
         return Err(AppError::Network(format!("Spotify {status}: {body}")));
     }
 
-    // read the body as text first then deserialize so a schema mismatch gives us
-    // the actual field/line from serde instead of some useless "error decoding
-    // response body"
-    let text = resp.text().await.map_err(|e| AppError::Network(e.to_string()))?;
-    serde_json::from_str::<T>(&text)
+    // Deserialize straight off the raw bytes. `text()` would allocate a String
+    // and UTF-8 validate the whole payload first (liked-songs/playlist pages run
+    // to hundreds of KB) just to hand it to serde, which validates again.
+    // `from_slice` skips that entire copy. Schema mismatches still report the
+    // real serde field/line, same as before.
+    let bytes = resp.bytes().await.map_err(|e| AppError::Network(e.to_string()))?;
+    serde_json::from_slice::<T>(&bytes)
         .map_err(|e| AppError::Network(format!("decode {url}: {e}")))
 }
 
@@ -71,7 +73,7 @@ pub(crate) async fn spotify_write(
     url:    &str,
 ) -> Result<(), AppError> {
     let resp = send_request(
-        reqwest::Client::new()
+        crate::http::client()
             .request(method, url)
             .bearer_auth(token)
             .header("Content-Length", "0"),
@@ -95,7 +97,7 @@ pub(crate) async fn spotify_write_json(
     body:   serde_json::Value,
 ) -> Result<serde_json::Value, AppError> {
     let resp = send_request(
-        reqwest::Client::new()
+        crate::http::client()
             .request(method, url)
             .bearer_auth(token)
             .json(&body),

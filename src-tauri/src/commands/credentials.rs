@@ -180,7 +180,7 @@ pub async fn validate_credentials(
 
     let auth_header = STANDARD.encode(format!("{}:{}", client_id, client_secret));
 
-    let res = reqwest::Client::new()
+    let res = crate::http::client()
         .post("https://accounts.spotify.com/api/token")
         .header("Authorization", format!("Basic {}", auth_header))
         .header("Content-Type", "application/x-www-form-urlencoded")

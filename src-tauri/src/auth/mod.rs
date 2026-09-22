@@ -106,10 +106,24 @@ pub(crate) async fn upsert_setting(
 
 // startup init, runs once when app boots
 
+/// Read the token pair out of the OS credential store. Blocking (it talks to
+/// the Windows Credential Manager / Keychain / Secret Service), so startup runs
+/// it on a blocking thread alongside the sqlite open rather than after it.
+pub fn load_stored_tokens() -> Option<(String, String)> {
+    token::load_tokens().ok().flatten()
+}
+
 pub async fn init_auth_state(pool: &SqlitePool) -> AuthState {
-    let (access_token, refresh_token) = match token::load_tokens() {
-        Ok(Some(pair)) => (Some(pair.0), Some(pair.1)),
-        _ => return AuthState::default(),
+    init_auth_state_with(pool, load_stored_tokens()).await
+}
+
+pub async fn init_auth_state_with(
+    pool: &SqlitePool,
+    tokens: Option<(String, String)>,
+) -> AuthState {
+    let (access_token, refresh_token) = match tokens {
+        Some(pair) => (Some(pair.0), Some(pair.1)),
+        None => return AuthState::default(),
     };
 
     let expires_at = get_setting_value(pool, "spotify_token_expires_at")
@@ -214,7 +228,7 @@ pub async fn refresh_loop(app: AppHandle) {
 pub(crate) async fn call_token_endpoint(
     params: &[(&str, &str)],
 ) -> Result<token::TokenResponse, AppError> {
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .post("https://accounts.spotify.com/api/token")
         .form(params)
         .send()
@@ -231,7 +245,7 @@ pub(crate) async fn call_token_endpoint(
 }
 
 async fn fetch_profile(access_token: &str) -> Result<SpotifyProfile, AppError> {
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .get("https://api.spotify.com/v1/me")
         .bearer_auth(access_token)
         .send()

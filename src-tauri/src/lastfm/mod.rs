@@ -70,7 +70,7 @@ async fn call(
     params.insert("api_sig".into(), sig);
     params.insert("format".into(), "json".into());
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let req = if write {
         client.post(API).form(&params)
     } else {

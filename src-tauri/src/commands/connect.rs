@@ -9,15 +9,8 @@ use crate::{
 
 const BASE: &str = "https://api.spotify.com/v1";
 
-static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-
 fn client() -> &'static reqwest::Client {
-    HTTP_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(6))
-            .build()
-            .unwrap_or_default()
-    })
+    crate::http::client()
 }
 
 async fn tok(app: &AppHandle) -> Result<String, AppError> {

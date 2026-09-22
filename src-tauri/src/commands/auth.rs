@@ -355,7 +355,7 @@ pub async fn get_profile(app: AppHandle) -> Result<Profile, AppError> {
 
     let token = auth::get_valid_token(&db, &auth_state).await?;
 
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .get("https://api.spotify.com/v1/me")
         .bearer_auth(&token)
         .send()

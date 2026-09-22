@@ -484,11 +484,7 @@ pub async fn get_or_fetch(
     }
 
     // cookie store on so musixmatchs token cookies carry over to its macro call
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(9))
-        .cookie_store(true)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let client = crate::http::cookie_client();
     let dur_sec = (duration_ms as f64 / 1000.0).round() as i64;
 
     // provider chain, best word-by-word coverage first:
