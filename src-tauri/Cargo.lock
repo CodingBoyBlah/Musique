@@ -1183,6 +1183,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "des"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
+dependencies = [
+ "cipher",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5372,9 +5381,12 @@ name = "spotify"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "cipher",
  "cpal",
+ "des",
  "discord-rich-presence",
  "dotenvy",
+ "flate2",
  "keyring",
  "libc",
  "librespot-connect",

@@ -267,6 +267,14 @@ impl PlaybackInner {
         self.session.is_invalid()
     }
 
+    // hand out the live librespot session so other subsystems (lyrics) can call
+    // spclient endpoints with our real first-party identity. `Session` is an
+    // Arc handle, so this clone is cheap and lets callers drop the state mutex
+    // before doing network i/o.
+    pub fn session(&self) -> Session {
+        self.session.clone()
+    }
+
     pub fn play_uri(&self, uri: String, position_ms: u32) -> Result<(), AppError> {
         eprintln!("[playback] play_uri uri={uri} pos={position_ms}");
         self.spirc.activate().map_err(spirc_err)?;

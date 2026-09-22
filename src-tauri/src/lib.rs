@@ -877,6 +877,7 @@ pub fn run() {
             commands::window::set_window_effect,
             commands::window::get_backdrop_active,
             commands::lyrics::get_lyrics,
+            commands::lyrics::set_lyrics_source,
             commands::share::resolve_odesli,
             commands::lastfm::lastfm_status,
             commands::lastfm::lastfm_save_api,

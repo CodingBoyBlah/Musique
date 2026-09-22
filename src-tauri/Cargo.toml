@@ -59,6 +59,9 @@ cpal = "0.16"
 # cross-platform, no system deps. All calls degrade silently if Discord is closed.
 discord-rich-presence = "1.1"
 md5 = "0.7"
+des = "0.8"
+cipher = "0.4"
+flate2 = "1.0"
 # Spotify Connect (Spirc). Makes Musique register as a real Connect device and
 # report player state to Spotify's backend over the dealer websocket + the
 # /connect-state PUT - this is what makes plays show up in Spotify's "recently
