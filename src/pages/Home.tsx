@@ -2,7 +2,7 @@ import { useState, useRef, useLayoutEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { Heart, Music2, ListMusic, Disc3, Users } from "lucide-react";
+import { Heart, Music2, ListMusic, Disc3, Users, ChevronLeft, ChevronRight } from "@/lib/icons";
 import { useAuth } from "../hooks/useAuth";
 import { getRecommendations, getAlbum, getArtist, getPlaylist, getTrack } from "../api/spotify";
 import { getLikedSongs } from "../api/library";
@@ -34,6 +34,11 @@ import type { TimeRange } from "../types/library";
 
 // grid reflow spring for smooth panel gliding
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
+
+// every track tile renders at this exact size regardless of window width
+const TILE_COVER = 164;
+const TILE_FLEX  = `0 0 ${TILE_COVER}px`;
+const TILE_H     = 212; // 20 padding + 144 cover + 2×8 gap + 17 title + 15 artist
 
 // --- top 6 quick action cards ---
 interface QuickItem {
@@ -228,16 +233,17 @@ function QuickActionCard({
       style={{
         display: "flex",
         alignItems: "center",
-        height: 64,
-        borderRadius: 8,
+        height: 60,
+        padding: "5px 12px 5px 6px",
+        borderRadius: 10,
         overflow: "hidden",
         cursor: "pointer",
         background: hover
-          ? "var(--color-surface-hover, rgba(255,255,255,0.12))"
-          : "var(--color-surface, rgba(255,255,255,0.06))",
-        border: "1px solid rgba(255, 255, 255, 0.05)",
+          ? "rgba(255, 255, 255, 0.09)"
+          : "rgba(255, 255, 255, 0.045)",
+        border: "1px solid rgba(255, 255, 255, 0.07)",
         transition: "background 0.16s ease, box-shadow 0.16s ease",
-        boxShadow: hover ? "0 8px 24px rgba(0,0,0,0.32)" : "0 2px 8px rgba(0,0,0,0.18)",
+        boxShadow: hover ? "0 10px 24px rgba(0,0,0,0.42)" : "0 2px 6px rgba(0,0,0,0.18)",
         userSelect: "none",
         minWidth: 0,
         ...gpuLayer,
@@ -246,17 +252,19 @@ function QuickActionCard({
       {item.isLikedSongs ? (
         <div
           style={{
-            width: 64,
-            height: 64,
+            width: 48,
+            height: 48,
+            borderRadius: 6,
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             background: "linear-gradient(135deg, #450af5 0%, #8e8ee5 100%)",
             color: "#ffffff",
+            boxShadow: "0 2px 8px rgba(69, 10, 245, 0.35)",
           }}
         >
-          <Heart size={22} fill="#ffffff" strokeWidth={0} />
+          <Heart size={20} fill="#ffffff" strokeWidth={0} />
         </div>
       ) : item.imageUrl ? (
         <img
@@ -264,33 +272,37 @@ function QuickActionCard({
           alt=""
           loading="lazy"
           style={{
-            width: 64,
-            height: 64,
+            width: 48,
+            height: 48,
+            borderRadius: 6,
             flexShrink: 0,
             objectFit: "cover",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
           }}
         />
       ) : (
         <div
           style={{
-            width: 64,
-            height: 64,
+            width: 48,
+            height: 48,
+            borderRadius: 6,
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             background: "rgba(255,255,255,0.06)",
             color: "var(--color-text-dim)",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
           }}
         >
           {item.playlistId ? (
-            <ListMusic size={22} strokeWidth={1.8} />
+            <ListMusic size={20} strokeWidth={1.8} />
           ) : item.artistId ? (
-            <Users size={22} strokeWidth={1.8} />
+            <Users size={20} strokeWidth={1.8} />
           ) : item.albumId ? (
-            <Disc3 size={22} strokeWidth={1.8} />
+            <Disc3 size={20} strokeWidth={1.8} />
           ) : (
-            <Music2 size={22} strokeWidth={1.8} />
+            <Music2 size={20} strokeWidth={1.8} />
           )}
         </div>
       )}
@@ -617,7 +629,78 @@ function QuickActionsShelf() {
 
 // --- section scaffolding ---
 
-function SectionTitle({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
+function CarouselControls({ onPrev, onNext }: { onPrev?: () => void; onNext?: () => void }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <button
+        onClick={onPrev}
+        aria-label="Previous items"
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          background: "rgba(255, 255, 255, 0.05)",
+          color: "var(--color-text-dim)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          transition: "background 0.15s, color 0.15s",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.12)";
+          (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.05)";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-dim)";
+        }}
+      >
+        <ChevronLeft size={15} strokeWidth={2.4} />
+      </button>
+      <button
+        onClick={onNext}
+        aria-label="Next items"
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          background: "rgba(255, 255, 255, 0.05)",
+          color: "var(--color-text-dim)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          transition: "background 0.15s, color 0.15s",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.12)";
+          (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.05)";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-dim)";
+        }}
+      >
+        <ChevronRight size={15} strokeWidth={2.4} />
+      </button>
+    </div>
+  );
+}
+
+function SectionTitle({
+  children,
+  right,
+  onPrev,
+  onNext,
+}: {
+  children: React.ReactNode;
+  right?: React.ReactNode;
+  onPrev?: () => void;
+  onNext?: () => void;
+}) {
   return (
     <div
       style={{
@@ -627,28 +710,31 @@ function SectionTitle({ children, right }: { children: React.ReactNode; right?: 
         gap: 12,
         flexWrap: "wrap",
         rowGap: 8,
-        margin: "0 0 14px",
+        margin: "0 0 16px",
       }}
     >
       <h2
         style={{
           margin: 0,
-          fontSize: "clamp(17px, 2.2vw, 21px)",
+          fontSize: "clamp(18px, 2.2vw, 22px)",
           fontWeight: 700,
-          letterSpacing: "-0.02em",
+          letterSpacing: "-0.025em",
           color: "var(--color-text-hi)",
           textWrap: "balance",
         } as React.CSSProperties}
       >
         {children}
       </h2>
-      {right}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {right}
+        {(onPrev || onNext) && <CarouselControls onPrev={onPrev} onNext={onNext} />}
+      </div>
     </div>
   );
 }
 
 function TileSkeleton() {
-  return <EvenGridSkeleton minColWidth={140} gap={14} maxRows={1} />;
+  return <EvenGridSkeleton minColWidth={TILE_COVER} gap={14} maxRows={1} />;
 }
 
 // --- recommendation / track tile ---
@@ -662,20 +748,26 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
 
   return (
     <motion.button
+      layout="position"
       transformTemplate={zTransform}
+      transition={{ layout: REFLOW }}
       onClick={onPlay}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       whileTap={{ scale: 0.97 }}
       style={{
         width: "100%",
+        maxWidth: TILE_COVER,
+        height: TILE_H,
+        overflow: "hidden",
+        marginInline: "auto",
         display: "flex",
         flexDirection: "column",
-        gap: 10,
-        padding: 8,
-        borderRadius: 14,
+        gap: 8,
+        padding: 10,
+        borderRadius: 12,
         border: "none",
-        background: hover ? "var(--color-surface)" : "transparent",
+        background: hover ? "var(--color-surface-hover, rgba(255,255,255,0.06))" : "transparent",
         cursor: "pointer",
         textAlign: "left",
         transition: "background 0.18s ease",
@@ -683,17 +775,27 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
         ...gpuLayer,
       }}
     >
-      <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          aspectRatio: "1 / 1",
+          borderRadius: 10,
+          overflow: "hidden",
+          boxShadow: hover ? "0 12px 28px rgba(0, 0, 0, 0.5)" : "0 4px 14px rgba(0, 0, 0, 0.3)",
+          transition: "box-shadow 0.25s ease",
+        }}
+      >
         {art ? (
           <img
             src={art}
             alt=""
             loading="lazy"
             decoding="async"
-            style={{ width: "100%", height: "100%", borderRadius: 10, objectFit: "cover", outline: "1px solid rgba(255,255,255,0.1)", outlineOffset: -1 }}
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
           />
         ) : (
-          <div style={{ width: "100%", height: "100%", borderRadius: 10, outline: "1px solid rgba(255,255,255,0.1)", outlineOffset: -1, overflow: "hidden", ...meshGradient(track.id) }} />
+          <div style={{ width: "100%", height: "100%", overflow: "hidden", ...meshGradient(track.id) }} />
         )}
         <CirclePlayButton
           isPlaying={isThisTrackPlaying}
@@ -706,17 +808,20 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
               onPlay();
             }
           }}
-          size={42}
-          iconSize={17}
-          style={{ position: "absolute", right: 10, bottom: 10 }}
+          size={40}
+          iconSize={16}
+          style={{ position: "absolute", right: 8, bottom: 8 }}
           ariaLabel={isThisTrackPlaying ? `Pause ${track.name}` : `Play ${track.name}`}
         />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", minWidth: 0 }}>
         <span
           style={{
-            fontSize: 13,
+            fontSize: 13.5,
             fontWeight: 600,
+            letterSpacing: "-0.012em",
+            lineHeight: "17px",
+            height: 17,
             color: isThisTrackPlaying ? "var(--color-accent)" : "var(--color-text-hi)",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -740,7 +845,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
           </div>
         )}
       </div>
-      <span style={{ fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", width: "100%", display: "block", marginTop: -4 }}>
+      <span style={{ fontSize: 12, lineHeight: "15px", height: 15, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", width: "100%", display: "block" }}>
         {track.artists.map((a) => a.name).join(", ")}
       </span>
     </motion.button>
@@ -760,7 +865,7 @@ function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string 
   return (
     <EvenGrid
       items={tracks}
-      minColWidth={140}
+      minColWidth={TILE_COVER}
       gap={14}
       maxRows={2}
       getKey={(t) => t.id}
@@ -771,19 +876,58 @@ function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string 
   );
 }
 
+function HorizontalScrollRow({
+  children,
+  scrollRef,
+}: {
+  children: React.ReactNode;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <div
+      ref={scrollRef}
+      style={{
+        display: "flex",
+        gap: 14,
+        overflowX: "auto",
+        overflowY: "hidden",
+        scrollSnapType: "x mandatory",
+        scrollbarWidth: "none",
+        msOverflowStyle: "none",
+        padding: "4px 2px 14px",
+        margin: "-4px -2px -14px",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function MadeForYou() {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
+  const playContext = useQueueStore((s) => s.playContext);
   const { data: recs = [], isLoading } = useQuery({
     queryKey:  ["recommendations", "home"],
     queryFn:   () => getRecommendations(undefined, 16),
-    staleTime: 30 * 60_000,
+    staleTime: 10 * 60_000,
     gcTime:    24 * 60 * 60_000,
     placeholderData: (prev) => prev,
     refetchOnWindowFocus: false,
   });
 
+  const scroll = (dir: -1 | 1) => {
+    scrollRef.current?.scrollBy({ left: dir * 380, behavior: "smooth" });
+  };
+
+  function play(i: number) {
+    const start = playContext(recs, i, "made-for-you");
+    if (start) { setCurrentTrack(start); playTrack(start.id).catch(() => {}); }
+  }
+
   return (
     <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="Made for you">
-      <SectionTitle>Made for you</SectionTitle>
+      <SectionTitle onPrev={() => scroll(-1)} onNext={() => scroll(1)}>Top Picks for You</SectionTitle>
       {isLoading ? (
         <TileSkeleton />
       ) : recs.length === 0 ? (
@@ -791,19 +935,48 @@ function MadeForYou() {
           Play and follow some artists, recommendations will grow here.
         </p>
       ) : (
-        <TrackTiles tracks={recs} context="made-for-you" />
+        <HorizontalScrollRow scrollRef={scrollRef}>
+          {recs.map((t, i) => (
+            <div key={t.id} style={{ flex: TILE_FLEX, scrollSnapAlign: "start" }}>
+              <RecTile track={t} onPlay={() => play(i)} />
+            </div>
+          ))}
+        </HorizontalScrollRow>
       )}
     </motion.section>
   );
 }
 
 function RecentlyPlayed() {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const { data = [], isLoading } = useRecentlyPlayed();
+  const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
+  const playContext = useQueueStore((s) => s.playContext);
+
+  const scroll = (dir: -1 | 1) => {
+    scrollRef.current?.scrollBy({ left: dir * 360, behavior: "smooth" });
+  };
+
+  function play(i: number) {
+    const start = playContext(data, i, "recently-played");
+    if (start) { setCurrentTrack(start); playTrack(start.id).catch(() => {}); }
+  }
+
   if (!isLoading && data.length === 0) return null;
   return (
     <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="Jump back in">
-      <SectionTitle>Jump back in</SectionTitle>
-      {isLoading ? <TileSkeleton /> : <TrackTiles tracks={data.slice(0, 16)} context="recently-played" />}
+      <SectionTitle onPrev={() => scroll(-1)} onNext={() => scroll(1)}>Jump back in</SectionTitle>
+      {isLoading ? (
+        <TileSkeleton />
+      ) : (
+        <HorizontalScrollRow scrollRef={scrollRef}>
+          {data.slice(0, 18).map((t, i) => (
+            <div key={t.id} style={{ flex: TILE_FLEX, scrollSnapAlign: "start" }}>
+              <RecTile track={t} onPlay={() => play(i)} />
+            </div>
+          ))}
+        </HorizontalScrollRow>
+      )}
     </motion.section>
   );
 }
@@ -850,11 +1023,11 @@ function ArtistTiles({ artists }: { artists: ArtistItem[] }) {
   return (
     <EvenGrid
       items={artists}
-      minColWidth={126}
+      minColWidth={TILE_COVER}
       gap={14}
       maxRows={2}
       getKey={(a) => a.id}
-      renderItem={(a) => <ArtistCard artist={a} />}
+      renderItem={(a, i) => <ArtistCard artist={a} index={i} />}
     />
   );
 }
@@ -887,7 +1060,7 @@ function TopArtists() {
     <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="Your top artists">
       <SectionTitle right={<RangeSlider value={range} onChange={setRange} layoutId="home-top-artists-range" />}>Your top artists</SectionTitle>
       {isLoading ? (
-        <EvenGridSkeleton minColWidth={126} gap={14} maxRows={1} borderRadius={999} />
+        <EvenGridSkeleton minColWidth={TILE_COVER} gap={14} maxRows={1} borderRadius={999} />
       ) : data.length === 0 ? (
         <EmptyHint>Not enough listening from {rangeWord(range)} yet.</EmptyHint>
       ) : (
@@ -898,22 +1071,27 @@ function TopArtists() {
 }
 
 function NewReleases() {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const { data = [], isLoading } = useNewReleases();
+
+  const scroll = (dir: -1 | 1) => {
+    scrollRef.current?.scrollBy({ left: dir * 360, behavior: "smooth" });
+  };
+
   if (!isLoading && data.length === 0) return null;
   return (
     <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="New releases">
-      <SectionTitle>New releases</SectionTitle>
+      <SectionTitle onPrev={() => scroll(-1)} onNext={() => scroll(1)}>New releases</SectionTitle>
       {isLoading ? (
         <TileSkeleton />
       ) : (
-        <EvenGrid
-          items={data.slice(0, 16)}
-          minColWidth={140}
-          gap={14}
-          maxRows={2}
-          getKey={(al) => al.id}
-          renderItem={(al) => <AlbumCard album={al} />}
-        />
+        <HorizontalScrollRow scrollRef={scrollRef}>
+          {data.slice(0, 18).map((al, i) => (
+            <div key={al.id} style={{ flex: TILE_FLEX, scrollSnapAlign: "start" }}>
+              <AlbumCard album={al} index={i} />
+            </div>
+          ))}
+        </HorizontalScrollRow>
       )}
     </motion.section>
   );

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
-import { ListMusic, RefreshCw, Pin, PinOff } from "lucide-react";
+import { motion, LayoutGroup } from "framer-motion";
+import { ListMusic, RefreshCw, Pin, PinOff } from "@/lib/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { getPlaylist } from "../api/spotify";
 import { useAuth } from "../hooks/useAuth";
@@ -11,16 +11,20 @@ import { useMyPlaylists, useSyncLibrary } from "../hooks/useLibrary";
 import { usePinsStore } from "../store/pins.store";
 import { useContextMenu, type MenuEntry } from "../components/ui/ContextMenu";
 import type { PlaylistSummary } from "../types/library";
+import { useReflowPulse } from "../hooks/useReflowPulse";
+import { getGridItemTransition } from "../lib/motion";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 const MotionLink = motion.create(Link);
 
 function PlaylistCard({
-  playlist, onContextMenu,
+  playlist, onContextMenu, index = 0,
 }: {
   playlist: PlaylistSummary;
   onContextMenu: (e: React.MouseEvent) => void;
+  index?: number;
 }) {
+  useReflowPulse();
   const [hover, setHover] = useState(false);
   const qc = useQueryClient();
   const prefetchTimer = useRef<number | null>(null);
@@ -48,7 +52,7 @@ function PlaylistCard({
     <MotionLink
       to={`/playlist/${playlist.id}`}
       layout="position"
-      transition={{ layout: REFLOW }}
+      transition={getGridItemTransition(index)}
       onContextMenu={onContextMenu}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -59,7 +63,7 @@ function PlaylistCard({
         flexDirection:  "column",
         gap:            10,
         padding:        "clamp(10px, 1.2vw, 14px)",
-        borderRadius:   14,
+        borderRadius:   12,
         width:          "100%",
         boxSizing:      "border-box",
         textDecoration: "none",
@@ -70,7 +74,7 @@ function PlaylistCard({
         cursor:         "pointer",
       }}
     >
-      <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 10, overflow: "hidden", position: "relative" }}>
+      <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 8, overflow: "hidden", position: "relative" }}>
         {playlist.image_url ? (
           <img
             src={playlist.image_url}
@@ -134,6 +138,7 @@ function PlaylistCard({
 }
 
 export default function Playlists() {
+  useReflowPulse();
   const { loggedIn, login, loggingIn } = useAuth();
   const { data: playlists = [], isLoading } = useMyPlaylists();
   const { mutate: sync, isPending } = useSyncLibrary();
@@ -254,18 +259,22 @@ export default function Playlists() {
       )}
 
       {playlists.length > 0 && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(clamp(130px, 14vw, 170px), 1fr))",
-            gap: "clamp(10px, 1.4vw, 16px)",
-            width: "100%",
-          }}
-        >
-          {playlists.map((p: PlaylistSummary) => (
-            <PlaylistCard key={p.id} playlist={p} onContextMenu={openMenu(cardMenu(p))} />
-          ))}
-        </div>
+        <LayoutGroup id="playlists-grid">
+          <motion.div
+            layout="position"
+            transition={{ layout: REFLOW }}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(clamp(130px, 14vw, 170px), 1fr))",
+              gap: "clamp(10px, 1.4vw, 16px)",
+              width: "100%",
+            }}
+          >
+            {playlists.map((p: PlaylistSummary, i: number) => (
+              <PlaylistCard key={p.id} playlist={p} index={i} onContextMenu={openMenu(cardMenu(p))} />
+            ))}
+          </motion.div>
+        </LayoutGroup>
       )}
       {menuEl}
     </motion.div>

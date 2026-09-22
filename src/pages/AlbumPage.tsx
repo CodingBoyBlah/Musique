@@ -1,7 +1,10 @@
+import { useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Pin } from "lucide-react";
+import { Pin, ChevronLeft, ChevronRight } from "@/lib/icons";
 import { useAlbum } from "../hooks/useAlbum";
+import { useArtist } from "../hooks/useArtist";
+import { AlbumCard } from "../components/ui/AlbumCard";
 import { TrackRow } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -17,10 +20,12 @@ import { useSpeedDialStore } from "../store/speedDial.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { errMsg } from "../lib/err";
+import { useReflowPulse } from "../hooks/useReflowPulse";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 
 export default function AlbumPage() {
+  useReflowPulse();
   const { id }                     = useParams<{ id: string }>();
   const { data, isLoading, error } = useAlbum(id);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
@@ -30,6 +35,8 @@ export default function AlbumPage() {
   const togglePin = usePinsStore((s) => s.togglePin);
   const toggleLike = useToggleLike();
   const { open: openMenu, element: menuEl } = useContextMenu();
+  const { data: artistDetail } = useArtist(data?.artists[0]?.id);
+  const carouselRef = useRef<HTMLDivElement>(null);
 
   const tracks = data?.tracks ?? [];
   const { data: savedIds = [] } = useSavedTrackIds(tracks.map((t) => t.id));
@@ -67,22 +74,65 @@ export default function AlbumPage() {
       ])}
     >
       <PageHeader imageUrl={data.image_url} eyebrow={data.album_type} title={data.name}>
-        <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
-          {data.artists.map((a, i) => (
-            <span key={a.id}>
-              {i > 0 && " · "}
-              <Link to={`/artist/${a.id}`} className="font-semibold hover:underline" style={{ color: "#fff" }}>
-                {a.name}
-              </Link>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {artistDetail?.image_url && (
+              <img
+                src={artistDetail.image_url}
+                alt=""
+                style={{ width: 22, height: 22, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
+              />
+            )}
+            <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#ffffff" }}>
+              {data.artists.map((a, i) => (
+                <span key={a.id}>
+                  {i > 0 && ", "}
+                  <Link to={`/artist/${a.id}`} style={{ color: "inherit", textDecoration: "none" }} className="hover:underline">
+                    {a.name}
+                  </Link>
+                </span>
+              ))}
+            </p>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "2px 8px",
+                borderRadius: 99,
+                background: "rgba(255, 255, 255, 0.05)",
+                border: "1px solid rgba(255, 255, 255, 0.09)",
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+                color: "rgba(255, 255, 255, 0.80)",
+              }}
+            >
+              {data.album_type}
             </span>
-          ))}
-          {data.release_date && <> · {releaseYear(data.release_date)}</>}
-          {" · "}
-          <span style={{ textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>
-            {data.total_tracks} {data.total_tracks === 1 ? "track" : "tracks"}
-          </span>
-          {data.popularity != null && <> · {data.popularity}% POPULARITY</>}
-        </p>
+            {data.release_date && (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "2px 8px",
+                  borderRadius: 99,
+                  background: "rgba(255, 255, 255, 0.05)",
+                  border: "1px solid rgba(255, 255, 255, 0.09)",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  color: "rgba(255, 255, 255, 0.70)",
+                }}
+              >
+                {releaseYear(data.release_date)}
+              </span>
+            )}
+          </div>
+        </div>
         {data.description && (
           <ExpandableDescription text={data.description} />
         )}
@@ -122,6 +172,104 @@ export default function AlbumPage() {
           )}
         </motion.div>
       </section>
+
+      {/* release metadata footer (Cider Screenshot 5) */}
+      <div style={{ padding: "28px 4px 16px", display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--color-text-dim)" }}>
+        <p style={{ margin: 0, fontWeight: 500 }}>
+          {data.release_date} • {data.total_tracks} {data.total_tracks === 1 ? "track" : "tracks"}
+          {tracks.length > 0 && (() => {
+            const totalMin = Math.round(tracks.reduce((sum, t) => sum + (t.duration_ms || 0), 0) / 60000);
+            return `, ${totalMin} minutes`;
+          })()}
+        </p>
+        <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>
+          ℗ {releaseYear(data.release_date)} {data.artists.map((a) => a.name).join(", ")}
+        </p>
+      </div>
+
+      {/* More By Artist section (Cider Screenshot 5) */}
+      {artistDetail && artistDetail.albums && artistDetail.albums.filter((a) => a.id !== data.id).length > 0 && (
+        <div style={{ marginTop: 28 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--color-text-hi)" }}>
+              <Link to={`/artist/${artistDetail.id}`} style={{ color: "inherit", textDecoration: "none" }} className="hover:underline">
+                More By {artistDetail.name} &rsaquo;
+              </Link>
+            </h3>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <button
+                onClick={() => carouselRef.current?.scrollBy({ left: -340, behavior: "smooth" })}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  border: "1px solid rgba(255, 255, 255, 0.10)",
+                  background: "rgba(255, 255, 255, 0.05)",
+                  color: "var(--color-text-dim)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  transition: "background 0.15s, color 0.15s",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.10)";
+                  (e.currentTarget as HTMLElement).style.color = "#ffffff";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.05)";
+                  (e.currentTarget as HTMLElement).style.color = "var(--color-text-dim)";
+                }}
+              >
+                <ChevronLeft size={14} strokeWidth={2.4} />
+              </button>
+              <button
+                onClick={() => carouselRef.current?.scrollBy({ left: 340, behavior: "smooth" })}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  border: "1px solid rgba(255, 255, 255, 0.10)",
+                  background: "rgba(255, 255, 255, 0.05)",
+                  color: "var(--color-text-dim)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  transition: "background 0.15s, color 0.15s",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.10)";
+                  (e.currentTarget as HTMLElement).style.color = "#ffffff";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.05)";
+                  (e.currentTarget as HTMLElement).style.color = "var(--color-text-dim)";
+                }}
+              >
+                <ChevronRight size={14} strokeWidth={2.4} />
+              </button>
+            </div>
+          </div>
+          <div
+            ref={carouselRef}
+            style={{
+              display: "flex",
+              gap: 14,
+              overflowX: "auto",
+              overflowY: "hidden",
+              padding: "4px 0 12px",
+              scrollbarWidth: "none",
+            }}
+          >
+            {artistDetail.albums.filter((a) => a.id !== data.id).slice(0, 10).map((al, i) => (
+              <div key={al.id} style={{ flex: "0 0 clamp(140px, 16vw, 175px)" }}>
+                <AlbumCard album={al} index={i} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {menuEl}
     </div>
   );

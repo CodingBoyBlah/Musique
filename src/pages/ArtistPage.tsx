@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Check, UserPlus, Share2, Shuffle } from "lucide-react";
+import { Check, UserPlus, Share2, Shuffle } from "@/lib/icons";
 import { useArtist } from "../hooks/useArtist";
 import { CoverArt } from "../components/ui/CoverArt";
 import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
@@ -11,7 +11,7 @@ import { Loader } from "../components/ui/Loader";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { Tooltip } from "../components/ui/Tooltip";
 import { shareSpotifyLink, shareUniversalLink } from "../lib/share";
-import { Link2, Globe } from "lucide-react";
+import { Link2, Globe } from "@/lib/icons";
 import {
   useIsArtistFollowed,
   useToggleFollow,
@@ -25,11 +25,13 @@ import { playTrack, pausePlayback } from "../api/playback";
 import { gpuLayer, zTransform } from "../lib/motion";
 import { errMsg } from "../lib/err";
 import { AnimatedPlayPause } from "../components/playground/AnimatedIcons";
+import { useReflowPulse } from "../hooks/useReflowPulse";
 
 const TOP_TRACKS_COLLAPSED = 5;
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 
 export default function ArtistPage() {
+  useReflowPulse();
   const { id } = useParams<{ id: string }>();
   const { data, isLoading, error } = useArtist(id);
   const { data: following = false } = useIsArtistFollowed(id);
@@ -144,7 +146,6 @@ export default function ArtistPage() {
             flexShrink: 0,
             borderRadius: "50%",
             overflow: "hidden",
-            transition: "width 0.28s cubic-bezier(0.23, 1, 0.32, 1), height 0.28s cubic-bezier(0.23, 1, 0.32, 1)",
           }}
         >
           <div style={{ width: "100%", height: "100%" }}>
@@ -171,7 +172,6 @@ export default function ArtistPage() {
               letterSpacing: "-0.02em",
               color: "#ffffff",
               margin: 0,
-              transition: "font-size 0.28s cubic-bezier(0.23, 1, 0.32, 1)",
             }}
           >
             {data.name}
@@ -554,8 +554,8 @@ export default function ArtistPage() {
             Discography
           </h2>
           <AlbumGrid>
-            {data.albums.map((al) => (
-              <AlbumCard key={al.id} album={al} />
+            {data.albums.map((al, i) => (
+              <AlbumCard key={al.id} album={al} index={i} />
             ))}
           </AlbumGrid>
         </section>
@@ -576,8 +576,8 @@ export default function ArtistPage() {
             Singles & EPs
           </h2>
           <AlbumGrid>
-            {data.singles.map((al) => (
-              <AlbumCard key={al.id} album={al} />
+            {data.singles.map((al, i) => (
+              <AlbumCard key={al.id} album={al} index={i} />
             ))}
           </AlbumGrid>
         </section>
@@ -598,8 +598,8 @@ export default function ArtistPage() {
             Fans Also Like
           </h2>
           <ArtistGrid>
-            {data.related_artists.map((ar) => (
-              <ArtistCard key={ar.id} artist={ar} />
+            {data.related_artists.map((ar, i) => (
+              <ArtistCard key={ar.id} artist={ar} index={i} />
             ))}
           </ArtistGrid>
         </section>

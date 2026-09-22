@@ -1,6 +1,6 @@
 import { Link, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Heart, Users, RefreshCw, Disc3 } from "lucide-react";
+import { Heart, Users, RefreshCw, Disc3 } from "@/lib/icons";
 import { useAuth } from "../hooks/useAuth";
 import { EmptyState } from "../components/ui/EmptyState";
 import { MusiqueLogo } from "../components/ui/MusiqueLogo";
@@ -22,15 +22,12 @@ import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { playTrack } from "../api/playback";
 import { useSpeedDialStore } from "../store/speedDial.store";
+import { useReflowPulse } from "../hooks/useReflowPulse";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 
-const TABS = [
-  { key: "songs",   label: "Songs"   },
-  { key: "albums",  label: "Albums"  },
-  { key: "artists", label: "Artists" },
-] as const;
-type TabKey = (typeof TABS)[number]["key"];
+const TAB_KEYS = ["songs", "albums", "artists"] as const;
+type TabKey = (typeof TAB_KEYS)[number];
 
 // sync button
 
@@ -184,7 +181,7 @@ function AlbumsTab() {
         {toolbar}
       </motion.div>
       <AlbumGrid>
-        {view.map((al) => <AlbumCard key={al.id} album={al} />)}
+        {view.map((al, i) => <AlbumCard key={al.id} album={al} index={i} />)}
       </AlbumGrid>
       {view.length === 0 && (
         <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>No albums match your filter.</p>
@@ -226,7 +223,7 @@ function ArtistsTab() {
         {toolbar}
       </motion.div>
       <ArtistGrid>
-        {view.map((a) => <ArtistCard key={a.id} artist={a} />)}
+        {view.map((a, i) => <ArtistCard key={a.id} artist={a} index={i} />)}
       </ArtistGrid>
       {view.length === 0 && (
         <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>No artists match your filter.</p>
@@ -238,13 +235,11 @@ function ArtistsTab() {
 // library page
 
 export default function Library() {
+  useReflowPulse();
   const { loggedIn, login, loggingIn } = useAuth();
-  const [params, setParams] = useSearchParams();
-  const tab = (params.get("tab") as TabKey) || "songs";
-
-  function selectTab(key: TabKey) {
-    setParams({ tab: key }, { replace: true });
-  }
+  const [params] = useSearchParams();
+  const rawTab = params.get("tab");
+  const tab: TabKey = (TAB_KEYS as readonly string[]).includes(rawTab ?? "") ? (rawTab as TabKey) : "songs";
 
   if (!loggedIn) {
     return (
@@ -306,69 +301,6 @@ export default function Library() {
           Your Library
         </h1>
         <SyncButton />
-      </motion.div>
-
-      {/* segmented tabs */}
-      <motion.div
-        layout="position"
-        transition={{ layout: REFLOW }}
-        role="tablist"
-        aria-label="Library sections"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 4,
-          padding: 3,
-          borderRadius: 99,
-          background: "var(--color-surface)",
-          border: "1px solid var(--color-border)",
-          width: "fit-content",
-          maxWidth: "100%",
-          overflowX: "auto",
-        }}
-      >
-        {TABS.map((t) => {
-          const on = tab === t.key;
-          return (
-            <button
-              key={t.key}
-              role="tab"
-              aria-selected={on}
-              onClick={() => selectTab(t.key)}
-              style={{
-                position: "relative",
-                padding: "6px 18px",
-                borderRadius: 99,
-                border: "none",
-                background: "transparent",
-                color: on ? "var(--color-text-hi)" : "var(--color-text-dim)",
-                fontSize: 13,
-                fontWeight: on ? 600 : 500,
-                cursor: "pointer",
-                transition: "color 0.15s ease",
-                zIndex: 1,
-                userSelect: "none",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {on && (
-                <motion.div
-                  layoutId="library-tab-indicator"
-                  transition={{ type: "spring", stiffness: 400, damping: 34 }}
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    borderRadius: 99,
-                    background: "var(--color-active)",
-                    boxShadow: "0 1px 3px rgba(0,0,0,0.25)",
-                    zIndex: -1,
-                  }}
-                />
-              )}
-              {t.label}
-            </button>
-          );
-        })}
       </motion.div>
 
       <motion.div

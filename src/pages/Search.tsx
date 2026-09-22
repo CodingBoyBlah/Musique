@@ -17,6 +17,8 @@ import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
 import { errMsg } from "../lib/err";
+import { useReflowPulse } from "../hooks/useReflowPulse";
+import { getGridItemTransition } from "../lib/motion";
 import type {
   PlaylistCard as PlaylistCardType,
   ArtistItem,
@@ -186,32 +188,13 @@ function TopResultCard({
           {title}
         </h3>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span
-            style={{
-              padding: "3px 10px",
-              borderRadius: 999,
-              background: "rgba(255, 255, 255, 0.12)",
-              fontSize: 11.5,
-              fontWeight: 700,
-              letterSpacing: "0.03em",
-              textTransform: "uppercase",
-              color: "var(--color-text-hi)",
-            }}
-          >
-            {badge}
-          </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 13, fontWeight: 500, color: "var(--color-text-dim)" }}>
+          <span style={{ fontWeight: 600, color: "var(--color-text-hi)" }}>{badge}</span>
           {subtitle && subtitle !== badge && (
-            <span
-              className="line-clamp-1"
-              style={{
-                fontSize: 13,
-                fontWeight: 500,
-                color: "var(--color-text-dim)",
-              }}
-            >
-              {subtitle}
-            </span>
+            <>
+              <span>•</span>
+              <span className="line-clamp-1">{subtitle}</span>
+            </>
           )}
         </div>
       </div>
@@ -232,7 +215,8 @@ function TopResultCard({
 
 // ─── Playlist card ──────────────────────────────────────────────────────────
 
-function PlaylistResultCard({ playlist }: { playlist: PlaylistCardType }) {
+function PlaylistResultCard({ playlist, index = 0 }: { playlist: PlaylistCardType; index?: number }) {
+  useReflowPulse();
   const [hover, setHover] = useState(false);
   return (
     <MotionLink
@@ -241,7 +225,7 @@ function PlaylistResultCard({ playlist }: { playlist: PlaylistCardType }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       whileHover={{ y: -3 }}
-      transition={{ layout: REFLOW }}
+      transition={getGridItemTransition(index)}
       style={{
         display: "flex", flexDirection: "column", gap: 8,
         padding: 14, borderRadius: 14, width: "100%", boxSizing: "border-box",
@@ -264,6 +248,7 @@ function PlaylistResultCard({ playlist }: { playlist: PlaylistCardType }) {
 // ─── Search Page ────────────────────────────────────────────────────────────
 
 export default function Search() {
+  useReflowPulse();
   const { loggedIn, login, loggingIn } = useAuth();
   const [params]        = useSearchParams();
   const query           = (params.get("q") ?? "").trim();
@@ -752,8 +737,8 @@ export default function Search() {
               </div>
               <motion.div layout="position" transition={{ layout: REFLOW }}>
                 <ArtistGrid>
-                  {(cat === "all" ? data.artists.slice(0, 7) : data.artists).map((a) => (
-                    <ArtistCard key={a.id} artist={a} />
+                  {(cat === "all" ? data.artists.slice(0, 7) : data.artists).map((a, i) => (
+                    <ArtistCard key={a.id} artist={a} index={i} />
                   ))}
                 </ArtistGrid>
               </motion.div>
@@ -811,8 +796,8 @@ export default function Search() {
               </div>
               <motion.div layout="position" transition={{ layout: REFLOW }}>
                 <AlbumGrid>
-                  {(cat === "all" ? data.albums.slice(0, 7) : data.albums).map((al) => (
-                    <AlbumCard key={al.id} album={al} />
+                  {(cat === "all" ? data.albums.slice(0, 7) : data.albums).map((al, i) => (
+                    <AlbumCard key={al.id} album={al} index={i} />
                   ))}
                 </AlbumGrid>
               </motion.div>
@@ -874,13 +859,13 @@ export default function Search() {
                 style={{
                   display: "grid",
                   gridTemplateColumns:
-                    "repeat(auto-fill, minmax(clamp(118px, 15vw, 160px), 1fr))",
+                    "repeat(auto-fill, minmax(clamp(120px, 14vw, 175px), 1fr))",
                   gap: "clamp(10px, 1.5vw, 16px)",
                   width: "100%",
                 }}
               >
-                {(cat === "all" ? data.playlists.slice(0, 7) : data.playlists).map((pl) => (
-                  <PlaylistResultCard key={pl.id} playlist={pl} />
+                {(cat === "all" ? data.playlists.slice(0, 7) : data.playlists).map((pl, i) => (
+                  <PlaylistResultCard key={pl.id} playlist={pl} index={i} />
                 ))}
               </motion.div>
             </motion.section>
