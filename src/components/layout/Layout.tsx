@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { TitleBar } from "./TitleBar";
+import { TitleBar, WindowCaptionControls, WindowCaptionHitboxOverlay } from "./TitleBar";
+import { SearchPalette } from "./SearchPalette";
 import Sidebar from "./Sidebar";
 import { PlayerBar } from "./PlayerBar";
 import { QueuePanel } from "./QueuePanel";
@@ -10,6 +11,7 @@ import { QuitConfirm } from "../ui/QuitConfirm";
 import { Toaster } from "../ui/Toaster";
 import { Immersive } from "./Immersive";
 import { AddToPlaylistModal } from "../ui/AddToPlaylistModal";
+import { DevicesPopover } from "./DevicesPopover";
 import { usePlayerStore } from "../../store/player.store";
 import { useUIStore } from "../../store/ui.store";
 import { getBackdropActive } from "../../api/window";
@@ -63,6 +65,9 @@ export default function Layout() {
 
   const rawPanelWidth = lyricsOpen ? 366 : queueOpen ? 272 : 0;
   const spacerWidth = willCrushMain ? 0 : rawPanelWidth;
+  const macSimulated = useUIStore((s) => s.macSimulated);
+  const hasRightRail = (lyricsOpen || queueOpen) && spacerWidth > 0;
+  const isWindowsDocked = !isMac && !macSimulated && !hasRightRail;
 
   useEffect(() => {
     if (mainRef.current) mainRef.current.scrollTop = 0;
@@ -86,12 +91,33 @@ export default function Layout() {
     getBackdropActive().then(setBackdropActive).catch(() => setBackdropActive(false));
   }, [setBackdropActive]);
 
+  const toggleMacSimulated = useUIStore((s) => s.toggleMacSimulated);
+  const setSearchPaletteOpen = useUIStore((s) => s.setSearchPaletteOpen);
+
+  useEffect(() => {
+    function onGlobalKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        toggleMacSimulated();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchPaletteOpen(true);
+      }
+    }
+    window.addEventListener("keydown", onGlobalKey);
+    return () => window.removeEventListener("keydown", onGlobalKey);
+  }, [toggleMacSimulated, setSearchPaletteOpen]);
+
   // backdrop strategy:
   //  - no live material (Linux, or Mica/vibrancy failed) -> paint the solid app
   //    bg, otherwise the transparent window shows white (or the desktop)
   //  - windows acrylic -> OS ignores the tint, so darken with a CSS scrim
   //  - windows Mica / macOS vibrancy -> stay transparent, OS material shows
   const scrim = backdropScrim(backdropActive, effect, materialTransparency, isMac);
+  const isTranslucent = backdropActive && effect !== "none";
+  const cardBg = isTranslucent
+    ? `rgba(18, 18, 20, ${Math.max(0.66, Math.min(0.85, 0.78 * (1 - materialTransparency * 0.28)))})`
+    : "rgba(19, 19, 19, 0.94)";
 
   return (
     /*
@@ -112,33 +138,36 @@ export default function Layout() {
       <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
         <Sidebar />
 
+        {/* The Main Window Island Card */}
         <div
           style={{
             flex: 1,
-            // minWidth:0 lets this column shrink below its content's intrinsic
-            // width instead of overflowing, so it stays responsive as side
-            // panels (queue/lyrics/whatever) open and the window narrows. no
-            // visual change while there's room.
             minWidth: 0,
+            margin: 4,
+            borderRadius: 12,
+            border: isWindowsDocked ? "none" : "1px solid rgba(255, 255, 255, 0.08)",
+            borderLeft: isWindowsDocked ? "1px solid rgba(255, 255, 255, 0.08)" : undefined,
+            borderBottom: isWindowsDocked ? "1px solid rgba(255, 255, 255, 0.08)" : undefined,
+            background: cardBg,
+            boxShadow: isWindowsDocked
+              ? "0 10px 30px rgba(0, 0, 0, 0.5)"
+              : "0 10px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
+            backdropFilter: isTranslucent ? "blur(32px) saturate(140%)" : "blur(24px)",
+            WebkitBackdropFilter: isTranslucent ? "blur(32px) saturate(140%)" : "blur(24px)",
+            position: "relative",
+            overflow: "hidden",
             display: "flex",
             flexDirection: "column",
-            overflow: "hidden",
-            background: "var(--color-content)",
-            position: "relative",
           }}
         >
-          {/* fixed artwork tint behind the content (not the sidebar). lives in
-              the non-scrolling column so it stays put while <main> scrolls. an
-              inverse-vignette radial mask blooms the colour out of the cover
-              (top-left) and fades it to nothing - no hard edges, no top/bottom
-              gradient cuts. */}
+          {/* Cover art bloom contained within the island card */}
           <AnimatePresence>
             {pageTint && (
               <motion.div
                 key={pageTint}
                 aria-hidden
                 initial={{ opacity: 0 }}
-                animate={{ opacity: 0.40 }}
+                animate={{ opacity: 0.18 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.7, ease: "easeOut" }}
                 style={{
@@ -146,11 +175,10 @@ export default function Layout() {
                   inset: 0,
                   zIndex: 0,
                   pointerEvents: "none",
+                  overflow: "hidden",
+                  borderRadius: 12,
                 }}
               >
-                {/* blurred artwork bloom, centred horizontally, emerging from
-                    the top-centre. scale pushes the blurred edges off-frame so
-                    no visible seams; saturate keeps the colour alive. */}
                 <div
                   style={{
                     position: "absolute",
@@ -167,9 +195,6 @@ export default function Layout() {
                       "radial-gradient(75% 70% at 50% 0%, #000 0%, rgba(0,0,0,0.5) 42%, transparent 78%)",
                   }}
                 />
-                {/* fine fractal-noise dither over the bloom. a smooth blurred
-                    gradient bands into visible steps on flat panels; a faint
-                    noise layer breaks them up so the falloff stays clean. */}
                 <div
                   style={{
                     position: "absolute",
@@ -185,88 +210,107 @@ export default function Layout() {
             )}
           </AnimatePresence>
 
-          <div
-            style={{
-              position: "relative",
-              zIndex: 1,
-              flex: 1,
-              minHeight: 0,
-              minWidth: 0,
-              display: "flex",
-              overflow: "hidden",
-            }}
-          >
-            {/* Title bar sits over the layout, absolute positioned so panels can extend behind it */}
+          {/* Title bar at top of card */}
+          <TitleBar />
+
+          {/* Top border extending to caption controls when docked */}
+          {isWindowsDocked && (
             <div
               style={{
                 position: "absolute",
                 top: 0,
                 left: 0,
-                right: 0,
-                height: 48,
-                zIndex: 50,
+                right: 137,
+                height: 1,
+                background: "rgba(255, 255, 255, 0.08)",
+                borderTopLeftRadius: 12,
                 pointerEvents: "none",
+                zIndex: 15,
+              }}
+            />
+          )}
+
+          {/* Right border below caption controls when docked */}
+          {isWindowsDocked && (
+            <div
+              style={{
+                position: "absolute",
+                top: 39,
+                right: 0,
+                bottom: 0,
+                width: 1,
+                background: "rgba(255, 255, 255, 0.08)",
+                borderBottomRightRadius: 12,
+                pointerEvents: "none",
+                zIndex: 15,
+              }}
+            />
+          )}
+
+          {/* Window Caption Controls docked into top-right notch of Island Card */}
+          {isWindowsDocked && <WindowCaptionControls dockedToCard />}
+
+          {/* Scrolling page view inside card */}
+          <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <main
+              ref={mainRef}
+              data-selectable
+              style={{
+                position: "absolute",
+                inset: 0,
+                overflowY: "auto",
+                overflowX: "hidden",
+                paddingTop: 8,
+                paddingLeft: "clamp(14px, 2.5vw, 32px)",
+                paddingRight: "clamp(14px, 2.5vw, 32px)",
+                paddingBottom: "90px",
               }}
             >
-              <TitleBar />
-            </div>
-
-            {/* main region + right rail sit in ONE horizontal row */}
-            <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
-              <div style={{ position: "relative", flex: 1, minWidth: 0, overflow: "hidden" }}>
-                <main
-                  ref={mainRef}
-                  data-selectable
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    overflowY: "auto",
-                    overflowX: "hidden",
-                    paddingTop: "clamp(54px, 1.8vw, 64px)",
-                    paddingLeft: "clamp(12px, 2.5vw, 32px)",
-                    paddingRight: "clamp(12px, 2.5vw, 32px)",
-                    paddingBottom: "clamp(16px, 3vw, 36px)",
-                    WebkitMaskImage:
-                      "linear-gradient(to bottom, transparent 0px, transparent 16px, rgba(0,0,0,0.015) 20px, rgba(0,0,0,0.055) 24px, rgba(0,0,0,0.13) 28px, rgba(0,0,0,0.25) 32px, rgba(0,0,0,0.42) 36px, rgba(0,0,0,0.60) 40px, rgba(0,0,0,0.77) 44px, rgba(0,0,0,0.89) 48px, rgba(0,0,0,0.965) 51px, #000 54px, #000 100%)",
-                    maskImage:
-                      "linear-gradient(to bottom, transparent 0px, transparent 16px, rgba(0,0,0,0.015) 20px, rgba(0,0,0,0.055) 24px, rgba(0,0,0,0.13) 28px, rgba(0,0,0,0.25) 32px, rgba(0,0,0,0.42) 36px, rgba(0,0,0,0.60) 40px, rgba(0,0,0,0.77) 44px, rgba(0,0,0,0.89) 48px, rgba(0,0,0,0.965) 51px, #000 54px, #000 100%)",
-                  }}
-                >
-                  {/* page-load motion: subtle 6px rise and micro-scale (0.18s), respects reduced-motion */}
-                  <motion.div
-                    key={location.pathname}
-                    initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.995 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                  >
-                    <Outlet />
-                  </motion.div>
-                </main>
-              </div>
-
-              {/* reserves the rail's width instantly (no transition) so the grid
-                  reflows once; the panel below slides over this exact slot.
-                  on narrow windows where space is tight, spacer is 0 so the panel overlays gracefully */}
-              <div aria-hidden style={{ width: spacerWidth, flexShrink: 0 }} />
-
-              {/* right rail - lyrics or queue, mutually exclusive. positioned
-                  against THIS row (below the title bar), sliding in via a transform. */}
-              <AnimatePresence initial={false}>
-                {lyricsOpen && <LyricsPanel key="lyrics" />}
-              </AnimatePresence>
-              <AnimatePresence initial={false}>
-                {queueOpen && <QueuePanel key="queue" />}
-              </AnimatePresence>
-            </div>
+              <motion.div
+                key={location.pathname}
+                initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.995 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+              >
+                <Outlet />
+              </motion.div>
+            </main>
           </div>
+
+          {/* PlayerBar docked inside card */}
+          <PlayerBar />
         </div>
+
+        {/* Right rail - Lyrics or Queue on base layer */}
+        <div
+          style={{
+            width: spacerWidth,
+            flexShrink: 0,
+            position: "relative",
+            overflow: "hidden",
+            height: "100%",
+            display: spacerWidth > 0 ? "flex" : "none",
+          }}
+        >
+          <AnimatePresence initial={false}>
+            {lyricsOpen && <LyricsPanel key="lyrics" />}
+          </AnimatePresence>
+          <AnimatePresence initial={false}>
+            {queueOpen && <QueuePanel key="queue" />}
+          </AnimatePresence>
+        </div>
+
+        {/* Invisible Hitbox Overlay extending to top and right edges/corners of window */}
+        {isWindowsDocked && <WindowCaptionHitboxOverlay />}
       </div>
 
-      <PlayerBar />
+      <SearchPalette />
+      <DevicesPopover />
       <Immersive />
       <QuitConfirm />
       <AddToPlaylistModal />
       <Toaster />
+      {!isWindowsDocked && <WindowCaptionControls />}
     </div>
   );
 }

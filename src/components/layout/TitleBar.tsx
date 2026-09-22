@@ -3,46 +3,73 @@ import { motion, AnimatePresence } from "framer-motion";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useNavigate } from "react-router-dom";
 import {
-  ChevronLeft, ChevronRight, Minus, Square, Copy, X,
+  ChevronLeft, ChevronRight,
   MoreHorizontal, User, Settings, LogOut, LogIn,
-} from "lucide-react";
+  ListMusic, Captions, MonitorSpeaker,
+  PanelLeft,
+} from "@/lib/icons";
 import { useAuth } from "../../hooks/useAuth";
 import { useAuthStore } from "../../store/auth.store";
 import { useCredentialsStore, type ConnectionStatus } from "../../store/credentials.store";
+import { useDevices } from "../../hooks/useDevices";
 import { Tooltip } from "../ui/Tooltip";
 import { isMac } from "../../lib/platform";
-import { gpuLayer, zTransform } from "../../lib/motion";
 import { usePlayerStore } from "../../store/player.store";
+import { useUIStore } from "../../store/ui.store";
+import { create } from "zustand";
+
+export const useCaptionHoverStore = create<{
+  hovered: "min" | "max" | "close" | null;
+  setHovered: (b: "min" | "max" | "close" | null) => void;
+}>((set) => ({
+  hovered: null,
+  setHovered: (b) => set({ hovered: b }),
+}));
 
 // win11 caption button (transparent and full-height)
 
 function CaptionBtn({
-  children, onClick, danger,
+  onClick,
+  children,
+  danger,
+  isHovered,
+  onHoverChange,
 }: {
-  children: React.ReactNode;
   onClick: () => void;
+  children: React.ReactNode;
   danger?: boolean;
+  isHovered?: boolean;
+  onHoverChange?: (hover: boolean) => void;
 }) {
-  const [hover, setHover] = useState(false);
+  const [internalHover, setInternalHover] = useState(false);
+  const hover = isHovered !== undefined ? (isHovered || internalHover) : internalHover;
   return (
     <button
       onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onMouseEnter={() => {
+        setInternalHover(true);
+        onHoverChange?.(true);
+      }}
+      onMouseLeave={() => {
+        setInternalHover(false);
+        onHoverChange?.(false);
+      }}
       style={{
         width:          46,
         height:         "100%",
+        borderRadius:   0,
         border:         "none",
         background:     hover
-          ? danger ? "#c42b1c" : "rgba(255,255,255,0.08)"
+          ? danger ? "#e81123" : "rgba(255,255,255,0.09)"
           : "transparent",
-        color:          hover && danger ? "#fff" : "rgba(255,255,255,0.78)",
+        color:          hover && danger ? "#fff" : hover ? "#ffffff" : "rgba(255,255,255,0.72)",
         cursor:         "pointer",
         display:        "flex",
         alignItems:     "center",
         justifyContent: "center",
         transition:     "background 0.12s, color 0.12s",
         flexShrink:     0,
+        ...({ WebkitAppRegion: "no-drag" } as React.CSSProperties),
       }}
     >
       {children}
@@ -50,56 +77,6 @@ function CaptionBtn({
   );
 }
 
-// round nav / ellipsis button
-
-function PillBtn({
-  children, onClick, wide, nudge,
-}: {
-  children: React.ReactNode;
-  onClick?: () => void;
-  wide?: boolean;
-  // nudge the glyph a hair this way on hover (back left, forward right)
-  nudge?: "left" | "right";
-}) {
-  const [hover, setHover] = useState(false);
-  const nudgeX = nudge && hover ? (nudge === "left" ? -2 : 2) : 0;
-  return (
-    <motion.button
-      onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      whileHover={{ scale: 0.97 }}
-      whileTap={{ scale: 0.92 }}
-      transition={{ type: "spring", stiffness: 400, damping: 22 }}
-      transformTemplate={zTransform}
-      style={{
-        ...gpuLayer,
-        height:         30,
-        width:          wide ? 38 : 30,
-        borderRadius:   wide ? 8 : "50%",
-        // borderless at rest, border only eases in on hover
-        border:         hover ? "1px solid var(--color-glass-border)" : "1px solid transparent",
-        background:     hover ? "rgba(255,255,255,0.10)" : "transparent",
-        color:          hover ? "var(--color-text-hi)" : "var(--color-text)",
-        cursor:         "pointer",
-        display:        "flex",
-        alignItems:     "center",
-        justifyContent: "center",
-        transition:     "background 0.18s ease, color 0.18s ease, border-color 0.18s ease",
-        flexShrink:     0,
-      }}
-    >
-      {/* directional micro-slide - chevron leans the way it'll take you */}
-      <motion.span
-        style={{ display: "flex" }}
-        animate={{ x: nudgeX }}
-        transition={{ type: "spring", stiffness: 500, damping: 28 }}
-      >
-        {children}
-      </motion.span>
-    </motion.button>
-  );
-}
 
 // account menu (avatar / name header + Account · Settings · Log out)
 
@@ -166,11 +143,38 @@ function AccountMenu() {
   const go = (path: string) => { setOpen(false); navigate(path); };
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <div ref={ref} style={{ position: "relative", display: "flex", alignItems: "center" }}>
       <Tooltip label="Account" side="bottom" align="start">
-        <PillBtn wide onClick={() => setOpen((v) => !v)}>
-          <MoreHorizontal size={16} strokeWidth={2.5} />
-        </PillBtn>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: 9999,
+            border: "none",
+            background: open ? "rgba(255, 255, 255, 0.14)" : "transparent",
+            color: open ? "#ffffff" : "var(--color-text)",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "background 0.15s, color 0.15s",
+          }}
+          onMouseEnter={(e) => {
+            if (!open) {
+              (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.08)";
+              (e.currentTarget as HTMLElement).style.color = "#ffffff";
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!open) {
+              (e.currentTarget as HTMLElement).style.background = "transparent";
+              (e.currentTarget as HTMLElement).style.color = "var(--color-text)";
+            }
+          }}
+        >
+          <MoreHorizontal size={15} strokeWidth={1.8} />
+        </button>
       </Tooltip>
       <AnimatePresence>
         {open && (
@@ -235,23 +239,17 @@ function AccountMenu() {
   );
 }
 
-export function TitleBar() {
-  const navigate = useNavigate();
+export function WindowCaptionControls({ dockedToCard }: { dockedToCard?: boolean } = {}) {
   const [maximized, setMaximized] = useState(false);
-  const [windowWidth, setWindowWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1200));
-  const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
-  const queueOpen = usePlayerStore((s) => s.queueOpen);
-  const railWidth = lyricsOpen ? 366 : queueOpen ? 272 : 0;
-  const isCompact = windowWidth < 768;
-  const effectiveRailWidth = railWidth > 0 && !isCompact ? railWidth : "auto";
+  const macSimulated = useUIStore((s) => s.macSimulated);
+  const effect = useUIStore((s) => s.windowEffect);
+  const materialTransparency = useUIStore((s) => s.materialTransparency);
+  const backdropActive = useUIStore((s) => s.backdropActive);
+  const hovered = useCaptionHoverStore((s) => s.hovered);
+  const setHovered = useCaptionHoverStore((s) => s.setHovered);
 
   useEffect(() => {
-    const handleResize = () => setWindowWidth(window.innerWidth);
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-
-  useEffect(() => {
+    if (isMac) return;
     const win = getCurrentWindow();
     win.isMaximized().then(setMaximized).catch(() => {});
     const unlisten = win.onResized(() => {
@@ -260,76 +258,442 @@ export function TitleBar() {
     return () => { unlisten.then((u) => u()).catch(() => {}); };
   }, []);
 
+  if (isMac || macSimulated) return null;
   const win = getCurrentWindow();
 
+  const isTranslucent = backdropActive && effect !== "none";
+  const cardBg = isTranslucent
+    ? `rgba(18, 18, 20, ${Math.max(0.66, Math.min(0.85, 0.78 * (1 - materialTransparency * 0.28)))})`
+    : "rgba(19, 19, 19, 0.94)";
+
   return (
-    <>
-      {isMac && <div data-tauri-drag-region style={{ height: 30, flexShrink: 0 }} />}
+    <div
+      style={{
+        position: "absolute",
+        top: 0,
+        right: 0,
+        zIndex: 25,
+        display: "flex",
+        alignItems: "stretch",
+        width: 138,
+        height: 40,
+        background: dockedToCard ? "transparent" : cardBg,
+        backdropFilter: !dockedToCard && isTranslucent ? "blur(32px) saturate(140%)" : undefined,
+        WebkitBackdropFilter: !dockedToCard && isTranslucent ? "blur(32px) saturate(140%)" : undefined,
+        borderBottomLeftRadius: 10,
+        borderLeft: dockedToCard ? "1px solid rgba(255, 255, 255, 0.08)" : "none",
+        borderBottom: dockedToCard ? "1px solid rgba(255, 255, 255, 0.08)" : "none",
+        borderTop: "none",
+        borderRight: "none",
+        overflow: "hidden",
+        pointerEvents: "auto",
+        ...({ WebkitAppRegion: "no-drag" } as React.CSSProperties),
+      }}
+    >
+      <Tooltip label="Minimize" side="bottom">
+        <CaptionBtn
+          onClick={() => win.minimize()}
+          isHovered={hovered === "min"}
+          onHoverChange={(h) => setHovered(h ? "min" : null)}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+            <path d="M0 5H10" stroke="currentColor" strokeWidth="1" />
+          </svg>
+        </CaptionBtn>
+      </Tooltip>
+      <Tooltip label={maximized ? "Restore" : "Maximize"} side="bottom">
+        <CaptionBtn
+          onClick={() => win.toggleMaximize()}
+          isHovered={hovered === "max"}
+          onHoverChange={(h) => setHovered(h ? "max" : null)}
+        >
+          {maximized ? (
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+              <path d="M2.5 0.5H9.5V7.5H7.5" fill="none" stroke="currentColor" strokeWidth="1" />
+              <rect x="0.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
+            </svg>
+          ) : (
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+              <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
+            </svg>
+          )}
+        </CaptionBtn>
+      </Tooltip>
+      <Tooltip label="Close" side="bottom" align="end">
+        <CaptionBtn
+          onClick={() => win.close()}
+          danger
+          isHovered={hovered === "close"}
+          onHoverChange={(h) => setHovered(h ? "close" : null)}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+            <path d="M1 1L9 9M9 1L1 9" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+          </svg>
+        </CaptionBtn>
+      </Tooltip>
+    </div>
+  );
+}
+
+export function WindowCaptionHitboxOverlay() {
+  const macSimulated = useUIStore((s) => s.macSimulated);
+  const setHovered = useCaptionHoverStore((s) => s.setHovered);
+
+  if (isMac || macSimulated) return null;
+  const win = getCurrentWindow();
+
+  const hitStyle: React.CSSProperties = {
+    position: "absolute",
+    pointerEvents: "auto",
+    cursor: "pointer",
+    background: "transparent",
+    ...({ WebkitAppRegion: "no-drag" } as React.CSSProperties),
+  };
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 0,
+        right: 0,
+        zIndex: 9999,
+        pointerEvents: "none",
+        width: 142,
+        height: 44,
+      }}
+    >
+      {/* 4px top margin hitbox above Minimize */}
       <div
         style={{
-          height:      48,
-          flexShrink:  0,
-          display:     "flex",
-          alignItems:  "center",
-          width:       "100%",
+          ...hitStyle,
+          top: 0,
+          right: 96,
+          width: 46,
+          height: 5,
+        }}
+        onMouseEnter={() => setHovered("min")}
+        onMouseLeave={() => setHovered(null)}
+        onClick={() => win.minimize()}
+      />
+
+      {/* 4px top margin hitbox above Maximize */}
+      <div
+        style={{
+          ...hitStyle,
+          top: 0,
+          right: 50,
+          width: 46,
+          height: 5,
+        }}
+        onMouseEnter={() => setHovered("max")}
+        onMouseLeave={() => setHovered(null)}
+        onClick={() => win.toggleMaximize()}
+      />
+
+      {/* 4px top margin hitbox + exact top-right corner above Close */}
+      <div
+        style={{
+          ...hitStyle,
+          top: 0,
+          right: 0,
+          width: 50,
+          height: 5,
+        }}
+        onMouseEnter={() => setHovered("close")}
+        onMouseLeave={() => setHovered(null)}
+        onClick={() => win.close()}
+      />
+
+      {/* 4px right margin hitbox along the right edge of Close */}
+      <div
+        style={{
+          ...hitStyle,
+          top: 5,
+          right: 0,
+          width: 5,
+          height: 39,
+        }}
+        onMouseEnter={() => setHovered("close")}
+        onMouseLeave={() => setHovered(null)}
+        onClick={() => win.close()}
+      />
+    </div>
+  );
+}
+
+export function TitleBar() {
+  const navigate = useNavigate();
+  const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
+  const toggleLyrics = usePlayerStore((s) => s.toggleLyrics);
+  const queueOpen = usePlayerStore((s) => s.queueOpen);
+  const toggleQueue = usePlayerStore((s) => s.toggleQueue);
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const macSimulated = useUIStore((s) => s.macSimulated);
+  const { activeDevice, isRemotePlayback, devicesOpen, toggleDevices } = useDevices();
+
+  return (
+    <div
+      style={{
+        height: 48,
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        width: "100%",
+        paddingLeft: 12,
+        paddingRight: (!isMac && !macSimulated && !lyricsOpen && !queueOpen) ? 0 : 12,
+        position: "relative",
+        zIndex: 10,
+        pointerEvents: "auto",
+      }}
+    >
+      {/* Left controls: single unified capsule pill matching Cider */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          height: 32,
+          borderRadius: 9999,
+          background: "rgba(255, 255, 255, 0.05)",
+          border: "1px solid rgba(255, 255, 255, 0.10)",
+          boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 2px 8px rgba(0, 0, 0, 0.2)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
+          padding: 2,
+          gap: 2,
+          flexShrink: 0,
         }}
       >
-        {/* main scrolling content header area */}
-        <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, height: "100%" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", flexShrink: 0, pointerEvents: "auto" }}>
-            <AccountMenu />
-            <Tooltip label="Back" side="bottom">
-              <PillBtn onClick={() => navigate(-1)} nudge="left">
-                <ChevronLeft size={15} strokeWidth={2.5} />
-              </PillBtn>
-            </Tooltip>
-            <Tooltip label="Forward" side="bottom">
-              <PillBtn onClick={() => navigate(1)} nudge="right">
-                <ChevronRight size={15} strokeWidth={2.5} />
-              </PillBtn>
-            </Tooltip>
-          </div>
+        <AccountMenu />
 
-          {/* drag region over main content */}
-          <div data-tauri-drag-region style={{ flex: 1, height: "100%", cursor: "default", pointerEvents: "auto" }} />
-        </div>
+        <div style={{ width: 1, height: 14, background: "rgba(255, 255, 255, 0.1)", margin: "0 1px" }} />
 
-        {/* right rail slot (lyrics/queue) with window controls */}
-        <div
-          style={{
-            width: effectiveRailWidth,
-            height: "100%",
-            display: "flex",
-            alignItems: "stretch",
-            justifyContent: "flex-end",
-            flexShrink: 0,
-            pointerEvents: "none",
-          }}
-        >
-          {!isMac && (
-            <div style={{ display: "flex", alignItems: "stretch", height: "100%", flexShrink: 0, pointerEvents: "auto" }}>
-              <Tooltip label="Minimize" side="bottom">
-                <CaptionBtn onClick={() => win.minimize()}>
-                  <Minus size={15} strokeWidth={1.8} />
-                </CaptionBtn>
-              </Tooltip>
-              <Tooltip label={maximized ? "Restore" : "Maximize"} side="bottom">
-                <CaptionBtn onClick={() => win.toggleMaximize()}>
-                  {maximized
-                    ? <Copy   size={12} strokeWidth={1.8} style={{ transform: "scaleX(-1)" }} />
-                    : <Square size={12} strokeWidth={1.8} />
-                  }
-                </CaptionBtn>
-              </Tooltip>
-              <Tooltip label="Close" side="bottom" align="end">
-                <CaptionBtn onClick={() => win.close()} danger>
-                  <X size={16} strokeWidth={1.8} />
-                </CaptionBtn>
-              </Tooltip>
-            </div>
-          )}
-        </div>
+        <Tooltip label="Back" side="bottom">
+          <button
+            onClick={() => navigate(-1)}
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 9999,
+              border: "none",
+              background: "transparent",
+              color: "var(--color-text)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "background 0.15s, color 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.08)";
+              (e.currentTarget as HTMLElement).style.color = "#ffffff";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.background = "transparent";
+              (e.currentTarget as HTMLElement).style.color = "var(--color-text)";
+            }}
+          >
+            <ChevronLeft size={15} strokeWidth={1.8} />
+          </button>
+        </Tooltip>
+
+        <div style={{ width: 1, height: 14, background: "rgba(255, 255, 255, 0.1)", margin: "0 1px" }} />
+
+        <Tooltip label="Forward" side="bottom">
+          <button
+            onClick={() => navigate(1)}
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 9999,
+              border: "none",
+              background: "transparent",
+              color: "var(--color-text)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "background 0.15s, color 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.08)";
+              (e.currentTarget as HTMLElement).style.color = "#ffffff";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.background = "transparent";
+              (e.currentTarget as HTMLElement).style.color = "var(--color-text)";
+            }}
+          >
+            <ChevronRight size={15} strokeWidth={1.8} />
+          </button>
+        </Tooltip>
+
+        <div style={{ width: 1, height: 14, background: "rgba(255, 255, 255, 0.1)", margin: "0 1px" }} />
+
+        <Tooltip label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} side="bottom">
+          <button
+            onClick={toggleSidebar}
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 9999,
+              border: "none",
+              background: sidebarCollapsed ? "rgba(255, 255, 255, 0.14)" : "transparent",
+              color: sidebarCollapsed ? "#ffffff" : "var(--color-text)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "background 0.15s, color 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              if (!sidebarCollapsed) {
+                (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.08)";
+                (e.currentTarget as HTMLElement).style.color = "#ffffff";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!sidebarCollapsed) {
+                (e.currentTarget as HTMLElement).style.background = "transparent";
+                (e.currentTarget as HTMLElement).style.color = "var(--color-text)";
+              }
+            }}
+          >
+            <PanelLeft size={15} strokeWidth={1.75} />
+          </button>
+        </Tooltip>
       </div>
-    </>
+
+      {/* Center drag region */}
+      <div data-tauri-drag-region style={{ flex: 1, height: "100%", cursor: "default" }} />
+
+      {/* right actions capsule: lyrics, queue, devices */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          height: 32,
+          borderRadius: 9999,
+          background: "rgba(255, 255, 255, 0.06)",
+          border: "1px solid rgba(255, 255, 255, 0.1)",
+          boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 2px 8px rgba(0, 0, 0, 0.25)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
+          padding: 2,
+          gap: 2,
+          flexShrink: 0,
+          marginRight: (!isMac && !macSimulated && !lyricsOpen && !queueOpen) ? 148 : 0,
+        }}
+      >
+        <Tooltip label={lyricsOpen ? "Close lyrics" : "Lyrics"} side="bottom">
+          <button
+            onClick={() => { if (currentTrack) toggleLyrics(); }}
+            disabled={!currentTrack}
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 9999,
+              border: "none",
+              background: lyricsOpen ? "rgba(255, 255, 255, 0.18)" : "transparent",
+              color: lyricsOpen ? "#ffffff" : !currentTrack ? "rgba(255,255,255,0.25)" : "rgba(255, 255, 255, 0.72)",
+              cursor: currentTrack ? "pointer" : "default",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: lyricsOpen ? "0 1px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15)" : "none",
+              transition: "background 0.15s, color 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              if (!lyricsOpen && currentTrack) {
+                (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.1)";
+                (e.currentTarget as HTMLElement).style.color = "#ffffff";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!lyricsOpen && currentTrack) {
+                (e.currentTarget as HTMLElement).style.background = "transparent";
+                (e.currentTarget as HTMLElement).style.color = "rgba(255, 255, 255, 0.72)";
+              }
+            }}
+          >
+            <Captions size={15} strokeWidth={1.65} />
+          </button>
+        </Tooltip>
+
+        <div style={{ width: 1, height: 14, background: "rgba(255, 255, 255, 0.1)", margin: "0 1px" }} />
+
+        <Tooltip label={queueOpen ? "Close queue" : "Queue"} side="bottom">
+          <button
+            onClick={toggleQueue}
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 9999,
+              border: "none",
+              background: queueOpen ? "rgba(255, 255, 255, 0.18)" : "transparent",
+              color: queueOpen ? "#ffffff" : "rgba(255, 255, 255, 0.72)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: queueOpen ? "0 1px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15)" : "none",
+              transition: "background 0.15s, color 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              if (!queueOpen) {
+                (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.1)";
+                (e.currentTarget as HTMLElement).style.color = "#ffffff";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!queueOpen) {
+                (e.currentTarget as HTMLElement).style.background = "transparent";
+                (e.currentTarget as HTMLElement).style.color = "rgba(255, 255, 255, 0.72)";
+              }
+            }}
+          >
+            <ListMusic size={15} strokeWidth={1.65} />
+          </button>
+        </Tooltip>
+
+        <div style={{ width: 1, height: 14, background: "rgba(255, 255, 255, 0.1)", margin: "0 1px" }} />
+
+        <Tooltip label={isRemotePlayback && activeDevice ? `Device: ${activeDevice.name}` : devicesOpen ? "Close devices" : "Devices"} side="bottom">
+          <button
+            data-devices-trigger="true"
+            onClick={toggleDevices}
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 9999,
+              border: "none",
+              background: devicesOpen ? "rgba(255, 255, 255, 0.18)" : isRemotePlayback ? "rgba(30, 215, 96, 0.18)" : "transparent",
+              color: isRemotePlayback ? "var(--color-primary, #1ed760)" : devicesOpen ? "#ffffff" : "rgba(255, 255, 255, 0.72)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: devicesOpen ? "0 1px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15)" : "none",
+              transition: "background 0.15s, color 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              if (!devicesOpen && !isRemotePlayback) {
+                (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.1)";
+                (e.currentTarget as HTMLElement).style.color = "#ffffff";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!devicesOpen && !isRemotePlayback) {
+                (e.currentTarget as HTMLElement).style.background = "transparent";
+                (e.currentTarget as HTMLElement).style.color = "rgba(255, 255, 255, 0.72)";
+              }
+            }}
+          >
+            <MonitorSpeaker size={15} strokeWidth={1.65} />
+          </button>
+        </Tooltip>
+      </div>
+    </div>
   );
 }

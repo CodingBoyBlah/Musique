@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { usePlayerStore } from "../store/player.store";
+import { useUIStore } from "../store/ui.store";
 
 /* reflow pulse
 
@@ -51,7 +52,8 @@ function getSnapshot() {
 export function useReflowPulse(): void {
   // resize -> grid re-columns
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  // side panels eat horizontal space -> grid re-columns. selecting these  subscribes the caller to the toggles.
+  // side panels & sidebar toggles eat/free horizontal space -> grid re-columns.
   usePlayerStore((s) => s.lyricsOpen);
   usePlayerStore((s) => s.queueOpen);
+  useUIStore((s) => s.sidebarCollapsed);
 }

@@ -5,16 +5,16 @@
    
     --color-window: transparent;
     --color-content: transparent;
-    --color-sidebar: rgba(0, 0, 0, 0.06);
+    --color-sidebar: rgba(0, 0, 0, 0.20);
     
-    --color-base: #0b0b0f;
+    --color-base: #131313;
 
     
     --color-glass: rgba(255, 255, 255, 0.05);
-    --color-glass-border: rgba(255, 255, 255, 0.09);
-    --color-surface: rgba(255, 255, 255, 0.035);
-    --color-surface-2: rgba(255, 255, 255, 0.06);
-    --color-surface-elevated: rgba(255, 255, 255, 0.06);
+    --color-glass-border: rgba(255, 255, 255, 0.08);
+    --color-surface: rgba(255, 255, 255, 0.04);
+    --color-surface-2: rgba(255, 255, 255, 0.07);
+    --color-surface-elevated: rgba(255, 255, 255, 0.07);
 
    
     --color-hover: rgba(255, 255, 255, 0.06);
@@ -22,14 +22,14 @@
     --color-active: rgba(255, 255, 255, 0.11);
 
    
-    --color-border: rgba(255, 255, 255, 0.08);
-    --color-divider: rgba(255, 255, 255, 0.06);
+    --color-border: rgba(255, 255, 255, 0.07);
+    --color-divider: rgba(255, 255, 255, 0.05);
 
    
-    --color-text: rgba(255, 255, 255, 0.82);
-    --color-text-hi: rgba(255, 255, 255, 0.97);
-    --color-text-dim: rgba(255, 255, 255, 0.46);
-    --color-text-muted: rgba(255, 255, 255, 0.46);
+    --color-text: rgba(255, 255, 255, 0.84);
+    --color-text-hi: rgba(255, 255, 255, 0.98);
+    --color-text-dim: rgba(255, 255, 255, 0.48);
+    --color-text-muted: rgba(255, 255, 255, 0.48);
 
    
     --color-accent: #5873D8;
@@ -38,7 +38,10 @@
     --color-accent-text: #ffffff;
 
     
-    --color-player: rgba(16, 16, 18, 0.07);
+    --color-player: var(--color-sidebar);
+    --color-dock-bg: rgba(18, 18, 18, 0.94);
+    --color-dock-border: rgba(255, 255, 255, 0.09);
+    --color-dock-highlight: rgba(255, 255, 255, 0.12);
 
     --color-danger: #ff453a;
 }

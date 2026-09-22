@@ -19,6 +19,13 @@ interface UIState {
   
   quitConfirmOpen: boolean;
   setQuitConfirmOpen: (v: boolean) => void;
+
+  macSimulated: boolean;
+  toggleMacSimulated: () => void;
+  setMacSimulated: (v: boolean) => void;
+
+  searchPaletteOpen: boolean;
+  setSearchPaletteOpen: (v: boolean) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -37,6 +44,11 @@ export const useUIStore = create<UIState>()(
       setBackdropActive: (v) => set({ backdropActive: v }),
       quitConfirmOpen: false,
       setQuitConfirmOpen: (v) => set({ quitConfirmOpen: v }),
+      macSimulated: false,
+      toggleMacSimulated: () => set((s) => ({ macSimulated: !s.macSimulated })),
+      setMacSimulated: (v) => set({ macSimulated: v }),
+      searchPaletteOpen: false,
+      setSearchPaletteOpen: (v) => set({ searchPaletteOpen: v }),
     }),
     {
       name: "spotify-ui",

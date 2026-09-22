@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, GripVertical, ListMusic } from "lucide-react";
+import { X, GripVertical, ListMusic } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { playTrack } from "../../api/playback";
@@ -202,14 +202,14 @@ export function QueuePanel() {
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH, maxWidth: "100vw", display: "flex", flexDirection: "column", overflow: "hidden",
-        background: "var(--color-sidebar)", borderLeft: "1px solid var(--color-border)",
-        boxShadow: "-8px 0 32px rgba(0,0,0,0.36)",
+        background: "transparent", borderLeft: "none",
+        boxShadow: "none",
         willChange: "transform",
       }}
     >
       <div style={{ width: WIDTH, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {/* header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMac ? "0 12px" : "0 146px 0 14px", height: 48, flexShrink: 0, borderBottom: "1px solid var(--color-border)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMac ? "4px 12px 0" : "4px 140px 0 14px", height: 40, flexShrink: 0, borderBottom: "none" }}>
           <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>Queue</span>
           <Tooltip label="Close queue" side="bottom" align="end">
             <button
