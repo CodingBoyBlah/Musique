@@ -1,76 +1,135 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef } from "react";
+import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import {
-  X, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1,
-  Captions, ListMusic, Music,
-} from "@/lib/icons";
+import { Minimize2, Captions, ListMusic, Music } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
 import { useLyrics } from "../../hooks/useLyrics";
-import { CoverArt } from "../ui/CoverArt";
-import { fmtMs } from "../../utils/fmt";
-import { gpuLayer, zTransform } from "../../lib/motion";
+import { useAmbient } from "../../hooks/useAmbient";
+import { useWindowActive } from "../../hooks/useWindowActive";
+import { PlayerBar } from "./PlayerBar";
 import { playTrack } from "../../api/playback";
 import {
-  ActiveLine,
+  LyricRowText,
   buildRows,
-  mapWords,
+  lyricTone,
+  lyricWords,
   useActiveRow,
   useLyricClock,
 } from "../../lib/lyrics";
 
-// animated gradient bg derived from the cover art like apple music mobile
-
-// {arc browser onboarindg graident inspo too}
-
-function GradientBg({ url }: { url: string | null | undefined }) {
-  const reduceMotion = useReducedMotion();
-
-  const base: React.CSSProperties = {
-    position: "absolute", inset: 0, overflow: "hidden",
-    isolation: "isolate", background: "#07070b",
-    pointerEvents: "none",
-  };
-
-  const layer = (opacity: number, blur: number): React.CSSProperties => ({
-    position: "absolute", inset: "-25%",
-    backgroundImage: url ? `url("${url}")` : "none", backgroundSize: "cover", backgroundPosition: "center",
-    filter: `blur(${blur}px) saturate(1.8)`, opacity,
-    willChange: "transform", backfaceVisibility: "hidden",
-  });
+/* The room the record is playing in.
+ *
+ * One copy of the cover, blurred once into a bitmap by lib/ambient, drifting on
+ * transform alone. The sharp sleeve is drawn over it by Sleeve below, feathered
+ * at its right edge and corners, so what shows through around the artwork - the
+ * corners, and the whole right side the lyrics sit on - is this layer moving.
+ *
+ * Everything expensive that used to live here is gone, and none of it was ever
+ * needed for the look. The first version blurred two full-window copies of the
+ * cover live, on every frame, under a `backdrop-filter` panel that re-blurred
+ * half the window again - a backdrop-filter's input is whatever is behind it,
+ * and that was moving, so it could never be cached. A later pass added a
+ * full-window `mix-blend-mode: overlay` grain tile, which forces the whole
+ * subtree onto a render surface that has to be re-blended on every frame the
+ * ambient moves. Blurring once into a bitmap and then only transforming it
+ * costs nothing per frame, and the artwork now supplies its own texture. */
+function AmbientBg({ url }: { url: string | null | undefined }) {
+  const { art, blobs, base, glow } = useAmbient(url);
+  const awake = useWindowActive();
 
   return (
-    <div aria-hidden style={base}>
-      {/* Deep atmospheric radial glow so the canvas has rich color depth and never flat pitch black */}
+    <div
+      aria-hidden
+      style={{ position: "absolute", inset: 0, overflow: "hidden", background: base, pointerEvents: "none", contain: "strict" }}
+    >
+      <div
+        className={awake ? "amb-layer amb-1" : "amb-layer amb-1 amb-parked"}
+        style={
+          art
+            ? { backgroundImage: `url("${art}")` }
+            : // unreadable artwork: light the room off the palette instead
+              { background: `radial-gradient(circle at 34% 40%, rgba(${blobs[0]}, 0.75) 0%, rgba(${blobs[1]}, 0.35) 52%, rgba(${blobs[2]}, 0) 78%)` }
+        }
+      />
+
+{/* One element, two stacked gradients: the light the sleeve pools into
+          the room, and the scrim over the strips the window chrome and the dock
+          actually sit on. Kept on a single div because every full-window layer
+          here is another full-window blend on every frame the backdrop moves.
+          The scrim stays off the middle of the frame - an earlier pass laid a
+          vignette and a full-height wash over this and turned a hot pink sleeve
+          into dead maroon. */}
       <div
         style={{
-          position: "absolute",
-          inset: 0,
-          background: "radial-gradient(ellipse 80% 60% at 50% 35%, rgba(32, 28, 52, 0.6) 0%, #07070b 100%)",
+          position: "absolute", inset: 0,
+          background:
+            `radial-gradient(ellipse 52% 60% at 26% 50%, rgba(${glow}, 0.18) 0%, rgba(${glow}, 0) 74%), ` +
+            "linear-gradient(180deg, rgba(4,4,8,0.42) 0%, rgba(4,4,8,0.04) 16%, rgba(4,4,8,0) 52%, rgba(4,4,8,0.14) 76%, rgba(4,4,8,0.50) 100%)",
         }}
       />
-      {url && (
-        <>
-          <motion.div
-            initial={false}
-            transformTemplate={zTransform}
-            animate={reduceMotion ? { scale: 1.35 } : { scale: 1.35, x: [0, 60, -45, 0], y: [0, -48, 38, 0], rotate: [0, 5, -4, 0] }}
-            transition={{ duration: 32, repeat: Infinity, ease: "easeInOut" }}
-            style={layer(0.85, 60)}
-          />
-          <motion.div
-            initial={false}
-            transformTemplate={zTransform}
-            animate={reduceMotion ? { scale: 1.55 } : { scale: 1.55, x: [0, -50, 42, 0], y: [0, 42, -32, 0], rotate: [0, -6, 4, 0] }}
-            transition={{ duration: 42, repeat: Infinity, ease: "easeInOut" }}
-            style={layer(0.45, 72)}
-          />
-        </>
-      )}
-      {/* darkening scrim so white text/controls stay legible over any artwork */}
-      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(4,4,8,0.50) 0%, rgba(4,4,8,0.28) 40%, rgba(4,4,8,0.65) 100%)" }} />
+    </div>
+  );
+}
+
+/* The sleeve, full bleed down the left.
+ *
+ * A single radial mask does both jobs the reference does: it holds the artwork
+ * solid through the left edge and the middle, then feathers it out across the
+ * right and softens all four corners, so the drifting blur underneath comes
+ * through exactly where the lyrics are. One mask on a static image rasterises
+ * once - it is not a filter and it costs nothing per frame. */
+function Sleeve({ url, alt }: { url: string | null | undefined; alt: string }) {
+  const src = coverUrl(url, 900) ?? url;
+  if (!src) return null;
+
+/* Three masks, multiplied together.
+ *
+ * The first is the falloff across the right of the sleeve, where the lyrics
+ * sit. The other two open up the window's top-left and bottom-left corners, so
+ * the drift shows through there as well - one ellipse cannot do both jobs,
+ * because widening it until the left corners dissolve also thins the artwork
+ * along the whole top and bottom edge. Squeezing the first mask's vertical
+ * radius was that mistake: it took the corners with it but hollowed out the
+ * middle of the sleeve on the way.
+ *
+ * The intersect composite is what makes them multiply. The default is add,
+ * which unions instead - each corner gradient is opaque everywhere the other
+ * one is cut out, so a union would simply cancel both holes. */
+const SLEEVE_MASK = [
+  /* Falloff across the sleeve. These percentages are relative to the 62%-wide
+     container, which makes them easy to misread - in window terms the artwork
+     stays solid to about 31% and has dissolved completely by 57%. */
+  "radial-gradient(ellipse 90% 150% at 11.5% 50%, #000 0%, #000 42%, transparent 89%)",
+  // the window's top-left corner
+  "radial-gradient(ellipse 44% 36% at 0% 0%, transparent 6%, #000 94%)",
+  // and its bottom-left
+  "radial-gradient(ellipse 44% 36% at 0% 100%, transparent 6%, #000 94%)",
+].join(", ");
+
+  return (
+    <div aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "62%", overflow: "hidden", pointerEvents: "none" }}>
+      <AnimatePresence initial={false}>
+        <motion.img
+          key={src}
+          src={src}
+          alt={alt}
+          referrerPolicy="no-referrer"
+          decoding="async"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          style={{
+            position: "absolute", inset: 0,
+            width: "100%", height: "100%", objectFit: "cover", objectPosition: "center",
+            WebkitMaskImage: SLEEVE_MASK,
+            maskImage: SLEEVE_MASK,
+            maskComposite: "intersect",
+          }}
+        />
+      </AnimatePresence>
     </div>
   );
 }
@@ -78,9 +137,9 @@ function GradientBg({ url }: { url: string | null | undefined }) {
 // synced lyrics same wordby word engine as the side LyricsPanel too
 
 
-/* IMMERSIVE - background graident like arcs onboarding, panels: Album art, play, pause, and on the side EITHER
-lyrics or queue, like cider TODO DONE*/
-function ImmersiveLyrics() {
+/* IMMERSIVE - the sleeve fills the left, the lyrics sit on the drifting blur to
+the right of it, and the app's own dock floats over the bottom */
+function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
   const track        = usePlayerStore((s) => s.currentTrack);
   const setPosition  = usePlayerStore((s) => s.setPosition);
   const reduceMotion = useReducedMotion();
@@ -101,7 +160,38 @@ function ImmersiveLyrics() {
     const el = rowRefs.current[active];
     const cont = scrollRef.current;
     if (!el || !cont) return;
-    cont.scrollTo({ top: el.offsetTop - cont.clientHeight * 0.42 + el.clientHeight / 2, behavior: reduceMotion ? "auto" : "smooth" });
+
+    /* The active line rests with its middle at 42% of the column, not 34% -
+       it was sitting close enough to the tabs to feel pinned under them.
+       Centring rather than top-aligning is what makes it size-aware: a line
+       that wraps to three rows grows in both directions instead of pushing its
+       tail off the bottom. The clamp is for the extreme case, where a line long
+       enough to fill half the column would still ride up under the header. */
+    const H = cont.clientHeight;
+    const target = Math.min(
+      el.offsetTop - H * 0.42 + el.clientHeight / 2,
+      el.offsetTop - H * 0.16,
+    );
+    if (reduceMotion) {
+      cont.scrollTop = target;
+      return;
+    }
+
+    const from = cont.scrollTop;
+    const delta = target - from;
+    if (Math.abs(delta) < 1) return;
+
+    // ease-out-quart, the curve the row's scale is on
+    const DURATION = 560;
+    const start = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / DURATION);
+      cont.scrollTop = from + delta * (1 - Math.pow(1 - t, 4));
+      if (t < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
   }, [active, reduceMotion]);
 
   function seekTo(i: number) {
@@ -117,10 +207,10 @@ function ImmersiveLyrics() {
   if (rows.length === 0) return <Centered>No lyrics found for this track.</Centered>;
 
   return (
-    <div ref={scrollRef} data-selectable style={lyricsScroll}>
+    <div ref={scrollRef} data-selectable className="lyr-scroll" style={lyricsScroll}>
       {rows.map((row, ri) => {
         const isActive = synced && ri === active;
-        const isPast = synced && ri < active;
+        const tone = synced ? lyricTone(Math.abs(ri - active), ri < active) : { blur: 0, alpha: 0.9 };
         const multi = row.voices.length > 1;
         return (
           <div
@@ -129,44 +219,55 @@ function ImmersiveLyrics() {
             onClick={() => seekTo(ri)}
             style={{
               cursor: synced ? "pointer" : "default",
-              padding: isActive ? "10px 8px" : "6px 8px",
-              margin: isActive ? "4px 0" : "0",
-              borderRadius: 12,
-              transition: "opacity 0.38s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), filter 0.38s ease",
+              /* Constant box: the padding never changes. Growing the active
+                 row reflowed the whole list on every line and moved the scroll
+                 target out from under the tween chasing it, so size is carried
+                 by transform, which does not relayout.
+
+                 The list is laid out at the ACTIVE size and everything else is
+                 scaled DOWN to 0.79 - 1/1.27, the ratio measured off the
+                 reference. Scaling the active line up instead is the obvious
+                 way round and the wrong one: a scale about `left center` grows
+                 the box rightward without the layout knowing, so the effect has
+                 to be paid for in reserved width that every other line wraps
+                 early to fund. This way the widest thing on screen is always
+                 the thing the layout measured, and nothing can clip however
+                 large the ratio gets. */
+              padding: "5px 0",
+              opacity: tone.alpha,
+              transform: isActive ? "scale(1)" : "scale(0.79)",
               transformOrigin: "left center",
-              transform: isActive ? "scale(1.12)" : "scale(0.95)",
-              opacity: !synced ? 0.9 : isActive ? 1 : isPast ? 0.26 : 0.40,
-              filter: !synced || isActive ? "none" : "blur(2px)",
-              display: "flex", flexDirection: "column", gap: multi ? 4 : 0,
+              transition: reduceMotion
+                ? "none"
+                : "opacity 0.44s cubic-bezier(0.22, 1, 0.36, 1), transform 0.56s cubic-bezier(0.22, 1, 0.36, 1)",
+              display: "flex", flexDirection: "column", gap: multi ? 6 : 0,
             }}
           >
             {row.voices.map((voice, vi) => {
-              const size = vi === 0 ? 30 : 23;
+              const size = vi === 0 ? "clamp(28px, 2.9vw, 46px)" : "clamp(21px, 2.15vw, 34px)";
               const weight = vi === 0 ? 800 : 700;
-              const indent = vi === 0 ? 0 : 18;
+              // built for every row, not just the lit one: both states render
+              // the same spans so the line can never re-wrap when it lights up
+              const words = lyricWords(voice, row.startMs, row.endMs);
               return (
                 <div
                   key={vi}
                   style={{
-                    marginLeft: indent,
+                    marginLeft: vi === 0 ? 0 : 18,
                     borderLeft: vi === 0 ? "none" : "2px solid rgba(255,255,255,0.18)",
-                    paddingLeft: vi === 0 ? 0 : 10,
+                    paddingLeft: vi === 0 ? 0 : 12,
                   }}
                 >
-                  {isActive && voice.words.length ? (
-                    // word-by-word brightness sweep (real musixmatch/netease timings)
-                    <ActiveLine words={mapWords(voice)} getClock={getClock} size={size} weight={weight} halo={0.35} />
-                  ) : (
-                    <p
-                      style={{
-                        margin: 0, fontSize: size, fontWeight: weight, lineHeight: 1.3, letterSpacing: "-0.01em",
-                        color: isActive ? "#fff" : "rgba(255,255,255,0.82)",
-                        textShadow: isActive ? "0 0 28px rgba(255, 255, 255, 0.40)" : "none",
-                      }}
-                    >
-                      {voice.text || "♪"}
-                    </p>
-                  )}
+                  <LyricRowText
+                    words={words}
+                    active={isActive}
+                    getClock={getClock}
+                    tone={tone}
+                    size={size}
+                    weight={weight}
+                    glowRgb={glow}
+                    inkRgb={ink}
+                  />
                 </div>
               );
             })}
@@ -178,10 +279,15 @@ function ImmersiveLyrics() {
 }
 
 const lyricsScroll: React.CSSProperties = {
-  height: "100%", overflowY: "auto", padding: "8vh 8px 30vh",
-  WebkitMaskImage: "linear-gradient(to bottom, transparent 0, #000 8%, #000 86%, transparent 100%)",
-  maskImage: "linear-gradient(to bottom, transparent 0, #000 8%, #000 86%, transparent 100%)",
+  height: "100%", overflowY: "auto", overflowX: "hidden",
+  /* Real gutters. The text used to sit 8px off the panel edge and then get
+     scaled 12% wider from that edge, so long lines ran off the right of the
+     window entirely. */
+  padding: "10vh clamp(16px, 1.8vw, 30px) 32vh clamp(14px, 1.6vw, 26px)",
+  WebkitMaskImage: "linear-gradient(to bottom, transparent 0, #000 9%, #000 84%, transparent 100%)",
+  maskImage: "linear-gradient(to bottom, transparent 0, #000 9%, #000 84%, transparent 100%)",
 };
+
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
@@ -225,7 +331,7 @@ function ImmersiveQueue() {
           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
         >
           {t.album?.image_url
-            ? <img src={t.album.image_url} alt="" style={{ width: 44, height: 44, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
+            ? <img src={coverUrl(t.album.image_url, 44) ?? t.album.image_url} alt="" style={{ width: 44, height: 44, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
             : <div style={{ width: 44, height: 44, borderRadius: 6, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Music size={18} style={{ color: "rgba(255,255,255,0.4)" }} /></div>}
           <div style={{ minWidth: 0, flex: 1 }}>
             <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</p>
@@ -237,82 +343,18 @@ function ImmersiveQueue() {
   );
 }
 
-// lean progress bar
-
-function Progress() {
-  const positionMs = usePlayerStore((s) => s.positionMs);
-  const durationMs = usePlayerStore((s) => s.durationMs);
-  const { seek } = usePlayerControls();
-  const barRef = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<number | null>(null);
-
-  const frac = drag != null ? drag : durationMs > 0 ? Math.min(positionMs / durationMs, 1) : 0;
-
-  function fracFrom(clientX: number) {
-    const el = barRef.current; if (!el) return 0;
-    const r = el.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (clientX - r.left) / r.width));
-  }
-
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
-      <span style={tmark}>{fmtMs(drag != null ? Math.floor(drag * durationMs) : positionMs)}</span>
-      <div
-        ref={barRef}
-        onPointerDown={(e) => { if (!durationMs) return; e.currentTarget.setPointerCapture(e.pointerId); setDrag(fracFrom(e.clientX)); }}
-        onPointerMove={(e) => { if (drag != null) setDrag(fracFrom(e.clientX)); }}
-        onPointerUp={(e) => { if (drag != null) { seek(Math.floor(drag * durationMs)); setDrag(null); } try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ } }}
-        style={{ flex: 1, height: 16, display: "flex", alignItems: "center", cursor: durationMs ? "pointer" : "default", touchAction: "none" }}
-      >
-        <div style={{ position: "relative", width: "100%", height: 5, borderRadius: 99 }}>
-          <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.18)", borderRadius: 99 }} />
-          <div style={{ position: "absolute", inset: "0 auto 0 0", width: `${frac * 100}%`, background: "#fff", borderRadius: 99 }} />
-        </div>
-      </div>
-      <span style={tmark}>{durationMs > 0 ? fmtMs(durationMs) : "0:00"}</span>
-    </div>
-  );
-}
-
-const tmark: React.CSSProperties = { fontSize: 12, color: "rgba(255,255,255,0.6)", flexShrink: 0, fontVariantNumeric: "tabular-nums" };
-
-// round control button
-
-function Ctl({ children, onClick, active, big, title }: { children: React.ReactNode; onClick: () => void; active?: boolean; big?: boolean; title?: string }) {
-  return (
-    <motion.button
-      onClick={onClick}
-      title={title}
-      whileHover={{ scale: 1.1 }}
-      whileTap={{ scale: 0.9 }}
-      transition={{ type: "spring", stiffness: 400, damping: 22 }}
-      transformTemplate={zTransform}
-      style={{
-        ...gpuLayer,
-        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-        width: big ? 64 : 44, height: big ? 64 : 44, borderRadius: "50%", border: "none",
-        background: big ? "#fff" : "transparent",
-        color: big ? "#0a0a0f" : active ? "#fff" : "rgba(255,255,255,0.75)",
-        boxShadow: big ? "0 4px 20px rgba(0, 0, 0, 0.45)" : "none",
-        cursor: "pointer",
-      }}
-    >
-      {children}
-    </motion.button>
-  );
-}
 
 // immersive view
 
 export function Immersive() {
-  const open        = usePlayerStore((s) => s.immersiveOpen);
-  const setOpen     = usePlayerStore((s) => s.setImmersiveOpen);
-  const panel       = usePlayerStore((s) => s.immersivePanel);
-  const setPanel    = usePlayerStore((s) => s.setImmersivePanel);
-  const track       = usePlayerStore((s) => s.currentTrack);
-  const isPlaying   = usePlayerStore((s) => s.isPlaying);
-  const { togglePlay, next, prev } = usePlayerControls();
-  const { shuffle, repeat, toggleShuffle, cycleRepeat } = useQueueStore();
+  const open     = usePlayerStore((s) => s.immersiveOpen);
+  const setOpen  = usePlayerStore((s) => s.setImmersiveOpen);
+  const panel    = usePlayerStore((s) => s.immersivePanel);
+  const setPanel = usePlayerStore((s) => s.setImmersivePanel);
+  const track    = usePlayerStore((s) => s.currentTrack);
+  // the same cached read AmbientBg does: the lyric ink and glow come off the
+  // cover, so the type is lit by the record it belongs to
+  const { glow, ink } = useAmbient(track?.album?.image_url);
 
   // esc closes
   useEffect(() => {
@@ -322,19 +364,26 @@ export function Immersive() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, setOpen]);
 
-  const RepeatIcon = repeat === "one" ? Repeat1 : Repeat;
-
   return (
     <AnimatePresence>
       {open && track && (
         <motion.div
-          initial={{ opacity: 0, scale: 0.94, filter: "blur(16px)" }}
-          animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-          exit={{ opacity: 0, scale: 0.96, filter: "blur(12px)" }}
-          transition={{ duration: 0.38, ease: [0.16, 1, 0.3, 1] }}
+          /* Opacity only.
+           *
+           * This first animated `filter: blur(16px)` to zero, which re-rasterises
+           * every pixel of the window on every frame of the transition. Swapping
+           * that for a scale was better but still wrong: scaling a full-screen
+           * element re-rasters its whole subtree at each new scale, which is the
+           * spike you see on open and close. Opacity is the one property the
+           * compositor can animate without touching raster at all. */
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b" }}
         >
-          <GradientBg url={track.album?.image_url} />
+          <AmbientBg url={track.album?.image_url} />
+          <Sleeve url={track.album?.image_url} alt={track.name} />
 
           {/* window drag strip immersive covers the whole window (titlebar
               included) so without this you couldnt drag the window here. BUT this sits OVER
@@ -345,145 +394,94 @@ export function Immersive() {
             style={{ position: "absolute", top: 0, left: 0, right: 0, height: 40, zIndex: 4 }}
           />
 
-          {/* close */}
-          <button
-            onClick={() => setOpen(false)}
-            title="Close (Esc)"
-            style={{
-              position: "absolute", top: 18, right: 18, zIndex: 5,
-              width: 40, height: 40, borderRadius: "50%", border: "none", cursor: "pointer",
-              background: "rgba(255,255,255,0.1)", color: "#fff",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.2)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.1)"; }}
-          >
-            <X size={18} strokeWidth={2.4} />
-          </button>
+          {/* The sleeve owns the left of the window; the lyrics and the dock
+              share a single column down the right.
 
-          {/* two-column content */}
+              They are stacked in one flex column rather than positioned
+              separately so their width comes from the same parent - there is no
+              pair of numbers to keep in sync, and they cannot fall out of
+              alignment at any window size. It also puts the dock over the part
+              of the frame the drift already softens, which is why it can stay
+              transparent without a backdrop-filter of its own. */}
           <div
             style={{
-              position: "relative", zIndex: 2, height: "100%",
-              display: "flex", gap: "clamp(20px, 4vw, 64px)",
-              padding: "clamp(40px, 6vh, 80px) clamp(24px, 5vw, 80px)",
-              alignItems: "center", flexWrap: "wrap",
+              position: "absolute", inset: 0, zIndex: 5,
+              display: "flex", justifyContent: "flex-end",
+              padding: "clamp(24px, 4vh, 52px) clamp(20px, 3vw, 50px) clamp(16px, 2.6vh, 28px)",
+              pointerEvents: "none",
             }}
           >
-            {/* left: cover + meta + controls */}
-            <div style={{ flex: "1 1 420px", minWidth: 0, maxWidth: 620, display: "flex", flexDirection: "column", gap: "clamp(18px, 3vh, 32px)", margin: "0 auto" }}>
-              <motion.div
-                layout
-                animate={{ scale: isPlaying ? 1 : 0.96 }}
-                transition={{ type: "spring", stiffness: 300, damping: 26 }}
-                style={{ width: "min(46vh, 100%)", aspectRatio: "1 / 1", alignSelf: "center", borderRadius: 20, overflow: "hidden", boxShadow: "0 28px 80px rgba(0,0,0,0.65), 0 0 40px rgba(255,255,255,0.06)" }}
-              >
-                <CoverArt url={track.album?.image_url} alt={track.name} size={520} style={{ width: "100%", height: "100%" }} />
-              </motion.div>
-
-              <div style={{ minWidth: 0 }}>
-                <h1 style={{ margin: 0, fontSize: "clamp(24px, 3.4vw, 40px)", fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {track.album?.id ? (
-                    <Link
-                      to={`/album/${track.album.id}`}
-                      onClick={() => setOpen(false)}
-                      style={{ color: "inherit", textDecoration: "none" }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline"; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none"; }}
-                      title={`Go to ${track.album.album_type === "single" ? "single" : "album"}: ${track.album.name}`}
-                    >
-                      {track.name}
-                    </Link>
-                  ) : (
-                    track.name
-                  )}
-                </h1>
-                <p style={{ margin: "6px 0 0", fontSize: "clamp(14px, 1.6vw, 18px)", color: "rgba(255,255,255,0.7)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {track.artists.map((a, i) => (
-                    <span key={a.id || i}>
-                      {i > 0 && ", "}
-                      {a.id ? (
-                        <Link
-                          to={`/artist/${a.id}`}
-                          onClick={() => setOpen(false)}
-                          style={{ color: "inherit", textDecoration: "none", transition: "color 0.15s" }}
-                          onMouseEnter={(e) => {
-                            (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline";
-                            (e.currentTarget as HTMLAnchorElement).style.color = "#fff";
-                          }}
-                          onMouseLeave={(e) => {
-                            (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none";
-                            (e.currentTarget as HTMLAnchorElement).style.color = "inherit";
-                          }}
-                          title={`Go to artist: ${a.name}`}
-                        >
-                          {a.name}
-                        </Link>
-                      ) : (
-                        <span>{a.name}</span>
-                      )}
-                    </span>
-                  ))}
-                </p>
-                {track.album?.name && (
-                  <div style={{ marginTop: 8 }}>
-                    <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {track.album.name}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              <Progress />
-
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "clamp(12px, 2vw, 26px)" }}>
-                <Ctl active={shuffle} onClick={toggleShuffle} title="Shuffle"><Shuffle size={20} strokeWidth={2.4} /></Ctl>
-                <Ctl onClick={prev} title="Previous"><SkipBack size={24} strokeWidth={2} fill="currentColor" /></Ctl>
-                <Ctl big onClick={togglePlay} title={isPlaying ? "Pause" : "Play"}>
-                  {isPlaying ? <Pause size={30} fill="currentColor" strokeWidth={0} /> : <Play size={30} fill="currentColor" strokeWidth={0} style={{ marginLeft: 3 }} />}
-                </Ctl>
-                <Ctl onClick={next} title="Next"><SkipForward size={24} strokeWidth={2} fill="currentColor" /></Ctl>
-                <Ctl active={repeat !== "none"} onClick={cycleRepeat} title="Repeat"><RepeatIcon size={20} strokeWidth={2.4} /></Ctl>
-              </div>
-            </div>
-
-            {/* right: Cider frosted card container for lyrics / queue */}
             <div
               style={{
-                flex: "1 1 420px",
-                minWidth: 0,
-                height: "100%",
-                maxHeight: "82vh",
+                width: "min(50%, 760px)",
+                minWidth: 360,
                 display: "flex",
                 flexDirection: "column",
+                gap: "clamp(12px, 1.6vh, 20px)",
                 minHeight: 0,
-                borderRadius: 28,
-                background: "rgba(28, 28, 34, 0.60)",
-                backdropFilter: "blur(48px) saturate(180%)",
-                WebkitBackdropFilter: "blur(48px) saturate(180%)",
-                border: "1px solid rgba(255, 255, 255, 0.08)",
-                boxShadow: "0 28px 70px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.10)",
-                padding: "24px 28px",
               }}
             >
-              <div style={{ display: "flex", gap: 4, padding: 4, borderRadius: 99, background: "rgba(255,255,255,0.08)", alignSelf: "flex-start", marginBottom: 12 }}>
-                <PanelTab active={panel === "lyrics"} onClick={() => setPanel("lyrics")} icon={<Captions size={15} />} label="Lyrics" />
-                <PanelTab active={panel === "queue"} onClick={() => setPanel("queue")} icon={<ListMusic size={15} />} label="Queue" />
-              </div>
-              <div style={{ flex: 1, minHeight: 0 }}>
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={panel}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }}
-                    transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
-                    style={{ height: "100%" }}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.28, delay: 0.04, ease: [0.22, 1, 0.36, 1] }}
+                style={{
+                  pointerEvents: "auto",
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: 0,
+                  borderRadius: 26,
+                  /* Dark, not pale. The reference card is a shade dropped over the
+                     ambient, which is what keeps white type readable while the
+                     field behind it keeps moving and changing colour. */
+                  background: "linear-gradient(180deg, rgba(10, 8, 14, 0.30) 0%, rgba(10, 8, 14, 0.42) 100%)",
+                  border: "1px solid rgba(255, 255, 255, 0.11)",
+                  boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 30px 80px rgba(0, 0, 0, 0.30)",
+                  padding: "20px clamp(20px, 2vw, 36px)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+                  <div className="lyr-tabs">
+                    <PanelTab active={panel === "lyrics"} onClick={() => setPanel("lyrics")} icon={<Captions size={14} />} label="Lyrics" />
+                    <PanelTab active={panel === "queue"} onClick={() => setPanel("queue")} icon={<ListMusic size={14} />} label="Queue" />
+                  </div>
+                  <button
+                    className="imm-close"
+                    onClick={() => setOpen(false)}
+                    title="Exit immersive view (Esc)"
+                    aria-label="Exit immersive view"
                   >
-                    {panel === "lyrics" ? <ImmersiveLyrics /> : <ImmersiveQueue />}
-                  </motion.div>
-                </AnimatePresence>
-              </div>
+                    <Minimize2 size={16} strokeWidth={2.2} />
+                  </button>
+                </div>
+                <div style={{ flex: 1, minHeight: 0 }}>
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={panel}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6 }}
+                      transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                      style={{ height: "100%" }}
+                    >
+                      {panel === "lyrics" ? <ImmersiveLyrics glow={glow} ink={ink} /> : <ImmersiveQueue />}
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+              </motion.div>
+
+              {/* The app's own dock, minus the 44px sleeve - it is already
+                  filling the screen behind this. Same component, so transport,
+                  scrubber, volume, devices and queue all behave identically. */}
+              <motion.div
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}
+                style={{ flexShrink: 0 }}
+              >
+                <PlayerBar immersive />
+              </motion.div>
             </div>
           </div>
         </motion.div>
@@ -495,16 +493,13 @@ export function Immersive() {
 function PanelTab({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
   return (
     <button
+      className={active ? "lyr-tab lyr-tab-on" : "lyr-tab"}
       onClick={onClick}
-      style={{
-        display: "flex", alignItems: "center", gap: 7, height: 32, padding: "0 16px", borderRadius: 99,
-        border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit",
-        background: active ? "#fff" : "transparent",
-        color: active ? "#0a0a0f" : "rgba(255,255,255,0.7)",
-        transition: "background 0.15s, color 0.15s",
-      }}
+      aria-pressed={active}
     >
-      {icon} {label}
+      {icon}
+      <span>{label}</span>
     </button>
   );
 }
+

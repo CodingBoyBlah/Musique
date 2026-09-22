@@ -272,12 +272,15 @@ const PlayerScrubber = memo(function PlayerScrubber({
   );
 });
 
-export function PlayerBar() {
+/* `immersive` means this bar is floating on the immersive backdrop rather
+   than docked in the app card. It drops the 44px sleeve, which is already
+   filling the screen behind it, and takes the same translucent shade as the
+   lyrics card so the two read as one set of surfaces over the artwork. */
+export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
   const qc              = useQueryClient();
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
   const currentTrack    = usePlayerStore((s) => s.currentTrack);
   const durationMs      = usePlayerStore((s) => s.durationMs);
-  const incrementPos    = usePlayerStore((s) => s.incrementPos);
   const volume          = usePlayerStore((s) => s.volume);
   const muted           = usePlayerStore((s) => s.muted);
   const storeSetVolume  = usePlayerStore((s) => s.setVolume);
@@ -296,29 +299,34 @@ export function PlayerBar() {
     }))
   );
 
-  useEffect(() => {
-    if (!isPlaying) return;
-    const timer = setInterval(incrementPos, 1000);
-    return () => clearInterval(timer);
-  }, [isPlaying, incrementPos]);
+  /* The position ticker used to live here. It does not any more - see
+     hooks/usePositionTicker, which Layout owns. Two PlayerBars on screen at
+     once meant two intervals and a playhead running at double speed. */
 
   const barContainerRef = useRef<HTMLDivElement>(null);
-  const [barWidth, setBarWidth] = useState(720);
+  const [layoutMode, setLayoutMode] = useState({ showSecondaryControls: true, showInlineVolume: true });
 
   useEffect(() => {
     const el = barContainerRef.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setBarWidth(entry.contentRect.width);
-      }
+      const entry = entries[0];
+      if (!entry) return;
+      const w = entry.contentRect.width;
+      const sec = w >= 560;
+      const vol = w >= 660;
+      setLayoutMode((prev) => {
+        if (prev.showSecondaryControls === sec && prev.showInlineVolume === vol) {
+          return prev;
+        }
+        return { showSecondaryControls: sec, showInlineVolume: vol };
+      });
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
-  const showSecondaryControls = barWidth >= 560;
-  const showInlineVolume = barWidth >= 660;
+  const { showSecondaryControls, showInlineVolume } = layoutMode;
 
   // Volume controls & popup
   const [volPopupOpen, setVolPopupOpen] = useState(false);
@@ -390,10 +398,15 @@ export function PlayerBar() {
   return (
     <div
       style={{
-        position: "absolute",
-        bottom: 12,
-        left: 0,
-        right: 0,
+        /* Docked in the app card it pins itself to the bottom. In the immersive
+           view it is a block inside the right-hand column instead, so that it
+           and the lyrics card get their width from the same parent and can
+           never drift out of alignment. */
+        position: immersive ? "relative" : "absolute",
+        bottom: immersive ? undefined : 12,
+        left: immersive ? undefined : 0,
+        right: immersive ? undefined : 0,
+        width: immersive ? "100%" : undefined,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -445,15 +458,28 @@ export function PlayerBar() {
         ref={barContainerRef}
         style={{
           pointerEvents: "auto",
-          width: "min(740px, calc(100% - 32px))",
+          width: immersive ? "100%" : "min(740px, calc(100% - 32px))",
           height: 74,
-          background: "var(--color-dock-bg, rgba(20, 20, 24, 0.88))",
-          backdropFilter: "blur(24px) saturate(160%)",
-          WebkitBackdropFilter: "blur(24px) saturate(160%)",
+          /* Over the immersive backdrop: the lyrics card's exact shade, and no
+             backdrop-filter. Dropping it is not only for the match - a
+             backdrop-filter's input is whatever is behind it, and behind this
+             the artwork is drifting, so it could never be cached and re-ran a
+             24px gaussian under the bar on every frame. It was the last
+             per-frame blur left on the page. Docked in the app card the bar
+             sits over scrolling content instead, where it has to stay opaque
+             to be readable, so that path is untouched. */
+          background: immersive
+            ? "linear-gradient(180deg, rgba(10, 8, 14, 0.30) 0%, rgba(10, 8, 14, 0.42) 100%)"
+            : "var(--color-dock-bg, rgba(20, 20, 24, 0.88))",
+          backdropFilter: immersive ? undefined : "blur(24px) saturate(160%)",
+          WebkitBackdropFilter: immersive ? undefined : "blur(24px) saturate(160%)",
           borderRadius: 18,
-          border: "1px solid var(--color-dock-border, rgba(255, 255, 255, 0.09))",
-          boxShadow:
-            "inset 0 1px 0 0 rgba(255, 255, 255, 0.08), 0 12px 32px rgba(0, 0, 0, 0.45)",
+          border: immersive
+            ? "1px solid rgba(255, 255, 255, 0.11)"
+            : "1px solid var(--color-dock-border, rgba(255, 255, 255, 0.09))",
+          boxShadow: immersive
+            ? "inset 0 1px 0 0 rgba(255, 255, 255, 0.09), 0 20px 50px rgba(0, 0, 0, 0.30)"
+            : "inset 0 1px 0 0 rgba(255, 255, 255, 0.08), 0 12px 32px rgba(0, 0, 0, 0.45)",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
@@ -504,15 +530,18 @@ export function PlayerBar() {
         <div
           style={{
             flex: "1 1 auto",
-            minWidth: 160,
-            maxWidth: 420,
+            minWidth: immersive ? 140 : 160,
+            maxWidth: immersive ? 360 : 420,
             display: "flex",
             alignItems: "center",
             gap: 12,
             overflow: "hidden",
           }}
         >
-          {/* Bigger Album Art (44x44px) */}
+          {/* Bigger Album Art (44x44px). The immersive view hides it: the
+              sleeve is already filling the left of the screen behind this bar,
+              and a 44px copy of it next to the title is just noise. */}
+          {!immersive && (
           <div
             className="group"
             style={{
@@ -557,6 +586,8 @@ export function PlayerBar() {
               </div>
             )}
           </div>
+
+          )}
 
           {/* Titles + Expanding Progress Line Directly Below */}
           <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 5, overflow: "hidden" }}>

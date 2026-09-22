@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { coverUrl } from "../../lib/coverUrl";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -199,6 +200,12 @@ export default function Sidebar() {
   }, []);
 
   const isCollapsed = sidebarCollapsed || isNarrow;
+  /* mac keeps its native decorations, so the traffic lights land in this
+     column at fixed OS coordinates: 12px dots on a 20px pitch, first centre
+     at x=20, last edge at x=66. the collapsed rail widens to 72 so all three
+     still fit instead of being cropped down to the red one. */
+  const macChrome = isMac || macSimulated;
+  const railWidth = isCollapsed ? (macChrome ? 72 : 64) : 232;
 
   const [spotifyOpen, setSpotifyOpen] = useState(true);
   const [libraryOpen, setLibraryOpen] = useState(true);
@@ -207,10 +214,10 @@ export default function Sidebar() {
 
   return (
     <motion.nav
-      animate={{ width: isCollapsed ? 64 : 232 }}
+      animate={{ width: railWidth }}
       transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
       style={{
-        width:         isCollapsed ? 64 : 232,
+        width:         railWidth,
         flexShrink:    0,
         display:       "flex",
         flexDirection: "column",
@@ -220,8 +227,11 @@ export default function Sidebar() {
         paddingTop:    4,
       }}
     >
-      {/* macOS traffic lights (native Mac OR Ctrl+Shift+M simulated on Windows) */}
-      {(isMac || macSimulated) && (
+      {/* macOS traffic lights (native Mac OR Ctrl+Shift+M simulated on Windows).
+          the padding and gap here mirror the native geometry exactly, in both
+          the expanded and the collapsed rail, so these sit under the real
+          buttons rather than beside them. */}
+      {macChrome && (
         <div
           data-tauri-drag-region
           style={{
@@ -229,42 +239,24 @@ export default function Sidebar() {
             display: "flex",
             alignItems: "center",
             gap: 8,
-            padding: isCollapsed ? "0 0 0 16px" : "0 14px",
+            padding: "0 14px",
             flexShrink: 0,
           }}
           title={!isMac ? "Mac traffic lights preview (Ctrl+Shift+M to toggle)" : undefined}
         >
-          <div
-            style={{
-              width: 12,
-              height: 12,
-              borderRadius: "50%",
-              background: "#ff5f57",
-              boxShadow: "inset 0 0 0 1px rgba(0, 0, 0, 0.18)",
-            }}
-          />
-          {!isCollapsed && (
-            <>
-              <div
-                style={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: "50%",
-                  background: "#febc2e",
-                  boxShadow: "inset 0 0 0 1px rgba(0, 0, 0, 0.18)",
-                }}
-              />
-              <div
-                style={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: "50%",
-                  background: "#28c840",
-                  boxShadow: "inset 0 0 0 1px rgba(0, 0, 0, 0.18)",
-                }}
-              />
-            </>
-          )}
+          {["#ff5f57", "#febc2e", "#28c840"].map((c) => (
+            <div
+              key={c}
+              style={{
+                width: 12,
+                height: 12,
+                flexShrink: 0,
+                borderRadius: "50%",
+                background: c,
+                boxShadow: "inset 0 0 0 1px rgba(0, 0, 0, 0.18)",
+              }}
+            />
+          ))}
         </div>
       )}
 
@@ -442,7 +434,7 @@ export default function Sidebar() {
                   )}
                   <span style={{ position: "relative", zIndex: 1, display: "flex", flexShrink: 0 }}>
                     {p.image_url ? (
-                      <img src={p.image_url} alt="" style={{ width: 26, height: 26, borderRadius: 5, objectFit: "cover" }} />
+                      <img src={coverUrl(p.image_url, 26) ?? p.image_url} alt="" style={{ width: 26, height: 26, borderRadius: 5, objectFit: "cover" }} />
                     ) : (
                       <div style={{ width: 26, height: 26, borderRadius: 5, background: active ? "rgba(255,255,255,0.2)" : "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <ListMusic size={14} style={{ color: active ? "#ffffff" : "var(--color-text-dim)" }} />

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { TitleBar, WindowCaptionControls, WindowCaptionHitboxOverlay } from "./TitleBar";
+import { TitleBar, WindowCaptionControls, CAPTION_W, CAPTION_H } from "./TitleBar";
 import { SearchPalette } from "./SearchPalette";
 import Sidebar from "./Sidebar";
 import { PlayerBar } from "./PlayerBar";
+import { usePositionTicker } from "../../hooks/usePositionTicker";
 import { QueuePanel } from "./QueuePanel";
 import { LyricsPanel } from "./LyricsPanel";
 import { QuitConfirm } from "../ui/QuitConfirm";
@@ -17,11 +18,39 @@ import { useUIStore } from "../../store/ui.store";
 import { getBackdropActive } from "../../api/window";
 import { backdropScrim } from "../../lib/backdrop";
 import { isMac } from "../../lib/platform";
-import { invoke } from "@tauri-apps/api/core";
+
+/* collapsed sidebar. on mac the native traffic lights live in this column at
+   their fixed OS positions (12px dots, 20px pitch, first centre at x=20), so
+   the collapsed rail has to stay wide enough to hold all three. */
+const COLLAPSED_SIDEBAR_W = 64;
+const MAC_COLLAPSED_SIDEBAR_W = 72;
+
+/* the notch cut out of the island card for the windows caption cluster. the
+   card is inset 4px from the window, the cluster sits flush in the corner. */
+const NOTCH_W = CAPTION_W - 4;
+const NOTCH_H = CAPTION_H - 4;
+const NOTCH_R = 10;
+
+/* the card is clipped, not just covered, so the caption buttons sit on the
+   same OS material as the sidebar instead of on the card's own tint. the
+   polygon walks the notch's one inner corner as a quarter round, matching the
+   cluster's border-radius exactly. */
+const NOTCH_CLIP = (() => {
+  const arc = [0, 22.5, 45, 67.5, 90].map((deg) => {
+    const a = (deg * Math.PI) / 180;
+    const x = (NOTCH_W - NOTCH_R + NOTCH_R * Math.cos(a)).toFixed(2);
+    const y = (NOTCH_H - NOTCH_R + NOTCH_R * Math.sin(a)).toFixed(2);
+    return `calc(100% - ${x}px) ${y}px`;
+  });
+  return `polygon(0 0, calc(100% - ${NOTCH_W}px) 0, ${arc.join(", ")}, 100% ${NOTCH_H}px, 100% 100%, 0 100%)`;
+})();
 
 export default function Layout() {
   const queueOpen = usePlayerStore((s) => s.queueOpen);
   const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
+  const immersiveOpen = usePlayerStore((s) => s.immersiveOpen);
+  // one owner for the playhead clock, whatever else is on screen
+  usePositionTicker();
   const effect = useUIStore((s) => s.windowEffect);
   const materialTransparency = useUIStore((s) => s.materialTransparency);
   const pageTint = useUIStore((s) => s.pageTint);
@@ -32,14 +61,26 @@ export default function Layout() {
   const mainRef = useRef<HTMLElement>(null);
 
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
+  const macSimulated = useUIStore((s) => s.macSimulated);
+  const collapsedSidebarW = (isMac || macSimulated) ? MAC_COLLAPSED_SIDEBAR_W : COLLAPSED_SIDEBAR_W;
   const [willCrushMain, setWillCrushMain] = useState(false);
+  const [shellHidden, setShellHidden] = useState(false);
+
+  useEffect(() => {
+    if (immersiveOpen) {
+      const t = setTimeout(() => setShellHidden(true), 420);
+      return () => clearTimeout(t);
+    } else {
+      setShellHidden(false);
+    }
+  }, [immersiveOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const checkCrush = () => {
       const w = window.innerWidth;
       const isCollapsed = sidebarCollapsed || w < 768;
-      const sw = isCollapsed ? 64 : 232;
+      const sw = isCollapsed ? collapsedSidebarW : 232;
       const rpw = lyricsOpen ? 366 : queueOpen ? 272 : 0;
       const nextCrush = w - sw - rpw < 340;
       setWillCrushMain((prev) => (prev === nextCrush ? prev : nextCrush));
@@ -61,31 +102,22 @@ export default function Layout() {
       window.removeEventListener("resize", onResizeThrottled);
       if (rId) cancelAnimationFrame(rId);
     };
-  }, [sidebarCollapsed, lyricsOpen, queueOpen]);
+  }, [sidebarCollapsed, collapsedSidebarW, lyricsOpen, queueOpen]);
 
   const rawPanelWidth = lyricsOpen ? 366 : queueOpen ? 272 : 0;
   const spacerWidth = willCrushMain ? 0 : rawPanelWidth;
-  const macSimulated = useUIStore((s) => s.macSimulated);
   const hasRightRail = (lyricsOpen || queueOpen) && spacerWidth > 0;
   const isWindowsDocked = !isMac && !macSimulated && !hasRightRail;
 
+  /* `trim_memory` used to fire 1.5s after every navigation. That call empties
+     the working set of this process and of every WebView2 child, so it landed
+     right as the user was reading and scrolling the page they had just opened,
+     and everything had to be faulted back in. Genuine idle trimming now happens
+     in the native layer, only once the window has actually been out of sight
+     for a while (see mem_trim.rs). */
   useEffect(() => {
     if (mainRef.current) mainRef.current.scrollTop = 0;
-    const t = setTimeout(() => {
-      invoke("trim_memory").catch(() => {});
-    }, 1500);
-    return () => clearTimeout(t);
   }, [location.pathname]);
-
-  useEffect(() => {
-    const handleVis = () => {
-      if (document.visibilityState === "hidden") {
-        invoke("trim_memory").catch(() => {});
-      }
-    };
-    document.addEventListener("visibilitychange", handleVis);
-    return () => document.removeEventListener("visibilitychange", handleVis);
-  }, []);
 
   useEffect(() => {
     getBackdropActive().then(setBackdropActive).catch(() => setBackdropActive(false));
@@ -135,7 +167,16 @@ export default function Layout() {
         transition: "background 0.2s",
       }}
     >
-      <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
+      <div
+        style={{
+          display: "flex",
+          flex: 1,
+          overflow: "hidden",
+          position: "relative",
+          visibility: shellHidden ? "hidden" : "visible",
+        }}
+        inert={shellHidden ? true : undefined}
+      >
         <Sidebar />
 
         {/* The Main Window Island Card */}
@@ -148,18 +189,41 @@ export default function Layout() {
             border: isWindowsDocked ? "none" : "1px solid rgba(255, 255, 255, 0.08)",
             borderLeft: isWindowsDocked ? "1px solid rgba(255, 255, 255, 0.08)" : undefined,
             borderBottom: isWindowsDocked ? "1px solid rgba(255, 255, 255, 0.08)" : undefined,
-            background: cardBg,
-            boxShadow: isWindowsDocked
-              ? "0 10px 30px rgba(0, 0, 0, 0.5)"
-              : "0 10px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
-            backdropFilter: isTranslucent ? "blur(32px) saturate(140%)" : "blur(24px)",
-            WebkitBackdropFilter: isTranslucent ? "blur(32px) saturate(140%)" : "blur(24px)",
+            background: "transparent",
+            /* negative spread keeps the lift underneath the card instead of
+               letting it bleed up into the 4px gutter the caption buttons
+               share with the OS material */
+            boxShadow: "0 14px 30px -8px rgba(0, 0, 0, 0.55)",
             position: "relative",
             overflow: "hidden",
             display: "flex",
             flexDirection: "column",
           }}
         >
+          {/* the card's material, on its own layer so the caption notch can be
+              clipped out of it and let the OS material through.
+
+              NO backdrop-filter here, deliberately. it never did anything:
+              nothing is ever painted between the window root and this card, so
+              it was only ever blurring transparency (or, with no live
+              material, a flat scrim colour). what it DID do was give the layer
+              its own compositing surface, and a clip-path over that surface
+              comes back opaque black instead of punched through - which is
+              exactly what was filling the notch. */}
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 0,
+              pointerEvents: "none",
+              borderRadius: 12,
+              background: cardBg,
+              boxShadow: isWindowsDocked ? undefined : "inset 0 1px 0 rgba(255, 255, 255, 0.08)",
+              clipPath: isWindowsDocked ? NOTCH_CLIP : undefined,
+            }}
+          />
+
           {/* Cover art bloom contained within the island card */}
           <AnimatePresence>
             {pageTint && (
@@ -177,6 +241,7 @@ export default function Layout() {
                   pointerEvents: "none",
                   overflow: "hidden",
                   borderRadius: 12,
+                  clipPath: isWindowsDocked ? NOTCH_CLIP : undefined,
                 }}
               >
                 <div
@@ -213,42 +278,54 @@ export default function Layout() {
           {/* Title bar at top of card */}
           <TitleBar />
 
-          {/* Top border extending to caption controls when docked */}
+          {/* the card's hairline, drawn by hand so it can run around the
+              caption notch: across the top, down the notch's left and along
+              its underside, then down the right edge. nothing above or to the
+              right of the buttons themselves. */}
           {isWindowsDocked && (
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 137,
-                height: 1,
-                background: "rgba(255, 255, 255, 0.08)",
-                borderTopLeftRadius: 12,
-                pointerEvents: "none",
-                zIndex: 15,
-              }}
-            />
+            <>
+              <div
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: NOTCH_W,
+                  height: 1,
+                  background: "rgba(255, 255, 255, 0.08)",
+                  borderTopLeftRadius: 12,
+                  pointerEvents: "none",
+                  zIndex: 15,
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  right: 0,
+                  width: NOTCH_W,
+                  height: NOTCH_H,
+                  borderLeft: "1px solid rgba(255, 255, 255, 0.08)",
+                  borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+                  borderBottomLeftRadius: NOTCH_R,
+                  pointerEvents: "none",
+                  zIndex: 15,
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  top: NOTCH_H,
+                  right: 0,
+                  bottom: 0,
+                  width: 1,
+                  background: "rgba(255, 255, 255, 0.08)",
+                  borderBottomRightRadius: 12,
+                  pointerEvents: "none",
+                  zIndex: 15,
+                }}
+              />
+            </>
           )}
-
-          {/* Right border below caption controls when docked */}
-          {isWindowsDocked && (
-            <div
-              style={{
-                position: "absolute",
-                top: 39,
-                right: 0,
-                bottom: 0,
-                width: 1,
-                background: "rgba(255, 255, 255, 0.08)",
-                borderBottomRightRadius: 12,
-                pointerEvents: "none",
-                zIndex: 15,
-              }}
-            />
-          )}
-
-          {/* Window Caption Controls docked into top-right notch of Island Card */}
-          {isWindowsDocked && <WindowCaptionControls dockedToCard />}
 
           {/* Scrolling page view inside card */}
           <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden" }}>
@@ -277,8 +354,10 @@ export default function Layout() {
             </main>
           </div>
 
-          {/* PlayerBar docked inside card */}
-          <PlayerBar />
+          {/* PlayerBar docked inside card. The immersive view floats its own
+              copy over the top, so this one stands down rather than render and
+              paint underneath an opaque overlay. */}
+          {!immersiveOpen && <PlayerBar />}
         </div>
 
         {/* Right rail - Lyrics or Queue on base layer */}
@@ -300,8 +379,6 @@ export default function Layout() {
           </AnimatePresence>
         </div>
 
-        {/* Invisible Hitbox Overlay extending to top and right edges/corners of window */}
-        {isWindowsDocked && <WindowCaptionHitboxOverlay />}
       </div>
 
       <SearchPalette />
@@ -310,7 +387,10 @@ export default function Layout() {
       <QuitConfirm />
       <AddToPlaylistModal />
       <Toaster />
-      {!isWindowsDocked && <WindowCaptionControls />}
+      {/* always at the window's own top-right corner, never inside the card,
+          so the buttons sit on the OS material and the close button owns the
+          corner pixel */}
+      <WindowCaptionControls />
     </div>
   );
 }

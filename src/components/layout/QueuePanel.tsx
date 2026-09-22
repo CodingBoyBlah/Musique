@@ -1,4 +1,5 @@
-import { useRef } from "react";
+import { useRef, memo } from "react";
+import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, GripVertical, ListMusic } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
@@ -17,7 +18,7 @@ function Cover({ track, size }: { track: TrackItem; size: number }) {
   const art = track.album?.image_url;
   return art ? (
     <img
-      src={art}
+      src={coverUrl(art, size) ?? art}
       alt=""
       loading="lazy"
       decoding="async"
@@ -28,7 +29,7 @@ function Cover({ track, size }: { track: TrackItem; size: number }) {
   );
 }
 
-function QueueTrackRow({
+const QueueTrackRow = memo(function QueueTrackRow({
   track, onRemove, draggable, onDragStart, onDragOver, onDrop, dim,
 }: {
   track:        TrackItem;
@@ -105,25 +106,30 @@ function QueueTrackRow({
       )}
     </div>
   );
-}
+});
 
 // animated 3-bar equaliser for the now-playing card
 function Equaliser() {
   return (
     <span style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 13 }}>
       {[0, 1, 2].map((i) => (
-        <motion.span
+        <span
           key={i}
-          animate={{ scaleY: [0.3, 1, 0.45, 0.8, 0.3] }}
-          transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: i * 0.18 }}
-          style={{ width: 3, borderRadius: 2, background: "var(--color-accent)", height: "100%", transformOrigin: "bottom" }}
+          className="eq-bar-q"
+          style={{
+            width: 3,
+            borderRadius: 2,
+            background: "var(--color-accent)",
+            height: "100%",
+            ["--eq-delay" as string]: `${i * 0.18}s`,
+          }}
         />
       ))}
     </span>
   );
 }
 
-function NowPlayingCard({ track, isPlaying }: { track: TrackItem; isPlaying: boolean }) {
+const NowPlayingCard = memo(function NowPlayingCard({ track, isPlaying }: { track: TrackItem; isPlaying: boolean }) {
   return (
     <div
       style={{
@@ -145,7 +151,7 @@ function NowPlayingCard({ track, isPlaying }: { track: TrackItem; isPlaying: boo
       {isPlaying && <Equaliser />}
     </div>
   );
-}
+});
 
 function SectionHead({ label, onClear }: { label: string; onClear?: () => void }) {
   return (
@@ -181,7 +187,12 @@ export function QueuePanel() {
   const currentTrack    = usePlayerStore((s) => s.currentTrack);
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
 
-  const { queue, history, removeAt, reorder, clearQueue, clearHistory } = useQueueStore();
+  const queue        = useQueueStore((s) => s.queue);
+  const history      = useQueueStore((s) => s.history);
+  const removeAt     = useQueueStore((s) => s.removeAt);
+  const reorder      = useQueueStore((s) => s.reorder);
+  const clearQueue   = useQueueStore((s) => s.clearQueue);
+  const clearHistory = useQueueStore((s) => s.clearHistory);
   const dragIdx = useRef<number | null>(null);
 
   function playItem(track: TrackItem) {

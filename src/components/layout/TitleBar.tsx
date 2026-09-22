@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   ChevronLeft, ChevronRight,
-  MoreHorizontal, User, Settings, LogOut, LogIn,
+  User, Settings, LogOut, LogIn,
   ListMusic, Captions, MonitorSpeaker,
-  PanelLeft,
+  PanelLeft, PanelLeftClose,
 } from "@/lib/icons";
 import { useAuth } from "../../hooks/useAuth";
 import { useAuthStore } from "../../store/auth.store";
@@ -16,15 +16,12 @@ import { Tooltip } from "../ui/Tooltip";
 import { isMac } from "../../lib/platform";
 import { usePlayerStore } from "../../store/player.store";
 import { useUIStore } from "../../store/ui.store";
-import { create } from "zustand";
 
-export const useCaptionHoverStore = create<{
-  hovered: "min" | "max" | "close" | null;
-  setHovered: (b: "min" | "max" | "close" | null) => void;
-}>((set) => ({
-  hovered: null,
-  setHovered: (b) => set({ hovered: b }),
-}));
+/* size of the windows caption cluster, measured from the window's top-right
+   corner. the island card is inset 4px, so the notch carved out of the card
+   is CAPTION_W - 4 by CAPTION_H - 4 (see Layout). */
+export const CAPTION_W = 138;
+export const CAPTION_H = 40;
 
 // win11 caption button (transparent and full-height)
 
@@ -32,28 +29,17 @@ function CaptionBtn({
   onClick,
   children,
   danger,
-  isHovered,
-  onHoverChange,
 }: {
   onClick: () => void;
   children: React.ReactNode;
   danger?: boolean;
-  isHovered?: boolean;
-  onHoverChange?: (hover: boolean) => void;
 }) {
-  const [internalHover, setInternalHover] = useState(false);
-  const hover = isHovered !== undefined ? (isHovered || internalHover) : internalHover;
+  const [hover, setHover] = useState(false);
   return (
     <button
       onClick={onClick}
-      onMouseEnter={() => {
-        setInternalHover(true);
-        onHoverChange?.(true);
-      }}
-      onMouseLeave={() => {
-        setInternalHover(false);
-        onHoverChange?.(false);
-      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
         width:          46,
         height:         "100%",
@@ -78,7 +64,68 @@ function CaptionBtn({
 }
 
 
-// account menu (avatar / name header + Account · Settings · Log out)
+/* one control inside a title-bar capsule.
+
+   hover / press / focus live in CSS (.tb-btn in index.css) rather than in
+   onMouseEnter handlers that write straight to node.style - those got wiped
+   by any unrelated re-render while the cursor was still on the button, so the
+   hover fill would silently vanish. `off` marks a control that is present but
+   has nothing to act on; it stays hoverable (and keeps its tooltip, which is
+   where the reason lives) instead of going `disabled` and swallowing the
+   pointer events the tooltip needs. */
+function CapsuleButton({
+  label, onClick, children, on, off, tone, align, ...rest
+}: {
+  label: React.ReactNode;
+  onClick: () => void;
+  children: React.ReactNode;
+  on?: boolean;
+  off?: boolean;
+  tone?: "remote";
+  align?: "center" | "start" | "end";
+} & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "onClick" | "children">) {
+  return (
+    <Tooltip label={label} side="bottom" align={align}>
+      <button
+        className="tb-btn"
+        onClick={() => { if (!off) onClick(); }}
+        aria-disabled={off || undefined}
+        data-on={on ? "true" : undefined}
+        data-tone={tone}
+        {...rest}
+      >
+        {children}
+      </button>
+    </Tooltip>
+  );
+}
+
+/* can we actually go back / forward?
+
+   react-router's BrowserRouter stamps its position into history.state.idx, so
+   that index plus history.length says whether either arrow has anywhere to
+   go. if the stamp is missing (first paint, a non-router entry) assume both
+   work - never block navigation over a missing hint. */
+function useHistoryEdges() {
+  const location = useLocation();
+  const [edges, setEdges] = useState({ back: true, forward: true });
+
+  useEffect(() => {
+    const read = () => {
+      const idx = (window.history.state as { idx?: number } | null)?.idx;
+      if (typeof idx !== "number") { setEdges({ back: true, forward: true }); return; }
+      setEdges({ back: idx > 0, forward: idx < window.history.length - 1 });
+    };
+    read();
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
+  }, [location.key]);
+
+  return edges;
+}
+
+
+// account menu (avatar / name header + Account - Settings - Log out)
 
 const STATUS_DOT: Record<ConnectionStatus, string> = {
   unconfigured: "#34d399",
@@ -142,43 +189,49 @@ function AccountMenu() {
 
   const go = (path: string) => { setOpen(false); navigate(path); };
 
+  /* the avatar IS the button. a "..." glyph said nothing about whose account
+     this is; the photo does, and it is the affordance people already know
+     from every other player. inset to 20px inside the 26px hit target so the
+     hover / open fill reads as a ring around it. */
+  const needsAttention = status === "invalid";
+
   return (
     <div ref={ref} style={{ position: "relative", display: "flex", alignItems: "center" }}>
-      <Tooltip label="Account" side="bottom" align="start">
-        <button
-          onClick={() => setOpen((v) => !v)}
-          style={{
-            width: 26,
-            height: 26,
-            borderRadius: 9999,
-            border: "none",
-            background: open ? "rgba(255, 255, 255, 0.14)" : "transparent",
-            color: open ? "#ffffff" : "var(--color-text)",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            transition: "background 0.15s, color 0.15s",
-          }}
-          onMouseEnter={(e) => {
-            if (!open) {
-              (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.08)";
-              (e.currentTarget as HTMLElement).style.color = "#ffffff";
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (!open) {
-              (e.currentTarget as HTMLElement).style.background = "transparent";
-              (e.currentTarget as HTMLElement).style.color = "var(--color-text)";
-            }
-          }}
-        >
-          <MoreHorizontal size={15} strokeWidth={1.8} />
-        </button>
-      </Tooltip>
+      <CapsuleButton
+        label={needsAttention ? STATUS_LABEL.invalid : (displayName ?? "Account")}
+        align="start"
+        onClick={() => setOpen((v) => !v)}
+        on={open}
+        aria-label="Account"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        style={{ position: "relative" }}
+      >
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            alt=""
+            style={{ width: 20, height: 20, borderRadius: "50%", objectFit: "cover", display: "block" }}
+          />
+        ) : (
+          <User size={15} strokeWidth={1.9} />
+        )}
+        {needsAttention && (
+          <span
+            aria-hidden
+            style={{
+              position: "absolute", right: 0, bottom: 0,
+              width: 8, height: 8, borderRadius: "50%",
+              background: "var(--color-danger)",
+              boxShadow: "0 0 0 1.5px rgba(16, 16, 20, 0.95)",
+            }}
+          />
+        )}
+      </CapsuleButton>
       <AnimatePresence>
         {open && (
           <motion.div
+            role="menu"
             initial={{ opacity: 0, y: -6, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.97 }}
@@ -239,14 +292,19 @@ function AccountMenu() {
   );
 }
 
-export function WindowCaptionControls({ dockedToCard }: { dockedToCard?: boolean } = {}) {
+/* minimise / maximise / close.
+
+   the cluster paints NOTHING of its own - no fill, no border, no blur. the
+   window root is transparent, so whatever is behind it shows through
+   unbroken: the OS Mica the sidebar sits on when the island card is clipped
+   away for it (Layout owns that notch), and the lyrics or queue rail, at its
+   own transparency, when one of those is open. the old dark chip drew a
+   rectangle that belonged to neither. it also sits flush in the window
+   corner, which makes the close button the corner pixel - the whole point of
+   a caption cluster. */
+export function WindowCaptionControls() {
   const [maximized, setMaximized] = useState(false);
   const macSimulated = useUIStore((s) => s.macSimulated);
-  const effect = useUIStore((s) => s.windowEffect);
-  const materialTransparency = useUIStore((s) => s.materialTransparency);
-  const backdropActive = useUIStore((s) => s.backdropActive);
-  const hovered = useCaptionHoverStore((s) => s.hovered);
-  const setHovered = useCaptionHoverStore((s) => s.setHovered);
 
   useEffect(() => {
     if (isMac) return;
@@ -261,11 +319,6 @@ export function WindowCaptionControls({ dockedToCard }: { dockedToCard?: boolean
   if (isMac || macSimulated) return null;
   const win = getCurrentWindow();
 
-  const isTranslucent = backdropActive && effect !== "none";
-  const cardBg = isTranslucent
-    ? `rgba(18, 18, 20, ${Math.max(0.66, Math.min(0.85, 0.78 * (1 - materialTransparency * 0.28)))})`
-    : "rgba(19, 19, 19, 0.94)";
-
   return (
     <div
       style={{
@@ -275,38 +328,25 @@ export function WindowCaptionControls({ dockedToCard }: { dockedToCard?: boolean
         zIndex: 25,
         display: "flex",
         alignItems: "stretch",
-        width: 138,
-        height: 40,
-        background: dockedToCard ? "transparent" : cardBg,
-        backdropFilter: !dockedToCard && isTranslucent ? "blur(32px) saturate(140%)" : undefined,
-        WebkitBackdropFilter: !dockedToCard && isTranslucent ? "blur(32px) saturate(140%)" : undefined,
+        width: CAPTION_W,
+        height: CAPTION_H,
+        background: "transparent",
         borderBottomLeftRadius: 10,
-        borderLeft: dockedToCard ? "1px solid rgba(255, 255, 255, 0.08)" : "none",
-        borderBottom: dockedToCard ? "1px solid rgba(255, 255, 255, 0.08)" : "none",
-        borderTop: "none",
-        borderRight: "none",
+        border: "none",
         overflow: "hidden",
         pointerEvents: "auto",
         ...({ WebkitAppRegion: "no-drag" } as React.CSSProperties),
       }}
     >
       <Tooltip label="Minimize" side="bottom">
-        <CaptionBtn
-          onClick={() => win.minimize()}
-          isHovered={hovered === "min"}
-          onHoverChange={(h) => setHovered(h ? "min" : null)}
-        >
+        <CaptionBtn onClick={() => win.minimize()}>
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
             <path d="M0 5H10" stroke="currentColor" strokeWidth="1" />
           </svg>
         </CaptionBtn>
       </Tooltip>
       <Tooltip label={maximized ? "Restore" : "Maximize"} side="bottom">
-        <CaptionBtn
-          onClick={() => win.toggleMaximize()}
-          isHovered={hovered === "max"}
-          onHoverChange={(h) => setHovered(h ? "max" : null)}
-        >
+        <CaptionBtn onClick={() => win.toggleMaximize()}>
           {maximized ? (
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
               <path d="M2.5 0.5H9.5V7.5H7.5" fill="none" stroke="currentColor" strokeWidth="1" />
@@ -320,103 +360,12 @@ export function WindowCaptionControls({ dockedToCard }: { dockedToCard?: boolean
         </CaptionBtn>
       </Tooltip>
       <Tooltip label="Close" side="bottom" align="end">
-        <CaptionBtn
-          onClick={() => win.close()}
-          danger
-          isHovered={hovered === "close"}
-          onHoverChange={(h) => setHovered(h ? "close" : null)}
-        >
+        <CaptionBtn onClick={() => win.close()} danger>
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
             <path d="M1 1L9 9M9 1L1 9" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
           </svg>
         </CaptionBtn>
       </Tooltip>
-    </div>
-  );
-}
-
-export function WindowCaptionHitboxOverlay() {
-  const macSimulated = useUIStore((s) => s.macSimulated);
-  const setHovered = useCaptionHoverStore((s) => s.setHovered);
-
-  if (isMac || macSimulated) return null;
-  const win = getCurrentWindow();
-
-  const hitStyle: React.CSSProperties = {
-    position: "absolute",
-    pointerEvents: "auto",
-    cursor: "pointer",
-    background: "transparent",
-    ...({ WebkitAppRegion: "no-drag" } as React.CSSProperties),
-  };
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        top: 0,
-        right: 0,
-        zIndex: 9999,
-        pointerEvents: "none",
-        width: 142,
-        height: 44,
-      }}
-    >
-      {/* 4px top margin hitbox above Minimize */}
-      <div
-        style={{
-          ...hitStyle,
-          top: 0,
-          right: 96,
-          width: 46,
-          height: 5,
-        }}
-        onMouseEnter={() => setHovered("min")}
-        onMouseLeave={() => setHovered(null)}
-        onClick={() => win.minimize()}
-      />
-
-      {/* 4px top margin hitbox above Maximize */}
-      <div
-        style={{
-          ...hitStyle,
-          top: 0,
-          right: 50,
-          width: 46,
-          height: 5,
-        }}
-        onMouseEnter={() => setHovered("max")}
-        onMouseLeave={() => setHovered(null)}
-        onClick={() => win.toggleMaximize()}
-      />
-
-      {/* 4px top margin hitbox + exact top-right corner above Close */}
-      <div
-        style={{
-          ...hitStyle,
-          top: 0,
-          right: 0,
-          width: 50,
-          height: 5,
-        }}
-        onMouseEnter={() => setHovered("close")}
-        onMouseLeave={() => setHovered(null)}
-        onClick={() => win.close()}
-      />
-
-      {/* 4px right margin hitbox along the right edge of Close */}
-      <div
-        style={{
-          ...hitStyle,
-          top: 5,
-          right: 0,
-          width: 5,
-          height: 39,
-        }}
-        onMouseEnter={() => setHovered("close")}
-        onMouseLeave={() => setHovered(null)}
-        onClick={() => win.close()}
-      />
     </div>
   );
 }
@@ -427,11 +376,14 @@ export function TitleBar() {
   const toggleLyrics = usePlayerStore((s) => s.toggleLyrics);
   const queueOpen = usePlayerStore((s) => s.queueOpen);
   const toggleQueue = usePlayerStore((s) => s.toggleQueue);
-  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const hasTrack = usePlayerStore((s) => s.currentTrack !== null);
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const macSimulated = useUIStore((s) => s.macSimulated);
   const { activeDevice, isRemotePlayback, devicesOpen, toggleDevices } = useDevices();
+  const { back: canGoBack, forward: canGoForward } = useHistoryEdges();
+
+  const docked = !isMac && !macSimulated && !lyricsOpen && !queueOpen;
 
   return (
     <div
@@ -442,257 +394,97 @@ export function TitleBar() {
         alignItems: "center",
         width: "100%",
         paddingLeft: 12,
-        paddingRight: (!isMac && !macSimulated && !lyricsOpen && !queueOpen) ? 0 : 12,
+        paddingRight: docked ? 0 : 12,
         position: "relative",
         zIndex: 10,
         pointerEvents: "auto",
       }}
     >
-      {/* Left controls: single unified capsule pill matching Cider */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          height: 32,
-          borderRadius: 9999,
-          background: "rgba(255, 255, 255, 0.05)",
-          border: "1px solid rgba(255, 255, 255, 0.10)",
-          boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 2px 8px rgba(0, 0, 0, 0.2)",
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
-          padding: 2,
-          gap: 2,
-          flexShrink: 0,
-        }}
-      >
+      {/* who you are - where you have been - how much you can see.
+          the dividers mark those three groups, so back/forward now sit
+          shoulder to shoulder: they are one control, not two. */}
+      <div className="tb-capsule">
         <AccountMenu />
 
-        <div style={{ width: 1, height: 14, background: "rgba(255, 255, 255, 0.1)", margin: "0 1px" }} />
+        <span className="tb-sep" aria-hidden />
 
-        <Tooltip label="Back" side="bottom">
-          <button
-            onClick={() => navigate(-1)}
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 9999,
-              border: "none",
-              background: "transparent",
-              color: "var(--color-text)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "background 0.15s, color 0.15s",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.08)";
-              (e.currentTarget as HTMLElement).style.color = "#ffffff";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLElement).style.background = "transparent";
-              (e.currentTarget as HTMLElement).style.color = "var(--color-text)";
-            }}
-          >
-            <ChevronLeft size={15} strokeWidth={1.8} />
-          </button>
-        </Tooltip>
+        <CapsuleButton
+          label={canGoBack ? "Back" : "Nothing to go back to"}
+          onClick={() => navigate(-1)}
+          off={!canGoBack}
+          aria-label="Back"
+        >
+          <ChevronLeft size={15} strokeWidth={1.9} />
+        </CapsuleButton>
 
-        <div style={{ width: 1, height: 14, background: "rgba(255, 255, 255, 0.1)", margin: "0 1px" }} />
+        <CapsuleButton
+          label={canGoForward ? "Forward" : "Nothing to go forward to"}
+          onClick={() => navigate(1)}
+          off={!canGoForward}
+          aria-label="Forward"
+        >
+          <ChevronRight size={15} strokeWidth={1.9} />
+        </CapsuleButton>
 
-        <Tooltip label="Forward" side="bottom">
-          <button
-            onClick={() => navigate(1)}
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 9999,
-              border: "none",
-              background: "transparent",
-              color: "var(--color-text)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "background 0.15s, color 0.15s",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.08)";
-              (e.currentTarget as HTMLElement).style.color = "#ffffff";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLElement).style.background = "transparent";
-              (e.currentTarget as HTMLElement).style.color = "var(--color-text)";
-            }}
-          >
-            <ChevronRight size={15} strokeWidth={1.8} />
-          </button>
-        </Tooltip>
+        <span className="tb-sep" aria-hidden />
 
-        <div style={{ width: 1, height: 14, background: "rgba(255, 255, 255, 0.1)", margin: "0 1px" }} />
-
-        <Tooltip label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} side="bottom">
-          <button
-            onClick={toggleSidebar}
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 9999,
-              border: "none",
-              background: sidebarCollapsed ? "rgba(255, 255, 255, 0.14)" : "transparent",
-              color: sidebarCollapsed ? "#ffffff" : "var(--color-text)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "background 0.15s, color 0.15s",
-            }}
-            onMouseEnter={(e) => {
-              if (!sidebarCollapsed) {
-                (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.08)";
-                (e.currentTarget as HTMLElement).style.color = "#ffffff";
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!sidebarCollapsed) {
-                (e.currentTarget as HTMLElement).style.background = "transparent";
-                (e.currentTarget as HTMLElement).style.color = "var(--color-text)";
-              }
-            }}
-          >
-            <PanelLeft size={15} strokeWidth={1.75} />
-          </button>
-        </Tooltip>
+        {/* the icon shows what the click will do, so the button never has to
+            sit in a lit "on" state that reads as a selected mode */}
+        <CapsuleButton
+          label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+          onClick={toggleSidebar}
+          aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+        >
+          {sidebarCollapsed
+            ? <PanelLeft size={15} strokeWidth={1.9} />
+            : <PanelLeftClose size={15} strokeWidth={1.9} />}
+        </CapsuleButton>
       </div>
 
       {/* Center drag region */}
       <div data-tauri-drag-region style={{ flex: 1, height: "100%", cursor: "default" }} />
 
-      {/* right actions capsule: lyrics, queue, devices */}
+      {/* lyrics and queue share the right rail, so they are one group. where
+          the sound comes out is a different question, past the divider. */}
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          height: 32,
-          borderRadius: 9999,
-          background: "rgba(255, 255, 255, 0.06)",
-          border: "1px solid rgba(255, 255, 255, 0.1)",
-          boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 2px 8px rgba(0, 0, 0, 0.25)",
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
-          padding: 2,
-          gap: 2,
-          flexShrink: 0,
-          marginRight: (!isMac && !macSimulated && !lyricsOpen && !queueOpen) ? 148 : 0,
-        }}
+        className="tb-capsule"
+        style={{ marginRight: docked ? CAPTION_W - 4 + 8 : 0 }}
       >
-        <Tooltip label={lyricsOpen ? "Close lyrics" : "Lyrics"} side="bottom">
-          <button
-            onClick={() => { if (currentTrack) toggleLyrics(); }}
-            disabled={!currentTrack}
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 9999,
-              border: "none",
-              background: lyricsOpen ? "rgba(255, 255, 255, 0.18)" : "transparent",
-              color: lyricsOpen ? "#ffffff" : !currentTrack ? "rgba(255,255,255,0.25)" : "rgba(255, 255, 255, 0.72)",
-              cursor: currentTrack ? "pointer" : "default",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: lyricsOpen ? "0 1px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15)" : "none",
-              transition: "background 0.15s, color 0.15s",
-            }}
-            onMouseEnter={(e) => {
-              if (!lyricsOpen && currentTrack) {
-                (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.1)";
-                (e.currentTarget as HTMLElement).style.color = "#ffffff";
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!lyricsOpen && currentTrack) {
-                (e.currentTarget as HTMLElement).style.background = "transparent";
-                (e.currentTarget as HTMLElement).style.color = "rgba(255, 255, 255, 0.72)";
-              }
-            }}
-          >
-            <Captions size={15} strokeWidth={1.65} />
-          </button>
-        </Tooltip>
+        <CapsuleButton
+          label={!hasTrack ? "Play a song to see lyrics" : lyricsOpen ? "Hide lyrics" : "Lyrics"}
+          onClick={toggleLyrics}
+          on={lyricsOpen}
+          off={!hasTrack}
+          aria-label="Lyrics"
+          aria-pressed={lyricsOpen}
+        >
+          <Captions size={15} strokeWidth={1.75} />
+        </CapsuleButton>
 
-        <div style={{ width: 1, height: 14, background: "rgba(255, 255, 255, 0.1)", margin: "0 1px" }} />
+        <CapsuleButton
+          label={queueOpen ? "Hide queue" : "Queue"}
+          onClick={toggleQueue}
+          on={queueOpen}
+          aria-label="Queue"
+          aria-pressed={queueOpen}
+        >
+          <ListMusic size={15} strokeWidth={1.75} />
+        </CapsuleButton>
 
-        <Tooltip label={queueOpen ? "Close queue" : "Queue"} side="bottom">
-          <button
-            onClick={toggleQueue}
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 9999,
-              border: "none",
-              background: queueOpen ? "rgba(255, 255, 255, 0.18)" : "transparent",
-              color: queueOpen ? "#ffffff" : "rgba(255, 255, 255, 0.72)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: queueOpen ? "0 1px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15)" : "none",
-              transition: "background 0.15s, color 0.15s",
-            }}
-            onMouseEnter={(e) => {
-              if (!queueOpen) {
-                (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.1)";
-                (e.currentTarget as HTMLElement).style.color = "#ffffff";
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!queueOpen) {
-                (e.currentTarget as HTMLElement).style.background = "transparent";
-                (e.currentTarget as HTMLElement).style.color = "rgba(255, 255, 255, 0.72)";
-              }
-            }}
-          >
-            <ListMusic size={15} strokeWidth={1.65} />
-          </button>
-        </Tooltip>
+        <span className="tb-sep" aria-hidden />
 
-        <div style={{ width: 1, height: 14, background: "rgba(255, 255, 255, 0.1)", margin: "0 1px" }} />
-
-        <Tooltip label={isRemotePlayback && activeDevice ? `Device: ${activeDevice.name}` : devicesOpen ? "Close devices" : "Devices"} side="bottom">
-          <button
-            data-devices-trigger="true"
-            onClick={toggleDevices}
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 9999,
-              border: "none",
-              background: devicesOpen ? "rgba(255, 255, 255, 0.18)" : isRemotePlayback ? "rgba(30, 215, 96, 0.18)" : "transparent",
-              color: isRemotePlayback ? "var(--color-primary, #1ed760)" : devicesOpen ? "#ffffff" : "rgba(255, 255, 255, 0.72)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: devicesOpen ? "0 1px 4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15)" : "none",
-              transition: "background 0.15s, color 0.15s",
-            }}
-            onMouseEnter={(e) => {
-              if (!devicesOpen && !isRemotePlayback) {
-                (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.1)";
-                (e.currentTarget as HTMLElement).style.color = "#ffffff";
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!devicesOpen && !isRemotePlayback) {
-                (e.currentTarget as HTMLElement).style.background = "transparent";
-                (e.currentTarget as HTMLElement).style.color = "rgba(255, 255, 255, 0.72)";
-              }
-            }}
-          >
-            <MonitorSpeaker size={15} strokeWidth={1.65} />
-          </button>
-        </Tooltip>
+        <CapsuleButton
+          label={isRemotePlayback && activeDevice ? `Playing on ${activeDevice.name}` : devicesOpen ? "Hide devices" : "Devices"}
+          onClick={toggleDevices}
+          on={devicesOpen && !isRemotePlayback}
+          tone={isRemotePlayback ? "remote" : undefined}
+          align="end"
+          aria-label="Devices"
+          aria-expanded={devicesOpen}
+          data-devices-trigger="true"
+        >
+          <MonitorSpeaker size={15} strokeWidth={1.75} />
+        </CapsuleButton>
       </div>
     </div>
   );

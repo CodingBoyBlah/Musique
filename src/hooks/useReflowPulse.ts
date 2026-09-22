@@ -53,7 +53,6 @@ export function useReflowPulse(): void {
   // resize -> grid re-columns
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   // side panels & sidebar toggles eat/free horizontal space -> grid re-columns.
-  usePlayerStore((s) => s.lyricsOpen);
-  usePlayerStore((s) => s.queueOpen);
+  usePlayerStore((s) => (s.lyricsOpen ? 1 : 0) | (s.queueOpen ? 2 : 0));
   useUIStore((s) => s.sidebarCollapsed);
 }
