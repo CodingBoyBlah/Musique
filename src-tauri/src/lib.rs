@@ -435,6 +435,7 @@ mod recommend;
 mod resample;
 mod sink;
 mod spotify;
+mod youtube;
 mod state;
 mod mem_trim;
 
