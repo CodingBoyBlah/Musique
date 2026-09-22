@@ -7,6 +7,7 @@ import {
 } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useLyrics } from "../../hooks/useLyrics";
+import { useAmbient } from "../../hooks/useAmbient";
 import { seekPlayback } from "../../api/playback";
 import { Loader } from "../ui/Loader";
 import { Tooltip } from "../ui/Tooltip";
@@ -19,9 +20,10 @@ import {
   romanizeLines,
 } from "../../utils/romanize";
 import {
-  ActiveLine,
+  LyricRowText,
   buildRows,
-  mapWords,
+  lyricTone,
+  lyricWords,
   useActiveRow,
   useLyricClock,
   type Row,
@@ -37,6 +39,7 @@ export function LyricsPanel() {
   const reduceMotion = useReducedMotion();
 
   const { data, isLoading, isError, isFetching, refetch } = useLyrics(track);
+  const { glow, ink } = useAmbient(track?.album?.image_url);
 
   const synced = !!data?.lines.length;
 
@@ -214,6 +217,7 @@ export function LyricsPanel() {
             overflowY: "auto",
             overflowX: "hidden",
             padding: "26px 18px 40vh",
+            scrollbarWidth: "none",
             WebkitMaskImage:
               "linear-gradient(to bottom, transparent 0, #000 7%, #000 88%, transparent 100%)",
             maskImage:
@@ -246,6 +250,9 @@ export function LyricsPanel() {
             >
               {rows.map((row, ri) => {
                 const isActive = synced && ri === active;
+                const tone = synced
+                  ? lyricTone(Math.abs(ri - active), ri < active)
+                  : { blur: 0, alpha: 0.92 };
                 const multi = row.voices.length > 1;
                 return (
                   <div
@@ -255,22 +262,19 @@ export function LyricsPanel() {
                     }}
                     onClick={() => seekTo(ri)}
                     style={{
-                      padding: isActive ? "8px 10px" : "4px 10px",
-                      margin: isActive ? "3px 0" : "0",
+                      /* Constant box. Growing the active row's padding reflowed
+                         the whole list on every line, and scaling it from
+                         `left center` grew it rightward without the layout
+                         knowing - which is what ran long lines off the edge of
+                         this panel. Emphasis is light only now, the same as the
+                         immersive view. */
+                      padding: "6px 10px",
                       borderRadius: 10,
                       cursor: synced ? "pointer" : "default",
-                      transition:
-                        "opacity 0.35s ease, transform 0.48s cubic-bezier(0.16, 1, 0.3, 1), filter 0.35s ease",
-                      transform: isActive ? "scale(1.09)" : "scale(0.96)",
-                      transformOrigin: "left center",
-                      opacity: !synced
-                        ? 0.92
-                        : isActive
-                          ? 1
-                          : ri < active
-                            ? 0.28
-                            : 0.42,
-                      filter: !synced || isActive ? "none" : "blur(1.6px)",
+                      transition: reduceMotion
+                        ? "none"
+                        : "opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1)",
+                      opacity: synced ? tone.alpha : 0.92,
                       contentVisibility: "auto",
                       containIntrinsicSize: "0 40px",
                       display: "flex",
@@ -296,6 +300,10 @@ export function LyricsPanel() {
                       const weight = vi === 0 ? 800 : 700;
                       const indent = vi === 0 ? 0 : 16;
                       const romIdx = rowOffsets[ri] + vi;
+                      // built for every row, not just the lit one: both states
+                      // render the same spans, so a line can never re-wrap at
+                      // the moment it lights up
+                      const words = lyricWords(voice, row.startMs, row.endMs);
                       return (
                         <div
                           key={vi}
@@ -311,51 +319,16 @@ export function LyricsPanel() {
                             boxSizing: "border-box",
                           }}
                         >
-                          {isActive && voice.words.length ? (
-                            // word-by-word (musixmatch ANDOR netease real timings)
-                            <ActiveLine
-                              words={mapWords(voice)}
-                              getClock={getClock}
-                              size={size}
-                              weight={weight}
-                              halo={0.35}
-                            />
-                          ) : isActive ? (
-                            // line level source (LRCLIB) = whole line lit, no word sweep, no estimation
-
-                            <p
-                              style={{
-                                margin: 0,
-                                fontSize: size,
-                                lineHeight: 1.3,
-                                letterSpacing: "-0.01em",
-                                fontWeight: weight,
-                                color: "var(--color-text-hi)",
-                                textShadow: "0 0 32px rgba(255,255,255,0.45), 0 2px 10px rgba(0,0,0,0.3)",
-                                whiteSpace: "pre-wrap",
-                                wordBreak: "break-word",
-                                overflowWrap: "break-word",
-                              }}
-                            >
-                              {voice.text || "♪"}
-                            </p>
-                          ) : (
-                            <p
-                              style={{
-                                margin: 0,
-                                fontSize: size,
-                                lineHeight: 1.3,
-                                letterSpacing: "-0.01em",
-                                fontWeight: weight,
-                                color: "rgba(255,255,255,0.72)",
-                                whiteSpace: "pre-wrap",
-                                wordBreak: "break-word",
-                                overflowWrap: "break-word",
-                              }}
-                            >
-                              {voice.text || "♪"}
-                            </p>
-                          )}
+                          <LyricRowText
+                            words={words}
+                            active={isActive}
+                            getClock={getClock}
+                            tone={tone}
+                            size={size}
+                            weight={weight}
+                            glowRgb={glow}
+                            inkRgb={ink}
+                          />
                           {pron && (
                             <p
                               style={{

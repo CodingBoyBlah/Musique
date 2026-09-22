@@ -180,6 +180,9 @@ export const Loader2 = createRuneIcon("Loader2", `<path d="M21 12a9 9 0 1 1-6.21
 
 export const Maximize2 = createRuneIcon("Maximize2", `<path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/>`);
 
+// the counterpart to Maximize2, which is what opens the immersive view
+export const Minimize2 = createRuneIcon("Minimize2", `<path d="M4 14h6v6"/><path d="m3 21 7-7"/><path d="M20 10h-6V4"/><path d="m14 10 7-7"/>`);
+
 export const MonitorSpeaker = createRuneIcon("MonitorSpeaker", `<path d="M5.5 20H8"/><path d="M17 9h.01"/><rect width="10" height="16" x="12" y="4" rx="2"/><path d="M8 6H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h4"/><circle cx="17" cy="15" r="1"/>`);
 
 export const MoreHorizontal = createRuneIcon("MoreHorizontal", `<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>`);
@@ -248,6 +251,7 @@ const ICONS: Record<string, LucideIcon> = {
   "LogIn": LogIn,
   "LogOut": LogOut,
   "Maximize2": Maximize2,
+  "Minimize2": Minimize2,
   "MonitorSpeaker": MonitorSpeaker,
   "MoreHorizontal": MoreHorizontal,
   "Music": Music,

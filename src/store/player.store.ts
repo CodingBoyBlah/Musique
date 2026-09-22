@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { dedupedStorage } from "../lib/persistStorage";
 import type { TrackItem } from "../types/spotify";
 import type { SpotifyDevice, RemotePlaybackState } from "../api/connect";
 
@@ -326,6 +327,7 @@ export const usePlayerStore = create<PlayerStore>()(
     }),
     {
       name: "spotify-player",
+      storage: dedupedStorage(),
       partialize: (s) => ({
         volume: s.volume,
         muted:  s.muted,
