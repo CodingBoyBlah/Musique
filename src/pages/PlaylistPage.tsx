@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Pin } from "@/lib/icons";
@@ -30,7 +31,7 @@ export default function PlaylistPage() {
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const enqueue         = useQueueStore((s) => s.enqueue);
   const playContext     = useQueueStore((s) => s.playContext);
-  const pins      = usePinsStore((s) => s.pins);
+  const pinned = usePinsStore((s) => Boolean(data?.id && s.pins.some((p) => p.id === data.id)));
   const togglePin = usePinsStore((s) => s.togglePin);
   const toggleLike = useToggleLike();
   const displayName = useAuthStore((s) => s.displayName);
@@ -38,8 +39,9 @@ export default function PlaylistPage() {
   const { open: openMenu, element: menuEl } = useContextMenu();
 
   const tracks = data?.tracks ?? [];
-  const { data: savedIds = [] } = useSavedTrackIds(tracks.map((t) => t.id));
-  const likedSet = new Set(savedIds);
+  const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
+  const { data: savedIds = [] } = useSavedTrackIds(trackIds);
+  const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
 
   const { view, keys, toolbar } = useTrackTools(tracks, "Playlist order");
 
@@ -51,7 +53,6 @@ export default function PlaylistPage() {
   }
   if (!data) return null;
 
-  const pinned  = pins.some((p) => p.id === data.id);
   const pinItem = { id: data.id, name: data.name, image_url: data.image_url, type: "playlist" as const };
 
   // only the owner can remove tracks. owner_name is the only owner signal we get on the frontend, so compare it to the logged-in users display name.

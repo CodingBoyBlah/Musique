@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useId, memo } from "react";
+import { coverUrl } from "../lib/coverUrl";
 import { Link } from "react-router-dom";
 import { motion, LayoutGroup } from "framer-motion";
 import { ListMusic, RefreshCw, Pin, PinOff } from "@/lib/icons";
@@ -17,7 +18,7 @@ import { getGridItemTransition } from "../lib/motion";
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
 const MotionLink = motion.create(Link);
 
-function PlaylistCard({
+const PlaylistCard = memo(function PlaylistCard({
   playlist, onContextMenu, index = 0,
 }: {
   playlist: PlaylistSummary;
@@ -72,12 +73,14 @@ function PlaylistCard({
         transition:     "background 0.18s ease",
         position:       "relative",
         cursor:         "pointer",
+        minWidth:       0,
+        overflow:       "hidden",
       }}
     >
-      <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 8, overflow: "hidden", position: "relative" }}>
+      <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 8, overflow: "hidden", position: "relative", flexShrink: 0 }}>
         {playlist.image_url ? (
           <img
-            src={playlist.image_url}
+            src={coverUrl(playlist.image_url, 200) ?? playlist.image_url}
             alt={playlist.name}
             loading="lazy"
             decoding="async"
@@ -116,7 +119,12 @@ function PlaylistCard({
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
-          lineHeight: 1.3,
+          lineHeight: "18px",
+          height: 18,
+          width: "100%",
+          minWidth: 0,
+          maxWidth: "100%",
+          flexShrink: 0,
         }}
       >
         {playlist.name}
@@ -129,16 +137,23 @@ function PlaylistCard({
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
+          lineHeight: "15px",
+          height: 15,
+          width: "100%",
+          minWidth: 0,
+          maxWidth: "100%",
+          flexShrink: 0,
         }}
       >
         {playlist.total_tracks} {playlist.total_tracks === 1 ? "song" : "songs"}
       </p>
     </MotionLink>
   );
-}
+});
 
 export default function Playlists() {
   useReflowPulse();
+  const layoutGroupId = useId();
   const { loggedIn, login, loggingIn } = useAuth();
   const { data: playlists = [], isLoading } = useMyPlaylists();
   const { mutate: sync, isPending } = useSyncLibrary();
@@ -259,7 +274,7 @@ export default function Playlists() {
       )}
 
       {playlists.length > 0 && (
-        <LayoutGroup id="playlists-grid">
+        <LayoutGroup id={layoutGroupId}>
           <motion.div
             layout="position"
             transition={{ layout: REFLOW }}

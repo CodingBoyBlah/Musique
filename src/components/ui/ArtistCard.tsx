@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useState, useId } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { ArrowUpRight, User } from "@/lib/icons";
@@ -12,14 +12,16 @@ interface Props {
   artist: { id: string; name: string; image_url?: string | null };
   size?:  number;
   index?: number;
+  style?: React.CSSProperties;
 }
 
 const MotionLink = motion.create(Link);
 
 // responsive grid of editorial artist cards, even gutters, fills the row
 export function ArtistGrid({ children }: { children: React.ReactNode }) {
+  const layoutGroupId = useId();
   return (
-    <LayoutGroup id="artist-grid">
+    <LayoutGroup id={layoutGroupId}>
       <motion.div
         layout="position"
         transition={{ layout: REFLOW_SPRING }}
@@ -36,7 +38,7 @@ export function ArtistGrid({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ArtistCardImpl({ artist, index = 0 }: Props) {
+function ArtistCardImpl({ artist, index = 0, style }: Props) {
   useReflowPulse();
   const [hover, setHover] = useState(false);
   const qc = useQueryClient();
@@ -70,7 +72,9 @@ function ArtistCardImpl({ artist, index = 0 }: Props) {
         position: "relative",
         cursor: "pointer",
         minWidth: 0,
+        overflow: "hidden",
         ...gpuLayer,
+        ...style,
       }}
     >
       {/* Editorial squircle frame with ambient depth and micro-badge */}
@@ -81,6 +85,7 @@ function ArtistCardImpl({ artist, index = 0 }: Props) {
           aspectRatio: "1 / 1",
           borderRadius: 10,
           overflow: "hidden",
+          flexShrink: 0,
           boxShadow: hover
             ? "0 14px 32px -4px rgba(0, 0, 0, 0.55), 0 0 20px var(--color-accent-dim)"
             : "0 6px 18px rgba(0, 0, 0, 0.35)",
@@ -172,7 +177,7 @@ function ArtistCardImpl({ artist, index = 0 }: Props) {
       </div>
 
       {/* Typography & Subtitle */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 3, width: "100%", minWidth: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3, width: "100%", minWidth: 0, flexShrink: 0 }}>
         <span
           style={{
             fontSize: 14,
@@ -184,14 +189,17 @@ function ArtistCardImpl({ artist, index = 0 }: Props) {
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
+            width: "100%",
+            minWidth: 0,
             maxWidth: "100%",
             display: "block",
+            flexShrink: 0,
           }}
         >
           {artist.name}
         </span>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 6, height: 16, fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", whiteSpace: "nowrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, height: 16, fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", whiteSpace: "nowrap", width: "100%", minWidth: 0, maxWidth: "100%", flexShrink: 0 }}>
           <span
             style={{
               width: 5,
@@ -202,7 +210,7 @@ function ArtistCardImpl({ artist, index = 0 }: Props) {
               flexShrink: 0,
             }}
           />
-          <span style={{ transition: "color 0.16s ease", color: hover ? "var(--color-text)" : "var(--color-text-dim)" }}>
+          <span style={{ transition: "color 0.16s ease", color: hover ? "var(--color-text)" : "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {hover ? "View profile" : "Artist"}
           </span>
         </div>

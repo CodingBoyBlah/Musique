@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Check, UserPlus, Share2, Shuffle } from "@/lib/icons";
@@ -38,7 +38,6 @@ export default function ArtistPage() {
   const toggleFollow = useToggleFollow();
 
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
-  const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
   const queueOpen = usePlayerStore((s) => s.queueOpen);
@@ -64,8 +63,10 @@ export default function ArtistPage() {
   ];
 
   const topTracks = data?.top_tracks ?? [];
-  const { data: savedIds = [] } = useSavedTrackIds(topTracks.map((t) => t.id));
-  const likedSet = new Set(savedIds);
+  const topTrackIds = useMemo(() => topTracks.map((t) => t.id), [topTracks]);
+  const isTopTrackPlaying = usePlayerStore((s) => Boolean(s.currentTrack?.id && topTrackIds.includes(s.currentTrack.id)));
+  const { data: savedIds = [] } = useSavedTrackIds(topTrackIds);
+  const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
 
   if (isLoading) return <Loader label="Loading artist" />;
 
@@ -99,7 +100,7 @@ export default function ArtistPage() {
     }
   }
 
-  const isContextPlaying = isPlaying && !!currentTrack && topTracks.some((t) => t.id === currentTrack.id);
+  const isContextPlaying = isPlaying && isTopTrackPlaying;
 
   function playAll() {
     if (isContextPlaying) {

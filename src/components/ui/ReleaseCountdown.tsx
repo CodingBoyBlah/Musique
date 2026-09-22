@@ -24,16 +24,21 @@ export function ReleaseCountdown({ date }: { date: string }) {
         height: 15,
         lineHeight: "15px",
         alignSelf: "flex-start",
+        width: "100%",
+        minWidth: 0,
         maxWidth: "100%",
         overflow: "hidden",
+        textOverflow: "ellipsis",
         whiteSpace: "nowrap",
         color: "var(--color-accent)",
         fontWeight: 600,
         fontVariantNumeric: "tabular-nums",
       }}
     >
-      <Clock size={11} strokeWidth={2.4} />
-      {fmtCountdown(remaining)}
+      <Clock size={11} strokeWidth={2.4} style={{ flexShrink: 0 }} />
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {fmtCountdown(remaining)}
+      </span>
     </span>
   );
 }

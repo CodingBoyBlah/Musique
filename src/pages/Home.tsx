@@ -1,4 +1,5 @@
-import { useState, useRef, useLayoutEffect, useMemo } from "react";
+import { useState, useRef, useLayoutEffect, useMemo, memo } from "react";
+import { coverUrl } from "../lib/coverUrl";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
@@ -54,7 +55,7 @@ interface QuickItem {
   isLikedSongs?: boolean;
 }
 
-function QuickActionCard({
+const QuickActionCard = memo(function QuickActionCard({
   item,
   recentTracks,
   index = 0,
@@ -65,22 +66,18 @@ function QuickActionCard({
 }) {
   const [hover, setHover] = useState(false);
   const navigate = useNavigate();
-  const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const setPlaying = usePlayerStore((s) => s.setPlaying);
-  const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
-  const playContext = useQueueStore((s) => s.playContext);
+  const isCurrentTrackMatch = usePlayerStore((s) => Boolean(item.track && s.currentTrack?.id === item.track.id));
   const contextId = useQueueStore((s) => s.contextId);
 
-  const isThisPlaying = Boolean(
-    isPlaying && (
-      (item.isLikedSongs && (contextId === "liked-songs" || contextId === "liked")) ||
-      (item.playlistId && contextId === item.playlistId) ||
-      (item.albumId && contextId === item.albumId) ||
-      (item.artistId && (contextId === item.artistId || contextId === `artist-top-${item.artistId}`)) ||
-      (item.track && currentTrack?.id === item.track.id)
-    )
+  const isContextMatch = Boolean(
+    (item.isLikedSongs && (contextId === "liked-songs" || contextId === "liked")) ||
+    (item.playlistId && contextId === item.playlistId) ||
+    (item.albumId && contextId === item.albumId) ||
+    (item.artistId && (contextId === item.artistId || contextId === `artist-top-${item.artistId}`))
   );
+
+  const isThisPlaying = Boolean(isPlaying && (isContextMatch || isCurrentTrackMatch));
 
   async function handlePlay(e?: React.MouseEvent) {
     if (e) {
@@ -93,10 +90,14 @@ function QuickActionCard({
       return;
     }
 
-    if (item.track && currentTrack?.id === item.track.id && !isPlaying) {
+    if (isCurrentTrackMatch && !isPlaying) {
       transportPlay();
       return;
     }
+
+    const playContext = useQueueStore.getState().playContext;
+    const setCurrentTrack = usePlayerStore.getState().setCurrentTrack;
+    const setPlaying = (val: boolean) => usePlayerStore.getState().setPlaying(val);
 
     // 1. Liked Songs
     if (item.isLikedSongs || item.id === "liked-songs") {
@@ -268,7 +269,7 @@ function QuickActionCard({
         </div>
       ) : item.imageUrl ? (
         <img
-          src={item.imageUrl}
+          src={coverUrl(item.imageUrl, 48) ?? item.imageUrl}
           alt=""
           loading="lazy"
           style={{
@@ -326,11 +327,16 @@ function QuickActionCard({
         {isThisPlaying && (
           <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 12, width: 12, flexShrink: 0 }}>
             {[0.4, 1.0, 0.6].map((_, i) => (
-              <motion.div
+              <div
                 key={i}
-                animate={{ scaleY: [0.2, 1.0, 0.2] }}
-                transition={{ repeat: Infinity, duration: 0.55 + i * 0.15, ease: "easeInOut" }}
-                style={{ flex: 1, height: "100%", borderRadius: 1, background: "var(--color-accent)", transformOrigin: "bottom" }}
+                className="eq-bar"
+                style={{
+                  flex: 1,
+                  height: "100%",
+                  borderRadius: 1,
+                  background: "var(--color-accent)",
+                  ["--eq-dur" as string]: `${0.55 + i * 0.15}s`,
+                }}
               />
             ))}
           </div>
@@ -349,7 +355,7 @@ function QuickActionCard({
       </div>
     </motion.div>
   );
-}
+});
 
 function QuickActionsShelf() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -760,6 +766,8 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
         maxWidth: TILE_COVER,
         height: TILE_H,
         overflow: "hidden",
+        minWidth: 0,
+        flexShrink: 0,
         marginInline: "auto",
         display: "flex",
         flexDirection: "column",
@@ -784,11 +792,12 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
           overflow: "hidden",
           boxShadow: hover ? "0 12px 28px rgba(0, 0, 0, 0.5)" : "0 4px 14px rgba(0, 0, 0, 0.3)",
           transition: "box-shadow 0.25s ease",
+          flexShrink: 0,
         }}
       >
         {art ? (
           <img
-            src={art}
+            src={coverUrl(art, 164) ?? art}
             alt=""
             loading="lazy"
             decoding="async"
@@ -814,7 +823,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
           ariaLabel={isThisTrackPlaying ? `Pause ${track.name}` : `Play ${track.name}`}
         />
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", minWidth: 0, height: 17, flexShrink: 0 }}>
         <span
           style={{
             fontSize: 13.5,
@@ -835,17 +844,22 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
         {isThisTrackPlaying && (
           <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 11, width: 11, flexShrink: 0 }}>
             {[0.4, 1.0, 0.6].map((_, i) => (
-              <motion.div
+              <div
                 key={i}
-                animate={{ height: ["20%", "100%", "20%"] }}
-                transition={{ repeat: Infinity, duration: 0.55 + i * 0.15, ease: "easeInOut" }}
-                style={{ flex: 1, borderRadius: 1, background: "var(--color-accent)" }}
+                className="eq-bar"
+                style={{
+                  flex: 1,
+                  height: "100%",
+                  borderRadius: 1,
+                  background: "var(--color-accent)",
+                  ["--eq-dur" as string]: `${0.55 + i * 0.15}s`,
+                }}
               />
             ))}
           </div>
         )}
       </div>
-      <span style={{ fontSize: 12, lineHeight: "15px", height: 15, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", width: "100%", display: "block" }}>
+      <span style={{ fontSize: 12, lineHeight: "15px", height: 15, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", width: "100%", display: "block", flexShrink: 0, minWidth: 0 }}>
         {track.artists.map((a) => a.name).join(", ")}
       </span>
     </motion.button>
@@ -937,7 +951,7 @@ function MadeForYou() {
       ) : (
         <HorizontalScrollRow scrollRef={scrollRef}>
           {recs.map((t, i) => (
-            <div key={t.id} style={{ flex: TILE_FLEX, scrollSnapAlign: "start" }}>
+            <div key={t.id} style={{ flex: TILE_FLEX, width: TILE_COVER, maxWidth: TILE_COVER, minWidth: 0, height: TILE_H, scrollSnapAlign: "start" }}>
               <RecTile track={t} onPlay={() => play(i)} />
             </div>
           ))}
@@ -971,7 +985,7 @@ function RecentlyPlayed() {
       ) : (
         <HorizontalScrollRow scrollRef={scrollRef}>
           {data.slice(0, 18).map((t, i) => (
-            <div key={t.id} style={{ flex: TILE_FLEX, scrollSnapAlign: "start" }}>
+            <div key={t.id} style={{ flex: TILE_FLEX, width: TILE_COVER, maxWidth: TILE_COVER, minWidth: 0, height: TILE_H, scrollSnapAlign: "start" }}>
               <RecTile track={t} onPlay={() => play(i)} />
             </div>
           ))}
@@ -1087,8 +1101,8 @@ function NewReleases() {
       ) : (
         <HorizontalScrollRow scrollRef={scrollRef}>
           {data.slice(0, 18).map((al, i) => (
-            <div key={al.id} style={{ flex: TILE_FLEX, scrollSnapAlign: "start" }}>
-              <AlbumCard album={al} index={i} />
+            <div key={al.id} style={{ flex: TILE_FLEX, width: TILE_COVER, maxWidth: TILE_COVER, minWidth: 0, height: TILE_H, scrollSnapAlign: "start" }}>
+              <AlbumCard album={al} index={i} style={{ height: TILE_H, maxWidth: TILE_COVER }} />
             </div>
           ))}
         </HorizontalScrollRow>

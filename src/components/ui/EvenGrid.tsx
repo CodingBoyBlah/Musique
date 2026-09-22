@@ -1,4 +1,4 @@
-import { useRef, useState, useLayoutEffect, useEffect, useMemo, type ReactNode, type CSSProperties } from "react";
+import { useRef, useState, useLayoutEffect, useEffect, useMemo, useId, type ReactNode, type CSSProperties } from "react";
 import { motion, LayoutGroup } from "framer-motion";
 import { zTransform, REFLOW_SPRING, getGridItemTransition } from "../../lib/motion";
 
@@ -159,9 +159,10 @@ export function EvenGrid<T>({
 
   const { effectiveCols, visibleCount } = metrics;
   const visibleItems = items.slice(0, visibleCount);
+  const layoutGroupId = useId();
 
   return (
-    <LayoutGroup id="even-grid">
+    <LayoutGroup id={layoutGroupId}>
       <motion.div
         ref={containerRef}
         className={className}

@@ -1,4 +1,5 @@
 import { memo, useState } from "react";
+import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2, Check } from "@/lib/icons";
 import { Link, useNavigate } from "react-router-dom";
@@ -79,10 +80,9 @@ function TrackRowImpl({
   const openAddToPlaylist = useAddToPlaylistStore((s) => s.open);
   const { open: openMenu, element: menuEl } = useContextMenu();
 
-  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isThisCurrent = usePlayerStore((s) => s.currentTrack?.id === track.id);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const isThisPlaying = Boolean(currentTrack?.id === track.id && isPlaying);
-  const isThisCurrent = Boolean(currentTrack?.id === track.id);
+  const isThisPlaying = Boolean(isThisCurrent && isPlaying);
 
   function handlePlayToggle(e?: React.MouseEvent) {
     if (e) {
@@ -217,7 +217,7 @@ function TrackRowImpl({
 
         {showCover && (
           cover ? (
-            <img src={cover} alt="" loading="lazy" decoding="async" style={{ width: 38, height: 38, borderRadius: 6, objectFit: "cover", flexShrink: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.25)" }} />
+            <img src={coverUrl(cover, 38) ?? cover} alt="" loading="lazy" decoding="async" style={{ width: 38, height: 38, borderRadius: 6, objectFit: "cover", flexShrink: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.25)" }} />
           ) : (
             <div style={{ width: 38, height: 38, borderRadius: 6, background: "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <Music size={16} style={{ color: "var(--color-text-dim)" }} />
@@ -245,11 +245,16 @@ function TrackRowImpl({
             {isThisPlaying && (
               <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 12, width: 12, flexShrink: 0 }}>
                 {[0.4, 1.0, 0.6].map((_, i) => (
-                  <motion.div
+                  <div
                     key={i}
-                    animate={{ height: ["20%", "100%", "20%"] }}
-                    transition={{ repeat: Infinity, duration: 0.55 + i * 0.15, ease: "easeInOut" }}
-                    style={{ flex: 1, borderRadius: 1, background: "var(--color-accent)" }}
+                    className="eq-bar"
+                    style={{
+                      flex: 1,
+                      height: "100%",
+                      borderRadius: 1,
+                      background: "var(--color-accent)",
+                      ["--eq-dur" as string]: `${0.55 + i * 0.15}s`,
+                    }}
                   />
                 ))}
               </div>
@@ -372,6 +377,14 @@ function TrackRowImpl({
   );
 }
 
-/* memoised: rows only re-render when their own props change, not on every
-parent re-render (eg the per-second progress tick elsewhere) */
-export const TrackRow = memo(TrackRowImpl);
+/* memoised: rows only re-render when their own track, index, liked or display props change,
+avoiding cascade re-renders from inline function props or unrelated store changes */
+export const TrackRow = memo(TrackRowImpl, (prev, next) => {
+  return (
+    prev.track.id === next.track.id &&
+    prev.index === next.index &&
+    prev.liked === next.liked &&
+    prev.showCover === next.showCover &&
+    prev.showAlbum === next.showAlbum
+  );
+});

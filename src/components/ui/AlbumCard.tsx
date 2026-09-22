@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useState, useId } from "react";
 import { Link } from "react-router-dom";
 import { motion, LayoutGroup } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
@@ -22,11 +22,13 @@ interface Props {
   album: AlbumItem;
   size?: number;
   index?: number;
+  style?: React.CSSProperties;
 }
 
 export function AlbumGrid({ children }: { children: React.ReactNode }) {
+  const layoutGroupId = useId();
   return (
-    <LayoutGroup id="album-grid">
+    <LayoutGroup id={layoutGroupId}>
       <motion.div
         layout="position"
         transition={{ layout: REFLOW_SPRING }}
@@ -43,19 +45,15 @@ export function AlbumGrid({ children }: { children: React.ReactNode }) {
   );
 }
 
-function AlbumCardImpl({ album, size = 160, index = 0 }: Props) {
+function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
   useReflowPulse();
   const imgSize = size - 24;
   const [hover, setHover] = useState(false);
   const qc = useQueryClient();
 
-  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isCurrentAlbum = usePlayerStore((s) => Boolean(album.id && s.currentTrack?.album?.id === album.id));
   const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const setPlaying = usePlayerStore((s) => s.setPlaying);
-  const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
-  const playContext = useQueueStore((s) => s.playContext);
-
-  const isThisAlbumPlaying = Boolean(album.id && currentTrack?.album?.id === album.id && isPlaying);
+  const isThisAlbumPlaying = isCurrentAlbum && isPlaying;
 
   async function handlePlayAlbum(e: React.MouseEvent) {
     e.preventDefault();
@@ -64,7 +62,7 @@ function AlbumCardImpl({ album, size = 160, index = 0 }: Props) {
       transportPause();
       return;
     }
-    if (currentTrack?.album?.id === album.id && !isPlaying) {
+    if (isCurrentAlbum && !isPlaying) {
       transportPlay();
       return;
     }
@@ -72,10 +70,10 @@ function AlbumCardImpl({ album, size = 160, index = 0 }: Props) {
       const full = await getAlbum(album.id);
       const tracks = full?.tracks ?? [];
       if (tracks.length > 0) {
-        const start = playContext(tracks, 0, album.id);
+        const start = useQueueStore.getState().playContext(tracks, 0, album.id);
         if (start) {
-          setCurrentTrack(start);
-          playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+          usePlayerStore.getState().setCurrentTrack(start);
+          playTrack(start.id).then(() => usePlayerStore.getState().setPlaying(true)).catch(() => {});
         }
       }
     } catch (err) {
@@ -112,7 +110,9 @@ function AlbumCardImpl({ album, size = 160, index = 0 }: Props) {
         position: "relative",
         cursor: "pointer",
         minWidth: 0,
+        overflow: "hidden",
         ...gpuLayer,
+        ...style,
       }}
     >
       <div
@@ -124,6 +124,7 @@ function AlbumCardImpl({ album, size = 160, index = 0 }: Props) {
           overflow: "hidden",
           boxShadow: hover ? "0 12px 28px rgba(0, 0, 0, 0.5)" : "0 4px 14px rgba(0, 0, 0, 0.3)",
           transition: "box-shadow 0.25s ease",
+          flexShrink: 0,
         }}
       >
         <CoverArt url={album.image_url} alt={album.name} size={imgSize} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
@@ -142,6 +143,7 @@ function AlbumCardImpl({ album, size = 160, index = 0 }: Props) {
 
       <span
         style={{
+          display: "block",
           fontSize: 13.5,
           fontWeight: 600,
           letterSpacing: "-0.012em",
@@ -151,19 +153,48 @@ function AlbumCardImpl({ album, size = 160, index = 0 }: Props) {
           whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",
+          width: "100%",
+          minWidth: 0,
           maxWidth: "100%",
+          flexShrink: 0,
         }}
       >
         {album.name}
       </span>
 
-      {isUpcoming(album.release_date) ? (
-        <ReleaseCountdown date={album.release_date!} />
-      ) : (
-        <span style={{ fontSize: 12, lineHeight: "15px", height: 15, display: "block", color: "var(--color-text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
-          {releaseYear(album.release_date)} • {album.artists?.map((a) => a.name).join(", ") || album.album_type}
-        </span>
-      )}
+      <div
+        style={{
+          height: 15,
+          lineHeight: "15px",
+          width: "100%",
+          minWidth: 0,
+          maxWidth: "100%",
+          overflow: "hidden",
+          flexShrink: 0,
+        }}
+      >
+        {isUpcoming(album.release_date) ? (
+          <ReleaseCountdown date={album.release_date!} />
+        ) : (
+          <span
+            style={{
+              fontSize: 12,
+              lineHeight: "15px",
+              height: 15,
+              display: "block",
+              color: "var(--color-text-dim)",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              width: "100%",
+              minWidth: 0,
+              maxWidth: "100%",
+            }}
+          >
+            {releaseYear(album.release_date)} • {album.artists?.map((a) => a.name).join(", ") || album.album_type}
+          </span>
+        )}
+      </div>
     </MotionLink>
   );
 }

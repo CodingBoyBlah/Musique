@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, memo } from "react";
 import { Link, Navigate, useSearchParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useSearch } from "../hooks/useSearch";
@@ -72,7 +72,7 @@ function getTopResult(data: SearchResults, query: string): TopResult | null {
   return null;
 }
 
-function TopResultCard({
+const TopResultCard = memo(function TopResultCard({
   result,
   onPlay,
   isPlaying,
@@ -211,11 +211,11 @@ function TopResultCard({
       </div>
     </motion.div>
   );
-}
+});
 
 // ─── Playlist card ──────────────────────────────────────────────────────────
 
-function PlaylistResultCard({ playlist, index = 0 }: { playlist: PlaylistCardType; index?: number }) {
+const PlaylistResultCard = memo(function PlaylistResultCard({ playlist, index = 0 }: { playlist: PlaylistCardType; index?: number }) {
   useReflowPulse();
   const [hover, setHover] = useState(false);
   return (
@@ -232,18 +232,52 @@ function PlaylistResultCard({ playlist, index = 0 }: { playlist: PlaylistCardTyp
         textDecoration: "none", color: "inherit",
         background: hover ? "var(--color-surface-elevated)" : "transparent",
         transition: "background 0.18s ease",
+        minWidth: 0,
+        overflow: "hidden",
       }}
     >
-      <div style={{ width: "100%", aspectRatio: "1 / 1" }}>
+      <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 8, overflow: "hidden", flexShrink: 0 }}>
         <CoverArt url={playlist.image_url} alt={playlist.name} size={136} style={{ width: "100%", height: "100%" }} />
       </div>
-      <span className="text-sm font-medium line-clamp-2" style={{ maxWidth: "100%" }}>{playlist.name}</span>
-      <span className="text-xs line-clamp-1" style={{ color: "var(--color-text-dim)" }}>
+      <span
+        style={{
+          display: "block",
+          fontSize: 14,
+          fontWeight: 500,
+          lineHeight: "18px",
+          height: 18,
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          width: "100%",
+          minWidth: 0,
+          maxWidth: "100%",
+          flexShrink: 0,
+        }}
+      >
+        {playlist.name}
+      </span>
+      <span
+        style={{
+          display: "block",
+          fontSize: 12,
+          lineHeight: "15px",
+          height: 15,
+          color: "var(--color-text-dim)",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          width: "100%",
+          minWidth: 0,
+          maxWidth: "100%",
+          flexShrink: 0,
+        }}
+      >
         {playlist.owner_name ? `By ${playlist.owner_name}` : "Playlist"}
       </span>
     </MotionLink>
   );
-}
+});
 
 // ─── Search Page ────────────────────────────────────────────────────────────
 
@@ -255,29 +289,27 @@ export default function Search() {
   const [cat, setCat]   = useState<Category>("all");
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
-  const setPlaying      = usePlayerStore((s) => s.setPlaying);
-  const currentTrack    = usePlayerStore((s) => s.currentTrack);
   const enqueue         = useQueueStore((s) => s.enqueue);
   const playContext     = useQueueStore((s) => s.playContext);
   const toggleLike      = useToggleLike();
 
   const { data, isLoading, error } = useSearch(query);
-  const trackIds = data?.tracks.map((t) => t.id) ?? [];
+  const trackIds = useMemo(() => data?.tracks.map((t) => t.id) ?? [], [data?.tracks]);
   const { data: savedIds = [] } = useSavedTrackIds(trackIds);
-  const likedSet = new Set(savedIds);
+  const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
 
   const topResult = useMemo(() => {
     if (!data) return null;
     return getTopResult(data, query);
   }, [data, query]);
 
-  const isTopResultPlaying = Boolean(
-    isPlaying &&
-      topResult &&
-      ((topResult.type === "track" && currentTrack?.id === topResult.item.id) ||
-        (topResult.type === "artist" && currentTrack?.artists.some((a) => a.id === topResult.item.id)) ||
-        (topResult.type === "album" && currentTrack?.album?.id === topResult.item.id))
-  );
+  const isTopResultPlaying = usePlayerStore((s) => {
+    if (!s.isPlaying || !topResult || !s.currentTrack) return false;
+    if (topResult.type === "track") return s.currentTrack.id === topResult.item.id;
+    if (topResult.type === "artist") return s.currentTrack.artists.some((a) => a.id === topResult.item.id);
+    if (topResult.type === "album") return s.currentTrack.album?.id === topResult.item.id;
+    return false;
+  });
 
   async function handlePlayTopResult(e?: React.MouseEvent) {
     if (e) {
@@ -292,7 +324,8 @@ export default function Search() {
     }
 
     if (topResult.type === "track") {
-      if (currentTrack?.id === topResult.item.id && !isPlaying) {
+      const curTrack = usePlayerStore.getState().currentTrack;
+      if (curTrack?.id === topResult.item.id && !isPlaying) {
         transportPlay();
         return;
       }
@@ -300,7 +333,7 @@ export default function Search() {
       const start = playContext(data?.tracks ?? [topResult.item], idx >= 0 ? idx : 0, "search");
       const trackToPlay = start || topResult.item;
       setCurrentTrack(trackToPlay);
-      playTrack(trackToPlay.id).then(() => setPlaying(true)).catch(console.error);
+      playTrack(trackToPlay.id).then(() => usePlayerStore.getState().setPlaying(true)).catch(console.error);
       return;
     }
 
@@ -312,7 +345,7 @@ export default function Search() {
           const start = playContext(tracks, 0, topResult.item.id);
           if (start) {
             setCurrentTrack(start);
-            playTrack(start.id).then(() => setPlaying(true)).catch(console.error);
+            playTrack(start.id).then(() => usePlayerStore.getState().setPlaying(true)).catch(console.error);
           }
         }
       } catch (err) {
@@ -329,7 +362,7 @@ export default function Search() {
           const start = playContext(tracks, 0, topResult.item.id);
           if (start) {
             setCurrentTrack(start);
-            playTrack(start.id).then(() => setPlaying(true)).catch(console.error);
+            playTrack(start.id).then(() => usePlayerStore.getState().setPlaying(true)).catch(console.error);
           }
         }
       } catch (err) {

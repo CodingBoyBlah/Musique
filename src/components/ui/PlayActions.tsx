@@ -106,7 +106,7 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
   ];
 
   return (
-    <div ref={rootRef} className="flex items-center mt-3" style={{ gap: 10, width: "100%" }}>
+    <div ref={rootRef} className="flex items-center mt-2" style={{ gap: 10, width: "100%" }}>
       <Tooltip label={playing ? "Pause" : "Play"} side="top">
         <motion.button
           initial={false}

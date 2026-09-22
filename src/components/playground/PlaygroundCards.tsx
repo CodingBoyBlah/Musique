@@ -37,9 +37,11 @@ export function MusiqueAlbumCard({
         transition: "background 0.18s ease",
         cursor: "pointer",
         position: "relative",
+        minWidth: 0,
+        overflow: "hidden",
       }}
     >
-      <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1", borderRadius: 8, overflow: "hidden", flexShrink: 0 }}>
         <img
           src={coverUrl}
           alt={title}
@@ -60,17 +62,39 @@ export function MusiqueAlbumCard({
 
       <span
         style={{
+          display: "block",
           fontSize: 14,
           fontWeight: 500,
+          lineHeight: "18px",
+          height: 18,
           color: "var(--color-text-hi)",
           whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",
+          width: "100%",
+          minWidth: 0,
+          maxWidth: "100%",
+          flexShrink: 0,
         }}
       >
         {title}
       </span>
-      <span style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
+      <span
+        style={{
+          display: "block",
+          fontSize: 12,
+          lineHeight: "15px",
+          height: 15,
+          color: "var(--color-text-dim)",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          width: "100%",
+          minWidth: 0,
+          maxWidth: "100%",
+          flexShrink: 0,
+        }}
+      >
         {year} • {artist}
       </span>
     </motion.div>

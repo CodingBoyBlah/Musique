@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Heart, Users, RefreshCw, Disc3 } from "@/lib/icons";
@@ -84,8 +85,9 @@ function LikedSongsTab() {
   const toggleLike  = useToggleLike();
 
   const { view, toolbar } = useSortTools(tracks, "Find in songs");
-  const { data: savedIds = [] } = useSavedTrackIds(tracks.map((t) => t.id));
-  const likedSet = new Set(savedIds);
+  const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
+  const { data: savedIds = [] } = useSavedTrackIds(trackIds);
+  const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
 
   if (isLoading) {
     return <p style={{ fontSize: 13, color: "rgba(255,255,255,0.40)" }}>Loading liked songs…</p>;

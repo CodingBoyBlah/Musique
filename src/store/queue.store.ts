@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { dedupedStorage } from "../lib/persistStorage";
 import type { TrackItem } from "../types/spotify";
 import { usePlayerStore } from "./player.store";
 
@@ -210,10 +211,11 @@ export const useQueueStore = create<QueueStore>()(
     }),
     {
       name: "spotify-queue",
+      storage: dedupedStorage(),
       partialize: (s) => ({
-        queue:         s.queue,
+        queue:         s.queue.slice(0, 150),
         history:       s.history.slice(-30),
-        contextTracks: s.contextTracks,
+        contextTracks: s.contextTracks.slice(0, 150),
         contextId:     s.contextId,
         shuffle:       s.shuffle,
         repeat:        s.repeat,

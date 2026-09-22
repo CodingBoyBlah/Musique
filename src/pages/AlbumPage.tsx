@@ -1,4 +1,5 @@
-import { useRef } from "react";
+import { useRef, useMemo } from "react";
+import { coverUrl } from "../lib/coverUrl";
 import { useParams, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Pin, ChevronLeft, ChevronRight } from "@/lib/icons";
@@ -31,7 +32,7 @@ export default function AlbumPage() {
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const enqueue         = useQueueStore((s) => s.enqueue);
   const playContext     = useQueueStore((s) => s.playContext);
-  const pins      = usePinsStore((s) => s.pins);
+  const pinned = usePinsStore((s) => Boolean(data?.id && s.pins.some((p) => p.id === data.id)));
   const togglePin = usePinsStore((s) => s.togglePin);
   const toggleLike = useToggleLike();
   const { open: openMenu, element: menuEl } = useContextMenu();
@@ -39,8 +40,9 @@ export default function AlbumPage() {
   const carouselRef = useRef<HTMLDivElement>(null);
 
   const tracks = data?.tracks ?? [];
-  const { data: savedIds = [] } = useSavedTrackIds(tracks.map((t) => t.id));
-  const likedSet = new Set(savedIds);
+  const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
+  const { data: savedIds = [] } = useSavedTrackIds(trackIds);
+  const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
 
   const { view, keys, toolbar } = useTrackTools(tracks, "Album order");
 
@@ -52,7 +54,6 @@ export default function AlbumPage() {
   }
   if (!data) return null;
 
-  const pinned  = pins.some((p) => p.id === data.id);
   const pinItem = { id: data.id, name: data.name, image_url: data.image_url, type: "album" as const };
 
   function startAt(index: number) {
@@ -74,16 +75,16 @@ export default function AlbumPage() {
       ])}
     >
       <PageHeader imageUrl={data.image_url} eyebrow={data.album_type} title={data.name}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {artistDetail?.image_url && (
-              <img
-                src={artistDetail.image_url}
-                alt=""
-                style={{ width: 22, height: 22, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
-              />
-            )}
-            <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#ffffff" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap", fontSize: 14.5 }}>
+          {artistDetail?.image_url && (
+            <img
+              src={coverUrl(artistDetail.image_url, 22) ?? artistDetail.image_url}
+              alt=""
+              style={{ width: 22, height: 22, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
+            />
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 700, color: "#ffffff" }}>
               {data.artists.map((a, i) => (
                 <span key={a.id}>
                   {i > 0 && ", "}
@@ -92,43 +93,13 @@ export default function AlbumPage() {
                   </Link>
                 </span>
               ))}
-            </p>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                padding: "2px 8px",
-                borderRadius: 99,
-                background: "rgba(255, 255, 255, 0.05)",
-                border: "1px solid rgba(255, 255, 255, 0.09)",
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: "0.06em",
-                textTransform: "uppercase",
-                color: "rgba(255, 255, 255, 0.80)",
-              }}
-            >
-              {data.album_type}
             </span>
-            {data.release_date && (
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  padding: "2px 8px",
-                  borderRadius: 99,
-                  background: "rgba(255, 255, 255, 0.05)",
-                  border: "1px solid rgba(255, 255, 255, 0.09)",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  letterSpacing: "0.06em",
-                  textTransform: "uppercase",
-                  color: "rgba(255, 255, 255, 0.70)",
-                }}
-              >
-                {releaseYear(data.release_date)}
+            {releaseYear(data.release_date) && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <span style={{ color: "rgba(255, 255, 255, 0.35)", fontSize: 10, userSelect: "none" }}>•</span>
+                <span style={{ fontWeight: 500, color: "rgba(255, 255, 255, 0.65)" }}>
+                  {releaseYear(data.release_date)}
+                </span>
               </span>
             )}
           </div>
@@ -263,7 +234,15 @@ export default function AlbumPage() {
             }}
           >
             {artistDetail.albums.filter((a) => a.id !== data.id).slice(0, 10).map((al, i) => (
-              <div key={al.id} style={{ flex: "0 0 clamp(140px, 16vw, 175px)" }}>
+              <div
+                key={al.id}
+                style={{
+                  flex: "0 0 clamp(140px, 16vw, 175px)",
+                  width: "clamp(140px, 16vw, 175px)",
+                  maxWidth: "clamp(140px, 16vw, 175px)",
+                  minWidth: 0,
+                }}
+              >
                 <AlbumCard album={al} index={i} />
               </div>
             ))}

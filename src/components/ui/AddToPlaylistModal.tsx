@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { coverUrl } from "../../lib/coverUrl";
 import { AnimatePresence, motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { ListMusic, Plus, Search, X } from "@/lib/icons";
@@ -120,7 +121,7 @@ export function AddToPlaylistModal() {
                 shown.map((p) => (
                   <button key={p.id} onClick={() => add(p.id, p.name)} disabled={busy} style={rowBtn} onMouseEnter={hoverOn} onMouseLeave={hoverOff}>
                     {p.image_url
-                      ? <img src={p.image_url} alt="" style={{ ...thumb, objectFit: "cover" }} />
+                      ? <img src={coverUrl(p.image_url, 40) ?? p.image_url} alt="" style={{ ...thumb, objectFit: "cover" }} />
                       : <span style={{ ...thumb, background: "var(--color-surface-2)" }}><ListMusic size={16} style={{ color: "var(--color-text-dim)" }} /></span>}
                     <span style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
                       <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>

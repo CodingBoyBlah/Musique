@@ -1,4 +1,5 @@
 import { Music } from "@/lib/icons";
+import { coverUrl } from "../../lib/coverUrl";
 import type { CSSProperties } from "react";
 
 interface Props {
@@ -29,7 +30,7 @@ export function CoverArt({
   if (url) {
     return (
       <img
-        src={url}
+        src={coverUrl(url, size) ?? url}
         alt={alt}
         referrerPolicy="no-referrer"
         className={className}
