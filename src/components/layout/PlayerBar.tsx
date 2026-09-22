@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, memo } from "react";
 import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -7,9 +7,8 @@ import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat, Repeat1,
   Volume2, Volume1, VolumeX,
-  ListMusic, Captions, Maximize2,
-  MonitorSpeaker,
-} from "lucide-react";
+  MonitorSpeaker, Maximize2,
+} from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
@@ -18,14 +17,11 @@ import {
 } from "../../api/playback";
 import { remoteSetVolume } from "../../api/connect";
 import { useDevices } from "../../hooks/useDevices";
-import { DevicesPopover } from "./DevicesPopover";
 import { CoverArt } from "../ui/CoverArt";
 import { Tooltip } from "../ui/Tooltip";
 import { fmtMs } from "../../utils/fmt";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
 import { gpuLayer, zTransform } from "../../lib/motion";
-
-// icon button
 
 function IconBtn({
   children, onClick, active, large, title, disabled,
@@ -39,17 +35,12 @@ function IconBtn({
 }) {
   return (
     <motion.button
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
       title={title}
       disabled={disabled}
       whileHover={disabled ? {} : { scale: 1.10 }}
       whileTap={disabled   ? {} : { scale: 0.92 }}
-      transition={{ type: "spring", stiffness: 400, damping: 25 }}
-      /* TODO LOGIC - keep a permanent GPU layer (translateZ(0) always there) so scaling
-       never prodemotes the layer - that promote/demote rounding is the
-       1px "teleport" you get before/after the animation */
-
-/* IMPLEMETED  DOMNE */
+      transition={{ type: "spring", stiffness: 420, damping: 24 }}
       transformTemplate={zTransform}
       style={{
         ...gpuLayer,
@@ -68,16 +59,25 @@ function IconBtn({
             ? "var(--color-accent)"
             : disabled
               ? "rgba(242,238,233,0.18)"
-              : "var(--color-text)",
+              : "rgba(255, 255, 255, 0.72)",
         cursor:         disabled ? "default" : "pointer",
+        transition:     "color 0.15s",
+      }}
+      onMouseEnter={(e) => {
+        if (!disabled && !active && !large) {
+          (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!disabled && !active && !large) {
+          (e.currentTarget as HTMLButtonElement).style.color = "rgba(255, 255, 255, 0.72)";
+        }
       }}
     >
       {children}
     </motion.button>
   );
 }
-
-// play / pause (bare, (and also) morphing glyph, to be reused)
 
 function PlayPauseButton({
   isPlaying, onClick,
@@ -87,22 +87,22 @@ function PlayPauseButton({
   return (
     <motion.button
       onClick={onClick}
-      whileHover={{ scale: 1.08 }}
-      whileTap={{ scale: 0.86 }}
-      transition={{ type: "spring", stiffness: 420, damping: 20 }}
+      whileHover={{ scale: 1.14 }}
+      whileTap={{ scale: 0.88 }}
+      transition={{ type: "spring", stiffness: 440, damping: 22 }}
       transformTemplate={zTransform}
       style={{
         ...gpuLayer,
         position: "relative",
         display: "flex", alignItems: "center", justifyContent: "center",
-        width: 34, height: 34, flexShrink: 0,
-        border: "none", background: "transparent",
-        color: "var(--color-text-hi)", cursor: "pointer",
+        width: 38, height: 38, flexShrink: 0,
+        borderRadius: "50%",
+        border: "none",
+        background: "transparent",
+        color: "var(--color-text-hi, #ffffff)",
+        cursor: "pointer",
       }}
     >
-      {/* two glyphs crossfade through a slight blur so the swap erads as one
-          morph instead of a hard cut, pinned to inset:0 and centred so the
-          swap/scale cant shift the glyphs position (Removes teleport) */}
       <AnimatePresence initial={false}>
         <motion.span
           key={isPlaying ? "pause" : "play"}
@@ -113,8 +113,8 @@ function PlayPauseButton({
           style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
         >
           {isPlaying
-            ? <Pause size={22} strokeWidth={2.4} fill="currentColor" />
-            : <Play  size={22} strokeWidth={2.4} fill="currentColor" style={{ marginLeft: 2 }} />
+            ? <Pause size={19} strokeWidth={2.6} fill="currentColor" />
+            : <Play  size={19} strokeWidth={2.6} fill="currentColor" style={{ marginLeft: 2 }} />
           }
         </motion.span>
       </AnimatePresence>
@@ -122,140 +122,158 @@ function PlayPauseButton({
   );
 }
 
-// progress bar
-
-function ProgressBar({
-  durationMs, onSeek,
+const PlayerScrubber = memo(function PlayerScrubber({
+  durationMs,
+  doSeek,
 }: {
-  durationMs: number; onSeek: (ms: number) => void;
+  durationMs: number;
+  doSeek: (ms: number) => void;
 }) {
   const positionMs = usePlayerStore((s) => s.positionMs);
-  // hover scrub preview + drag-scrub. while dragging the bar follows the cursor until release, when we commit the seek.
-
-
-  // (AND shows the wouldbe time)
+  const [isScrubHovered, setIsScrubHovered] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragFrac, setDragFrac] = useState<number | null>(null);
   const [hoverFrac, setHoverFrac] = useState<number | null>(null);
-  const [dragFrac,  setDragFrac]  = useState<number | null>(null);
-  const barRef = useRef<HTMLDivElement>(null);
+  const scrubBarRef = useRef<HTMLDivElement>(null);
 
-  const dragging  = dragFrac != null;
-  // The fill would show drag position ?????
-  const shownFrac = dragging ? dragFrac! : (durationMs > 0 ? Math.min(positionMs / durationMs, 1) : 0);
-  const pct       = shownFrac * 100;
-  const showBubble = (hoverFrac != null || dragging) && durationMs > 0;
-  const bubbleFrac = dragging ? dragFrac! : (hoverFrac ?? 0);
+  const activeFrac = isDragging && dragFrac !== null
+    ? dragFrac
+    : durationMs > 0
+      ? Math.min(positionMs / durationMs, 1)
+      : 0;
+
+  const pct = activeFrac * 100;
 
   function fracFromClientX(clientX: number) {
-    const el = barRef.current;
+    const el = scrubBarRef.current;
     if (!el) return 0;
     const rect = el.getBoundingClientRect();
+    if (rect.width <= 0) return 0;
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   }
-  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+
+  function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (!durationMs) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     const f = fracFromClientX(e.clientX);
+    setIsDragging(true);
     setDragFrac(f);
     setHoverFrac(f);
   }
-  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+
+  function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
     if (!durationMs) return;
     const f = fracFromClientX(e.clientX);
     setHoverFrac(f);
-    if (dragging) setDragFrac(f);
-  }
-  function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {
-    if (dragging) {
-      onSeek(Math.floor(dragFrac! * durationMs));
-      setDragFrac(null);
+    if (isDragging) {
+      setDragFrac(f);
     }
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
   }
+
+  function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (isDragging && dragFrac !== null && durationMs > 0) {
+      const targetMs = Math.floor(dragFrac * durationMs);
+      doSeek(targetMs);
+    }
+    setIsDragging(false);
+    setDragFrac(null);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+  }
+
+  const showTooltip = (hoverFrac !== null || isDragging) && durationMs > 0;
+  const tooltipFrac = isDragging && dragFrac !== null ? dragFrac : (hoverFrac ?? activeFrac);
+  const isLineExpanded = isScrubHovered || isDragging;
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", maxWidth: 480 }}>
-      <span style={{ fontSize: 11, fontWeight: 400, color: "var(--color-text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-        {fmtMs(dragging ? Math.floor(dragFrac! * durationMs) : positionMs)}
-      </span>
-      {/* tall transparent hitarea so it's easy to grab -- 4px track sits centred */}
+    <div
+      ref={scrubBarRef}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onMouseEnter={() => setIsScrubHovered(true)}
+      onMouseLeave={() => {
+        if (!isDragging) {
+          setIsScrubHovered(false);
+          setHoverFrac(null);
+        }
+      }}
+      style={{
+        position: "relative",
+        width: "100%",
+        height: 12,
+        display: "flex",
+        alignItems: "center",
+        cursor: durationMs > 0 ? "pointer" : "default",
+        touchAction: "none",
+      }}
+    >
+      {/* Expanding hairline track */}
       <div
-        ref={barRef}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerLeave={() => { if (!dragging) setHoverFrac(null); }}
-        className="group"
-        style={{ flex: 1, height: 16, position: "relative", display: "flex", alignItems: "center", cursor: durationMs ? "pointer" : "default", touchAction: "none" }}
+        style={{
+          position: "relative",
+          width: "100%",
+          height: 5,
+          borderRadius: 9999,
+          background: isLineExpanded ? "rgba(255, 255, 255, 0.22)" : "rgba(255, 255, 255, 0.14)",
+          overflow: "hidden",
+          transform: isLineExpanded ? "scaleY(1)" : "scaleY(0.45)",
+          transformOrigin: "center",
+          transition: isDragging ? "none" : "transform 0.20s cubic-bezier(0.16, 1, 0.3, 1), background 0.20s",
+        }}
       >
-        <div style={{ position: "relative", width: "100%", height: 4, borderRadius: 99 }}>
-          <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.10)", borderRadius: 99 }} />
-          <motion.div
-            style={{ position: "absolute", inset: 0, transformOrigin: "left", background: "rgba(242,238,233,0.80)", borderRadius: 99 }}
-            animate={{ scaleX: pct / 100 }}
-            transition={{ duration: dragging ? 0 : 0.16, ease: [0.23, 1, 0.32, 1] }}
-          />
-          {/* draggable thumb --- shows on hover/drag, sits at the fill end to */}
-          <motion.div
-            style={{
-              position: "absolute", top: "50%", left: `${pct}%`,
-              width: 12, height: 12, borderRadius: "50%",
-              background: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,0.5)",
-              pointerEvents: "none",
-            }}
-            animate={{
-              x: "-50%", y: "-50%",
-              opacity: durationMs && (hoverFrac != null || dragging) ? 1 : 0,
-              scale: dragging ? 1.15 : 1,
-            }}
-            transition={{ opacity: { duration: 0.12 }, scale: { duration: 0.12 }, left: { duration: dragging ? 0 : 0.16 } }}
-          />
-        </div>
-
-        <AnimatePresence>
-          {showBubble && (
-            <motion.span
-              initial={{ opacity: 0, y: 3 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 3 }}
-              transition={{ duration: 0.12 }}
-              style={{
-                position: "absolute",
-                left: `${bubbleFrac * 100}%`,
-                bottom: "calc(100% + 4px)",
-                transform: "translateX(-50%)",
-                pointerEvents: "none",
-                whiteSpace: "nowrap",
-                padding: "3px 7px",
-                borderRadius: 6,
-                background: "rgba(26,26,30,0.96)",
-                border: "1px solid var(--color-glass-border)",
-                boxShadow: "0 6px 16px rgba(0,0,0,0.45)",
-                fontSize: 11,
-                fontWeight: 600,
-                fontVariantNumeric: "tabular-nums",
-                color: "var(--color-text-hi)",
-              }}
-            >
-              {fmtMs(Math.floor(bubbleFrac * durationMs))}
-            </motion.span>
-          )}
-        </AnimatePresence>
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            transformOrigin: "left",
+            borderRadius: 9999,
+            background: "#ffffff",
+            transform: `scaleX(${pct / 100})`,
+            transition: isDragging ? "none" : "transform 0.12s linear",
+            boxShadow: isLineExpanded ? "0 0 8px rgba(255, 255, 255, 0.45)" : "none",
+          }}
+        />
       </div>
-      <span style={{ fontSize: 11, fontWeight: 400, color: "var(--color-text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-        {durationMs > 0 ? fmtMs(durationMs) : "0:00"}
-      </span>
+
+      {/* Floating Tooltip displaying the scrubbed timestamp on interaction */}
+      <AnimatePresence>
+        {showTooltip && (
+          <motion.div
+            initial={{ opacity: 0, y: 3, scale: 0.92 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 3, scale: 0.92 }}
+            transition={{ duration: 0.12 }}
+            style={{
+              position: "absolute",
+              left: `${tooltipFrac * 100}%`,
+              bottom: "calc(100% + 5px)",
+              transform: "translateX(-50%)",
+              pointerEvents: "none",
+              whiteSpace: "nowrap",
+              padding: "2px 6px",
+              borderRadius: 5,
+              background: "rgba(22, 22, 26, 0.96)",
+              border: "1px solid rgba(255, 255, 255, 0.14)",
+              boxShadow: "0 4px 14px rgba(0, 0, 0, 0.55)",
+              fontSize: 10.5,
+              fontWeight: 600,
+              fontVariantNumeric: "tabular-nums",
+              color: "#ffffff",
+              zIndex: 60,
+            }}
+          >
+            {fmtMs(Math.floor(tooltipFrac * durationMs))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
-}
-
-// playerbar
+});
 
 export function PlayerBar() {
   const qc              = useQueryClient();
-  const queueOpen       = usePlayerStore((s) => s.queueOpen);
-  const toggleQueue     = usePlayerStore((s) => s.toggleQueue);
-  const lyricsOpen      = usePlayerStore((s) => s.lyricsOpen);
-  const toggleLyrics    = usePlayerStore((s) => s.toggleLyrics);
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
   const currentTrack    = usePlayerStore((s) => s.currentTrack);
   const durationMs      = usePlayerStore((s) => s.durationMs);
@@ -265,15 +283,16 @@ export function PlayerBar() {
   const storeSetVolume  = usePlayerStore((s) => s.setVolume);
   const storeSetMuted   = usePlayerStore((s) => s.setMuted);
   const setImmersiveOpen = usePlayerStore((s) => s.setImmersiveOpen);
+
   const { togglePlay, next: handleNext, prev: handlePrev, seek: doSeek } = usePlayerControls();
-  const { activeDevice, isRemotePlayback, devicesOpen, toggleDevices } = useDevices();
-  const { shuffle, repeat, toggleShuffle, cycleRepeat, queueLength } = useQueueStore(
+  const { activeDevice, isRemotePlayback, toggleDevices } = useDevices();
+
+  const { shuffle, repeat, toggleShuffle, cycleRepeat } = useQueueStore(
     useShallow((s) => ({
       shuffle: s.shuffle,
       repeat:  s.repeat,
       toggleShuffle: s.toggleShuffle,
       cycleRepeat:   s.cycleRepeat,
-      queueLength:   s.queue.length,
     }))
   );
 
@@ -283,30 +302,50 @@ export function PlayerBar() {
     return () => clearInterval(timer);
   }, [isPlaying, incrementPos]);
 
-  const [isCompactBar, setIsCompactBar] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth < 680 : false
-  );
-  const [isSuperCompactBar, setIsSuperCompactBar] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth < 500 : false
-  );
+  const barContainerRef = useRef<HTMLDivElement>(null);
+  const [barWidth, setBarWidth] = useState(720);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mqlCompact = window.matchMedia("(max-width: 679px)");
-    const mqlSuperCompact = window.matchMedia("(max-width: 499px)");
-    const onCompact = (e: MediaQueryListEvent) => setIsCompactBar(e.matches);
-    const onSuperCompact = (e: MediaQueryListEvent) => setIsSuperCompactBar(e.matches);
-
-    setIsCompactBar(mqlCompact.matches);
-    setIsSuperCompactBar(mqlSuperCompact.matches);
-
-    mqlCompact.addEventListener("change", onCompact);
-    mqlSuperCompact.addEventListener("change", onSuperCompact);
-    return () => {
-      mqlCompact.removeEventListener("change", onCompact);
-      mqlSuperCompact.removeEventListener("change", onSuperCompact);
-    };
+    const el = barContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setBarWidth(entry.contentRect.width);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
+
+  const showSecondaryControls = barWidth >= 560;
+  const showInlineVolume = barWidth >= 660;
+
+  // Volume controls & popup
+  const [volPopupOpen, setVolPopupOpen] = useState(false);
+  const volPopupRef = useRef<HTMLDivElement>(null);
+  const volBtnRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!volPopupOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        volPopupRef.current &&
+        !volPopupRef.current.contains(e.target as Node) &&
+        volBtnRef.current &&
+        !volBtnRef.current.contains(e.target as Node)
+      ) {
+        setVolPopupOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", handleClickOutside);
+    return () => window.removeEventListener("mousedown", handleClickOutside);
+  }, [volPopupOpen]);
+
+  useEffect(() => {
+    if (showInlineVolume && volPopupOpen) {
+      setVolPopupOpen(false);
+    }
+  }, [showInlineVolume, volPopupOpen]);
 
   const volDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -322,6 +361,7 @@ export function PlayerBar() {
       }
     }, 80);
   }
+
   function handleMuteToggle() {
     const next = !muted;
     storeSetMuted(next);
@@ -329,6 +369,14 @@ export function PlayerBar() {
       remoteSetVolume(next ? 0 : volume).catch(() => {});
     } else {
       apiSetMuted(next).catch(() => {});
+    }
+  }
+
+  function handleVolumeButtonClick() {
+    if (showInlineVolume) {
+      handleMuteToggle();
+    } else {
+      setVolPopupOpen((v) => !v);
     }
   }
 
@@ -340,24 +388,44 @@ export function PlayerBar() {
     : "Repeat off";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flexShrink: 0, position: "relative" }}>
+    <div
+      style={{
+        position: "absolute",
+        bottom: 12,
+        left: 0,
+        right: 0,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        pointerEvents: "none",
+        zIndex: 40,
+      }}
+    >
+      {/* Remote playback banner */}
       <AnimatePresence>
         {isRemotePlayback && activeDevice && (
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 26, opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
+            initial={{ height: 0, opacity: 0, y: 8 }}
+            animate={{ height: 28, opacity: 1, y: 0 }}
+            exit={{ height: 0, opacity: 0, y: 8 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
             onClick={toggleDevices}
             data-devices-trigger="true"
             style={{
-              background: "rgba(255, 255, 255, 0.05)",
-              borderBottom: "1px solid var(--color-glass-border)",
+              pointerEvents: "auto",
+              marginBottom: 6,
+              background: "rgba(22, 22, 26, 0.90)",
+              backdropFilter: "blur(20px)",
+              WebkitBackdropFilter: "blur(20px)",
+              border: "1px solid var(--color-glass-border)",
+              borderRadius: 20,
+              boxShadow: "0 8px 24px rgba(0, 0, 0, 0.4)",
               color: "var(--color-text-hi)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               gap: 8,
+              padding: "0 14px",
               fontSize: 11.5,
               fontWeight: 500,
               cursor: "pointer",
@@ -372,268 +440,285 @@ export function PlayerBar() {
         )}
       </AnimatePresence>
 
+      {/* Dock Container: Scaled down from full page width to a tailored floating island */}
       <div
+        ref={barContainerRef}
         style={{
-          height:     72,
-          background: "var(--color-player)",
-          borderTop:  "1px solid var(--color-border)",
-          display:    "flex",
+          pointerEvents: "auto",
+          width: "min(740px, calc(100% - 32px))",
+          height: 74,
+          background: "var(--color-dock-bg, rgba(20, 20, 24, 0.88))",
+          backdropFilter: "blur(24px) saturate(160%)",
+          WebkitBackdropFilter: "blur(24px) saturate(160%)",
+          borderRadius: 18,
+          border: "1px solid var(--color-dock-border, rgba(255, 255, 255, 0.09))",
+          boxShadow:
+            "inset 0 1px 0 0 rgba(255, 255, 255, 0.08), 0 12px 32px rgba(0, 0, 0, 0.45)",
+          display: "flex",
           alignItems: "center",
-          gap:        "clamp(8px, 1.6vw, 16px)",
-          padding:    "0 clamp(10px, 1.8vw, 18px)",
+          justifyContent: "space-between",
+          padding: "0 18px",
+          gap: 14,
           flexShrink: 0,
         }}
       >
-      {/* left: track info */}
-      <div style={{ flex: "1 1 0%", minWidth: 160, display: "flex", alignItems: "center", gap: 10, overflow: "hidden" }}>
-        {/* art swaps (eg on skip) ease in through a slight blur so the change isn't an abrupt cut */}
-        <div
-          className="group"
-          style={{ position: "relative", width: 44, height: 44, flexShrink: 0, borderRadius: 6, overflow: "hidden", cursor: currentTrack ? "pointer" : "default" }}
-          onClick={() => { if (currentTrack) setImmersiveOpen(true); }}
-          title={currentTrack ? "Open immersive view" : undefined}
-        >
-          {/* crossfade on track change: old and new art dissolve through a soft blur
-              so the swap eases instead of cutting. Separate in/out curves create
-              a gentle focus transition. */}
-          <AnimatePresence initial={false}>
-            <motion.div
-              key={currentTrack?.album?.image_url ?? currentTrack?.id ?? "none"}
-              initial={{ opacity: 0, filter: "blur(16px)", scale: 1.08 }}
-              animate={{ opacity: 1, filter: "blur(0px)",  scale: 1 }}
-              exit={{    opacity: 0, filter: "blur(12px)", scale: 1.04 }}
-              transition={{
-                opacity: { duration: 0.45, ease: [0.22, 1, 0.36, 1] },
-                filter:  { duration: 0.5,  ease: [0.22, 1, 0.36, 1] },
-                scale:   { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
-              }}
-              style={{ position: "absolute", inset: 0, willChange: "filter, opacity, transform", backfaceVisibility: "hidden" }}
-            >
-              <CoverArt url={currentTrack?.album?.image_url ?? null} alt={currentTrack?.name ?? ""} size={44} />
-            </motion.div>
-          </AnimatePresence>
-          {/* expand affordance on hover (only when a track is loaded) */}
-          {currentTrack && (
-            <div
-              className="queue-btn"
-              style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.45)", transition: "opacity 0.12s" }}
-            >
-              <Maximize2 size={16} strokeWidth={2.4} style={{ color: "#fff" }} />
-            </div>
-          )}
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <p style={{ margin: 0, fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: currentTrack ? "var(--color-text-hi)" : "var(--color-text-dim)" }}>
-            {currentTrack?.album?.id ? (
-              <Link
-                to={`/album/${currentTrack.album.id}`}
-                onClick={() => setImmersiveOpen(false)}
-                style={{ color: "inherit", textDecoration: "none" }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline";
-                  prefetchAlbum(qc, currentTrack.album?.id);
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none";
-                }}
-                title={`Go to ${currentTrack.album.album_type === "single" ? "single" : "album"}: ${currentTrack.album.name}`}
-              >
-                {currentTrack.name}
-              </Link>
-            ) : (
-              currentTrack?.name ?? "Not playing"
-            )}
-          </p>
-          <p style={{ margin: 0, fontSize: 12, fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-dim)" }}>
-            {currentTrack ? (
-              currentTrack.artists.map((a, i) => (
-                <span key={a.id || i}>
-                  {i > 0 && ", "}
-                  {a.id ? (
-                    <Link
-                      to={`/artist/${a.id}`}
-                      onClick={() => setImmersiveOpen(false)}
-                      style={{ color: "inherit", textDecoration: "none", transition: "color 0.15s" }}
-                      onMouseEnter={(e) => {
-                        (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline";
-                        (e.currentTarget as HTMLAnchorElement).style.color = "var(--color-text-hi)";
-                        prefetchArtist(qc, a.id);
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none";
-                        (e.currentTarget as HTMLAnchorElement).style.color = "inherit";
-                      }}
-                      title={`Go to artist: ${a.name}`}
-                    >
-                      {a.name}
-                    </Link>
-                  ) : (
-                    <span>{a.name}</span>
-                  )}
-                </span>
-              ))
-            ) : (
-              "-"
-            )}
-          </p>
-        </div>
-      </div>
-
-      {/* center: controls + progress */}
-      <div style={{ flex: "0 1 680px", width: "100%", maxWidth: 680, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 7 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {!isSuperCompactBar && (
+        {/* Left: Playback Controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: "clamp(4px, 0.8vw, 8px)", flexShrink: 0 }}>
+          {showSecondaryControls && (
             <Tooltip label={shuffle ? "Shuffle on" : "Shuffle off"}>
               <IconBtn active={shuffle} onClick={toggleShuffle}>
-                <Shuffle size={14} strokeWidth={2.4} />
+                <Shuffle size={15} strokeWidth={1.75} />
               </IconBtn>
             </Tooltip>
           )}
+
           <Tooltip label="Previous">
             <IconBtn onClick={handlePrev}>
-              <SkipBack size={16} strokeWidth={2} fill="currentColor" />
+              <SkipBack size={15} strokeWidth={1.75} fill="currentColor" />
             </IconBtn>
           </Tooltip>
+
           <Tooltip label={isPlaying ? "Pause" : "Play"}>
             <PlayPauseButton
               isPlaying={isPlaying}
               onClick={togglePlay}
             />
           </Tooltip>
+
           <Tooltip label="Next">
             <IconBtn onClick={handleNext}>
-              <SkipForward size={16} strokeWidth={2} fill="currentColor" />
+              <SkipForward size={15} strokeWidth={1.75} fill="currentColor" />
             </IconBtn>
           </Tooltip>
-          {!isSuperCompactBar && (
+
+          {showSecondaryControls && (
             <Tooltip label={repeatLabel}>
               <IconBtn active={repeat !== "none"} onClick={cycleRepeat}>
-                <RepeatIcon size={14} strokeWidth={2.4} />
+                <RepeatIcon size={15} strokeWidth={1.75} />
               </IconBtn>
             </Tooltip>
           )}
         </div>
-        <ProgressBar durationMs={durationMs} onSeek={doSeek} />
-      </div>
 
-      {/* right: volume + queue */}
-      <div style={{ flex: "1 1 0%", minWidth: 160, display: "flex", alignItems: "center", gap: "clamp(4px, 1vw, 8px)", justifyContent: "flex-end" }}>
-        <Tooltip label={muted ? "Unmute" : `Mute (${volume}%)`}>
-          <IconBtn onClick={handleMuteToggle}>
-            <VolumeIcon size={14} strokeWidth={2} fill="currentColor" />
-          </IconBtn>
-        </Tooltip>
-        {!isCompactBar && (
-          <Tooltip label={muted ? "Muted" : `Volume ${volume}%`}>
-            <input
-              className="vol"
-              type="range" min={0} max={100}
-              value={muted ? 0 : volume}
-              onChange={handleVolumeChange}
-              onMouseDown={() => { if (muted) { storeSetMuted(false); apiSetMuted(false).catch(() => {}); } }}
-              style={{ width: "clamp(54px, 8vw, 76px)", ["--vol" as string]: `${muted ? 0 : volume}%` } as React.CSSProperties}
-            />
-          </Tooltip>
-        )}
-
-      {/* TODO reveiew bottom tooltip (ai made, check the paddings) - DONE changed scale value to 1.08 */}
-        <Tooltip label={lyricsOpen ? "Hide lyrics" : "Lyrics"}>
-          <motion.button
-            onClick={() => { if (currentTrack) toggleLyrics(); }}
-            disabled={!currentTrack}
-            whileHover={currentTrack ? { scale: 1.08 } : {}}
-            whileTap={currentTrack ? { scale: 0.92 } : {}}
-            transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            transformTemplate={zTransform}
+        {/* Center: Bigger Album Art + Bigger Titles + Progress Line Directly Underneath */}
+        <div
+          style={{
+            flex: "1 1 auto",
+            minWidth: 160,
+            maxWidth: 420,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            overflow: "hidden",
+          }}
+        >
+          {/* Bigger Album Art (44x44px) */}
+          <div
+            className="group"
             style={{
-              ...gpuLayer,
-              display:        "flex",
-              alignItems:     "center",
-              justifyContent: "center",
-              width:          28,
-              height:         28,
-              borderRadius:   5,
-              border:         "none",
-              background:     lyricsOpen ? "var(--color-accent-dim, rgba(110,231,183,0.12))" : "transparent",
-              color:          !currentTrack ? "rgba(242,238,233,0.18)" : lyricsOpen ? "var(--color-accent)" : "var(--color-text)",
-              cursor:         currentTrack ? "pointer" : "default",
+              position: "relative",
+              width: 44,
+              height: 44,
+              flexShrink: 0,
+              borderRadius: 8,
+              overflow: "hidden",
+              cursor: currentTrack ? "pointer" : "default",
+              boxShadow: "0 2px 8px rgba(0, 0, 0, 0.4)",
             }}
+            onClick={() => { if (currentTrack) setImmersiveOpen(true); }}
+            title={currentTrack ? "Open immersive view" : undefined}
           >
-            <Captions size={15} strokeWidth={2} />
-          </motion.button>
-        </Tooltip>
-        <Tooltip label={queueOpen ? "Hide queue" : queueLength > 0 ? `Queue (${queueLength})` : "Show queue"} align="end">
-          <motion.button
-            onClick={toggleQueue}
-            whileHover={{ scale: 1.08 }}
-            whileTap={{ scale: 0.92 }}
-            transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            transformTemplate={zTransform}
-            style={{
-              ...gpuLayer,
-              position:       "relative",
-              display:        "flex",
-              alignItems:     "center",
-              justifyContent: "center",
-              width:          28,
-              height:         28,
-              borderRadius:   5,
-              border:         "none",
-              background:     queueOpen ? "var(--color-accent-dim, rgba(110,231,183,0.12))" : "transparent",
-              color:          queueOpen ? "var(--color-accent)" : "var(--color-text)",
-              cursor:         "pointer",
-            }}
-          >
-            <ListMusic size={14} strokeWidth={2} />
-            {queueLength > 0 && !queueOpen && (
-              <span
+            <AnimatePresence initial={false}>
+              <motion.div
+                key={currentTrack?.album?.image_url ?? currentTrack?.id ?? "none"}
+                initial={{ opacity: 0, filter: "blur(10px)", scale: 1.06 }}
+                animate={{ opacity: 1, filter: "blur(0px)", scale: 1 }}
+                exit={{ opacity: 0, filter: "blur(8px)", scale: 1.04 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                style={{ position: "absolute", inset: 0 }}
+              >
+                <CoverArt url={currentTrack?.album?.image_url ?? null} alt={currentTrack?.name ?? ""} size={44} />
+              </motion.div>
+            </AnimatePresence>
+            {currentTrack && (
+              <div
+                className="queue-btn"
                 style={{
                   position: "absolute",
-                  top: 5,
-                  right: 5,
-                  width: 5,
-                  height: 5,
-                  borderRadius: "50%",
-                  background: "var(--color-accent)",
-                  boxShadow: "0 0 6px var(--color-accent)",
-                  pointerEvents: "none",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "rgba(0,0,0,0.45)",
+                  transition: "opacity 0.12s",
                 }}
-              />
+              >
+                <Maximize2 size={14} strokeWidth={1.8} style={{ color: "#fff" }} />
+              </div>
             )}
-          </motion.button>
-        </Tooltip>
-        <Tooltip label={isRemotePlayback && activeDevice ? `Connected: ${activeDevice.name}` : "Devices"}>
-          <motion.button
-            data-devices-trigger="true"
-            onClick={toggleDevices}
-            whileHover={{ scale: 1.08 }}
-            whileTap={{ scale: 0.92 }}
-            transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            transformTemplate={zTransform}
-            style={{
-              ...gpuLayer,
-              display:        "flex",
-              alignItems:     "center",
-              justifyContent: "center",
-              width:          28,
-              height:         28,
-              borderRadius:   5,
-              border:         "none",
-              background:     devicesOpen
-                ? "var(--color-active, rgba(255,255,255,0.11))"
-                : isRemotePlayback
-                  ? "var(--color-surface-2, rgba(255,255,255,0.06))"
-                  : "transparent",
-              color:          (devicesOpen || isRemotePlayback) ? "var(--color-text-hi)" : "var(--color-text)",
-              cursor:         "pointer",
-            }}
-          >
-            <MonitorSpeaker size={15} strokeWidth={2} />
-          </motion.button>
-        </Tooltip>
+          </div>
+
+          {/* Titles + Expanding Progress Line Directly Below */}
+          <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 5, overflow: "hidden" }}>
+            <div style={{ minWidth: 0, overflow: "hidden" }}>
+              <p style={{ margin: 0, fontSize: 14.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: currentTrack ? "var(--color-text-hi)" : "var(--color-text-dim)", lineHeight: 1.25, letterSpacing: "-0.01em" }}>
+                {currentTrack?.album?.id ? (
+                  <Link
+                    to={`/album/${currentTrack.album.id}`}
+                    onClick={() => setImmersiveOpen(false)}
+                    style={{ color: "inherit", textDecoration: "none" }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline";
+                      prefetchAlbum(qc, currentTrack.album?.id);
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none";
+                    }}
+                    title={`Go to album: ${currentTrack.album.name}`}
+                  >
+                    {currentTrack.name}
+                  </Link>
+                ) : (
+                  currentTrack?.name ?? "Not playing"
+                )}
+              </p>
+              <p style={{ margin: "2px 0 0", fontSize: 12.5, fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-dim)", lineHeight: 1.2 }}>
+                {currentTrack ? (
+                  currentTrack.artists.map((a, i) => (
+                    <span key={a.id || i}>
+                      {i > 0 && ", "}
+                      {a.id ? (
+                        <Link
+                          to={`/artist/${a.id}`}
+                          onClick={() => setImmersiveOpen(false)}
+                          style={{ color: "inherit", textDecoration: "none", transition: "color 0.15s" }}
+                          onMouseEnter={(e) => {
+                            (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline";
+                            prefetchArtist(qc, a.id);
+                          }}
+                          onMouseLeave={(e) => {
+                            (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none";
+                          }}
+                        >
+                          {a.name}
+                        </Link>
+                      ) : (
+                        <span>{a.name}</span>
+                      )}
+                    </span>
+                  ))
+                ) : (
+                  ""
+                )}
+              </p>
+            </div>
+
+            {/* Progress line under album title: isolated leaf scrubber so PlayerBar does not re-render every second */}
+            <PlayerScrubber durationMs={durationMs} doSeek={doSeek} />
+          </div>
+        </div>
+
+        {/* Right: Volume with responsive slider */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end", position: "relative", flexShrink: 0 }}>
+          <Tooltip label={showInlineVolume ? (muted ? "Unmute" : `Mute (${volume}%)`) : (volPopupOpen ? "Close volume" : `Volume (${volume}%)`)}>
+            <span ref={volBtnRef}>
+              <IconBtn active={!showInlineVolume && volPopupOpen} onClick={handleVolumeButtonClick}>
+                <VolumeIcon size={16} strokeWidth={1.75} />
+              </IconBtn>
+            </span>
+          </Tooltip>
+          {showInlineVolume && (
+            <Tooltip label={muted ? "Muted" : `Volume ${volume}%`}>
+              <input
+                className="vol"
+                type="range" min={0} max={100}
+                value={muted ? 0 : volume}
+                onChange={handleVolumeChange}
+                onMouseDown={() => { if (muted) { storeSetMuted(false); apiSetMuted(false).catch(() => {}); } }}
+                style={{ width: "clamp(75px, 10vw, 110px)", ["--vol" as string]: `${muted ? 0 : volume}%` } as React.CSSProperties}
+              />
+            </Tooltip>
+          )}
+
+          {/* Floating volume popup for compact widths */}
+          <AnimatePresence>
+            {!showInlineVolume && volPopupOpen && (
+              <motion.div
+                ref={volPopupRef}
+                initial={{ opacity: 0, y: 8, scale: 0.94 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.94 }}
+                transition={{ duration: 0.16, ease: [0.23, 1, 0.32, 1] }}
+                style={{
+                  position: "absolute",
+                  bottom: 44,
+                  right: 0,
+                  zIndex: 60,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "8px 12px",
+                  borderRadius: 12,
+                  background: "rgba(19, 19, 22, 0.96)",
+                  backdropFilter: "blur(24px) saturate(1.4)",
+                  WebkitBackdropFilter: "blur(24px) saturate(1.4)",
+                  border: "1px solid rgba(255, 255, 255, 0.12)",
+                  boxShadow: "0 12px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
+                  pointerEvents: "auto",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <button
+                  onClick={handleMuteToggle}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: muted ? "var(--color-accent)" : "var(--color-text-hi)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 2,
+                  }}
+                  title={muted ? "Unmute" : "Mute"}
+                >
+                  <VolumeIcon size={16} strokeWidth={2} fill="currentColor" />
+                </button>
+                <input
+                  className="vol"
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={muted ? 0 : volume}
+                  onChange={handleVolumeChange}
+                  onMouseDown={() => {
+                    if (muted) {
+                      storeSetMuted(false);
+                      apiSetMuted(false).catch(() => {});
+                    }
+                  }}
+                  style={{
+                    width: 100,
+                    ["--vol" as string]: `${muted ? 0 : volume}%`,
+                  } as React.CSSProperties}
+                />
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    fontVariantNumeric: "tabular-nums",
+                    color: "rgba(255, 255, 255, 0.7)",
+                    minWidth: 32,
+                    textAlign: "right",
+                  }}
+                >
+                  {muted ? "0%" : `${volume}%`}
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
     </div>
-    <DevicesPopover />
-  </div>
   );
 }

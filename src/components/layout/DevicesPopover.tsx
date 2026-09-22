@@ -10,7 +10,7 @@ import {
   Volume2,
   RefreshCw,
   X,
-} from "lucide-react";
+} from "@/lib/icons";
 import { useDevices } from "../../hooks/useDevices";
 import type { SpotifyDevice } from "../../api/connect";
 import { gpuLayer, zTransform } from "../../lib/motion";
@@ -39,6 +39,34 @@ export function DevicesPopover() {
 
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number }>({ top: 48, right: 16 });
+
+  useEffect(() => {
+    if (!devicesOpen) return;
+    const updatePos = () => {
+      const triggers = document.querySelectorAll("[data-devices-trigger]");
+      let activeTrigger: Element | null = null;
+      for (const t of triggers) {
+        const r = t.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          activeTrigger = t;
+          break;
+        }
+      }
+      if (activeTrigger) {
+        const rect = activeTrigger.getBoundingClientRect();
+        const right = Math.max(12, window.innerWidth - rect.right);
+        if (rect.top > window.innerHeight / 2) {
+          setPos({ bottom: Math.max(16, window.innerHeight - rect.top + 8), right });
+        } else {
+          setPos({ top: Math.max(12, rect.bottom + 8), right });
+        }
+      }
+    };
+    updatePos();
+    window.addEventListener("resize", updatePos);
+    return () => window.removeEventListener("resize", updatePos);
+  }, [devicesOpen]);
 
   // Close on outside pointer click (ignoring trigger clicks)
   useEffect(() => {
@@ -76,16 +104,17 @@ export function DevicesPopover() {
   return (
     <motion.div
       ref={popoverRef}
-      initial={{ opacity: 0, y: 8, scale: 0.96 }}
+      initial={{ opacity: 0, y: pos.top !== undefined ? -8 : 8, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 6, scale: 0.96 }}
+      exit={{ opacity: 0, y: pos.top !== undefined ? -6 : 6, scale: 0.96 }}
       transition={{ type: "spring", stiffness: 440, damping: 28 }}
       transformTemplate={zTransform}
       style={{
         ...gpuLayer,
         position: "fixed",
-        bottom: isRemotePlayback ? 106 : 80,
-        right: 16,
+        ...(pos.top !== undefined ? { top: pos.top } : {}),
+        ...(pos.bottom !== undefined ? { bottom: pos.bottom } : {}),
+        right: pos.right,
         width: 290,
         maxHeight: 380,
         display: "flex",
@@ -94,7 +123,7 @@ export function DevicesPopover() {
         backdropFilter: "blur(32px)",
         WebkitBackdropFilter: "blur(32px)",
         border: "1px solid var(--color-glass-border)",
-        borderRadius: 12,
+        borderRadius: 16,
         boxShadow: "0 18px 48px rgba(0, 0, 0, 0.65), 0 2px 10px rgba(0, 0, 0, 0.35)",
         zIndex: 9999,
         overflow: "hidden",

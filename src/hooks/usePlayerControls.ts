@@ -8,6 +8,7 @@ import {
   remotePlay, remotePause, remoteNext, remotePrevious, remoteSeek, getPlaybackState,
 } from "../api/connect";
 import { replenishQueue } from "../utils/radio";
+import { trackSkipped } from "../utils/listenTracker";
 import { toast } from "../store/toast.store";
 import { errMsg } from "../lib/err";
 
@@ -179,7 +180,9 @@ export function transportNext(): void {
       });
     return;
   }
-  const { currentTrack, setCurrentTrack } = s;
+  const { currentTrack, positionMs, setCurrentTrack } = s;
+  const ctx = useQueueStore.getState().contextId;
+  trackSkipped(currentTrack, positionMs, "player", ctx);
   const n = useQueueStore.getState().advance(currentTrack);
   if (n) {
     setCurrentTrack(n);
