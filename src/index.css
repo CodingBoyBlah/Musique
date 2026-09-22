@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./fonts.css";
 
 
 @theme {
@@ -186,11 +187,385 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
 }
 
 /* ─── Keyframes ───────────────────────────────────────────────────── */
+/* Now-playing equaliser bars.
+ *
+ * These were Framer Motion `repeat: Infinity` animations. Framer drives those
+ * from a requestAnimationFrame loop on the JS main thread, so every visible
+ * equaliser was doing main-thread work on every frame for as long as music was
+ * playing - and several are mounted at once (the playing TrackRow in whatever
+ * list is open, the Home speed-dial card, the Home track tile, the queue
+ * now-playing card), three bars each. The TrackRow variant was the worst: it
+ * animated `height`, which forces a layout + paint pass every frame rather
+ * than just a composite.
+ *
+ * As plain CSS transform keyframes they run entirely on the compositor thread:
+ * no JS, no style recalc, no layout, and they keep moving smoothly even when
+ * the main thread is busy. Keyframe values, durations, easing (Framer's
+ * "easeInOut" is cubic-bezier(.42,0,.58,1), i.e. CSS ease-in-out) and per-bar
+ * stagger are matched to the originals, so the motion is unchanged.
+ */
+@keyframes eq-bar-pulse {
+    0% {
+        transform: scaleY(0.2);
+    }
+    50% {
+        transform: scaleY(1);
+    }
+    100% {
+        transform: scaleY(0.2);
+    }
+}
+
+@keyframes eq-bar-pulse-q {
+    0% {
+        transform: scaleY(0.3);
+    }
+    25% {
+        transform: scaleY(1);
+    }
+    50% {
+        transform: scaleY(0.45);
+    }
+    75% {
+        transform: scaleY(0.8);
+    }
+    100% {
+        transform: scaleY(0.3);
+    }
+}
+
+.eq-bar {
+    transform-origin: bottom;
+    animation: eq-bar-pulse var(--eq-dur, 0.55s) ease-in-out infinite;
+}
+
+.eq-bar-q {
+    transform-origin: bottom;
+    animation: eq-bar-pulse-q 0.9s ease-in-out infinite;
+    animation-delay: var(--eq-delay, 0s);
+}
+
 @keyframes spin {
     from {
         transform: rotate(0deg);
     }
     to {
         transform: rotate(360deg);
+    }
+}
+
+/* ── immersive ambient ────────────────────────────────────────────────────
+ *
+ * Three copies of the cover drifting over each other at unrelated rates, which
+ * is what makes the colour actually flow rather than sit there - put two frames
+ * of the reference four seconds apart and the whole field has rearranged.
+ *
+ * The motion is the same idea the first version of this view had. What was
+ * wrong with it was never the look, it was that each layer carried a live
+ * `filter: blur(60px)` while it animated, so WebView2 re-ran a gaussian over a
+ * layer one and a half times the size of the window on every frame - with a
+ * `backdrop-filter: blur(48px)` panel on top re-blurring half the window again,
+ * because a backdrop-filter's input is whatever is behind it and that was
+ * moving, so it could never be cached.
+ *
+ * lib/ambient now blurs the artwork once into a bitmap. Rotating and
+ * translating a plain image is compositor work, so all three layers together
+ * cost nothing per frame, and the motion can be as generous as it likes.
+ */
+
+.amb-layer {
+    position: absolute;
+    /* 124% of the window, down from 144%.
+     *
+     * This is the size of the texture Chromium has to hold and re-blend on
+     * every frame, and it is not the box that matters but the box times the
+     * largest scale the keyframes reach: at -22% and scale 1.24 the layer
+     * rastered at about 1.79x the window in each direction, which is 3.2x the
+     * window's pixels. At -12% and scale 1.16 it is 1.39x each way, about 1.9x
+     * the pixels - a third of the fill, for motion that reads identically
+     * because the source is a blur to begin with. Rotation is kept to 4deg so
+     * the box still covers the window at its corners. */
+    inset: -12%;
+    background-size: cover;
+    background-position: center;
+    will-change: transform;
+    backface-visibility: hidden;
+    pointer-events: none;
+}
+
+/* Fast enough to be caught moving. Speed is free here - the frame is
+   recomposited at 60fps for as long as any animation runs at all, so a 17s
+   cycle costs exactly what a 90s one did. */
+.amb-1 { animation: amb-drift-1 17s ease-in-out infinite; }
+
+/* Nobody is looking: stop damaging the frame. See hooks/useWindowActive - an
+   unfocused window is not a hidden one, and Chromium keeps its animations
+   running at full rate. */
+.amb-parked { animation-play-state: paused; }
+
+@keyframes amb-drift-1 {
+    0%, 100% { transform: scale(1.02) translate3d(0, 0, 0) rotate(0deg); }
+    33%      { transform: scale(1.16) translate3d(6%, -5%, 0) rotate(4deg); }
+    66%      { transform: scale(1.08) translate3d(-5%, 4%, 0) rotate(-4deg); }
+}
+
+/* ── lyrics ───────────────────────────────────────────────────────────────
+ *
+ * The active line's light travels with the voice: lib/lyrics writes one
+ * quantised `--g` per word on the frame it advances the sweep, so the bloom
+ * rises as a word is sung and decays behind it rather than the whole line
+ * switching on at once. `--glow` is the cover's most saturated colour, so the
+ * lyric reads as lit by the record it belongs to.
+ */
+
+/* Every lyric line is built from these spans, lit or not - see LyricRowText.
+   Keeping the box identical in both states is what stops a line re-wrapping at
+   the moment it lights up: inline-blocks do not break where plain text does, so
+   swapping between the two re-flowed the line underneath the enlarge. */
+.lyr-word {
+    display: inline-block;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+/* Only the lit line carries the sweep gradient and its travelling bloom.
+   The radius is short on purpose: this repaints on every frame of the sweep, it
+   is the only per-frame blur left on the page, and a text shadow costs roughly
+   its radius. --glow is sampled from the cover, so on a warm sleeve a wide one
+   is an orange bloom over an orange field - the two compound into haze rather
+   than reading as light. */
+.lyr-word-lit {
+    color: transparent;
+    -webkit-background-clip: text;
+    background-clip: text;
+    text-shadow: 0 0 calc(2px + var(--g, 0) * 9px) rgba(var(--glow, 255, 255, 255), calc(var(--g, 0) * 0.38));
+}
+
+/* A line arrives rather than switches on: it lifts the last few pixels into
+   place as the sweep starts crossing it. Keyed to the element mounting, which
+   happens exactly when a row becomes active and its plain paragraph is replaced
+   by the sweep's spans - so it never fires across the rest of the list. */
+.lyr-line {
+    /* balance, not pretty: when a line does wrap, split it into two even halves
+       rather than pushing a single orphaned word onto the second row */
+    text-wrap: balance;
+}
+
+/* There was a lift-and-fade keyed to this element mounting. It is gone: the row
+   it sits in now scales and fades on its own transition, and the column tweens
+   underneath it on the same curve, so a second animation on the paragraph was
+   one motion too many - it read as the line arriving twice. */
+
+/* The mask fades the ends of the list, which leaves a scrollbar reading as a
+   stray bright edge inside the fade. Wheel and drag still work. */
+.lyr-scroll {
+    scrollbar-width: none;
+    overscroll-behavior: contain;
+}
+
+/* Lyrics / Queue.
+ *
+ * Quieter than it was: the group used to be a heavy 8% fill with a pure #fff
+ * pill inside it, which put the brightest thing in the whole view on a control
+ * nobody needs to look at while a song is playing. The shell is now barely
+ * there, the selected tab is an off-white that matches the lyric ink rather
+ * than out-glowing it, and the type is set a notch smaller so the icons sit
+ * level with the caps instead of towering over them. */
+.lyr-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.lyr-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 29px;
+    padding: 0 13px;
+    border: none;
+    border-radius: 99px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.58);
+    transition: background 0.16s ease, color 0.16s ease;
+}
+
+.lyr-tab:hover {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.lyr-tab-on,
+.lyr-tab-on:hover {
+    background: rgba(255, 255, 255, 0.94);
+    color: #16131c;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+}
+
+.lyr-tab:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.7);
+    outline-offset: 2px;
+}
+
+
+/* Collapse back to the dock. Sits opposite the Lyrics/Queue tabs in the card
+   header, and is quiet until pointed at - it is an exit, not an action anyone
+   is looking for. Hover lives here rather than in an onMouseEnter handler
+   because those write straight to node.style, and any unrelated re-render while
+   the cursor is still on the button wipes the fill. */
+.imm-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    transition: background 0.16s ease, color 0.16s ease;
+}
+
+.imm-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+.imm-close:active {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+.imm-close:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.7);
+    outline-offset: 2px;
+}
+
+.lyr-scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .amb-layer { animation: none !important; }
+}
+
+
+/* ── title-bar capsules ───────────────────────────────────────────────────
+   the two clusters that flank the drag region. hover / press / focus are
+   CSS-only: the old inline onMouseEnter handlers wrote straight to
+   node.style, so any unrelated re-render while the cursor was still on a
+   button wiped the hover fill. */
+
+.tb-capsule {
+    display: flex;
+    align-items: center;
+    height: 32px;
+    padding: 2px;
+    gap: 2px;
+    flex-shrink: 0;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.09),
+        0 2px 8px rgba(0, 0, 0, 0.22);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
+
+/* group divider. only between groups, never between every control */
+.tb-sep {
+    width: 1px;
+    height: 14px;
+    flex-shrink: 0;
+    margin: 0 3px;
+    background: rgba(255, 255, 255, 0.11);
+}
+
+.tb-btn {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 9999px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.72);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition:
+        background 0.15s ease,
+        color 0.15s ease,
+        box-shadow 0.15s ease,
+        transform 0.09s ease;
+}
+
+.tb-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+}
+
+.tb-btn:active {
+    transform: scale(0.9);
+}
+
+.tb-btn:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 1px;
+}
+
+/* toggled on -> the same accent the sidebar uses for the active nav item, so
+   "this panel is open" reads at a glance instead of as a faint grey wash */
+.tb-btn[data-on="true"] {
+    background: var(--color-accent);
+    color: #ffffff;
+    box-shadow:
+        0 2px 8px var(--color-accent-dim),
+        inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.tb-btn[data-on="true"]:hover {
+    background: var(--color-accent-hover);
+}
+
+/* playing on another device: a different fact, so a different colour */
+.tb-btn[data-tone="remote"],
+.tb-btn[data-tone="remote"]:hover {
+    background: rgba(30, 215, 96, 0.18);
+    color: var(--color-primary, #1ed760);
+}
+
+.tb-btn[data-tone="remote"]:hover {
+    background: rgba(30, 215, 96, 0.26);
+}
+
+/* nothing to act on. still hoverable, so the tooltip can say why */
+.tb-btn[aria-disabled="true"] {
+    color: rgba(255, 255, 255, 0.22);
+    background: transparent;
+    cursor: default;
+}
+
+.tb-btn[aria-disabled="true"]:active {
+    transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tb-btn {
+        transition: none;
+    }
+    .tb-btn:active {
+        transform: none;
     }
 }
