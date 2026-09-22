@@ -1,15 +1,17 @@
 import { memo, useState } from "react";
 import { Link } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import { ArrowUpRight, User } from "lucide-react";
+import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
+import { ArrowUpRight, User } from "@/lib/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { CoverArt } from "./CoverArt";
 import { prefetchArtist } from "../../lib/prefetch";
-import { gpuLayer, zTransform } from "../../lib/motion";
+import { gpuLayer, zTransform, REFLOW_SPRING, getGridItemTransition } from "../../lib/motion";
+import { useReflowPulse } from "../../hooks/useReflowPulse";
 
 interface Props {
   artist: { id: string; name: string; image_url?: string | null };
   size?:  number;
+  index?: number;
 }
 
 const MotionLink = motion.create(Link);
@@ -17,42 +19,53 @@ const MotionLink = motion.create(Link);
 // responsive grid of editorial artist cards, even gutters, fills the row
 export function ArtistGrid({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(clamp(116px, 14vw, 160px), 1fr))",
-        gap: "clamp(10px, 1.4vw, 16px)",
-        width: "100%",
-      }}
-    >
-      {children}
-    </div>
+    <LayoutGroup id="artist-grid">
+      <motion.div
+        layout="position"
+        transition={{ layout: REFLOW_SPRING }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(clamp(120px, 14vw, 175px), 1fr))",
+          gap: "clamp(10px, 1.4vw, 16px)",
+          width: "100%",
+        }}
+      >
+        {children}
+      </motion.div>
+    </LayoutGroup>
   );
 }
 
-function ArtistCardImpl({ artist }: Props) {
+function ArtistCardImpl({ artist, index = 0 }: Props) {
+  useReflowPulse();
   const [hover, setHover] = useState(false);
   const qc = useQueryClient();
 
   return (
     <MotionLink
       to={`/artist/${artist.id}`}
+      layout="position"
       transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchArtist(qc, artist.id); }}
       onMouseLeave={() => setHover(false)}
       whileHover={{ y: -3 }}
-      transition={{ type: "spring", stiffness: 520, damping: 44 }}
+      transition={{
+        type: "spring",
+        stiffness: 520,
+        damping: 44,
+        ...getGridItemTransition(index),
+      }}
       style={{
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        padding: 12,
-        borderRadius: 16,
+        padding: 10,
+        borderRadius: 12,
         width: "100%",
         boxSizing: "border-box",
         textDecoration: "none",
         color: "inherit",
-        background: hover ? "var(--color-surface-elevated)" : "transparent",
+        background: hover ? "var(--color-surface-hover)" : "transparent",
         transition: "background 0.18s ease",
         position: "relative",
         cursor: "pointer",
@@ -66,7 +79,7 @@ function ArtistCardImpl({ artist }: Props) {
           position: "relative",
           width: "100%",
           aspectRatio: "1 / 1",
-          borderRadius: 14,
+          borderRadius: 10,
           overflow: "hidden",
           boxShadow: hover
             ? "0 14px 32px -4px rgba(0, 0, 0, 0.55), 0 0 20px var(--color-accent-dim)"
@@ -164,18 +177,21 @@ function ArtistCardImpl({ artist }: Props) {
           style={{
             fontSize: 14,
             fontWeight: 600,
+            lineHeight: "17px",
+            height: 17,
             color: hover ? "var(--color-accent)" : "var(--color-text-hi)",
             transition: "color 0.16s ease",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
             maxWidth: "100%",
+            display: "block",
           }}
         >
           {artist.name}
         </span>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--color-text-dim)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, height: 16, fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", whiteSpace: "nowrap" }}>
           <span
             style={{
               width: 5,

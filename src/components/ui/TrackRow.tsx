@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2, Check } from "lucide-react";
+import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2, Check } from "@/lib/icons";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TrackItem } from "../../types/spotify";
@@ -170,7 +170,7 @@ function TrackRowImpl({
       >
         {/* Left Slot: Track Number or Play/Pause Button with blur+scale morph */}
         {(index != null || onPlay) && (
-          <div style={{ position: "relative", width: 28, height: 30, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ position: "relative", width: 28, height: 28, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             {hover || isThisPlaying ? (
               <motion.button
                 whileHover={{ scale: 1.15 }}
@@ -217,9 +217,9 @@ function TrackRowImpl({
 
         {showCover && (
           cover ? (
-            <img src={cover} alt="" loading="lazy" decoding="async" style={{ width: 42, height: 42, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
+            <img src={cover} alt="" loading="lazy" decoding="async" style={{ width: 38, height: 38, borderRadius: 6, objectFit: "cover", flexShrink: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.25)" }} />
           ) : (
-            <div style={{ width: 42, height: 42, borderRadius: 6, background: "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 6, background: "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <Music size={16} style={{ color: "var(--color-text-dim)" }} />
             </div>
           )
@@ -231,12 +231,13 @@ function TrackRowImpl({
             <p
               style={{
                 margin: 0,
-                fontSize: 14,
-                fontWeight: 500,
+                fontSize: 13.5,
+                fontWeight: 600,
+                letterSpacing: "-0.012em",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
-                color: isThisCurrent ? "var(--color-accent)" : "rgba(255,255,255,0.90)",
+                color: isThisCurrent ? "var(--color-accent)" : "rgba(255,255,255,0.92)",
               }}
             >
               {track.name}
@@ -255,9 +256,9 @@ function TrackRowImpl({
             )}
           </div>
 
-          <p style={{ margin: "2px 0 0", fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(255,255,255,0.45)" }}>
+          <p style={{ margin: "2px 0 0", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-dim)" }}>
             {track.explicit && (
-              <span style={{ display: "inline-block", marginRight: 4, padding: "0 3px", borderRadius: 2, fontSize: 9, fontWeight: 700, background: "rgba(255,255,255,0.18)", color: "rgba(255,255,255,0.55)" }}>
+              <span style={{ display: "inline-block", marginRight: 5, padding: "1px 4px", borderRadius: 3, fontSize: 9.5, fontWeight: 700, background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.70)" }}>
                 E
               </span>
             )}

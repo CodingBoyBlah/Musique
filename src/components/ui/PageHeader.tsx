@@ -28,26 +28,23 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
       style={{
         display: "flex",
         alignItems: "flex-end",
-        gap: "clamp(14px, 2.2vw, 24px)",
+        gap: "clamp(16px, 2.4vw, 24px)",
         flexWrap: "wrap",
         minWidth: 0,
-        padding: isCompact ? "8px 0 16px" : "12px 0 22px",
-        transition: "padding 0.28s ease, gap 0.28s ease",
+        padding: "12px 0 20px",
       }}
     >
       {/* Fluid responsive album cover */}
       <div
         style={{
-          width: isCompact ? "clamp(130px, 17vw, 170px)" : "clamp(140px, 20vw, 230px)",
-          height: isCompact ? "clamp(130px, 17vw, 170px)" : "clamp(140px, 20vw, 230px)",
+          width: isCompact ? "clamp(130px, 17vw, 170px)" : "clamp(140px, 20vw, 220px)",
+          height: isCompact ? "clamp(130px, 17vw, 170px)" : "clamp(140px, 20vw, 220px)",
           flexShrink: 0,
-          borderRadius: 12,
+          borderRadius: 14,
           overflow: "hidden",
           boxShadow: isCompact
-            ? "0 10px 24px rgba(0, 0, 0, 0.42)"
-            : "0 20px 48px rgba(0, 0, 0, 0.58)",
-          transition:
-            "width 0.28s cubic-bezier(0.23, 1, 0.32, 1), height 0.28s cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.28s ease",
+            ? "0 14px 36px rgba(0, 0, 0, 0.5)"
+            : "0 24px 64px rgba(0, 0, 0, 0.65)",
         }}
       >
         <div style={{ width: "100%", height: "100%" }}>
@@ -81,7 +78,6 @@ export function PageHeader({ imageUrl, eyebrow, title, children }: Props) {
             letterSpacing: "-0.025em",
             color: "#ffffff",
             margin: 0,
-            transition: "font-size 0.28s cubic-bezier(0.23, 1, 0.32, 1)",
           }}
         >
           {title}

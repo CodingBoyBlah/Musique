@@ -74,7 +74,7 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
         position: "relative",
         display: "inline-flex",
         verticalAlign: "middle",
-        zIndex: open ? 60 : undefined,
+        zIndex: open ? 10000 : undefined,
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -93,7 +93,7 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
               ...horiz,
               whiteSpace:    "nowrap",
               pointerEvents: "none",
-              zIndex:        1000,
+              zIndex:        10000,
               padding:       "5px 9px",
               borderRadius:  7,
               lineHeight:    1.2,

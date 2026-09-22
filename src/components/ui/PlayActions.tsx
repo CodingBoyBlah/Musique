@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Shuffle, Pin, Share2, Link2, Globe } from "lucide-react";
+import { Shuffle, Pin, Link2, Globe, Plus, MoreHorizontal } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { usePinsStore, type PinnedItem } from "../../store/pins.store";
@@ -100,8 +100,13 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
 
   const shuffleActive = isActive && shuffle;
 
+  const allEntries = [
+    { label: pinned ? "Remove from sidebar" : "Pin to sidebar", icon: <Pin size={14} />, onSelect: () => togglePin(pinItem) },
+    ...shareEntries,
+  ];
+
   return (
-    <div ref={rootRef} className="flex items-center mt-3" style={{ gap: 10, flexWrap: "nowrap" }}>
+    <div ref={rootRef} className="flex items-center mt-3" style={{ gap: 10, width: "100%" }}>
       <Tooltip label={playing ? "Pause" : "Play"} side="top">
         <motion.button
           initial={false}
@@ -110,35 +115,35 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
           whileHover={empty ? {} : { scale: 1.04 }}
           whileTap={empty ? {} : { scale: 0.96 }}
           animate={{
-            width: isCondensed ? 44 : 114,
-            paddingLeft: isCondensed ? 0 : 20,
-            paddingRight: isCondensed ? 0 : 20,
+            width: isCondensed ? 36 : 102,
+            paddingLeft: isCondensed ? 0 : 18,
+            paddingRight: isCondensed ? 0 : 18,
           }}
           transition={{ type: "spring", stiffness: 320, damping: 30 }}
           transformTemplate={zTransform}
           style={{
             ...gpuLayer,
-            width: isCondensed ? 44 : 114,
-            paddingLeft: isCondensed ? 0 : 20,
-            paddingRight: isCondensed ? 0 : 20,
+            width: isCondensed ? 36 : 102,
+            paddingLeft: isCondensed ? 0 : 18,
+            paddingRight: isCondensed ? 0 : 18,
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            height: 44,
-            minWidth: 44,
+            height: 36,
+            minWidth: 36,
             borderRadius: 99,
             border: "none",
-            background: "var(--color-accent)",
-            color: "var(--color-accent-text, #ffffff)",
-            fontSize: 14,
+            background: "#ffffff",
+            color: "#000000",
+            fontSize: 13.5,
             fontWeight: 700,
             letterSpacing: "-0.01em",
             cursor: empty ? "default" : "pointer",
             opacity: empty ? 0.5 : 1,
             boxShadow: playing
-              ? "0 0 0 4px var(--color-accent-dim), 0 4px 18px var(--color-accent-dim)"
-              : "0 4px 18px -2px var(--color-accent-dim)",
+              ? "0 0 0 4px rgba(255, 255, 255, 0.25), 0 4px 16px rgba(0, 0, 0, 0.35)"
+              : "0 2px 10px rgba(255, 255, 255, 0.20)",
             transition: "box-shadow 0.2s, background 0.15s",
             overflow: "hidden",
             whiteSpace: "nowrap",
@@ -146,46 +151,31 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
         >
           <AnimatedPlayPause
             isPlaying={playing}
-            size={16}
+            size={15}
             strokeWidth={0}
             fill="currentColor"
           />
           <motion.span
             initial={false}
             animate={{
-              maxWidth: isCondensed ? 0 : 54,
+              maxWidth: isCondensed ? 0 : 50,
               opacity: isCondensed ? 0 : 1,
               filter: isCondensed ? "blur(6px)" : "blur(0px)",
               scale: isCondensed ? 0.75 : 1,
-              marginLeft: isCondensed ? 0 : 8,
+              marginLeft: isCondensed ? 0 : 7,
             }}
             transition={{
               maxWidth: { type: "spring", stiffness: 320, damping: 30 },
               marginLeft: { type: "spring", stiffness: 320, damping: 30 },
-              opacity: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
-              filter: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
-              scale: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
+              opacity: { duration: 0.18, ease: [0.23, 1, 0.32, 1] },
             }}
             style={{
-              maxWidth: isCondensed ? 0 : 54,
+              maxWidth: isCondensed ? 0 : 50,
               opacity: isCondensed ? 0 : 1,
-              marginLeft: isCondensed ? 0 : 8,
+              marginLeft: isCondensed ? 0 : 7,
               display: "inline-block",
               overflow: "hidden",
               whiteSpace: "nowrap",
-              willChange: "transform, filter, opacity, max-width",
             }}
           >
             {playing ? "Pause" : "Play"}
@@ -201,40 +191,39 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
           whileHover={empty ? {} : { scale: 1.04 }}
           whileTap={empty ? {} : { scale: 0.96 }}
           animate={{
-            width: isCondensed ? 44 : 114,
-            paddingLeft: isCondensed ? 0 : 18,
-            paddingRight: isCondensed ? 0 : 18,
+            width: isCondensed ? 36 : 108,
+            paddingLeft: isCondensed ? 0 : 16,
+            paddingRight: isCondensed ? 0 : 16,
           }}
           transition={{ type: "spring", stiffness: 320, damping: 30 }}
           transformTemplate={zTransform}
           style={{
             ...gpuLayer,
-            width: isCondensed ? 44 : 114,
-            paddingLeft: isCondensed ? 0 : 18,
-            paddingRight: isCondensed ? 0 : 18,
+            width: isCondensed ? 36 : 108,
+            paddingLeft: isCondensed ? 0 : 16,
+            paddingRight: isCondensed ? 0 : 16,
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            height: 44,
-            minWidth: 44,
+            height: 36,
+            minWidth: 36,
             borderRadius: 99,
             border: shuffleActive
               ? "1.5px solid var(--color-accent)"
-              : "1px solid rgba(255, 255, 255, 0.16)",
+              : "1px solid rgba(255, 255, 255, 0.14)",
             background: shuffleActive
               ? "var(--color-accent-dim)"
               : "rgba(255, 255, 255, 0.08)",
             color: "#ffffff",
-            fontSize: 14,
+            fontSize: 13.5,
             fontWeight: 600,
             letterSpacing: "-0.01em",
             cursor: empty ? "default" : "pointer",
             opacity: empty ? 0.5 : 1,
             overflow: "hidden",
             whiteSpace: "nowrap",
-            boxShadow: shuffleActive ? "0 0 12px -2px var(--color-accent-dim)" : "none",
-            transition: "border 0.2s, background 0.2s, box-shadow 0.2s",
+            transition: "border 0.2s, background 0.2s",
           }}
         >
           <motion.span
@@ -250,44 +239,29 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
               color: shuffleActive ? "var(--color-accent-hover, #819af1)" : "#ffffff",
             }}
           >
-            <Shuffle size={16} strokeWidth={2.2} />
+            <Shuffle size={15} strokeWidth={2.2} />
           </motion.span>
           <motion.span
             initial={false}
             animate={{
-              maxWidth: isCondensed ? 0 : 56,
+              maxWidth: isCondensed ? 0 : 54,
               opacity: isCondensed ? 0 : 1,
               filter: isCondensed ? "blur(6px)" : "blur(0px)",
               scale: isCondensed ? 0.75 : 1,
-              marginLeft: isCondensed ? 0 : 8,
+              marginLeft: isCondensed ? 0 : 7,
             }}
             transition={{
               maxWidth: { type: "spring", stiffness: 320, damping: 30 },
               marginLeft: { type: "spring", stiffness: 320, damping: 30 },
-              opacity: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
-              filter: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
-              scale: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
+              opacity: { duration: 0.18, ease: [0.23, 1, 0.32, 1] },
             }}
             style={{
-              maxWidth: isCondensed ? 0 : 56,
+              maxWidth: isCondensed ? 0 : 54,
               opacity: isCondensed ? 0 : 1,
-              marginLeft: isCondensed ? 0 : 8,
+              marginLeft: isCondensed ? 0 : 7,
               display: "inline-block",
               overflow: "hidden",
               whiteSpace: "nowrap",
-              willChange: "transform, filter, opacity, max-width",
             }}
           >
             Shuffle
@@ -295,42 +269,68 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
         </motion.button>
       </Tooltip>
 
-      <Tooltip label={pinned ? "Unpin from sidebar" : "Pin to sidebar"} side="top">
+      <div style={{ flex: 1 }} />
+
+      {/* Right actions: + Add and ... menu */}
+      <Tooltip label={pinned ? "Pinned to sidebar" : "Pin to sidebar"} side="top">
         <motion.button
           onClick={() => togglePin(pinItem)}
-          whileHover={{ scale: 1.06 }}
-          whileTap={{ scale: 0.94 }}
-          transformTemplate={zTransform}
+          whileHover={{ scale: 1.04 }}
+          whileTap={{ scale: 0.96 }}
           style={{
-            ...gpuLayer,
+            height: 36,
+            padding: "0 16px",
+            borderRadius: 99,
+            background: pinned ? "rgba(255, 255, 255, 0.16)" : "rgba(255, 255, 255, 0.08)",
+            border: pinned ? "1px solid rgba(255, 255, 255, 0.28)" : "1px solid rgba(255, 255, 255, 0.14)",
+            color: "#ffffff",
+            fontSize: 13,
+            fontWeight: 600,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            cursor: "pointer",
             flexShrink: 0,
-            display: "flex", alignItems: "center", justifyContent: "center", width: 44, height: 44,
-            borderRadius: "50%",
-            border: pinned ? "none" : "1px solid var(--color-border)",
-            background: pinned ? "var(--color-accent)" : "transparent",
-            color: pinned ? "#fff" : "var(--color-text)", cursor: "pointer",
+            transition: "background 0.15s, border-color 0.15s",
           }}
         >
-          <Pin size={17} fill={pinned ? "currentColor" : "none"} />
+          <Plus size={14} strokeWidth={2.4} />
+          <span>{pinned ? "Added" : "Add"}</span>
         </motion.button>
       </Tooltip>
 
-      <Tooltip label="Share options" side="top">
+      <Tooltip label="More options" side="top">
         <motion.button
-          onClick={(e) => openMenu(shareEntries)(e)}
-          onContextMenu={openMenu(shareEntries)}
+          onClick={(e) => openMenu(allEntries)(e)}
+          onContextMenu={openMenu(allEntries)}
           whileHover={{ scale: 1.06 }}
           whileTap={{ scale: 0.94 }}
           transformTemplate={zTransform}
           style={{
             ...gpuLayer,
             flexShrink: 0,
-            display: "flex", alignItems: "center", justifyContent: "center", width: 44, height: 44,
-            borderRadius: "50%", border: "1px solid var(--color-border)",
-            background: "transparent", color: "var(--color-text)", cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 36,
+            height: 36,
+            borderRadius: "50%",
+            border: "1px solid rgba(255, 255, 255, 0.14)",
+            background: "rgba(255, 255, 255, 0.08)",
+            color: "var(--color-text-hi)",
+            cursor: "pointer",
+            transition: "background 0.15s, border-color 0.15s",
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.14)";
+            (e.currentTarget as HTMLElement).style.borderColor = "rgba(255, 255, 255, 0.22)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.08)";
+            (e.currentTarget as HTMLElement).style.borderColor = "rgba(255, 255, 255, 0.14)";
           }}
         >
-          <Share2 size={17} />
+          <MoreHorizontal size={16} strokeWidth={2} />
         </motion.button>
       </Tooltip>
 

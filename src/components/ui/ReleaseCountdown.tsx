@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Clock } from "lucide-react";
+import { Clock } from "@/lib/icons";
 import { msUntilRelease, fmtCountdown } from "../../utils/fmt";
 
 {/* live countdown, erros in fetching from spotify, fix TODO*/}
@@ -21,6 +21,12 @@ export function ReleaseCountdown({ date }: { date: string }) {
         display: "inline-flex",
         alignItems: "center",
         gap: 4,
+        height: 15,
+        lineHeight: "15px",
+        alignSelf: "flex-start",
+        maxWidth: "100%",
+        overflow: "hidden",
+        whiteSpace: "nowrap",
         color: "var(--color-accent)",
         fontWeight: 600,
         fontVariantNumeric: "tabular-nums",

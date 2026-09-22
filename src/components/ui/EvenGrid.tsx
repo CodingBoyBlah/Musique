@@ -1,4 +1,6 @@
 import { useRef, useState, useLayoutEffect, useEffect, useMemo, type ReactNode, type CSSProperties } from "react";
+import { motion, LayoutGroup } from "framer-motion";
+import { zTransform, REFLOW_SPRING, getGridItemTransition } from "../../lib/motion";
 
 interface EvenGridProps<T> {
   items: T[];
@@ -159,33 +161,39 @@ export function EvenGrid<T>({
   const visibleItems = items.slice(0, visibleCount);
 
   return (
-    <div
-      ref={containerRef}
-      className={className}
-      style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(${effectiveCols}, minmax(0, 1fr))`,
-        gap,
-        width: "100%",
-        contain: "layout style",
-        ...style,
-      }}
-    >
-      {visibleItems.map((item, index) => {
-        const key = getKey ? getKey(item, index) : index;
-        return (
-          <div
-            key={key}
-            style={{
-              minWidth: 0,
-              contain: "layout style",
-            }}
-          >
-            {renderItem(item, index)}
-          </div>
-        );
-      })}
-    </div>
+    <LayoutGroup id="even-grid">
+      <motion.div
+        ref={containerRef}
+        className={className}
+        layout="position"
+        transition={{ layout: REFLOW_SPRING }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${effectiveCols}, minmax(0, 1fr))`,
+          gap,
+          width: "100%",
+          ...style,
+        }}
+      >
+        {visibleItems.map((item, index) => {
+          const key = getKey ? getKey(item, index) : index;
+          return (
+            <motion.div
+              key={key}
+              layout="position"
+              transformTemplate={zTransform}
+              transition={getGridItemTransition(index)}
+              style={{
+                minWidth: 0,
+                width: "100%",
+              }}
+            >
+              {renderItem(item, index)}
+            </motion.div>
+          );
+        })}
+      </motion.div>
+    </LayoutGroup>
   );
 }
 
