@@ -29,3 +29,6 @@ dist-ssr
 *.sln
 *.sw?
 ~
+
+# Local screen recordings / capture scratch - never commit
+*.mp4
