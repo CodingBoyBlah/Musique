@@ -72,6 +72,18 @@ pub(crate) struct SpTrack {
     pub track_number: Option<i64>,
     pub disc_number:  Option<i64>,
     pub is_local:     Option<bool>,
+    // full track objects carry `external_ids.isrc`. it pins the exact
+    // *recording*, which is what stops lyrics providers matching a remaster or
+    // radio edit by fuzzy title+duration and handing back plausible-but-wrong
+    // timings. absent on the album/playlist-shaped track objects.
+    #[serde(default)]
+    pub external_ids: Option<SpExternalIds>,
+}
+
+#[derive(Clone, Deserialize)]
+pub(crate) struct SpExternalIds {
+    #[serde(default)]
+    pub isrc: Option<String>,
 }
 
 #[derive(Deserialize)]

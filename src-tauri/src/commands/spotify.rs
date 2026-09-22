@@ -6,11 +6,11 @@ use sqlx::SqlitePool;
 use std::collections::HashSet;
 use tauri::{AppHandle, Manager};
 
-const BASE: &str = "https://api.spotify.com/v1";
+pub(crate) const BASE: &str = "https://api.spotify.com/v1";
 
 // token helper thing
 
-async fn tok(app: &AppHandle) -> Result<String, AppError> {
+pub(crate) async fn tok(app: &AppHandle) -> Result<String, AppError> {
     let s    = app.state::<AppState>();
     let db   = s.db.clone();
     let auth = s.auth.clone();
@@ -149,6 +149,9 @@ async fn upsert_album_full(pool: &SqlitePool, al: &SpAlbum) -> Result<(), AppErr
                 preview_url:  t.preview_url.clone(),
                 is_local:     t.is_local.unwrap_or(false),
                 updated_at:   0,
+                // album track objects carry no external_ids; the upsert
+                // COALESCEs so this never clears an isrc we already know
+                isrc:         None,
             })
             .await;
         }
@@ -157,7 +160,7 @@ async fn upsert_album_full(pool: &SqlitePool, al: &SpAlbum) -> Result<(), AppErr
     Ok(())
 }
 
-async fn upsert_track(pool: &SqlitePool, t: &SpTrack) -> Result<(), AppError> {
+pub(crate) async fn upsert_track(pool: &SqlitePool, t: &SpTrack) -> Result<(), AppError> {
     tracks::upsert(pool, &tracks::Track {
         id:           t.id.clone(),
         name:         t.name.clone(),
@@ -170,6 +173,7 @@ async fn upsert_track(pool: &SqlitePool, t: &SpTrack) -> Result<(), AppError> {
         preview_url:  t.preview_url.clone(),
         is_local:     t.is_local.unwrap_or(false),
         updated_at:   0,
+        isrc:         t.external_ids.as_ref().and_then(|e| e.isrc.clone()),
     })
     .await
 }
@@ -539,6 +543,7 @@ fn clone_track(t: &SpTrack) -> SpTrack {
         popularity:   t.popularity,
         preview_url:  t.preview_url.clone(),
         artists:      t.artists.iter().map(|a| SpArtistSimple { id: a.id.clone(), name: a.name.clone() }).collect(),
+        external_ids: t.external_ids.clone(),
         album:        t.album.as_ref().map(|al| SpAlbumSimple {
             id:           al.id.clone(),
             name:         al.name.clone(),

@@ -1,0 +1,14 @@
+-- ISRC on the catalog tracks.
+--
+-- ISRC identifies a *recording*, not a song. That distinction is the whole
+-- reason it's here: every lyrics provider except Spotify's own matches by fuzzy
+-- search (name + artist + duration), so it happily returns the document for a
+-- different master - the radio edit, the remaster, the live cut - whose timings
+-- are internally consistent and completely wrong for the audio we're playing.
+-- Handing providers an ISRC pins the exact recording and removes that whole
+-- class of "the lyrics are out of sync" bug.
+--
+-- It's already on the wire in Spotify's `external_ids` on every full track
+-- object; we simply weren't deserializing it. Nullable because the album/
+-- playlist-shaped track objects don't carry it, and local files never will.
+ALTER TABLE tracks ADD COLUMN isrc TEXT;

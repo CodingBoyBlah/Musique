@@ -23,6 +23,9 @@ export interface TrackItem {
   artists:     ArtistItem[];
   album:       AlbumItem | null;
   popularity?: number | null;
+  // spotify only fills this on full track objects; lyrics matching uses the
+  // isrc when it is there because it is the one id providers share
+  external_ids?: { isrc?: string };
 }
 
 export interface PlaylistCard {
