@@ -1,14 +1,13 @@
 import { useRef, memo } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, GripVertical, ListMusic } from "@/lib/icons";
+import { X, GripVertical, Queue } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { playTrack } from "../../api/playback";
 import { fmtMs } from "../../utils/fmt";
 import { meshGradient } from "../../lib/mesh";
 import type { TrackItem } from "../../types/spotify";
-import { isMac } from "../../lib/platform";
 import { Tooltip } from "../ui/Tooltip";
 
 const WIDTH = 272;
@@ -220,7 +219,7 @@ export function QueuePanel() {
     >
       <div style={{ width: WIDTH, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {/* header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMac ? "4px 12px 0" : "4px 140px 0 14px", height: 40, flexShrink: 0, borderBottom: "none" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 12px 0 14px", height: 40, flexShrink: 0, borderBottom: "none" }}>
           <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>Queue</span>
           <Tooltip label="Close queue" side="bottom" align="end">
             <button
@@ -250,7 +249,7 @@ export function QueuePanel() {
           <SectionHead label="Next up" onClear={queue.length > 0 ? clearQueue : undefined} />
           {queue.length === 0 ? (
             <div style={{ margin: "0 12px", padding: "16px 14px", borderRadius: 10, border: "1.5px dashed var(--color-glass-border)", background: "var(--color-glass)", display: "flex", alignItems: "center", gap: 9, fontSize: 12, color: "var(--color-text-dim)" }}>
-              <ListMusic size={14} strokeWidth={2} style={{ flexShrink: 0 }} />
+              <Queue size={14} strokeWidth={2} style={{ flexShrink: 0 }} />
               <span>Nothing queued. Add a song with the ＋ on any track.</span>
             </div>
           ) : (

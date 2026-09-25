@@ -126,7 +126,7 @@ function TrackRowImpl({
   });
   if (onToggleLike) menuEntries.push({
     label: liked ? "Remove from Liked Songs" : "Save to Liked Songs",
-    icon: <Heart size={14} fill={liked ? "currentColor" : "none"} />,
+    icon: <Heart size={14} active={Boolean(liked)} />,
     onSelect: () => onToggleLike(track),
   });
   menuEntries.push({ label: "Add to playlist…", icon: <ListPlus size={14} />, onSelect: () => openAddToPlaylist(track) });

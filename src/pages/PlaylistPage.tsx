@@ -82,7 +82,7 @@ export default function PlaylistPage() {
     <div
       className="flex flex-col"
       onContextMenu={openMenu([
-        { label: pinned ? "Unpin from sidebar" : "Pin to sidebar", icon: <Pin size={14} />, onSelect: () => togglePin(pinItem) },
+        { label: pinned ? "Unpin from sidebar" : "Pin to sidebar", icon: <Pin size={14} active={pinned} />, onSelect: () => togglePin(pinItem) },
       ])}
     >
       <PageHeader imageUrl={data.image_url} eyebrow="Playlist" title={data.name}>

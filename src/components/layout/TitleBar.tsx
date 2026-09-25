@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   ChevronLeft, ChevronRight,
   User, Settings, LogOut, LogIn,
-  ListMusic, Captions, MonitorSpeaker,
+  Queue, Captions, Devices,
   PanelLeft, PanelLeftClose,
 } from "@/lib/icons";
 import { useAuth } from "../../hooks/useAuth";
@@ -16,12 +16,14 @@ import { Tooltip } from "../ui/Tooltip";
 import { isMac } from "../../lib/platform";
 import { usePlayerStore } from "../../store/player.store";
 import { useUIStore } from "../../store/ui.store";
+import { TopSearch } from "./TopSearch";
 
 /* size of the windows caption cluster, measured from the window's top-right
-   corner. the island card is inset 4px, so the notch carved out of the card
-   is CAPTION_W - 4 by CAPTION_H - 4 (see Layout). */
+   corner. the top bar is exactly this tall, so the buttons and the bar share
+   one strip of OS material. */
 export const CAPTION_W = 138;
 export const CAPTION_H = 40;
+export const TOP_BAR_H = CAPTION_H;
 
 // win11 caption button (transparent and full-height)
 
@@ -214,7 +216,7 @@ function AccountMenu() {
             style={{ width: 20, height: 20, borderRadius: "50%", objectFit: "cover", display: "block" }}
           />
         ) : (
-          <User size={15} strokeWidth={1.9} />
+          <User size={17} strokeWidth={1.75} />
         )}
         {needsAttention && (
           <span
@@ -238,11 +240,11 @@ function AccountMenu() {
             transition={{ duration: 0.16, ease: [0.23, 1, 0.32, 1] }}
             style={{
               position:      "absolute",
-              top:           38,
+              top:           36,
               left:          0,
               width:         232,
               padding:       6,
-              borderRadius:  14,
+              borderRadius:  12,
               transformOrigin: "top left",
               background:    "rgba(28, 28, 32, 0.92)",
               backdropFilter: "blur(40px) saturate(1.4)",
@@ -296,12 +298,10 @@ function AccountMenu() {
 
    the cluster paints NOTHING of its own - no fill, no border, no blur. the
    window root is transparent, so whatever is behind it shows through
-   unbroken: the OS Mica the sidebar sits on when the island card is clipped
-   away for it (Layout owns that notch), and the lyrics or queue rail, at its
-   own transparency, when one of those is open. the old dark chip drew a
-   rectangle that belonged to neither. it also sits flush in the window
-   corner, which makes the close button the corner pixel - the whole point of
-   a caption cluster. */
+   unbroken: the same OS material the top bar and sidebar sit on. the old
+   dark chip drew a rectangle that belonged to nothing around it. it also
+   sits flush in the window corner, which makes the close button the corner
+   pixel - the whole point of a caption cluster. */
 export function WindowCaptionControls() {
   const [maximized, setMaximized] = useState(false);
   const macSimulated = useUIStore((s) => s.macSimulated);
@@ -370,6 +370,16 @@ export function WindowCaptionControls() {
   );
 }
 
+/* the top bar: a strip right of the sidebar, exactly as tall as the caption
+   buttons, sitting straight on the OS material like the sidebar does.
+   navigation on the left (flush with the card's left edge), search in the
+   middle, panels on the right, caption buttons in the corner.
+
+   the outer tracks are minmax(auto, 1fr): equal while there is room, so the
+   search is centred over the card, but never narrower than their own
+   buttons. the search track gives way first when the window gets tight. the
+   right track carries the caption cluster's width as padding so the group
+   never slides under the buttons. */
 export function TitleBar() {
   const navigate = useNavigate();
   const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
@@ -383,108 +393,121 @@ export function TitleBar() {
   const { activeDevice, isRemotePlayback, devicesOpen, toggleDevices } = useDevices();
   const { back: canGoBack, forward: canGoForward } = useHistoryEdges();
 
-  const docked = !isMac && !macSimulated && !lyricsOpen && !queueOpen;
+  const macChrome = isMac || macSimulated;
 
   return (
     <div
+      data-tauri-drag-region
       style={{
-        height: 48,
+        height: TOP_BAR_H,
         flexShrink: 0,
-        display: "flex",
+        display: "grid",
+        gridTemplateColumns: "minmax(auto, 1fr) minmax(160px, 460px) minmax(auto, 1fr)",
         alignItems: "center",
+        columnGap: 12,
         width: "100%",
-        paddingLeft: 12,
-        paddingRight: docked ? 0 : 12,
         position: "relative",
-        zIndex: 10,
-        pointerEvents: "auto",
+        zIndex: 20,
+        background: "transparent",
       }}
     >
       {/* who you are - where you have been - how much you can see.
-          the dividers mark those three groups, so back/forward now sit
-          shoulder to shoulder: they are one control, not two. */}
-      <div className="tb-capsule">
-        <AccountMenu />
+          the dividers mark those three groups, so back/forward sit shoulder
+          to shoulder: they are one control, not two. */}
+      <div
+        data-tauri-drag-region
+        style={{ display: "flex", alignItems: "center", height: "100%", paddingLeft: 4 }}
+      >
+        <div className="tb-capsule">
+          <AccountMenu />
 
-        <span className="tb-sep" aria-hidden />
+          <span className="tb-sep" aria-hidden />
 
-        <CapsuleButton
-          label={canGoBack ? "Back" : "Nothing to go back to"}
-          onClick={() => navigate(-1)}
-          off={!canGoBack}
-          aria-label="Back"
-        >
-          <ChevronLeft size={15} strokeWidth={1.9} />
-        </CapsuleButton>
+          <CapsuleButton
+            label={canGoBack ? "Back" : "Nothing to go back to"}
+            onClick={() => navigate(-1)}
+            off={!canGoBack}
+            aria-label="Back"
+          >
+            <ChevronLeft size={17} strokeWidth={1.75} />
+          </CapsuleButton>
 
-        <CapsuleButton
-          label={canGoForward ? "Forward" : "Nothing to go forward to"}
-          onClick={() => navigate(1)}
-          off={!canGoForward}
-          aria-label="Forward"
-        >
-          <ChevronRight size={15} strokeWidth={1.9} />
-        </CapsuleButton>
+          <CapsuleButton
+            label={canGoForward ? "Forward" : "Nothing to go forward to"}
+            onClick={() => navigate(1)}
+            off={!canGoForward}
+            aria-label="Forward"
+          >
+            <ChevronRight size={17} strokeWidth={1.75} />
+          </CapsuleButton>
 
-        <span className="tb-sep" aria-hidden />
+          <span className="tb-sep" aria-hidden />
 
-        {/* the icon shows what the click will do, so the button never has to
-            sit in a lit "on" state that reads as a selected mode */}
-        <CapsuleButton
-          label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-          onClick={toggleSidebar}
-          aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-        >
-          {sidebarCollapsed
-            ? <PanelLeft size={15} strokeWidth={1.9} />
-            : <PanelLeftClose size={15} strokeWidth={1.9} />}
-        </CapsuleButton>
+          {/* the icon shows what the click will do, so the button never has to
+              sit in a lit "on" state that reads as a selected mode */}
+          <CapsuleButton
+            label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+            onClick={toggleSidebar}
+            aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+          >
+            {sidebarCollapsed
+              ? <PanelLeft size={17} strokeWidth={1.75} />
+              : <PanelLeftClose size={17} strokeWidth={1.75} />}
+          </CapsuleButton>
+        </div>
       </div>
 
-      {/* Center drag region */}
-      <div data-tauri-drag-region style={{ flex: 1, height: "100%", cursor: "default" }} />
+      <TopSearch />
 
       {/* lyrics and queue share the right rail, so they are one group. where
           the sound comes out is a different question, past the divider. */}
       <div
-        className="tb-capsule"
-        style={{ marginRight: docked ? CAPTION_W - 4 + 8 : 0 }}
+        data-tauri-drag-region
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "flex-end",
+          height: "100%",
+          /* mac: mirror the traffic lights' inset on the left, so the last
+             icon isn't jammed against the window edge */
+          paddingRight: macChrome ? 12 : CAPTION_W + 8,
+        }}
       >
-        <CapsuleButton
-          label={!hasTrack ? "Play a song to see lyrics" : lyricsOpen ? "Hide lyrics" : "Lyrics"}
-          onClick={toggleLyrics}
-          on={lyricsOpen}
-          off={!hasTrack}
-          aria-label="Lyrics"
-          aria-pressed={lyricsOpen}
-        >
-          <Captions size={15} strokeWidth={1.75} />
-        </CapsuleButton>
+        <div className="tb-capsule">
+          <CapsuleButton
+            label={!hasTrack ? "Play a song to see lyrics" : lyricsOpen ? "Hide lyrics" : "Lyrics"}
+            onClick={toggleLyrics}
+            on={lyricsOpen}
+            off={!hasTrack}
+            aria-label="Lyrics"
+            aria-pressed={lyricsOpen}
+          >
+            <Captions size={17} strokeWidth={1.75} active={lyricsOpen} />
+          </CapsuleButton>
 
-        <CapsuleButton
-          label={queueOpen ? "Hide queue" : "Queue"}
-          onClick={toggleQueue}
-          on={queueOpen}
-          aria-label="Queue"
-          aria-pressed={queueOpen}
-        >
-          <ListMusic size={15} strokeWidth={1.75} />
-        </CapsuleButton>
+          <CapsuleButton
+            label={queueOpen ? "Hide queue" : "Queue"}
+            onClick={toggleQueue}
+            on={queueOpen}
+            aria-label="Queue"
+            aria-pressed={queueOpen}
+          >
+            <Queue size={17} strokeWidth={1.75} active={queueOpen} />
+          </CapsuleButton>
 
-        <span className="tb-sep" aria-hidden />
+          <span className="tb-sep" aria-hidden />
 
-        <CapsuleButton
-          label={isRemotePlayback && activeDevice ? `Playing on ${activeDevice.name}` : devicesOpen ? "Hide devices" : "Devices"}
-          onClick={toggleDevices}
-          on={devicesOpen && !isRemotePlayback}
-          tone={isRemotePlayback ? "remote" : undefined}
-          align="end"
-          aria-label="Devices"
-          aria-expanded={devicesOpen}
-          data-devices-trigger="true"
-        >
-          <MonitorSpeaker size={15} strokeWidth={1.75} />
-        </CapsuleButton>
+          <CapsuleButton
+            label={isRemotePlayback && activeDevice ? `Playing on ${activeDevice.name}` : devicesOpen ? "Hide devices" : "Devices"}
+            onClick={toggleDevices}
+            on={devicesOpen && !isRemotePlayback}
+            tone={isRemotePlayback ? "remote" : undefined}
+            align="end"
+            aria-label="Devices"
+            aria-expanded={devicesOpen}
+            data-devices-trigger="true"
+          >
+            <Devices size={17} strokeWidth={1.75} active={devicesOpen || isRemotePlayback} />
+          </CapsuleButton>
+        </div>
       </div>
     </div>
   );

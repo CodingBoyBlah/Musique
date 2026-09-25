@@ -101,7 +101,7 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
   const shuffleActive = isActive && shuffle;
 
   const allEntries = [
-    { label: pinned ? "Remove from sidebar" : "Pin to sidebar", icon: <Pin size={14} />, onSelect: () => togglePin(pinItem) },
+    { label: pinned ? "Remove from sidebar" : "Pin to sidebar", icon: <Pin size={14} active={pinned} />, onSelect: () => togglePin(pinItem) },
     ...shareEntries,
   ];
 

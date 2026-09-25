@@ -13,7 +13,6 @@ import { useAmbient } from "../../hooks/useAmbient";
 import { seekPlayback } from "../../api/playback";
 import { Loader } from "../ui/Loader";
 import { Tooltip } from "../ui/Tooltip";
-import { isMac } from "../../lib/platform";
 import { zTransform } from "../../lib/motion";
 import {
   detectLyricScript,
@@ -181,7 +180,7 @@ export function LyricsPanel() {
               alignItems: "center",
               justifyContent: "flex-end",
               gap: 6,
-              padding: isMac ? "4px 12px 0" : "4px 140px 0 14px",
+              padding: "4px 12px 0 14px",
               height: 36,
             }}
           >
@@ -206,7 +205,7 @@ export function LyricsPanel() {
                   on={showTranslation}
                   onClick={() => setShowTranslation(!showTranslation)}
                 >
-                  <Globe size={13} strokeWidth={2.4} />
+                  <Globe size={13} strokeWidth={2.4} active={showTranslation} />
                 </Pill>
               </Tooltip>
             )}

@@ -7,7 +7,7 @@ import {
   Play, Pause, SkipBack, SkipForward,
   Shuffle, Repeat, Repeat1,
   Volume2, Volume1, VolumeX,
-  MonitorSpeaker, Maximize2,
+  Devices, Maximize2,
 } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { usePlayerStore } from "../../store/player.store";
@@ -446,7 +446,7 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
               overflow: "hidden",
             }}
           >
-            <MonitorSpeaker size={13} strokeWidth={2} style={{ color: "var(--color-text-dim)" }} />
+            <Devices size={13} strokeWidth={2} active style={{ color: "var(--color-text-dim)" }} />
             <span>Listening on <strong style={{ fontWeight: 600 }}>{activeDevice.name}</strong></span>
             <span style={{ fontSize: 10.5, color: "var(--color-text-dim)", textDecoration: "underline", marginLeft: 4 }}>Change</span>
           </motion.div>

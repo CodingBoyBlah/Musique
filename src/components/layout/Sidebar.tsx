@@ -1,47 +1,33 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Home, ListMusic,
-  Music, Disc3, Users,
+  Music, Disc3, User,
   Pin, PinOff,
-  Search, ChevronDown,
-  PanelLeftClose,
+  ChevronDown,
+  type LucideIcon,
 } from "@/lib/icons";
 import { usePinsStore } from "../../store/pins.store";
 import { useUIStore } from "../../store/ui.store";
 import { useContextMenu } from "../ui/ContextMenu";
 import { gpuLayer, zTransform } from "../../lib/motion";
-import { isMac } from "../../lib/platform";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchPlaylist, prefetchAlbum } from "../../lib/prefetch";
 import { Tooltip } from "../ui/Tooltip";
-
-// frosted glass pill -- (search bar / account bar)
-
-const glassPill: React.CSSProperties = {
-  width:        "100%",
-  height:       32,
-  borderRadius: 8,
-  background:   "rgba(255, 255, 255, 0.04)",
-  border:       "1px solid rgba(255, 255, 255, 0.08)",
-  display:      "flex",
-  alignItems:   "center",
-  gap:          8,
-  padding:      "0 10px",
-  flexShrink:   0,
-};
+import { isMac } from "../../lib/platform";
 
 // nav item. active state passed in explicitly so we don't get multi highlight
 
 function NavItem({
-  icon, label, active, onClick, collapsed,
+  icon: Icon, label, active, onClick, collapsed,
 }: {
-  icon: React.ReactNode; label: string; active: boolean; onClick: () => void; collapsed?: boolean;
+  icon: LucideIcon; label: string; active: boolean; onClick: () => void; collapsed?: boolean;
 }) {
   const btn = (
     <motion.button
+      className="nav-item"
       onClick={onClick}
       whileTap={{ scale: 0.98 }}
       whileHover={active ? {} : { backgroundColor: "var(--color-hover)" }}
@@ -84,14 +70,12 @@ function NavItem({
           }}
         />
       )}
-      <span style={{
+      <span className="nav-icon" data-active={active || undefined} style={{
         position: "relative",
         zIndex: 1,
         width: 20, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-        color: active ? "#ffffff" : "var(--color-text-dim)",
-        transition: "color 0.15s ease",
       }}>
-        {icon}
+        <Icon size={18} strokeWidth={1.7} active={active} />
       </span>
       {!collapsed && (
         <span style={{ position: "relative", zIndex: 1, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: active ? "#ffffff" : "inherit" }}>{label}</span>
@@ -183,9 +167,7 @@ export default function Sidebar() {
   const onUnpinnedPlaylist = openType === "playlist" && !openIsPinned;
 
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
-  const toggleSidebar    = useUIStore((s) => s.toggleSidebar);
   const macSimulated     = useUIStore((s) => s.macSimulated);
-  const setSearchPaletteOpen = useUIStore((s) => s.setSearchPaletteOpen);
   const [isNarrow, setIsNarrow] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth < 768 : false
   );
@@ -210,7 +192,6 @@ export default function Sidebar() {
   const [spotifyOpen, setSpotifyOpen] = useState(true);
   const [libraryOpen, setLibraryOpen] = useState(true);
   const [pinsOpen,    setPinsOpen]    = useState(true);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   return (
     <motion.nav
@@ -224,137 +205,49 @@ export default function Sidebar() {
         overflow:      "hidden",
         background:    "transparent",
         borderRight:   "none",
-        paddingTop:    4,
+        /* the rail runs to the top of the window. on windows the first
+           section header is pushed down just enough to sit on the top bar's
+           centre line (40px bar: 2px strip + 4px nav padding + 28px header),
+           so the two read as one row */
+        paddingTop:    macChrome ? 4 : 0,
       }}
     >
-      {/* macOS traffic lights (native Mac OR Ctrl+Shift+M simulated on Windows).
-          the padding and gap here mirror the native geometry exactly, in both
-          the expanded and the collapsed rail, so these sit under the real
-          buttons rather than beside them. */}
-      {macChrome && (
+      {macChrome ? (
+        /* macOS traffic lights (native Mac OR Ctrl+Shift+M simulated on
+           Windows). the padding and gap mirror the native geometry exactly,
+           in both the expanded and the collapsed rail, so these sit under the
+           real buttons rather than beside them. */
         <div
           data-tauri-drag-region
-          style={{
-            height: 32,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "0 14px",
-            flexShrink: 0,
-          }}
+          style={{ height: 32, display: "flex", alignItems: "center", gap: 8, padding: "0 14px", flexShrink: 0 }}
           title={!isMac ? "Mac traffic lights preview (Ctrl+Shift+M to toggle)" : undefined}
         >
           {["#ff5f57", "#febc2e", "#28c840"].map((c) => (
             <div
               key={c}
               style={{
-                width: 12,
-                height: 12,
-                flexShrink: 0,
-                borderRadius: "50%",
-                background: c,
-                boxShadow: "inset 0 0 0 1px rgba(0, 0, 0, 0.18)",
+                width: 12, height: 12, flexShrink: 0, borderRadius: "50%",
+                background: c, boxShadow: "inset 0 0 0 1px rgba(0, 0, 0, 0.18)",
               }}
             />
           ))}
         </div>
+      ) : (
+        // a strip of window-drag above the first header
+        <div data-tauri-drag-region style={{ height: 2, flexShrink: 0 }} />
       )}
-
-      {/* header row: search or toggle */}
-      <div style={{ height: 48, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: isCollapsed ? "center" : "space-between", padding: "0 8px" }}>
-        {isCollapsed ? (
-          <Tooltip label="Search (Ctrl+K)" side="right">
-            <button
-              onClick={() => setSearchPaletteOpen(true)}
-              style={{
-                width: 34, height: 34, borderRadius: 8,
-                border: "1px solid rgba(255, 255, 255, 0.08)",
-                background: "rgba(255, 255, 255, 0.04)",
-                color: "var(--color-text-dim)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                cursor: "pointer",
-                transition: "background 0.15s, color 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.08)";
-                (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.04)";
-                (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-dim)";
-              }}
-            >
-              <Search size={16} strokeWidth={2.2} />
-            </button>
-          </Tooltip>
-        ) : (
-          <>
-            <div
-              onClick={() => setSearchPaletteOpen(true)}
-              style={{ ...glassPill, height: 32, cursor: "pointer", flex: 1, marginRight: 6 }}
-            >
-              <Search size={14} strokeWidth={2.2} style={{ color: "var(--color-text-dim)", flexShrink: 0 }} />
-              <input
-                ref={inputRef}
-                value=""
-                onFocus={() => setSearchPaletteOpen(true)}
-                onClick={() => setSearchPaletteOpen(true)}
-                readOnly
-                placeholder="Search"
-                style={{
-                  flex: 1, minWidth: 0, height: "100%", border: "none", outline: "none",
-                  background: "transparent", color: "var(--color-text-hi)",
-                  fontSize: 13.5, fontWeight: 400, fontFamily: "inherit",
-                  cursor: "pointer",
-                }}
-              />
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 650,
-                  color: "var(--color-text-dim)",
-                  background: "rgba(255, 255, 255, 0.08)",
-                  border: "1px solid rgba(255, 255, 255, 0.08)",
-                  borderRadius: 4,
-                  padding: "1px 5px",
-                  lineHeight: "14px",
-                  userSelect: "none",
-                  flexShrink: 0,
-                }}
-              >
-                {isMac ? "⌘K" : "Ctrl K"}
-              </span>
-            </div>
-            <Tooltip label="Collapse sidebar" side="bottom">
-              <button
-                onClick={toggleSidebar}
-                style={{
-                  width: 32, height: 32, borderRadius: 8, border: "none",
-                  background: "transparent", color: "var(--color-text-dim)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: "pointer", flexShrink: 0,
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-hi)"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-dim)"; }}
-              >
-                <PanelLeftClose size={16} strokeWidth={2} />
-              </button>
-            </Tooltip>
-          </>
-        )}
-      </div>
 
       {/* nav */}
       <div style={{ flex: 1, overflowY: "auto", padding: isCollapsed ? "4px 6px" : "4px 8px" }}>
         <Section label="Discover" expanded={spotifyOpen} onToggle={() => setSpotifyOpen(v => !v)} collapsed={isCollapsed}>
-          <NavItem icon={<Home      size={16} strokeWidth={2} />} label="Home"      active={path === "/"}                                          onClick={() => navigate("/")} collapsed={isCollapsed} />
-          <NavItem icon={<ListMusic size={16} strokeWidth={2} />} label="Playlists" active={path === "/playlists" || onUnpinnedPlaylist}           onClick={() => navigate("/playlists")} collapsed={isCollapsed} />
+          <NavItem icon={Home} label="Home"      active={path === "/"}                                          onClick={() => navigate("/")} collapsed={isCollapsed} />
+          <NavItem icon={ListMusic} label="Playlists" active={path === "/playlists" || onUnpinnedPlaylist}           onClick={() => navigate("/playlists")} collapsed={isCollapsed} />
         </Section>
 
         <Section label="Library" expanded={libraryOpen} onToggle={() => setLibraryOpen(v => !v)} collapsed={isCollapsed}>
-          <NavItem icon={<Music size={16} strokeWidth={2} />} label="Songs"   active={onLibrary && tab === "songs"}   onClick={() => navigate("/library?tab=songs")} collapsed={isCollapsed} />
-          <NavItem icon={<Disc3 size={16} strokeWidth={2} />} label="Albums"  active={onLibrary && tab === "albums"}  onClick={() => navigate("/library?tab=albums")} collapsed={isCollapsed} />
-          <NavItem icon={<Users size={16} strokeWidth={2} />} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} collapsed={isCollapsed} />
+          <NavItem icon={Music} label="Songs"   active={onLibrary && tab === "songs"}   onClick={() => navigate("/library?tab=songs")} collapsed={isCollapsed} />
+          <NavItem icon={Disc3} label="Albums"  active={onLibrary && tab === "albums"}  onClick={() => navigate("/library?tab=albums")} collapsed={isCollapsed} />
+          <NavItem icon={User} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} collapsed={isCollapsed} />
         </Section>
 
         <Section label="Pins" expanded={pinsOpen} onToggle={() => setPinsOpen(v => !v)} collapsed={isCollapsed}>

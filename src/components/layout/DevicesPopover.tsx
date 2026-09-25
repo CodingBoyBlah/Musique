@@ -305,7 +305,7 @@ export function DevicesPopover() {
                       flexShrink: 0,
                     }}
                   >
-                    <Icon size={14} />
+                    <Icon size={14} active={isActive} />
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                     <span

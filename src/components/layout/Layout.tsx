@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { TitleBar, WindowCaptionControls, CAPTION_W, CAPTION_H } from "./TitleBar";
-import { SearchPalette } from "./SearchPalette";
+import { TitleBar, WindowCaptionControls } from "./TitleBar";
 import Sidebar from "./Sidebar";
 import { PlayerBar } from "./PlayerBar";
 import { usePositionTicker } from "../../hooks/usePositionTicker";
@@ -25,26 +24,6 @@ import { isMac } from "../../lib/platform";
    the collapsed rail has to stay wide enough to hold all three. */
 const COLLAPSED_SIDEBAR_W = 64;
 const MAC_COLLAPSED_SIDEBAR_W = 72;
-
-/* the notch cut out of the island card for the windows caption cluster. the
-   card is inset 4px from the window, the cluster sits flush in the corner. */
-const NOTCH_W = CAPTION_W - 4;
-const NOTCH_H = CAPTION_H - 4;
-const NOTCH_R = 10;
-
-/* the card is clipped, not just covered, so the caption buttons sit on the
-   same OS material as the sidebar instead of on the card's own tint. the
-   polygon walks the notch's one inner corner as a quarter round, matching the
-   cluster's border-radius exactly. */
-const NOTCH_CLIP = (() => {
-  const arc = [0, 22.5, 45, 67.5, 90].map((deg) => {
-    const a = (deg * Math.PI) / 180;
-    const x = (NOTCH_W - NOTCH_R + NOTCH_R * Math.cos(a)).toFixed(2);
-    const y = (NOTCH_H - NOTCH_R + NOTCH_R * Math.sin(a)).toFixed(2);
-    return `calc(100% - ${x}px) ${y}px`;
-  });
-  return `polygon(0 0, calc(100% - ${NOTCH_W}px) 0, ${arc.join(", ")}, 100% ${NOTCH_H}px, 100% 100%, 0 100%)`;
-})();
 
 export default function Layout() {
   const queueOpen = usePlayerStore((s) => s.queueOpen);
@@ -107,8 +86,6 @@ export default function Layout() {
 
   const rawPanelWidth = lyricsOpen ? 366 : queueOpen ? 272 : 0;
   const spacerWidth = willCrushMain ? 0 : rawPanelWidth;
-  const hasRightRail = (lyricsOpen || queueOpen) && spacerWidth > 0;
-  const isWindowsDocked = !isMac && !macSimulated && !hasRightRail;
 
   /* `trim_memory` used to fire 1.5s after every navigation. That call empties
      the working set of this process and of every WebView2 child, so it landed
@@ -125,21 +102,18 @@ export default function Layout() {
   }, [setBackdropActive]);
 
   const toggleMacSimulated = useUIStore((s) => s.toggleMacSimulated);
-  const setSearchPaletteOpen = useUIStore((s) => s.setSearchPaletteOpen);
 
+  // Ctrl+K lives with the search field in the top bar (TopSearch)
   useEffect(() => {
     function onGlobalKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "m") {
         e.preventDefault();
         toggleMacSimulated();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setSearchPaletteOpen(true);
       }
     }
     window.addEventListener("keydown", onGlobalKey);
     return () => window.removeEventListener("keydown", onGlobalKey);
-  }, [toggleMacSimulated, setSearchPaletteOpen]);
+  }, [toggleMacSimulated]);
 
   // backdrop strategy:
   //  - no live material (Linux, or Mica/vibrancy failed) -> paint the solid app
@@ -172,224 +146,174 @@ export default function Layout() {
         style={{
           display: "flex",
           flex: 1,
+          minHeight: 0,
           overflow: "hidden",
           position: "relative",
           visibility: shellHidden ? "hidden" : "visible",
         }}
         inert={shellHidden ? true : undefined}
       >
+        {/* the sidebar runs the full height of the window */}
         <Sidebar />
 
-        {/* The Main Window Island Card */}
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            margin: 4,
-            borderRadius: 12,
-            border: isWindowsDocked ? "none" : "1px solid rgba(255, 255, 255, 0.08)",
-            borderLeft: isWindowsDocked ? "1px solid rgba(255, 255, 255, 0.08)" : undefined,
-            borderBottom: isWindowsDocked ? "1px solid rgba(255, 255, 255, 0.08)" : undefined,
-            background: "transparent",
-            /* negative spread keeps the lift underneath the card instead of
-               letting it bleed up into the 4px gutter the caption buttons
-               share with the OS material */
-            boxShadow: "0 14px 30px -8px rgba(0, 0, 0, 0.55)",
-            position: "relative",
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          {/* the card's material, on its own layer so the caption notch can be
-              clipped out of it and let the OS material through.
+        {/* everything right of the sidebar: the top bar on the OS material,
+            and under it the page card plus the lyrics / queue rail */}
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ flexShrink: 0, position: "relative", zIndex: 20 }}>
+            <TitleBar />
+          </div>
 
-              NO backdrop-filter here, deliberately. it never did anything:
-              nothing is ever painted between the window root and this card, so
-              it was only ever blurring transparency (or, with no live
-              material, a flat scrim colour). what it DID do was give the layer
-              its own compositing surface, and a clip-path over that surface
-              comes back opaque black instead of punched through - which is
-              exactly what was filling the notch. */}
-          <div
-            aria-hidden
-            style={{
-              position: "absolute",
-              inset: 0,
-              zIndex: 0,
-              pointerEvents: "none",
-              borderRadius: 12,
-              background: cardBg,
-              boxShadow: isWindowsDocked ? undefined : "inset 0 1px 0 rgba(255, 255, 255, 0.08)",
-              clipPath: isWindowsDocked ? NOTCH_CLIP : undefined,
-            }}
-          />
+          <div style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>
+            {/* The Main Window Island Card */}
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                margin: "0 4px 4px",
+                borderRadius: 12,
+                border: "1px solid rgba(255, 255, 255, 0.08)",
+                background: "transparent",
+                /* negative spread keeps the lift underneath the card instead of
+                   letting it bleed up into the top bar */
+                boxShadow: "0 14px 30px -8px rgba(0, 0, 0, 0.55)",
+                position: "relative",
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              {/* the card's material, on its own layer under the content.
 
-          {/* Cover art bloom contained within the island card */}
-          <AnimatePresence>
-            {pageTint && (
-              <motion.div
-                key={pageTint}
+                  NO backdrop-filter here, deliberately. nothing is ever painted
+                  between the window root and this card, so it would only blur
+                  transparency (or, with no live material, a flat scrim colour)
+                  while costing a compositing surface of its own. */}
+              <div
                 aria-hidden
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 0.18 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.7, ease: "easeOut" }}
                 style={{
                   position: "absolute",
                   inset: 0,
                   zIndex: 0,
                   pointerEvents: "none",
-                  overflow: "hidden",
                   borderRadius: 12,
-                  clipPath: isWindowsDocked ? NOTCH_CLIP : undefined,
+                  background: cardBg,
+                  boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.08)",
                 }}
-              >
-                <div
+              />
+
+              {/* Cover art bloom contained within the island card */}
+              <AnimatePresence>
+                {pageTint && (
+                  <motion.div
+                    key={pageTint}
+                    aria-hidden
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 0.18 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.7, ease: "easeOut" }}
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      zIndex: 0,
+                      pointerEvents: "none",
+                      overflow: "hidden",
+                      borderRadius: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        backgroundImage: `url(${pageTint})`,
+                        backgroundSize: "cover",
+                        backgroundPosition: "center top",
+                        filter: "blur(72px) saturate(1.7)",
+                        transform: "scale(1.6)",
+                        transformOrigin: "center top",
+                        maskImage:
+                          "radial-gradient(75% 70% at 50% 0%, #000 0%, rgba(0,0,0,0.5) 42%, transparent 78%)",
+                        WebkitMaskImage:
+                          "radial-gradient(75% 70% at 50% 0%, #000 0%, rgba(0,0,0,0.5) 42%, transparent 78%)",
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        opacity: 0.05,
+                        mixBlendMode: "overlay",
+                        backgroundRepeat: "repeat",
+                        backgroundImage:
+                          "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+                      }}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Scrolling page view inside card */}
+              <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden" }}>
+                <main
+                  ref={mainRef}
+                  data-selectable
                   style={{
                     position: "absolute",
                     inset: 0,
-                    backgroundImage: `url(${pageTint})`,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center top",
-                    filter: "blur(72px) saturate(1.7)",
-                    transform: "scale(1.6)",
-                    transformOrigin: "center top",
-                    maskImage:
-                      "radial-gradient(75% 70% at 50% 0%, #000 0%, rgba(0,0,0,0.5) 42%, transparent 78%)",
-                    WebkitMaskImage:
-                      "radial-gradient(75% 70% at 50% 0%, #000 0%, rgba(0,0,0,0.5) 42%, transparent 78%)",
+                    overflowY: "auto",
+                    overflowX: "hidden",
+                    paddingTop: 20,
+                    paddingLeft: "clamp(14px, 2.5vw, 32px)",
+                    paddingRight: "clamp(14px, 2.5vw, 32px)",
+                    paddingBottom: "90px",
                   }}
-                />
-                <div
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    opacity: 0.05,
-                    mixBlendMode: "overlay",
-                    backgroundRepeat: "repeat",
-                    backgroundImage:
-                      "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
-                  }}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+                >
+                  <motion.div
+                    key={location.pathname}
+                    initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.995 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                  >
+                    <Outlet />
+                  </motion.div>
+                </main>
+              </div>
 
-          {/* Title bar at top of card */}
-          <TitleBar />
+              {/* PlayerBar docked inside card. The immersive view floats its own
+                  copy over the top, so this one stands down rather than render and
+                  paint underneath an opaque overlay. */}
+              {!immersiveOpen && <PlayerBar />}
+            </div>
 
-          {/* the card's hairline, drawn by hand so it can run around the
-              caption notch: across the top, down the notch's left and along
-              its underside, then down the right edge. nothing above or to the
-              right of the buttons themselves. */}
-          {isWindowsDocked && (
-            <>
-              <div
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  right: NOTCH_W,
-                  height: 1,
-                  background: "rgba(255, 255, 255, 0.08)",
-                  borderTopLeftRadius: 12,
-                  pointerEvents: "none",
-                  zIndex: 15,
-                }}
-              />
-              <div
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  right: 0,
-                  width: NOTCH_W,
-                  height: NOTCH_H,
-                  borderLeft: "1px solid rgba(255, 255, 255, 0.08)",
-                  borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-                  borderBottomLeftRadius: NOTCH_R,
-                  pointerEvents: "none",
-                  zIndex: 15,
-                }}
-              />
-              <div
-                style={{
-                  position: "absolute",
-                  top: NOTCH_H,
-                  right: 0,
-                  bottom: 0,
-                  width: 1,
-                  background: "rgba(255, 255, 255, 0.08)",
-                  borderBottomRightRadius: 12,
-                  pointerEvents: "none",
-                  zIndex: 15,
-                }}
-              />
-            </>
-          )}
-
-          {/* Scrolling page view inside card */}
-          <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden" }}>
-            <main
-              ref={mainRef}
-              data-selectable
+            {/* Right rail - Lyrics or Queue on base layer */}
+            <div
               style={{
-                position: "absolute",
-                inset: 0,
-                overflowY: "auto",
-                overflowX: "hidden",
-                paddingTop: 8,
-                paddingLeft: "clamp(14px, 2.5vw, 32px)",
-                paddingRight: "clamp(14px, 2.5vw, 32px)",
-                paddingBottom: "90px",
+                width: spacerWidth,
+                flexShrink: 0,
+                position: "relative",
+                overflow: "hidden",
+                height: "100%",
+                display: spacerWidth > 0 ? "flex" : "none",
               }}
             >
-              <motion.div
-                key={location.pathname}
-                initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.995 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-              >
-                <Outlet />
-              </motion.div>
-            </main>
+              <AnimatePresence initial={false}>
+                {lyricsOpen && <LyricsPanel key="lyrics" />}
+              </AnimatePresence>
+              <AnimatePresence initial={false}>
+                {queueOpen && <QueuePanel key="queue" />}
+              </AnimatePresence>
+            </div>
           </div>
-
-          {/* PlayerBar docked inside card. The immersive view floats its own
-              copy over the top, so this one stands down rather than render and
-              paint underneath an opaque overlay. */}
-          {!immersiveOpen && <PlayerBar />}
-        </div>
-
-        {/* Right rail - Lyrics or Queue on base layer */}
-        <div
-          style={{
-            width: spacerWidth,
-            flexShrink: 0,
-            position: "relative",
-            overflow: "hidden",
-            height: "100%",
-            display: spacerWidth > 0 ? "flex" : "none",
-          }}
-        >
-          <AnimatePresence initial={false}>
-            {lyricsOpen && <LyricsPanel key="lyrics" />}
-          </AnimatePresence>
-          <AnimatePresence initial={false}>
-            {queueOpen && <QueuePanel key="queue" />}
-          </AnimatePresence>
         </div>
 
       </div>
 
-      <SearchPalette />
       <DevicesPopover />
       <Immersive />
       <QuitConfirm />
       <AddToPlaylistModal />
       <YtMatchModal />
       <Toaster />
-      {/* always at the window's own top-right corner, never inside the card,
+      {/* always at the window's own top-right corner, in the top bar's strip,
           so the buttons sit on the OS material and the close button owns the
           corner pixel */}
       <WindowCaptionControls />

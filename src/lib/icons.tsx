@@ -1,9 +1,17 @@
-import React from "react";
+import React, { useId } from "react";
 
-/* Rune Icons — https://runeicons.com (Nexvyn/runeicons, Apache-2.0)
- * outline-style SVG paths, rendered as a single generated module.
- * glyphs Rune does not ship (music/pin/shuffle/cast/…) fall back to
- * equivalent Lucide geometry (ISC). Do not hand-edit path data.
+/* the app's icon set. hand drawn on a 24 grid in one style: round caps and
+ * joins, soft corners, circles as true arcs. same names and props as the
+ * lucide set it replaced, so call sites never changed.
+ *
+ * every icon is ONE <path>. crossing strokes inside a single path paint once,
+ * so an icon drawn in an rgba colour never goes lighter/darker where two of
+ * its lines overlap (separate <path>/<circle> elements each apply the alpha).
+ *
+ * `active` swaps an icon to its filled glyph (see SOLID) with a short fade:
+ * outline when idle, filled when the thing it stands for is on / selected.
+ * the filled glyph is built as a mask and painted once, so it has no alpha
+ * seams either.
  */
 
 export interface IconProps extends Omit<React.SVGProps<SVGSVGElement>, "stroke" | "fill"> {
@@ -11,283 +19,375 @@ export interface IconProps extends Omit<React.SVGProps<SVGSVGElement>, "stroke" 
   strokeWidth?: number | string;
   color?: string;
   fill?: string;
+  /* show the filled glyph. leave undefined for icons that never toggle, so
+     they skip the mask entirely */
+  active?: boolean;
 }
 export type LucideProps = IconProps;
 export type LucideIcon = React.ComponentType<IconProps>;
 
-function createRuneIcon(displayName: string, inner: string) {
-  const Comp = React.forwardRef<SVGSVGElement, IconProps>(function RuneIcon(
-    { size = 24, strokeWidth = 2, color = "currentColor", fill = "none", style, className, ...rest },
+// geometry helpers
+
+const n = (v: number) => +v.toFixed(3);
+
+const circle = (cx: number, cy: number, r: number) =>
+  `M${n(cx - r)} ${n(cy)}a${r} ${r} 0 1 0 ${n(2 * r)} 0a${r} ${r} 0 1 0 ${n(-2 * r)} 0`;
+
+const rrect = (x: number, y: number, w: number, h: number, r: number) =>
+  `M${n(x + r)} ${n(y)}h${n(w - 2 * r)}a${r} ${r} 0 0 1 ${r} ${r}v${n(h - 2 * r)}` +
+  `a${r} ${r} 0 0 1 ${-r} ${r}h${n(-(w - 2 * r))}a${r} ${r} 0 0 1 ${-r} ${-r}` +
+  `v${n(-(h - 2 * r))}a${r} ${r} 0 0 1 ${r} ${-r}z`;
+
+// a dot that reads as a solid disc once stroked
+const dot = (x: number, y: number) => circle(x, y, 0.7);
+
+function gear(teeth: number, inner: number, outer: number) {
+  const pt = (r: number, deg: number) => {
+    const a = (deg * Math.PI) / 180;
+    return `${n(12 + r * Math.cos(a))} ${n(12 + r * Math.sin(a))}`;
+  };
+  const step = 360 / teeth;
+  let d = "";
+  for (let k = 0; k < teeth; k++) {
+    const t = k * step - 90;
+    d += `${k === 0 ? "M" : "L"}${pt(inner, t - 17)}L${pt(outer, t - 9)}L${pt(outer, t + 9)}L${pt(inner, t + 17)}`;
+    d += `A${inner} ${inner} 0 0 1 ${pt(inner, t + step - 17)}`;
+  }
+  return d + "z";
+}
+
+// shared outlines (the sidebar's NavGlyph uses these too)
+
+const PERSON_BODY = "M4.5 19.6c0-3.4 3.3-5.9 7.5-5.9s7.5 2.5 7.5 5.9a.9.9 0 0 1-.9.9H5.4a.9.9 0 0 1-.9-.9z";
+const VOLUME_HORN =
+  "M4.5 9h2.6l4.1-3.6a.9.9 0 0 1 1.5.7v11.8a.9.9 0 0 1-1.5.7L7.1 15H4.5A1.5 1.5 0 0 1 3 13.5v-3A1.5 1.5 0 0 1 4.5 9z";
+const REPEAT = "M17 3l3 3-3 3M20 6H8a4 4 0 0 0-4 4v1M7 21l-3-3 3-3M4 18h12a4 4 0 0 0 4-4v-1";
+const PANEL = rrect(3, 4, 18, 16, 3) + "M9.5 4v16";
+// monitor with a phone in front. the monitor's edges stop short of the phone
+const DEVICES_MONITOR = "M12.5 15H4.5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1";
+const DEVICES_PHONE = rrect(14.5, 9.5, 7, 11, 1.8);
+const QUEUE_PLAY = "M4 5.2v4.6a.6.6 0 0 0 .9.5l3.7-2.3a.6.6 0 0 0 0-1L4.9 4.7a.6.6 0 0 0-.9.5z";
+const EYE = "M2.5 12C4.5 7.8 8 5.5 12 5.5s7.5 2.3 9.5 6.5c-2 4.2-5.5 6.5-9.5 6.5S4.5 16.2 2.5 12z";
+
+export const iconPaths = {
+  AlertTriangle: "M10.27 4.5a2 2 0 0 1 3.46 0l7.5 13a2 2 0 0 1-1.73 3H4.5a2 2 0 0 1-1.73-3zM12 9.5v4M12 17h.01",
+  ArrowRight: "M5 12h14M13 6l6 6-6 6",
+  ArrowUpRight: "M7 17 17 7M8.5 7H17v8.5",
+  Captions: rrect(3, 5, 18, 14, 3) + "M7 12h3.5M13.5 12h3.5M7 15.5h6M16 15.5h1",
+  Cast:
+    "M2.5 8V6.5A2.5 2.5 0 0 1 5 4h14a2.5 2.5 0 0 1 2.5 2.5v11A2.5 2.5 0 0 1 19 20h-5" +
+    "M2.5 12.5a7.5 7.5 0 0 1 7.5 7.5M2.5 16.5A3.5 3.5 0 0 1 6 20M2.5 20h.01",
+  Check: "M5 12.5l4.5 4.5L19 7.5",
+  ChevronDown: "M6 9.5l6 6 6-6",
+  ChevronLeft: "M14.5 6l-6 6 6 6",
+  ChevronRight: "M9.5 6l6 6-6 6",
+  Clock: circle(12, 12, 9) + "M12 7.5V12l3 2",
+  Devices: DEVICES_MONITOR + "M8.5 15v3.5M6 18.5h5" + DEVICES_PHONE + "M17.5 17.5h1",
+  Disc3: circle(12, 12, 9) + circle(12, 12, 2.5) + "M6.5 12A5.5 5.5 0 0 1 12 6.5",
+  Eye: EYE + circle(12, 12, 3),
+  EyeOff: EYE + "M3.5 3.5l17 17",
+  Globe:
+    circle(12, 12, 9) + "M3 12h18" +
+    "M12 3c-2.5 2.5-3.8 5.6-3.8 9s1.3 6.5 3.8 9c2.5-2.5 3.8-5.6 3.8-9S14.5 5.5 12 3z",
+  GripVertical: dot(9, 6) + dot(15, 6) + dot(9, 12) + dot(15, 12) + dot(9, 18) + dot(15, 18),
+  Heart:
+    "M12 20.25C6.8 17.2 3.5 13.6 3.5 9.6A4.6 4.6 0 0 1 12 7.2a4.6 4.6 0 0 1 8.5 2.4c0 4-3.3 7.6-8.5 10.65z",
+  Home:
+    "M3 10.5 11.35 3.55a1 1 0 0 1 1.3 0L21 10.5" +
+    "M5 8.8v9.7A1.5 1.5 0 0 0 6.5 20h3v-5a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5v5h3a1.5 1.5 0 0 0 1.5-1.5V8.8",
+  Info: circle(12, 12, 9) + "M12 11v5.5M12 7.75h.01",
+  Languages:
+    "M3 5.5h9.5M7.5 3.5v2M5 8.5l5 5M4 13.5l5-5 1.5-3" +
+    "M12.5 20.5l4-9 4 9M14 17.5h5",
+  Laptop: rrect(4.5, 5, 15, 10.5, 1.5) + "M2.5 19h19",
+  Link:
+    "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" +
+    "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
+  Link2: "M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8",
+  ListMusic: "M3.5 6h11M3.5 11h11M3.5 16h6.5M20 17.5V4.5" + circle(17, 17.5, 3),
+  ListPlus: "M3.5 6h11M3.5 11h11M3.5 16h7M18 13v7M14.5 16.5h7",
+  Loader2: "M20.5 12A8.5 8.5 0 1 1 12 3.5",
+  LogIn: "M14 4h3.5A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5H14M10 8l4 4-4 4M14 12H3.5",
+  LogOut: "M10 4H6.5A2.5 2.5 0 0 0 4 6.5v11A2.5 2.5 0 0 0 6.5 20H10M16 8l4 4-4 4M20 12H9.5",
+  Maximize2: "M14.5 3.5h6v6M20.5 3.5 14 10M9.5 20.5h-6v-6M3.5 20.5 10 14",
+  Minimize2: "M14 4v6h6M14 10l6.5-6.5M10 20v-6H4M10 14l-6.5 6.5",
+  MonitorSpeaker:
+    rrect(2.5, 4.5, 11, 9, 2) + "M8 13.5v3M5.5 17h5" + rrect(16, 3.5, 5.5, 17, 2) +
+    circle(18.75, 14, 1.5) + "M18.75 7h.01",
+  MoreHorizontal: dot(5, 12) + dot(12, 12) + dot(19, 12),
+  Music: "M9 18V6l11-2v12M9 9.5l11-2" + circle(6.5, 18, 2.5) + circle(17.5, 16, 2.5),
+  Music2: "M11 17.5V4l6.5 2.8" + circle(8, 17.5, 3),
+  PanelLeft: PANEL,
+  PanelLeftClose: PANEL + "M16 9.5 13.5 12l2.5 2.5",
+  Pause: rrect(6, 4.5, 4, 15, 1.2) + rrect(14, 4.5, 4, 15, 1.2),
+  Pin: "M12 16v5M8.5 3.5h7M9.5 3.5v5.2l-3 3.3V14.5h11V12l-3-3.3V3.5",
+  PinOff: "M12 16v5M8.5 3.5h7M14.5 3.5v5.2l3 3.3v2.5h-3M9.5 6.5v2.2l-3 3.3v2.5h8M3.5 3.5l17 17",
+  Play: "M7 5.4a1.2 1.2 0 0 1 1.8-1.04l10.4 6.6a1.2 1.2 0 0 1 0 2.08l-10.4 6.6A1.2 1.2 0 0 1 7 18.6z",
+  Plus: "M12 5v14M5 12h14",
+  Queue: QUEUE_PLAY + "M12 7.5h8.5M3.5 13.5h17M3.5 19h17",
+  RefreshCw:
+    "M20 11A8 8 0 0 0 6.1 6.6L4 8.5M4 4v4.5h4.5M4 13a8 8 0 0 0 13.9 4.4L20 15.5M20 20v-4.5h-4.5",
+  Repeat: REPEAT,
+  Repeat1: REPEAT + "M11 10.5l1.5-1v5",
+  RotateCcw: "M3.5 12a8.5 8.5 0 1 0 2.5-6L3.5 8.5M3.5 3.5v5h5",
+  RotateCw: "M20.5 12a8.5 8.5 0 1 1-2.5-6l2.5 2.5M20.5 3.5v5h-5",
+  Search: circle(10.75, 10.75, 6.75) + "M15.75 15.75l4.75 4.75",
+  Settings: gear(8, 7, 9.4) + circle(12, 12, 3),
+  Share2:
+    "M12 14.5V3M8 7l4-4 4 4" +
+    "M8.5 10H7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1.5",
+  Shuffle:
+    "M16.5 3.5 20 7l-3.5 3.5M16.5 13.5 20 17l-3.5 3.5" +
+    "M3.5 7h3.2a4 4 0 0 1 3.3 1.7l4 6.6a4 4 0 0 0 3.3 1.7H20" +
+    "M3.5 17h3.2a4 4 0 0 0 3.3-1.7M14 8.7A4 4 0 0 1 17.3 7H20",
+  SkipBack: "M19.5 6.2a1.2 1.2 0 0 0-1.85-1l-9 5.8a1.2 1.2 0 0 0 0 2l9 5.8a1.2 1.2 0 0 0 1.85-1zM4.5 5v14",
+  SkipForward: "M4.5 6.2a1.2 1.2 0 0 1 1.85-1l9 5.8a1.2 1.2 0 0 1 0 2l-9 5.8a1.2 1.2 0 0 1-1.85-1zM19.5 5v14",
+  Smartphone: rrect(6.5, 2.5, 11, 19, 2.5) + "M11 18h2",
+  Sparkles:
+    "M10 4.5c.4 3.9 2.6 6.1 6.5 6.5-3.9.4-6.1 2.6-6.5 6.5-.4-3.9-2.6-6.1-6.5-6.5 3.9-.4 6.1-2.6 6.5-6.5z" +
+    "M18 2.5c.15 1.4.9 2.35 2.5 2.5-1.6.15-2.35.9-2.5 2.5-.15-1.6-.9-2.35-2.5-2.5 1.6-.15 2.35-1.1 2.5-2.5z",
+  Speaker: rrect(5, 2.5, 14, 19, 2.5) + circle(12, 14.5, 3.5) + "M12 6.5h.01",
+  Trash2:
+    "M4 6.5h16M9.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v1.5" +
+    "M6 6.5l.8 12.1a2 2 0 0 0 2 1.9h6.4a2 2 0 0 0 2-1.9L18 6.5M10 11v5M14 11v5",
+  Tv: rrect(3, 5, 18, 12.5, 2.5) + "M8.5 20.5h7",
+  User: circle(12, 7.5, 4) + PERSON_BODY,
+  UserPlus:
+    circle(9.5, 8, 3.5) +
+    "M3 19.6c0-3 2.9-5.3 6.5-5.3s6.5 2.3 6.5 5.3a.9.9 0 0 1-.9.9H3.9a.9.9 0 0 1-.9-.9z" +
+    "M19 8v6M16 11h6",
+  Users:
+    circle(9, 8, 3.5) +
+    "M2.5 19.6c0-3 2.9-5.3 6.5-5.3s6.5 2.3 6.5 5.3a.9.9 0 0 1-.9.9H3.4a.9.9 0 0 1-.9-.9z" +
+    "M15.5 4.8a3.5 3.5 0 0 1 0 6.4M18 14.6c2.1.7 3.5 2.4 3.5 4.6v.4",
+  X: "M6.5 6.5l11 11M17.5 6.5l-11 11",
+} satisfies Record<string, string>;
+
+export type IconName = keyof typeof iconPaths;
+
+/* filled glyphs. `fill` is painted solid, then `cut` is stroked back out of
+   it, then `edge` is stroked on top (defaults to the outline; null = none).
+   so a cut can never eat into the border. */
+interface Solid {
+  fill: string;
+  cut?: string;
+  edge?: string | null;
+}
+
+const TRIANGLE = "M10.27 4.5a2 2 0 0 1 3.46 0l7.5 13a2 2 0 0 1-1.73 3H4.5a2 2 0 0 1-1.73-3z";
+const PANEL_SIDE = "M9.5 4H6a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h3.5z";
+
+const SOLID: Partial<Record<IconName, Solid>> = {
+  AlertTriangle: { fill: TRIANGLE, cut: "M12 9.5v4M12 17h.01", edge: TRIANGLE },
+  Captions: {
+    fill: rrect(3, 5, 18, 14, 3),
+    cut: "M7 12h3.5M13.5 12h3.5M7 15.5h6M16 15.5h1",
+    edge: rrect(3, 5, 18, 14, 3),
+  },
+  Clock: { fill: circle(12, 12, 9), cut: "M12 7.5V12l3 2", edge: circle(12, 12, 9) },
+  Devices: {
+    fill: "M12.5 15H4.5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1h-5z" + DEVICES_PHONE,
+    cut: "M17.5 17.5h1",
+    edge: DEVICES_MONITOR + "M8.5 15v3.5M6 18.5h5" + DEVICES_PHONE,
+  },
+  Disc3: {
+    fill: circle(12, 12, 9) + circle(12, 12, 2.3),
+    cut: "M6.5 12A5.5 5.5 0 0 1 12 6.5",
+    edge: circle(12, 12, 9),
+  },
+  Eye: { fill: EYE, cut: circle(12, 12, 3), edge: EYE },
+  Globe: {
+    fill: circle(12, 12, 9),
+    cut: "M3 12h18M12 3c-2.5 2.5-3.8 5.6-3.8 9s1.3 6.5 3.8 9c2.5-2.5 3.8-5.6 3.8-9S14.5 5.5 12 3z",
+    edge: circle(12, 12, 9),
+  },
+  Heart: { fill: iconPaths.Heart },
+  Home: {
+    fill: "M5 9.1 12 3.3l7 5.8v9.4a1.5 1.5 0 0 1-1.5 1.5h-3v-5a1.5 1.5 0 0 0-1.5-1.5h-2a1.5 1.5 0 0 0-1.5 1.5v5h-3A1.5 1.5 0 0 1 5 18.5z",
+  },
+  Info: { fill: circle(12, 12, 9), cut: "M12 11v5.5M12 7.75h.01", edge: circle(12, 12, 9) },
+  Laptop: { fill: rrect(4.5, 5, 15, 10.5, 1.5) },
+  ListMusic: { fill: circle(17, 17.5, 3) },
+  MonitorSpeaker: {
+    fill: rrect(2.5, 4.5, 11, 9, 2) + rrect(16, 3.5, 5.5, 17, 2),
+    cut: circle(18.75, 14, 1.5) + "M18.75 7h.01",
+    edge: rrect(2.5, 4.5, 11, 9, 2) + "M8 13.5v3M5.5 17h5" + rrect(16, 3.5, 5.5, 17, 2),
+  },
+  Music: { fill: "M9 6l11-2v3.5l-11 2z" + circle(6.5, 18, 2.5) + circle(17.5, 16, 2.5) },
+  Music2: { fill: circle(8, 17.5, 3) },
+  PanelLeft: { fill: PANEL_SIDE },
+  PanelLeftClose: { fill: PANEL_SIDE },
+  Pause: { fill: iconPaths.Pause },
+  Pin: { fill: "M9.5 3.5v5.2l-3 3.3v2.5h11V12l-3-3.3V3.5z" },
+  Play: { fill: iconPaths.Play },
+  Queue: { fill: QUEUE_PLAY },
+  Settings: { fill: gear(8, 7, 9.4) + circle(12, 12, 2.6), edge: gear(8, 7, 9.4) },
+  SkipBack: { fill: iconPaths.SkipBack },
+  SkipForward: { fill: iconPaths.SkipForward },
+  Smartphone: { fill: rrect(6.5, 2.5, 11, 19, 2.5), cut: "M11 18h2", edge: rrect(6.5, 2.5, 11, 19, 2.5) },
+  Sparkles: { fill: iconPaths.Sparkles },
+  Speaker: {
+    fill: rrect(5, 2.5, 14, 19, 2.5),
+    cut: circle(12, 14.5, 3.5) + "M12 6.5h.01",
+    edge: rrect(5, 2.5, 14, 19, 2.5),
+  },
+  Tv: { fill: rrect(3, 5, 18, 12.5, 2.5) },
+  User: { fill: circle(12, 7.5, 4) + PERSON_BODY },
+  UserPlus: {
+    fill: circle(9.5, 8, 3.5) + "M3 19.6c0-3 2.9-5.3 6.5-5.3s6.5 2.3 6.5 5.3a.9.9 0 0 1-.9.9H3.9a.9.9 0 0 1-.9-.9z",
+  },
+  Users: {
+    fill: circle(9, 8, 3.5) + "M2.5 19.6c0-3 2.9-5.3 6.5-5.3s6.5 2.3 6.5 5.3a.9.9 0 0 1-.9.9H3.4a.9.9 0 0 1-.9-.9z",
+  },
+};
+
+const FADE = "opacity 0.15s ease";
+
+function svgProps(size: number | string, strokeWidth: number | string, color: string, style?: React.CSSProperties) {
+  return {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    stroke: color,
+    strokeWidth,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    style: { display: "inline-block", verticalAlign: "middle", flexShrink: 0, ...style },
+  };
+}
+
+function createIcon(name: IconName) {
+  const d = iconPaths[name];
+  const solid = SOLID[name];
+  const Comp = React.forwardRef<SVGSVGElement, IconProps>(function Icon(
+    { size = 24, strokeWidth = 2, color = "currentColor", fill = "none", active, style, ...rest },
+    ref,
+  ) {
+    const maskId = "ic" + useId().replace(/[^a-zA-Z0-9_-]/g, "");
+    const toggles = solid && active !== undefined;
+    return (
+      <svg ref={ref} {...svgProps(size, strokeWidth, color, style)} fill="none" {...rest}>
+        <path d={d} fill={fill} style={toggles ? { transition: FADE, opacity: active ? 0 : 1 } : undefined} />
+        {toggles && (
+          <>
+            <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+              <path d={solid.fill} fill="#fff" fillRule="evenodd" stroke="none" />
+              {solid.cut && <path d={solid.cut} stroke="#000" />}
+              {solid.edge !== null && <path d={solid.edge ?? d} stroke="#fff" />}
+            </mask>
+            <rect
+              width="24"
+              height="24"
+              fill={color}
+              stroke="none"
+              mask={`url(#${maskId})`}
+              style={{ transition: FADE, opacity: active ? 1 : 0 }}
+            />
+          </>
+        )}
+      </svg>
+    );
+  });
+  Comp.displayName = name;
+  return Comp;
+}
+
+/* volume: `fill` only fills the speaker horn so the sound waves / mute cross
+   stay outlines */
+function createVolumeIcon(displayName: string, waves: string) {
+  const Comp = React.forwardRef<SVGSVGElement, IconProps>(function VolumeIcon(
+    { size = 24, strokeWidth = 2, color = "currentColor", fill = "none", active: _active, style, ...rest },
     ref,
   ) {
     return (
-      <svg
-        ref={ref}
-        width={size}
-        height={size}
-        viewBox="0 0 24 24"
-        fill={fill}
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className={className}
-        style={{ display: "inline-block", verticalAlign: "middle", flexShrink: 0, ...style }}
-        {...rest}
-        dangerouslySetInnerHTML={{ __html: inner }}
-      />
+      <svg ref={ref} {...svgProps(size, strokeWidth, color, style)} fill="none" {...rest}>
+        <path d={VOLUME_HORN} fill={fill} />
+        <path d={waves} />
+      </svg>
     );
   });
   Comp.displayName = displayName;
   return Comp;
 }
 
-/* volume: only fill the speaker horn so open arcs / mute crosses stay outlines */
-function createVolumeIcon(displayName: string, horn: string, extras: string[]) {
-  const Comp = React.forwardRef<SVGSVGElement, IconProps>(function RuneVolume(
-    { size = 24, strokeWidth = 2, color = "currentColor", fill = "none", style, className, ...rest },
-    ref,
-  ) {
-    return (
-      <svg
-        ref={ref}
-        width={size}
-        height={size}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className={className}
-        style={{ display: "inline-block", verticalAlign: "middle", flexShrink: 0, ...style }}
-        {...rest}
-        dangerouslySetInnerHTML={{
-          __html:
-            `<path d="${horn}" fill="${fill}" stroke-width="${strokeWidth}"/>` +
-            extras.map((d) => `<path d="${d}" fill="none"/>`).join(""),
-        }}
-      />
-    );
-  });
-  Comp.displayName = displayName;
-  return Comp;
-}
-
-export const AlertTriangle = createRuneIcon("AlertTriangle", `<path d="M12 9V13M12 17H12.01M21.7301 18.0002L13.7301 4.00022C13.5556 3.69243 13.3027 3.43641 12.997 3.25829C12.6913 3.08017 12.3438 2.98633 11.9901 2.98633C11.6363 2.98633 11.2888 3.08017 10.9831 3.25829C10.6774 3.43641 10.4245 3.69243 10.2501 4.00022L2.25005 18.0002C2.07373 18.3056 1.98128 18.6521 1.98206 19.0047C1.98284 19.3573 2.07683 19.7035 2.2545 20.008C2.43217 20.3126 2.6872 20.5648 2.99375 20.7391C3.30029 20.9133 3.64746 21.0034 4.00005 21.0002H20.0001C20.351 20.9999 20.6956 20.9072 20.9993 20.7315C21.3031 20.5558 21.5553 20.3033 21.7306 19.9993C21.9059 19.6954 21.9981 19.3506 21.998 18.9997C21.9979 18.6488 21.9055 18.3041 21.7301 18.0002Z"/>`);
-
-export const ArrowRight = createRuneIcon("ArrowRight", `<path d="M5 12H19M12 19L19 12L12 5"/>`);
-
-export const ArrowUpRight = createRuneIcon("ArrowUpRight", `<path d="M17 17V7H7M17 7L7 17"/>`);
-
-export const Check = createRuneIcon("Check", `<path d="M20 6L9 17L4 12"/>`);
-
-export const ChevronDown = createRuneIcon("ChevronDown", `<path d="M6 9L12 15L18 9"/>`);
-
-export const ChevronLeft = createRuneIcon("ChevronLeft", `<path d="M15 18L9 12L15 6"/>`);
-
-export const ChevronRight = createRuneIcon("ChevronRight", `<path d="M9 18L15 12L9 6"/>`);
-
-export const Clock = createRuneIcon("Clock", `<path d="M12 6V12L16 14M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z"/>`);
-
-export const Eye = createRuneIcon("Eye", `<path d="M2.06202 12.3481C1.97868 12.1236 1.97868 11.8766 2.06202 11.6521C2.87372 9.68397 4.25153 8.00116 6.02079 6.81701C7.79004 5.63287 9.87106 5.00073 12 5.00073C14.129 5.00073 16.21 5.63287 17.9792 6.81701C19.7485 8.00116 21.1263 9.68397 21.938 11.6521C22.0214 11.8766 22.0214 12.1236 21.938 12.3481C21.1263 14.3163 19.7485 15.9991 17.9792 17.1832C16.21 18.3674 14.129 18.9995 12 18.9995C9.87106 18.9995 7.79004 18.3674 6.02079 17.1832C4.25153 15.9991 2.87372 14.3163 2.06202 12.3481Z"/>
-<path d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z"/>`);
-
-export const EyeOff = createRuneIcon("EyeOff", `<path d="M10.733 5.07599C13.0624 4.7984 15.4186 5.29081 17.4419 6.47804C19.4652 7.66527 21.0442 9.48207 21.938 11.651C22.0214 11.8755 22.0214 12.1225 21.938 12.347C21.5705 13.238 21.0848 14.0755 20.494 14.837M14.084 14.158C13.5182 14.7045 12.7604 15.0069 11.9738 15C11.1872 14.9932 10.4348 14.6777 9.87856 14.1215C9.32233 13.5652 9.00683 12.8128 8.99999 12.0262C8.99316 11.2396 9.29554 10.4818 9.84201 9.91602M17.479 17.499C16.1525 18.2848 14.6725 18.776 13.1394 18.9394C11.6063 19.1028 10.056 18.9345 8.59365 18.4459C7.13133 17.9573 5.79121 17.1599 4.66423 16.1078C3.53725 15.0556 2.64977 13.7734 2.06202 12.348C1.97868 12.1235 1.97868 11.8765 2.06202 11.652C2.94865 9.50189 4.50869 7.69728 6.50802 6.50903M2 2L22 22"/>`);
-
-export const Globe = createRuneIcon("Globe", `<path d="M22 12C22 17.5228 17.5228 22 12 22M22 12C22 6.47715 17.5228 2 12 2M22 12H2M12 22C6.47715 22 2 17.5228 2 12M12 22C9.43223 19.3038 8 15.7233 8 12C8 8.27674 9.43223 4.69615 12 2M12 22C14.5678 19.3038 16 15.7233 16 12C16 8.27674 14.5678 4.69615 12 2M2 12C2 6.47715 6.47715 2 12 2"/>`);
-
-export const GripVertical = createRuneIcon("GripVertical", `<path d="M9 13C9.55228 13 10 12.5523 10 12C10 11.4477 9.55228 11 9 11C8.44772 11 8 11.4477 8 12C8 12.5523 8.44772 13 9 13Z"/>
-<path d="M9 6C9.55228 6 10 5.55228 10 5C10 4.44772 9.55228 4 9 4C8.44772 4 8 4.44772 8 5C8 5.55228 8.44772 6 9 6Z"/>
-<path d="M9 20C9.55228 20 10 19.5523 10 19C10 18.4477 9.55228 18 9 18C8.44772 18 8 18.4477 8 19C8 19.5523 8.44772 20 9 20Z"/>
-<path d="M15 13C15.5523 13 16 12.5523 16 12C16 11.4477 15.5523 11 15 11C14.4477 11 14 11.4477 14 12C14 12.5523 14.4477 13 15 13Z"/>
-<path d="M15 6C15.5523 6 16 5.55228 16 5C16 4.44772 15.5523 4 15 4C14.4477 4 14 4.44772 14 5C14 5.55228 14.4477 6 15 6Z"/>
-<path d="M15 20C15.5523 20 16 19.5523 16 19C16 18.4477 15.5523 18 15 18C14.4477 18 14 18.4477 14 19C14 19.5523 14.4477 20 15 20Z"/>`);
-
-export const Heart = createRuneIcon("Heart", `<path d="M2 9.49998C2.00002 8.38718 2.33759 7.30056 2.96813 6.38364C3.59867 5.46672 4.49252 4.76264 5.53161 4.36438C6.5707 3.96612 7.70616 3.89242 8.78801 4.15302C9.86987 4.41362 10.8472 4.99626 11.591 5.82398C11.6434 5.87999 11.7067 5.92465 11.7771 5.95518C11.8474 5.98571 11.9233 6.00146 12 6.00146C12.0767 6.00146 12.1526 5.98571 12.2229 5.95518C12.2933 5.92465 12.3566 5.87999 12.409 5.82398C13.1504 4.99088 14.128 4.40335 15.2116 4.13958C16.2952 3.87581 17.4335 3.94833 18.4749 4.34746C19.5163 4.7466 20.4114 5.45343 21.0411 6.37388C21.6708 7.29433 22.0053 8.38474 22 9.49998C22 11.79 20.5 13.5 19 15L13.508 20.313C13.3217 20.527 13.0919 20.6989 12.834 20.8173C12.5762 20.9357 12.296 20.9978 12.0123 20.9996C11.7285 21.0014 11.4476 20.9428 11.1883 20.8277C10.9289 20.7126 10.697 20.5436 10.508 20.332L5 15C3.5 13.5 2 11.8 2 9.49998Z"/>`);
-
-export const Home = createRuneIcon("Home", `<path d="M15 21V13C15 12.7348 14.8946 12.4804 14.7071 12.2929C14.5196 12.1054 14.2652 12 14 12H10C9.73478 12 9.48043 12.1054 9.29289 12.2929C9.10536 12.4804 9 12.7348 9 13V21M3 9.99999C2.99993 9.70906 3.06333 9.42161 3.18579 9.15771C3.30824 8.8938 3.4868 8.65979 3.709 8.47199L10.709 2.47199C11.07 2.1669 11.5274 1.99951 12 1.99951C12.4726 1.99951 12.93 2.1669 13.291 2.47199L20.291 8.47199C20.5132 8.65979 20.6918 8.8938 20.8142 9.15771C20.9367 9.42161 21.0001 9.70906 21 9.99999V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V9.99999Z"/>`);
-
-export const Laptop = createRuneIcon("Laptop", `<path d="M20.054 15.9871H3.94604M18 5C18.5305 5 19.0392 5.21071 19.4142 5.58579C19.7893 5.96086 20 6.46957 20 7V15.526C19.9999 15.8374 20.0725 16.1446 20.212 16.423L21.28 18.55C21.3571 18.703 21.3936 18.8732 21.386 19.0444C21.3784 19.2155 21.327 19.3818 21.2366 19.5274C21.1463 19.6729 21.0201 19.7928 20.8701 19.8756C20.7201 19.9584 20.5513 20.0012 20.38 20H3.62002C3.44871 20.0012 3.27997 19.9584 3.12997 19.8756C2.97997 19.7928 2.85374 19.6729 2.7634 19.5274C2.67305 19.3818 2.62162 19.2155 2.61402 19.0444C2.60643 18.8732 2.64293 18.703 2.72002 18.55L3.78802 16.423C3.92756 16.1446 4.00016 15.8374 4.00002 15.526V7C4.00002 6.46957 4.21073 5.96086 4.58581 5.58579C4.96088 5.21071 5.46959 5 6.00002 5H18Z"/>`);
-
-export const Link = createRuneIcon("Link", `<path d="M10 13C10.4295 13.5741 10.9774 14.0491 11.6066 14.3929C12.2357 14.7367 12.9315 14.9411 13.6467 14.9923C14.3618 15.0435 15.0796 14.9403 15.7513 14.6897C16.4231 14.4392 17.0331 14.047 17.54 13.54L20.54 10.54C21.4508 9.59695 21.9548 8.33394 21.9434 7.02296C21.932 5.71198 21.4061 4.45791 20.4791 3.53087C19.5521 2.60383 18.298 2.07799 16.987 2.0666C15.676 2.0552 14.413 2.55918 13.47 3.46997L11.75 5.17997M14 11C13.5705 10.4259 13.0226 9.9508 12.3934 9.60704C11.7642 9.26328 11.0684 9.05886 10.3533 9.00765C9.63816 8.95643 8.92037 9.05961 8.24861 9.3102C7.57685 9.56079 6.96684 9.95291 6.45996 10.46L3.45996 13.46C2.54917 14.403 2.04519 15.666 2.05659 16.977C2.06798 18.288 2.59382 19.542 3.52086 20.4691C4.4479 21.3961 5.70197 21.922 7.01295 21.9334C8.32393 21.9447 9.58694 21.4408 10.53 20.53L12.24 18.82"/>`);
-
-export const Link2 = createRuneIcon("Link2", `<path d="M9 17H7C5.67392 17 4.40215 16.4732 3.46447 15.5355C2.52678 14.5979 2 13.3261 2 12C2 10.6739 2.52678 9.40215 3.46447 8.46447C4.40215 7.52678 5.67392 7 7 7H9M15 7H17C18.3261 7 19.5979 7.52678 20.5355 8.46447C21.4732 9.40215 22 10.6739 22 12C22 13.3261 21.4732 14.5979 20.5355 15.5355C19.5979 16.4732 18.3261 17 17 17H15M8 12H16"/>`);
-
-export const LogIn = createRuneIcon("LogIn", `<path d="M10 7L15 12L10 17M15 12H3M15 3H19C19.5304 3 20.0391 3.21071 20.4142 3.58579C20.7893 3.96086 21 4.46957 21 5V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H15"/>`);
-
-export const LogOut = createRuneIcon("LogOut", `<path d="M16 7L21 12L16 17M21 12H9M9 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H9"/>`);
-
-export const PanelLeft = createRuneIcon("PanelLeft", `<path d="M9 3V21M5 3H19C20.1046 3 21 3.89543 21 5V19C21 20.1046 20.1046 21 19 21H5C3.89543 21 3 20.1046 3 19V5C3 3.89543 3.89543 3 5 3Z"/>`);
-
-export const PanelLeftClose = createRuneIcon("PanelLeftClose", `<path d="M9 3V21M16 15L13 12L16 9M5 3H19C20.1046 3 21 3.89543 21 5V19C21 20.1046 20.1046 21 19 21H5C3.89543 21 3 20.1046 3 19V5C3 3.89543 3.89543 3 5 3Z"/>`);
-
-export const Pause = createRuneIcon("Pause", `<path d="M18 3H15C14.4477 3 14 3.44772 14 4V20C14 20.5523 14.4477 21 15 21H18C18.5523 21 19 20.5523 19 20V4C19 3.44772 18.5523 3 18 3Z"/>
-<path d="M9 3H6C5.44772 3 5 3.44772 5 4V20C5 20.5523 5.44772 21 6 21H9C9.55228 21 10 20.5523 10 20V4C10 3.44772 9.55228 3 9 3Z"/>`);
-
-export const Play = createRuneIcon("Play", `<path d="M5 4.99998C4.9999 4.64807 5.09265 4.30237 5.26888 3.99777C5.44512 3.69318 5.69861 3.44047 6.00375 3.26518C6.30889 3.08988 6.65488 2.99821 7.00679 2.9994C7.3587 3.0006 7.70406 3.09462 8.008 3.27198L20.005 10.27C20.3078 10.4457 20.5591 10.6977 20.7339 11.001C20.9088 11.3042 21.0009 11.6481 21.0012 11.9981C21.0015 12.3482 20.91 12.6922 20.7357 12.9957C20.5614 13.2993 20.3105 13.5518 20.008 13.728L8.008 20.728C7.70406 20.9053 7.3587 20.9994 7.00679 21.0006C6.65488 21.0018 6.30889 20.9101 6.00375 20.7348C5.69861 20.5595 5.44512 20.3068 5.26888 20.0022C5.09265 19.6976 4.9999 19.3519 5 19V4.99998Z"/>`);
-
-export const Plus = createRuneIcon("Plus", `<path d="M5 12H19M12 5V19"/>`);
-
-export const RefreshCw = createRuneIcon("RefreshCw", `<path d="M3 12C3 9.61305 3.94821 7.32387 5.63604 5.63604C7.32387 3.94821 9.61305 3 12 3C14.516 3.00947 16.931 3.99122 18.74 5.74L21 8M16 8H21V3M21 12C21 14.3869 20.0518 16.6761 18.364 18.364C16.6761 20.0518 14.3869 21 12 21C9.48395 20.9905 7.06897 20.0088 5.26 18.26L3 16M3 21V16H8"/>`);
-
-export const Repeat = createRuneIcon("Repeat", `<path d="M17 10L21 6L17 2M21 6H7C5.93913 6 4.92172 6.42143 4.17157 7.17157C3.42143 7.92172 3 8.93913 3 10V11M7 14L3 18L7 22M3 18H17C18.0609 18 19.0783 17.5786 19.8284 16.8284C20.5786 16.0783 21 15.0609 21 14V13"/>`);
-
-export const RotateCcw = createRuneIcon("RotateCcw", `<path d="M3 12C3 13.78 3.52784 15.5201 4.51677 17.0001C5.50571 18.4802 6.91131 19.6337 8.55585 20.3149C10.2004 20.9961 12.01 21.1743 13.7558 20.8271C15.5016 20.4798 17.1053 19.6226 18.364 18.364C19.6226 17.1053 20.4798 15.5016 20.8271 13.7558C21.1743 12.01 20.9961 10.2004 20.3149 8.55585C19.6337 6.91131 18.4802 5.50571 17.0001 4.51677C15.5201 3.52784 13.78 3 12 3C9.48395 3.00947 7.06897 3.99122 5.26 5.74L3 8M8 8H3V3"/>`);
-
-export const RotateCw = createRuneIcon("RotateCw", `<path d="M21 12C21 13.78 20.4722 15.5201 19.4832 17.0001C18.4943 18.4802 17.0887 19.6337 15.4442 20.3149C13.7996 20.9961 11.99 21.1743 10.2442 20.8271C8.49836 20.4798 6.89472 19.6226 5.63604 18.364C4.37737 17.1053 3.5202 15.5016 3.17294 13.7558C2.82567 12.01 3.0039 10.2004 3.68509 8.55585C4.36628 6.91131 5.51983 5.50571 6.99987 4.51677C8.47991 3.52784 10.22 3 12 3C14.52 3 16.93 4 18.74 5.74L21 8M16 8H21L21 3"/>`);
-
-export const Search = createRuneIcon("Search", `<path d="M20.9999 21.0002L16.6599 16.6602M19 11C19 15.4183 15.4183 19 11 19C6.58172 19 3 15.4183 3 11C3 6.58172 6.58172 3 11 3C15.4183 3 19 6.58172 19 11Z"/>`);
-
-export const Settings = createRuneIcon("Settings", `<path d="M9.67106 4.13615C9.72616 3.55649 9.99539 3.0182 10.4262 2.62643C10.8569 2.23467 11.4183 2.01758 12.0006 2.01758C12.5828 2.01758 13.1442 2.23467 13.575 2.62643C14.0057 3.0182 14.275 3.55649 14.3301 4.13615C14.3632 4.51061 14.486 4.87157 14.6882 5.18849C14.8904 5.50541 15.1659 5.76896 15.4915 5.95683C15.8171 6.1447 16.1832 6.25135 16.5588 6.26777C16.9343 6.28419 17.3083 6.20989 17.6491 6.05115C18.1782 5.81093 18.7777 5.77617 19.3311 5.95364C19.8844 6.1311 20.3519 6.5081 20.6426 7.01126C20.9333 7.51441 21.0263 8.10772 20.9037 8.67572C20.7811 9.24372 20.4515 9.74577 19.9791 10.0842C19.6714 10.3 19.4203 10.5868 19.247 10.9202C19.0736 11.2536 18.9831 11.6239 18.9831 11.9997C18.9831 12.3754 19.0736 12.7457 19.247 13.0791C19.4203 13.4125 19.6714 13.6993 19.9791 13.9152C20.4515 14.2535 20.7811 14.7556 20.9037 15.3236C21.0263 15.8916 20.9333 16.4849 20.6426 16.988C20.3519 17.4912 19.8844 17.8682 19.3311 18.0457C18.7777 18.2231 18.1782 18.1884 17.6491 17.9482C17.3083 17.7894 16.9343 17.7151 16.5588 17.7315C16.1832 17.7479 15.8171 17.8546 15.4915 18.0425C15.1659 18.2303 14.8904 18.4939 14.6882 18.8108C14.486 19.1277 14.3632 19.4887 14.3301 19.8632C14.275 20.4428 14.0057 20.9811 13.575 21.3729C13.1442 21.7646 12.5828 21.9817 12.0006 21.9817C11.4183 21.9817 10.8569 21.7646 10.4262 21.3729C9.99539 20.9811 9.72616 20.4428 9.67106 19.8632C9.638 19.4886 9.51516 19.1275 9.31293 18.8104C9.11069 18.4934 8.83503 18.2298 8.50929 18.0419C8.18355 17.854 7.81733 17.7474 7.44164 17.7311C7.06595 17.7147 6.69186 17.7892 6.35106 17.9482C5.82195 18.1884 5.22239 18.2231 4.66906 18.0457C4.11573 17.8682 3.64823 17.4912 3.35754 16.988C3.06685 16.4849 2.97377 15.8916 3.09642 15.3236C3.21907 14.7556 3.54866 14.2535 4.02106 13.9152C4.32868 13.6993 4.57979 13.4125 4.75315 13.0791C4.92651 12.7457 5.01701 12.3754 5.01701 11.9997C5.01701 11.6239 4.92651 11.2536 4.75315 10.9202C4.57979 10.5868 4.32868 10.3 4.02106 10.0842C3.54932 9.7456 3.22031 9.24375 3.09796 8.67613C2.97561 8.10852 3.06867 7.51569 3.35904 7.01286C3.64942 6.51004 4.11637 6.13313 4.66915 5.95539C5.22193 5.77766 5.82104 5.81179 6.35006 6.05115C6.69082 6.20989 7.0648 6.28419 7.44036 6.26777C7.81592 6.25135 8.18199 6.1447 8.5076 5.95683C8.8332 5.76896 9.10875 5.50541 9.31093 5.18849C9.5131 4.87157 9.63594 4.51061 9.66906 4.13615M15 12C15 13.6569 13.6569 15 12 15C10.3431 15 9 13.6569 9 12C9 10.3431 10.3431 9 12 9C13.6569 9 15 10.3431 15 12Z"/>`);
-
-export const Share2 = createRuneIcon("Share2", `<path d="M8.59009 13.5098L15.4201 17.4898M15.4101 6.50977L8.59009 10.4898M21 5C21 6.65685 19.6569 8 18 8C16.3431 8 15 6.65685 15 5C15 3.34315 16.3431 2 18 2C19.6569 2 21 3.34315 21 5ZM9 12C9 13.6569 7.65685 15 6 15C4.34315 15 3 13.6569 3 12C3 10.3431 4.34315 9 6 9C7.65685 9 9 10.3431 9 12ZM21 19C21 20.6569 19.6569 22 18 22C16.3431 22 15 20.6569 15 19C15 17.3431 16.3431 16 18 16C19.6569 16 21 17.3431 21 19Z"/>`);
-
-export const SkipForward = createRuneIcon("SkipForward", `<path d="M21 4V20M6.029 4.28502C5.72551 4.10292 5.37913 4.00462 5.02523 4.00016C4.67133 3.99569 4.32259 4.08522 4.0146 4.2596C3.70661 4.43398 3.45041 4.68697 3.27216 4.99274C3.09391 5.2985 3 5.64609 3 6.00002V18C3 18.3539 3.09391 18.7015 3.27216 19.0073C3.45041 19.3131 3.70661 19.5661 4.0146 19.7404C4.32259 19.9148 4.67133 20.0043 5.02523 19.9999C5.37913 19.9954 5.72551 19.8971 6.029 19.715L16.026 13.717C16.3228 13.5397 16.5685 13.2885 16.7393 12.9879C16.91 12.6873 16.9999 12.3476 17.0002 12.0019C17.0005 11.6562 16.9112 11.3163 16.741 11.0154C16.5708 10.7145 16.3255 10.4628 16.029 10.285L6.029 4.28502Z"/>`);
-
-export const Sparkles = createRuneIcon("Sparkles", `<g clip-path="url(#clip0_1_2467)">
-<path d="M20 2V6M22 4H18M11.017 2.81395C11.0598 2.58456 11.1815 2.37737 11.3611 2.22827C11.5406 2.07917 11.7666 1.99756 12 1.99756C12.2333 1.99756 12.4593 2.07917 12.6389 2.22827C12.8184 2.37737 12.9401 2.58456 12.983 2.81395L14.034 8.37195C14.1086 8.7671 14.3006 9.13057 14.585 9.41492C14.8693 9.69928 15.2328 9.89131 15.628 9.96595L21.186 11.017C21.4153 11.0598 21.6225 11.1815 21.7716 11.3611C21.9207 11.5406 22.0023 11.7666 22.0023 12C22.0023 12.2333 21.9207 12.4593 21.7716 12.6389C21.6225 12.8184 21.4153 12.9401 21.186 12.983L15.628 14.034C15.2328 14.1086 14.8693 14.3006 14.585 14.585C14.3006 14.8693 14.1086 15.2328 14.034 15.628L12.983 21.186C12.9401 21.4153 12.8184 21.6225 12.6389 21.7716C12.4593 21.9207 12.2333 22.0023 12 22.0023C11.7666 22.0023 11.5406 21.9207 11.3611 21.7716C11.1815 21.6225 11.0598 21.4153 11.017 21.186L9.96595 15.628C9.89131 15.2328 9.69928 14.8693 9.41492 14.585C9.13057 14.3006 8.7671 14.1086 8.37195 14.034L2.81395 12.983C2.58456 12.9401 2.37737 12.8184 2.22827 12.6389C2.07917 12.4593 1.99756 12.2333 1.99756 12C1.99756 11.7666 2.07917 11.5406 2.22827 11.3611C2.37737 11.1815 2.58456 11.0598 2.81395 11.017L8.37195 9.96595C8.7671 9.89131 9.13057 9.69928 9.41492 9.41492C9.69928 9.13057 9.89131 8.7671 9.96595 8.37195L11.017 2.81395ZM6 20C6 21.1046 5.10457 22 4 22C2.89543 22 2 21.1046 2 20C2 18.8954 2.89543 18 4 18C5.10457 18 6 18.8954 6 20Z"/>
-</g>
-<defs>
-<clipPath id="clip0_1_2467">
-<rect width="24" height="24"/>
-</clipPath>
-</defs>`);
-
-export const Trash2 = createRuneIcon("Trash2", `<path d="M10 11V17M14 11V17M19 6V20C19 20.5304 18.7893 21.0391 18.4142 21.4142C18.0391 21.7893 17.5304 22 17 22H7C6.46957 22 5.96086 21.7893 5.58579 21.4142C5.21071 21.0391 5 20.5304 5 20V6M3 6H21M8 6V4C8 3.46957 8.21071 2.96086 8.58579 2.58579C8.96086 2.21071 9.46957 2 10 2H14C14.5304 2 15.0391 2.21071 15.4142 2.58579C15.7893 2.96086 16 3.46957 16 4V6"/>`);
-
-export const Tv = createRuneIcon("Tv", `<path d="M17 2L12 7L7 2M4 7H20C21.1046 7 22 7.89543 22 9V20C22 21.1046 21.1046 22 20 22H4C2.89543 22 2 21.1046 2 20V9C2 7.89543 2.89543 7 4 7Z"/>`);
-
-export const UserPlus = createRuneIcon("UserPlus", `<path d="M16 21V19C16 17.9391 15.5786 16.9217 14.8284 16.1716C14.0783 15.4214 13.0609 15 12 15H6C4.93913 15 3.92172 15.4214 3.17157 16.1716C2.42143 16.9217 2 17.9391 2 19V21M19 8V14M22 11H16M13 7C13 9.20914 11.2091 11 9 11C6.79086 11 5 9.20914 5 7C5 4.79086 6.79086 3 9 3C11.2091 3 13 4.79086 13 7Z"/>`);
-
-export const Users = createRuneIcon("Users", `<path d="M16 21V19C16 17.9391 15.5786 16.9217 14.8284 16.1716C14.0783 15.4214 13.0609 15 12 15H6C4.93913 15 3.92172 15.4214 3.17157 16.1716C2.42143 16.9217 2 17.9391 2 19V21M16 3.12793C16.8578 3.3503 17.6174 3.85119 18.1597 4.55199C18.702 5.25279 18.9962 6.11382 18.9962 6.99993C18.9962 7.88604 18.702 8.74707 18.1597 9.44787C17.6174 10.1487 16.8578 10.6496 16 10.8719M22 20.9999V18.9999C21.9993 18.1136 21.7044 17.2527 21.1614 16.5522C20.6184 15.8517 19.8581 15.3515 19 15.1299M13 7C13 9.20914 11.2091 11 9 11C6.79086 11 5 9.20914 5 7C5 4.79086 6.79086 3 9 3C11.2091 3 13 4.79086 13 7Z"/>`);
-
-export const X = createRuneIcon("X", `<path d="M18 6L6 18M6 6L18 18"/>`);
-
-export const Captions = createRuneIcon("Captions", `<rect width="18" height="14" x="3" y="5" rx="2" ry="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/>`);
-
-export const Cast = createRuneIcon("Cast", `<path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><path d="M2 12a9 9 0 0 1 8 8"/><path d="M2 16a5 5 0 0 1 4 4"/><line x1="2" x2="2.01" y1="20" y2="20"/>`);
-
-export const Disc3 = createRuneIcon("Disc3", `<circle cx="12" cy="12" r="10"/><path d="M6 12c0-1.7.7-3.2 1.8-4.2"/><circle cx="12" cy="12" r="2"/><path d="M18 12c0 1.7-.7 3.2-1.8 4.2"/>`);
-
-export const Languages = createRuneIcon("Languages", `<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>`);
-
-export const ListMusic = createRuneIcon("ListMusic", `<path d="M16 5H3"/><path d="M11 12H3"/><path d="M11 19H3"/><path d="M21 16V5"/><circle cx="18" cy="16" r="3"/>`);
-
-export const ListPlus = createRuneIcon("ListPlus", `<path d="M16 5H3"/><path d="M11 12H3"/><path d="M16 19H3"/><path d="M18 9v6"/><path d="M21 12h-6"/>`);
-
-export const Loader2 = createRuneIcon("Loader2", `<path d="M21 12a9 9 0 1 1-6.219-8.56"/>`);
-
-export const Maximize2 = createRuneIcon("Maximize2", `<path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/>`);
-
+export const AlertTriangle = createIcon("AlertTriangle");
+export const ArrowRight = createIcon("ArrowRight");
+export const ArrowUpRight = createIcon("ArrowUpRight");
+export const Captions = createIcon("Captions");
+export const Cast = createIcon("Cast");
+export const Check = createIcon("Check");
+export const ChevronDown = createIcon("ChevronDown");
+export const ChevronLeft = createIcon("ChevronLeft");
+export const ChevronRight = createIcon("ChevronRight");
+export const Clock = createIcon("Clock");
+export const Devices = createIcon("Devices");
+export const Disc3 = createIcon("Disc3");
+export const Eye = createIcon("Eye");
+export const EyeOff = createIcon("EyeOff");
+export const Globe = createIcon("Globe");
+export const GripVertical = createIcon("GripVertical");
+export const Heart = createIcon("Heart");
+export const Home = createIcon("Home");
+export const Info = createIcon("Info");
+export const Languages = createIcon("Languages");
+export const Laptop = createIcon("Laptop");
+export const Link = createIcon("Link");
+export const Link2 = createIcon("Link2");
+export const ListMusic = createIcon("ListMusic");
+export const ListPlus = createIcon("ListPlus");
+export const Loader2 = createIcon("Loader2");
+export const LogIn = createIcon("LogIn");
+export const LogOut = createIcon("LogOut");
+export const Maximize2 = createIcon("Maximize2");
 // the counterpart to Maximize2, which is what opens the immersive view
-export const Minimize2 = createRuneIcon("Minimize2", `<path d="M4 14h6v6"/><path d="m3 21 7-7"/><path d="M20 10h-6V4"/><path d="m14 10 7-7"/>`);
+export const Minimize2 = createIcon("Minimize2");
+export const MonitorSpeaker = createIcon("MonitorSpeaker");
+export const MoreHorizontal = createIcon("MoreHorizontal");
+export const Music = createIcon("Music");
+export const Music2 = createIcon("Music2");
+export const PanelLeft = createIcon("PanelLeft");
+export const PanelLeftClose = createIcon("PanelLeftClose");
+export const Pause = createIcon("Pause");
+export const Pin = createIcon("Pin");
+export const PinOff = createIcon("PinOff");
+export const Play = createIcon("Play");
+export const Plus = createIcon("Plus");
+export const Queue = createIcon("Queue");
+export const RefreshCw = createIcon("RefreshCw");
+export const Repeat = createIcon("Repeat");
+export const Repeat1 = createIcon("Repeat1");
+export const RotateCcw = createIcon("RotateCcw");
+export const RotateCw = createIcon("RotateCw");
+export const Search = createIcon("Search");
+export const Settings = createIcon("Settings");
+export const Share2 = createIcon("Share2");
+export const Shuffle = createIcon("Shuffle");
+export const SkipBack = createIcon("SkipBack");
+export const SkipForward = createIcon("SkipForward");
+export const Smartphone = createIcon("Smartphone");
+export const Sparkles = createIcon("Sparkles");
+export const Speaker = createIcon("Speaker");
+export const Trash2 = createIcon("Trash2");
+export const Tv = createIcon("Tv");
+export const User = createIcon("User");
+export const UserPlus = createIcon("UserPlus");
+export const Users = createIcon("Users");
+export const X = createIcon("X");
 
-export const MonitorSpeaker = createRuneIcon("MonitorSpeaker", `<path d="M5.5 20H8"/><path d="M17 9h.01"/><rect width="10" height="16" x="12" y="4" rx="2"/><path d="M8 6H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h4"/><circle cx="17" cy="15" r="1"/>`);
-
-export const MoreHorizontal = createRuneIcon("MoreHorizontal", `<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>`);
-
-export const Music = createRuneIcon("Music", `<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>`);
-export const Info = createRuneIcon("Info", `<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>`);
-
-export const Music2 = createRuneIcon("Music2", `<circle cx="8" cy="18" r="4"/><path d="M12 18V2l7 4"/>`);
-
-export const Pin = createRuneIcon("Pin", `<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>`);
-
-export const PinOff = createRuneIcon("PinOff", `<path d="M12 17v5"/><path d="M15 9.34V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H7.89"/><path d="m2 2 20 20"/><path d="M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h11"/>`);
-
-export const Repeat1 = createRuneIcon("Repeat1", `<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/><path d="M11 10h1v4"/>`);
-
-export const Shuffle = createRuneIcon("Shuffle", `<path d="m18 14 4 4-4 4"/><path d="m18 2 4 4-4 4"/><path d="M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22"/><path d="M2 6h1.972a4 4 0 0 1 3.6 2.2"/><path d="M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45"/>`);
-
-export const SkipBack = createRuneIcon("SkipBack", `<path d="M17.971 4.285A2 2 0 0 1 21 6v12a2 2 0 0 1-3.029 1.715l-9.997-5.998a2 2 0 0 1-.003-3.432z"/><path d="M3 20V4"/>`);
-
-export const Smartphone = createRuneIcon("Smartphone", `<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>`);
-
-export const Speaker = createRuneIcon("Speaker", `<rect width="16" height="20" x="4" y="2" rx="2"/><path d="M12 6h.01"/><circle cx="12" cy="14" r="4"/><path d="M12 14h.01"/>`);
-
-export const User = createRuneIcon("User", `<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`);
-
-export const Volume1 = createVolumeIcon("Volume1", `M11 4.70203C10.9998 4.56274 10.9583 4.42663 10.8809 4.31088C10.8034 4.19514 10.6934 4.10493 10.5647 4.05166C10.436 3.99838 10.2944 3.98442 10.1577 4.01154C10.0211 4.03866 9.89559 4.10564 9.797 4.20403L6.413 7.58703C6.2824 7.7184 6.12703 7.82256 5.95589 7.89345C5.78475 7.96435 5.60124 8.00057 5.416 8.00003H3C2.73478 8.00003 2.48043 8.10539 2.29289 8.29292C2.10536 8.48046 2 8.73481 2 9.00003V15C2 15.2652 2.10536 15.5196 2.29289 15.7071C2.48043 15.8947 2.73478 16 3 16H5.416C5.60124 15.9995 5.78475 16.0357 5.95589 16.1066C6.12703 16.1775 6.2824 16.2817 6.413 16.413L9.796 19.797C9.8946 19.8958 10.0203 19.9631 10.1572 19.9904C10.2941 20.0177 10.436 20.0037 10.5649 19.9503C10.6939 19.8968 10.804 19.8063 10.8815 19.6902C10.959 19.5741 11.0002 19.4376 11 19.298V4.70203Z`, [
-  `M16 9C16.6491 9.86548 17 10.9181 17 12C17 13.0819 16.6491 14.1345 16 15`,
-]);
-
-export const Volume2 = createVolumeIcon("Volume2", `M11 4.70203C10.9998 4.56274 10.9583 4.42663 10.8809 4.31088C10.8034 4.19514 10.6934 4.10493 10.5647 4.05166C10.436 3.99838 10.2944 3.98442 10.1577 4.01154C10.0211 4.03866 9.89559 4.10564 9.797 4.20403L6.413 7.58703C6.2824 7.7184 6.12703 7.82256 5.95589 7.89345C5.78475 7.96435 5.60124 8.00057 5.416 8.00003H3C2.73478 8.00003 2.48043 8.10539 2.29289 8.29292C2.10536 8.48046 2 8.73481 2 9.00003V15C2 15.2652 2.10536 15.5196 2.29289 15.7071C2.48043 15.8947 2.73478 16 3 16H5.416C5.60124 15.9995 5.78475 16.0357 5.95589 16.1066C6.12703 16.1775 6.2824 16.2817 6.413 16.413L9.796 19.797C9.8946 19.8958 10.0203 19.9631 10.1572 19.9904C10.2941 20.0177 10.436 20.0037 10.5649 19.9503C10.6939 19.8968 10.804 19.8063 10.8815 19.6902C10.959 19.5741 11.0002 19.4376 11 19.298V4.70203Z`, [
-  `M16 9C16.6491 9.86548 17 10.9181 17 12C17 13.0819 16.6491 14.1345 16 15`,
-  `M19.364 18.3642C20.1998 17.5285 20.8627 16.5363 21.315 15.4444C21.7673 14.3525 22.0001 13.1821 22.0001 12.0002C22.0001 10.8183 21.7673 9.64799 21.315 8.55605C20.8627 7.46412 20.1998 6.47196 19.364 5.63623`,
-]);
-
-export const VolumeX = createVolumeIcon("VolumeX", `M9.82788 4.17207C9.92377 4.07581 10.0461 4.0102 10.1793 3.98355C10.3125 3.95689 10.4507 3.9704 10.5762 4.02235C10.7017 4.0743 10.809 4.16235 10.8844 4.27535C10.9599 4.38835 11 4.52121 10.9999 4.65707V5.34307`, [
-  `M16 9C16.5044 9.67234 16.8311 10.461 16.95 11.293`,
-  `M19.364 5.63623C20.643 6.91449 21.5073 8.54839 21.8442 10.325C22.1812 12.1016 21.9752 13.9384 21.253 15.5962`,
-  `M2 2L22 22`,
-  `M7 7L6.413 7.587C6.2824 7.71838 6.12703 7.82253 5.95589 7.89342C5.78475 7.96432 5.60124 8.00054 5.416 8H3C2.73478 8 2.48043 8.10536 2.29289 8.29289C2.10536 8.48043 2 8.73478 2 9V15C2 15.2652 2.10536 15.5196 2.29289 15.7071C2.48043 15.8946 2.73478 16 3 16H5.416C5.60124 15.9995 5.78475 16.0357 5.95589 16.1066C6.12703 16.1775 6.2824 16.2816 6.413 16.413L9.796 19.797C9.8946 19.8958 10.0203 19.9631 10.1572 19.9904C10.2941 20.0177 10.436 20.0037 10.5649 19.9503C10.6939 19.8968 10.804 19.8063 10.8815 19.6902C10.959 19.5741 11.0002 19.4376 11 19.298V11`,
-]);
+export const Volume1 = createVolumeIcon("Volume1", "M16 9.5a3.5 3.5 0 0 1 0 5");
+export const Volume2 = createVolumeIcon("Volume2", "M16 9.5a3.5 3.5 0 0 1 0 5M18.8 6.5a7.5 7.5 0 0 1 0 11");
+export const VolumeX = createVolumeIcon("VolumeX", "M16.5 9.5l5 5M21.5 9.5l-5 5");
 
 const ICONS: Record<string, LucideIcon> = {
-  "AlertTriangle": AlertTriangle,
-  "ArrowRight": ArrowRight,
-  "ArrowUpRight": ArrowUpRight,
-  "Captions": Captions,
-  "Cast": Cast,
-  "Check": Check,
-  "ChevronDown": ChevronDown,
-  "ChevronLeft": ChevronLeft,
-  "ChevronRight": ChevronRight,
-  "Clock": Clock,
-  "Disc3": Disc3,
-  "Eye": Eye,
-  "EyeOff": EyeOff,
-  "Globe": Globe,
-  "GripVertical": GripVertical,
-  "Heart": Heart,
-  "Home": Home,
-  "Languages": Languages,
-  "Laptop": Laptop,
-  "Link": Link,
-  "Link2": Link2,
-  "ListMusic": ListMusic,
-  "ListPlus": ListPlus,
-  "Loader2": Loader2,
-  "LogIn": LogIn,
-  "LogOut": LogOut,
-  "Maximize2": Maximize2,
-  "Minimize2": Minimize2,
-  "MonitorSpeaker": MonitorSpeaker,
-  "MoreHorizontal": MoreHorizontal,
-  "Music": Music,
-  "Info": Info,
-  "Music2": Music2,
-  "PanelLeft": PanelLeft,
-  "PanelLeftClose": PanelLeftClose,
-  "Pause": Pause,
-  "Pin": Pin,
-  "PinOff": PinOff,
-  "Play": Play,
-  "Plus": Plus,
-  "RefreshCw": RefreshCw,
-  "Repeat": Repeat,
-  "Repeat1": Repeat1,
-  "RotateCcw": RotateCcw,
-  "RotateCw": RotateCw,
-  "Search": Search,
-  "Settings": Settings,
-  "Share2": Share2,
-  "Shuffle": Shuffle,
-  "SkipBack": SkipBack,
-  "SkipForward": SkipForward,
-  "Smartphone": Smartphone,
-  "Sparkles": Sparkles,
-  "Speaker": Speaker,
-  "Trash2": Trash2,
-  "Tv": Tv,
-  "User": User,
-  "UserPlus": UserPlus,
-  "Users": Users,
-  "Volume1": Volume1,
-  "Volume2": Volume2,
-  "VolumeX": VolumeX,
-  "X": X,
+  AlertTriangle, ArrowRight, ArrowUpRight, Captions, Cast, Check,
+  ChevronDown, ChevronLeft, ChevronRight, Clock, Devices, Disc3, Eye, EyeOff,
+  Globe, GripVertical, Heart, Home, Info, Languages, Laptop, Link, Link2,
+  ListMusic, ListPlus, Loader2, LogIn, LogOut, Maximize2, Minimize2,
+  MonitorSpeaker, MoreHorizontal, Music, Music2, PanelLeft, PanelLeftClose,
+  Pause, Pin, PinOff, Play, Plus, Queue, RefreshCw, Repeat, Repeat1, RotateCcw,
+  RotateCw, Search, Settings, Share2, Shuffle, SkipBack, SkipForward,
+  Smartphone, Sparkles, Speaker, Trash2, Tv, User, UserPlus, Users,
+  Volume1, Volume2, VolumeX, X,
 };
 
 export function RuneIcon({ name, ...props }: IconProps & { name: string }) {

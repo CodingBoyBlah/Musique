@@ -180,6 +180,21 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
     opacity: 1;
 }
 
+/* Sidebar nav icons. drawn solid white and dimmed with opacity so the glyph
+   composites as one layer; an rgba stroke colour would double up (read
+   lighter) wherever two strokes cross. */
+.nav-icon {
+    color: #ffffff;
+    opacity: 0.55;
+    transition: opacity 0.15s ease;
+}
+.nav-item:hover .nav-icon {
+    opacity: 0.85;
+}
+.nav-icon[data-active] {
+    opacity: 1;
+}
+
 /* Card hover play button (Home recommendations) */
 .group:hover .rec-play {
     opacity: 1 !important;
@@ -460,79 +475,82 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
 }
 
 
-/* ── title-bar capsules ───────────────────────────────────────────────────
-   the two clusters that flank the drag region. hover / press / focus are
-   CSS-only: the old inline onMouseEnter handlers wrote straight to
-   node.style, so any unrelated re-render while the cursor was still on a
-   button wiped the hover fill. */
+/* ── top bar controls ─────────────────────────────────────────────────────
+   the button groups either side of the search field, and the field itself.
+   they follow the rest of the app's shape language rather than being pills:
+   10px on the group (a notch under the 12px card), 7px on the buttons inside
+   so the corners stay concentric (10 - 1px border - 2px padding), and the
+   same faint glass fill + hairline the cards and sidebar pills use. 30px
+   tall in the 40px bar leaves 5px above and 5px down to the card.
 
+   hover / press / focus are CSS-only: the old inline onMouseEnter handlers
+   wrote straight to node.style, so any unrelated re-render while the cursor
+   was still on a button wiped the hover fill.
+
+   no backdrop-filter: the top bar sits straight on the OS material, so there
+   is nothing painted behind these to blur, and a filter layer over a
+   transparent window only buys a compositing surface. */
+
+/* a bare row of controls: no box around the group, the buttons carry their
+   own hover / on states */
 .tb-capsule {
     display: flex;
     align-items: center;
-    height: 32px;
-    padding: 2px;
+    height: 30px;
     gap: 2px;
     flex-shrink: 0;
-    border-radius: 9999px;
-    background: rgba(255, 255, 255, 0.055);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.09),
-        0 2px 8px rgba(0, 0, 0, 0.22);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
 }
 
 /* group divider. only between groups, never between every control */
 .tb-sep {
     width: 1px;
-    height: 14px;
+    height: 16px;
     flex-shrink: 0;
     margin: 0 3px;
-    background: rgba(255, 255, 255, 0.11);
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .tb-btn {
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     flex-shrink: 0;
     border: none;
-    border-radius: 9999px;
+    border-radius: 8px;
     background: transparent;
-    color: rgba(255, 255, 255, 0.72);
+    color: rgba(255, 255, 255, 0.62);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     transition:
-        background 0.15s ease,
-        color 0.15s ease,
-        box-shadow 0.15s ease,
-        transform 0.09s ease;
+        background 0.12s ease,
+        color 0.12s ease,
+        box-shadow 0.12s ease,
+        transform 0.12s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .tb-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.08);
     color: #ffffff;
 }
 
 .tb-btn:active {
-    transform: scale(0.9);
+    transform: scale(0.94);
 }
 
 .tb-btn:focus-visible {
-    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline: 2px solid var(--color-accent);
     outline-offset: 1px;
 }
 
-/* toggled on -> the same accent the sidebar uses for the active nav item, so
-   "this panel is open" reads at a glance instead of as a faint grey wash */
+/* toggled on -> the same accent pill the sidebar uses for the active nav
+   item, so "this panel is open" reads at a glance */
 .tb-btn[data-on="true"] {
     background: var(--color-accent);
     color: #ffffff;
     box-shadow:
-        0 2px 8px var(--color-accent-dim),
-        inset 0 1px 0 rgba(255, 255, 255, 0.18);
+        0 2px 10px rgba(88, 115, 216, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 
 .tb-btn[data-on="true"]:hover {
@@ -540,18 +558,19 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
 }
 
 /* playing on another device: a different fact, so a different colour */
-.tb-btn[data-tone="remote"],
-.tb-btn[data-tone="remote"]:hover {
-    background: rgba(30, 215, 96, 0.18);
+.tb-btn[data-tone="remote"] {
+    background: rgba(30, 215, 96, 0.16);
     color: var(--color-primary, #1ed760);
 }
 
 .tb-btn[data-tone="remote"]:hover {
-    background: rgba(30, 215, 96, 0.26);
+    background: rgba(30, 215, 96, 0.24);
+    color: var(--color-primary, #1ed760);
 }
 
 /* nothing to act on. still hoverable, so the tooltip can say why */
-.tb-btn[aria-disabled="true"] {
+.tb-btn[aria-disabled="true"],
+.tb-btn[aria-disabled="true"]:hover {
     color: rgba(255, 255, 255, 0.22);
     background: transparent;
     cursor: default;
@@ -561,8 +580,99 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
     transform: none;
 }
 
+/* the search field. the one boxed thing in the top bar, since it is an
+   input rather than a button; focus borrows the accent the way the rest of
+   the app marks "this is where your input goes" */
+.tb-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 5px 0 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    color: var(--color-text-dim);
+    cursor: text;
+    transition:
+        background 0.15s ease,
+        border-color 0.15s ease,
+        box-shadow 0.15s ease,
+        color 0.15s ease;
+}
+
+.tb-search:hover {
+    background: rgba(255, 255, 255, 0.065);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.tb-search[data-focused="true"] {
+    background: rgba(255, 255, 255, 0.075);
+    border-color: rgba(88, 115, 216, 0.75);
+    box-shadow: 0 0 0 3px rgba(88, 115, 216, 0.2);
+    color: #ffffff;
+}
+
+.tb-search input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--color-text-hi);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.006em;
+}
+
+.tb-search input::placeholder {
+    color: rgba(255, 255, 255, 0.42);
+    font-weight: 450;
+}
+
+.tb-search-kbd {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 5px;
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.45);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    user-select: none;
+}
+
+.tb-search-clear {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+
+.tb-search-clear:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+}
+
 @media (prefers-reduced-motion: reduce) {
-    .tb-btn {
+    .tb-btn,
+    .tb-search {
         transition: none;
     }
     .tb-btn:active {

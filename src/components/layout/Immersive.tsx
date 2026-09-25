@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Minimize2, Captions, ListMusic, Music } from "@/lib/icons";
+import { Minimize2, Captions, Queue, Music } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
@@ -460,8 +460,8 @@ export function Immersive() {
               >
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
                   <div className="lyr-tabs">
-                    <PanelTab active={panel === "lyrics"} onClick={() => setPanel("lyrics")} icon={<Captions size={14} />} label="Lyrics" />
-                    <PanelTab active={panel === "queue"} onClick={() => setPanel("queue")} icon={<ListMusic size={14} />} label="Queue" />
+                    <PanelTab active={panel === "lyrics"} onClick={() => setPanel("lyrics")} icon={<Captions size={14} active={panel === "lyrics"} />} label="Lyrics" />
+                    <PanelTab active={panel === "queue"} onClick={() => setPanel("queue")} icon={<Queue size={14} active={panel === "queue"} />} label="Queue" />
                   </div>
                   <button
                     className="imm-close"
