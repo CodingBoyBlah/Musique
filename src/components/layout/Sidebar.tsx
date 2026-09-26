@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { useNavigate, useLocation } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, animate, useMotionValue, useTransform, useReducedMotion, type MotionValue } from "framer-motion";
 import {
   Home, ListMusic,
   Music, Disc3, User,
@@ -19,6 +19,15 @@ import { Tooltip } from "../ui/Tooltip";
 import { isMac } from "../../lib/platform";
 import { usePrefsStore } from "../../store/prefs.store";
 import { chromePx } from "../../lib/zoom";
+
+/* collapsed rail geometry: one 40px square target per row, centred in the
+rail, 10px corners. Every icon and pinned cover sits on this same grid, so the
+rail reads as one column rather than a stack of odd-sized pieces. */
+const RAIL_ITEM = 40;
+const RAIL_RADIUS = 10;
+// a pinned cover inset in its target, so the selected pill shows as an even
+// 4px ring around it; its corners follow the pill's (10 - 4 = 6)
+const RAIL_COVER = 32;
 
 // nav item. active state passed in explicitly so we don't get multi highlight
 
@@ -46,13 +55,13 @@ function NavItem({
         alignItems:    "center",
         justifyContent: collapsed ? "center" : "flex-start",
         gap:           collapsed ? 0 : 11,
-        height:        34,
-        /* collapsed: fixed 34x34 square, centred in the column, so the active
+        height:        collapsed ? RAIL_ITEM : 34,
+        /* collapsed: a fixed square, centred in the column, so the active
          pill (inset: 0) is a perfect square */
-        width:         collapsed ? 34 : "100%",
+        width:         collapsed ? RAIL_ITEM : "100%",
         margin:        collapsed ? "0 auto" : undefined,
         padding:       collapsed ? 0 : "0 10px",
-        borderRadius:  8,
+        borderRadius:  collapsed ? RAIL_RADIUS : 8,
         border:        "none",
         fontSize:      13.5,
         fontWeight:    active ? 600 : 500,
@@ -62,14 +71,14 @@ function NavItem({
         textAlign:     collapsed ? "center" : "left",
       }}
     >
-      {active && (
+      {active && !collapsed && (
         <motion.div
           layoutId="activeNavPill"
           transition={SPRING}
           style={{
             position: "absolute",
             inset: 0,
-            borderRadius: 8,
+            borderRadius: collapsed ? RAIL_RADIUS : 8,
             background: "var(--color-accent)",
             boxShadow: "0 2px 10px var(--color-accent-dim, rgba(88, 115, 216, 0.35))",
             zIndex: 0,
@@ -81,7 +90,8 @@ function NavItem({
         zIndex: 1,
         width: 20, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
       }}>
-        <Icon size={18} strokeWidth={1.7} active={active} />
+        {/* a touch larger alone in the rail, where the icon is the only label */}
+        <Icon size={collapsed ? 19 : 18} strokeWidth={1.7} active={active} />
       </span>
       {!collapsed && (
         <span style={{ position: "relative", zIndex: 1, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: active ? "#ffffff" : "inherit" }}>{label}</span>
@@ -95,17 +105,121 @@ function NavItem({
   return btn;
 }
 
+/* The collapsed rail's selection highlight: one element for the whole rail
+rather than a pill inside each item handed over by layoutId, which slid as a
+rigid tile over every icon in between.
+
+Its two edges ride separate critically damped springs. The leading edge (the
+one on the side of the item you picked) is quick, the trailing edge follows a
+beat later, so the highlight stretches toward your choice and draws itself in
+behind - the motion points at where it's going. No overshoot: this answers a
+click, and nothing that was merely clicked should bounce. */
+const EDGE_LEAD  = { type: "spring" as const, stiffness: 620, damping: 50 };  // ~critical (2*sqrt(620) = 49.8)
+const EDGE_TRAIL = { type: "spring" as const, stiffness: 260, damping: 33 };  // ~critical (2*sqrt(260) = 32.2)
+
+function useRailIndicator(containerRef: React.RefObject<HTMLDivElement | null>, enabled: boolean, deps: unknown[]) {
+  const reduceMotion = useReducedMotion();
+  const top = useMotionValue(0);
+  const bottom = useMotionValue(0);
+  const height = useTransform([top, bottom], ([t, b]: number[]) => Math.max(0, b - t));
+  const [visible, setVisible] = useState(false);
+  const shown = useRef(false);
+
+  const measure = useCallback(() => {
+    const c = containerRef.current;
+    const el = enabled ? c?.querySelector<HTMLElement>('.sb-item[data-active="true"]') : null;
+    if (!c || !el) {
+      shown.current = false;
+      setVisible(false);
+      return;
+    }
+    // measure from the item's centre and untransformed height, so a press
+    // scale still running on the clicked item doesn't skew the target
+    const cr = c.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const mid = r.top + r.height / 2 - cr.top + c.scrollTop;
+    const t = mid - el.offsetHeight / 2;
+    const b = mid + el.offsetHeight / 2;
+
+    // first appearance (rail just collapsed, or arriving from a page with no
+    // rail item) lands in place and fades in; only item-to-item moves travel
+    if (!shown.current || reduceMotion) {
+      top.jump(t);
+      bottom.jump(b);
+      shown.current = true;
+      setVisible(true);
+      return;
+    }
+    if (t === top.get() && b === bottom.get()) return;
+    const down = t > top.get();
+    animate(top, t, down ? EDGE_TRAIL : EDGE_LEAD);
+    animate(bottom, b, down ? EDGE_LEAD : EDGE_TRAIL);
+  }, [containerRef, enabled, reduceMotion, top, bottom]);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(measure, deps);
+
+  // zoom or window changes move the items without a route change
+  useEffect(() => {
+    const c = containerRef.current;
+    if (!c || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(c);
+    return () => ro.disconnect();
+  }, [containerRef, measure]);
+
+  return { top, height, visible };
+}
+
+function RailIndicator({ top, height, visible }: { top: MotionValue<number>; height: MotionValue<number>; visible: boolean }) {
+  return (
+    <motion.div
+      aria-hidden
+      initial={false}
+      animate={{ opacity: visible ? 1 : 0 }}
+      transition={{ duration: 0.15, ease: EASE_OUT }}
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        margin: "0 auto",
+        width: RAIL_ITEM,
+        y: top,
+        height,
+        borderRadius: RAIL_RADIUS,
+        background: "var(--color-accent)",
+        boxShadow: "0 2px 10px var(--color-accent-dim, rgba(88, 115, 216, 0.35))",
+        pointerEvents: "none",
+        zIndex: 0,
+      }}
+    />
+  );
+}
+
 // collapsible section
 
 function Section({
-  label, expanded, onToggle, children, collapsed,
+  label, expanded, onToggle, children, collapsed, first,
 }: {
   label: string; expanded: boolean; onToggle: () => void; children: React.ReactNode; collapsed?: boolean;
+  // the top group: nothing above it to separate from, so no divider
+  first?: boolean;
 }) {
   if (collapsed) {
+    /* groups are split by a short centred hairline, not a rule across the
+       whole rail: it separates without boxing the column into strips. an
+       empty group (no pins yet) draws nothing, divider included. */
+    const hasItems = Array.isArray(children) ? children.some(Boolean) : Boolean(children);
+    if (!hasItems) return null;
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 8 }}>
-        <div style={{ height: 1, background: "var(--color-border)", margin: "4px 6px 6px" }} />
+      <div role="group" aria-label={label} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {!first && (
+          <div
+            aria-hidden
+            style={{ width: 20, height: 1, borderRadius: 1, background: "rgba(255, 255, 255, 0.12)", margin: "8px auto" }}
+          />
+        )}
         {children}
       </div>
     );
@@ -202,6 +316,9 @@ export default function Sidebar() {
   const px = (n: number) => chromePx(n, zoom);
   const railWidth = isCollapsed ? (macChrome ? Math.max(64, px(72)) : 64) : 232;
 
+  const railRef = useRef<HTMLDivElement>(null);
+  const rail = useRailIndicator(railRef, isCollapsed, [isCollapsed, path, location.search, pins]);
+
   const [spotifyOpen, setSpotifyOpen] = useState(true);
   const [libraryOpen, setLibraryOpen] = useState(true);
   const [pinsOpen,    setPinsOpen]    = useState(true);
@@ -256,8 +373,9 @@ export default function Sidebar() {
       )}
 
       {/* nav */}
-      <div style={{ flex: 1, overflowY: "auto", padding: isCollapsed ? "4px 6px" : "4px 8px" }}>
-        <Section label="Discover" expanded={spotifyOpen} onToggle={() => setSpotifyOpen(v => !v)} collapsed={isCollapsed}>
+      <div ref={railRef} style={{ position: "relative", flex: 1, overflowY: "auto", overflowX: "hidden", padding: isCollapsed ? "6px 6px 12px" : "4px 8px", scrollbarWidth: isCollapsed ? "none" : undefined }}>
+        {isCollapsed && <RailIndicator top={rail.top} height={rail.height} visible={rail.visible} />}
+        <Section label="Discover" first expanded={spotifyOpen} onToggle={() => setSpotifyOpen(v => !v)} collapsed={isCollapsed}>
           <NavItem icon={Home} label="Home"      active={path === "/"}                                          onClick={() => navigate("/")} collapsed={isCollapsed} />
           <NavItem icon={ListMusic} label="Playlists" active={path === "/playlists" || onUnpinnedPlaylist}           onClick={() => navigate("/playlists")} collapsed={isCollapsed} />
         </Section>
@@ -295,6 +413,8 @@ export default function Sidebar() {
           ) : (
             pins.map((p) => {
               const active = openId === p.id && openType === p.type;
+              const coverSize = isCollapsed ? RAIL_COVER : 26;
+              const coverRadius = isCollapsed ? RAIL_RADIUS - (RAIL_ITEM - RAIL_COVER) / 2 : 5;
               const btn = (
                 <motion.button
                   key={p.id}
@@ -317,11 +437,11 @@ export default function Sidebar() {
                     alignItems:    "center",
                     justifyContent: isCollapsed ? "center" : "flex-start",
                     gap:           isCollapsed ? 0 : 10,
-                    height:        34,
-                    width:         isCollapsed ? 34 : "100%",
+                    height:        isCollapsed ? RAIL_ITEM : 34,
+                    width:         isCollapsed ? RAIL_ITEM : "100%",
                     margin:        isCollapsed ? "0 auto" : undefined,
                     padding:       isCollapsed ? 0 : "0 8px",
-                    borderRadius:  8,
+                    borderRadius:  isCollapsed ? RAIL_RADIUS : 8,
                     border:        "none",
                     background:    "transparent",
                     color:         active ? "#ffffff" : "var(--color-text)",
@@ -333,14 +453,14 @@ export default function Sidebar() {
                     else prefetchPlaylist(qc, p.id);
                   }}
                 >
-                  {active && (
+                  {active && !isCollapsed && (
                     <motion.div
                       layoutId="activeNavPill"
                       transition={SPRING}
                       style={{
                         position: "absolute",
                         inset: 0,
-                        borderRadius: 8,
+                        borderRadius: isCollapsed ? RAIL_RADIUS : 8,
                         background: "var(--color-accent)",
                         boxShadow: "0 2px 10px var(--color-accent-dim, rgba(88, 115, 216, 0.35))",
                         zIndex: 0,
@@ -349,9 +469,9 @@ export default function Sidebar() {
                   )}
                   <span style={{ position: "relative", zIndex: 1, display: "flex", flexShrink: 0 }}>
                     {p.image_url ? (
-                      <img src={coverUrl(p.image_url, 26) ?? p.image_url} alt="" style={{ width: 26, height: 26, borderRadius: 5, objectFit: "cover" }} />
+                      <img src={coverUrl(p.image_url, coverSize) ?? p.image_url} alt="" style={{ width: coverSize, height: coverSize, borderRadius: coverRadius, objectFit: "cover", boxShadow: isCollapsed ? "0 2px 6px rgba(0, 0, 0, 0.35)" : undefined }} />
                     ) : (
-                      <div style={{ width: 26, height: 26, borderRadius: 5, background: active ? "rgba(255,255,255,0.2)" : "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <div style={{ width: coverSize, height: coverSize, borderRadius: coverRadius, background: active ? "rgba(255,255,255,0.2)" : "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <ListMusic size={14} style={{ color: active ? "#ffffff" : "var(--color-text-dim)" }} />
                       </div>
                     )}
