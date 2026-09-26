@@ -1,9 +1,9 @@
-import { useState, useRef, useLayoutEffect, useMemo, memo } from "react";
+import { useState, useRef, useLayoutEffect, useEffect, useMemo, memo } from "react";
 import { coverUrl } from "../lib/coverUrl";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { Heart, Music2, ListMusic, Disc3, Users, ChevronLeft, ChevronRight } from "@/lib/icons";
+import { Heart, Music2, ListMusic, Disc3, Users } from "@/lib/icons";
 import { useAuth } from "../hooks/useAuth";
 import { getRecommendations, getAlbum, getArtist, getPlaylist, getTrack } from "../api/spotify";
 import { getLikedSongs } from "../api/library";
@@ -20,25 +20,30 @@ import { useSpeedDialStore, type SpeedDialEntry } from "../store/speedDial.store
 import { playTrack } from "../api/playback";
 import { transportPlay, transportPause } from "../hooks/usePlayerControls";
 import { Loader } from "../components/ui/Loader";
-import { EmptyState } from "../components/ui/EmptyState";
-import { MusiqueLogo } from "../components/ui/MusiqueLogo";
+import { SignInPrompt } from "../components/ui/SignInPrompt";
+import { SectionTitle } from "../components/ui/SectionTitle";
+import { useCarousel, CarouselControls, CarouselTrack } from "../components/ui/Carousel";
 import { ArtistCard } from "../components/ui/ArtistCard";
 import { AlbumCard } from "../components/ui/AlbumCard";
 import { EvenGrid, EvenGridSkeleton } from "../components/ui/EvenGrid";
 import { CirclePlayButton } from "../components/ui/CirclePlayButton";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { meshGradient } from "../lib/mesh";
-import { gpuLayer, zTransform } from "../lib/motion";
+import { gpuLayer, zTransform, EASE_OUT, PRESS } from "../lib/motion";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
 
-// grid reflow spring for smooth panel gliding
-const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
+// grid reflow spring for smooth panel gliding (critically damped)
+const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
+
+/* the quick-action cascade plays once per session. Home is the screen people
+return to most; replaying a stagger on every back-navigation reads as the page
+being slow to arrive, when it was already there. */
+let quickShelfHasEntered = false;
 
 // every track tile renders at this exact size regardless of window width
 const TILE_COVER = 164;
-const TILE_FLEX  = `0 0 ${TILE_COVER}px`;
 const TILE_H     = 212; // 20 padding + 144 cover + 2×8 gap + 17 title + 15 artist
 
 // --- top 6 quick action cards ---
@@ -59,12 +64,17 @@ const QuickActionCard = memo(function QuickActionCard({
   item,
   recentTracks,
   index = 0,
+  animateIn,
 }: {
   item: QuickItem;
   recentTracks: TrackItem[];
   index?: number;
+  animateIn: boolean;
 }) {
   const [hover, setHover] = useState(false);
+  const [focused, setFocused] = useState(false);
+  // the click was heard; playback's context is being fetched
+  const [pending, setPending] = useState(false);
   const navigate = useNavigate();
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const isCurrentTrackMatch = usePlayerStore((s) => Boolean(item.track && s.currentTrack?.id === item.track.id));
@@ -84,6 +94,7 @@ const QuickActionCard = memo(function QuickActionCard({
       e.preventDefault();
       e.stopPropagation();
     }
+    if (pending) return;
 
     if (isThisPlaying) {
       transportPause();
@@ -95,6 +106,15 @@ const QuickActionCard = memo(function QuickActionCard({
       return;
     }
 
+    setPending(true);
+    try {
+      await startPlayback();
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function startPlayback() {
     const playContext = useQueueStore.getState().playContext;
     const setCurrentTrack = usePlayerStore.getState().setCurrentTrack;
     const setPlaying = (val: boolean) => usePlayerStore.getState().setPlaying(val);
@@ -214,23 +234,30 @@ const QuickActionCard = memo(function QuickActionCard({
     navigate(item.to);
   }
 
+  /* the whole card is a mouse target, but the play button inside it is the one
+  real control - so there is no role=button wrapping a <button>. keyboard users
+  tab straight to the play button, and focusing it lights the card up the same
+  way hovering does. */
+  const lit = hover || focused;
   return (
     <motion.div
-      role="button"
-      tabIndex={0}
       layout="position"
       transformTemplate={zTransform}
-      initial={{ opacity: 0, y: 10 }}
+      initial={animateIn ? { opacity: 0, y: 10 } : false}
       animate={{ opacity: 1, y: 0 }}
+      whileTap={PRESS}
       transition={{
-        opacity: { duration: 0.28, delay: index * 0.035 },
-        y: { duration: 0.28, delay: index * 0.035 },
+        opacity: { duration: 0.28, delay: index * 0.035, ease: EASE_OUT },
+        y: { duration: 0.28, delay: index * 0.035, ease: EASE_OUT },
+        scale: { duration: 0.12, ease: EASE_OUT },
         layout: REFLOW,
       }}
       onClick={() => handlePlay()}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handlePlay(); }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      aria-busy={pending || undefined}
       style={{
         display: "flex",
         alignItems: "center",
@@ -238,13 +265,13 @@ const QuickActionCard = memo(function QuickActionCard({
         padding: "5px 12px 5px 6px",
         borderRadius: 10,
         overflow: "hidden",
-        cursor: "pointer",
-        background: hover
+        cursor: pending ? "progress" : "pointer",
+        background: lit
           ? "rgba(255, 255, 255, 0.09)"
           : "rgba(255, 255, 255, 0.045)",
         border: "1px solid rgba(255, 255, 255, 0.07)",
         transition: "background 0.16s ease, box-shadow 0.16s ease",
-        boxShadow: hover ? "0 10px 24px rgba(0,0,0,0.42)" : "0 2px 6px rgba(0,0,0,0.18)",
+        boxShadow: lit ? "0 10px 24px rgba(0,0,0,0.42)" : "0 2px 6px rgba(0,0,0,0.18)",
         userSelect: "none",
         minWidth: 0,
         ...gpuLayer,
@@ -346,7 +373,8 @@ const QuickActionCard = memo(function QuickActionCard({
       <div style={{ marginRight: 12, flexShrink: 0 }}>
         <CirclePlayButton
           isPlaying={isThisPlaying}
-          visible={hover || isThisPlaying}
+          visible={lit || isThisPlaying || pending}
+          pending={pending}
           onClick={(e) => handlePlay(e)}
           size={42}
           iconSize={17}
@@ -392,6 +420,12 @@ function QuickActionsShelf() {
       if (rafId) cancelAnimationFrame(rafId);
       ro.disconnect();
     };
+  }, []);
+
+  // captured once per mount: true only for the first Home visit this session
+  const [animateIn] = useState(() => !quickShelfHasEntered);
+  useEffect(() => {
+    quickShelfHasEntered = true;
   }, []);
 
   const speedDialEntries = useSpeedDialStore((s) => s.entries);
@@ -627,6 +661,7 @@ function QuickActionsShelf() {
           item={item}
           recentTracks={recentTracks}
           index={i}
+          animateIn={animateIn}
         />
       ))}
     </motion.section>
@@ -634,110 +669,6 @@ function QuickActionsShelf() {
 }
 
 // --- section scaffolding ---
-
-function CarouselControls({ onPrev, onNext }: { onPrev?: () => void; onNext?: () => void }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <button
-        onClick={onPrev}
-        aria-label="Previous items"
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: "50%",
-          border: "1px solid rgba(255, 255, 255, 0.08)",
-          background: "rgba(255, 255, 255, 0.05)",
-          color: "var(--color-text-dim)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-          transition: "background 0.15s, color 0.15s",
-        }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.12)";
-          (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.05)";
-          (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-dim)";
-        }}
-      >
-        <ChevronLeft size={15} strokeWidth={2.4} />
-      </button>
-      <button
-        onClick={onNext}
-        aria-label="Next items"
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: "50%",
-          border: "1px solid rgba(255, 255, 255, 0.08)",
-          background: "rgba(255, 255, 255, 0.05)",
-          color: "var(--color-text-dim)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-          transition: "background 0.15s, color 0.15s",
-        }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.12)";
-          (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.05)";
-          (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-dim)";
-        }}
-      >
-        <ChevronRight size={15} strokeWidth={2.4} />
-      </button>
-    </div>
-  );
-}
-
-function SectionTitle({
-  children,
-  right,
-  onPrev,
-  onNext,
-}: {
-  children: React.ReactNode;
-  right?: React.ReactNode;
-  onPrev?: () => void;
-  onNext?: () => void;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        flexWrap: "wrap",
-        rowGap: 8,
-        margin: "0 0 16px",
-      }}
-    >
-      <h2
-        style={{
-          margin: 0,
-          fontSize: "clamp(18px, 2.2vw, 22px)",
-          fontWeight: 700,
-          letterSpacing: "-0.025em",
-          color: "var(--color-text-hi)",
-          textWrap: "balance",
-        } as React.CSSProperties}
-      >
-        {children}
-      </h2>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {right}
-        {(onPrev || onNext) && <CarouselControls onPrev={onPrev} onNext={onNext} />}
-      </div>
-    </div>
-  );
-}
 
 function TileSkeleton() {
   return <EvenGridSkeleton minColWidth={TILE_COVER} gap={14} maxRows={1} />;
@@ -859,7 +790,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
           </div>
         )}
       </div>
-      <span style={{ fontSize: 12, lineHeight: "15px", height: 15, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", width: "100%", display: "block", flexShrink: 0, minWidth: 0 }}>
+      <span className="t-caption" style={{ fontSize: 12, lineHeight: "15px", height: 15, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", width: "100%", display: "block", flexShrink: 0, minWidth: 0 }}>
         {track.artists.map((a) => a.name).join(", ")}
       </span>
     </motion.button>
@@ -890,35 +821,9 @@ function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string 
   );
 }
 
-function HorizontalScrollRow({
-  children,
-  scrollRef,
-}: {
-  children: React.ReactNode;
-  scrollRef: React.RefObject<HTMLDivElement | null>;
-}) {
-  return (
-    <div
-      ref={scrollRef}
-      style={{
-        display: "flex",
-        gap: 14,
-        overflowX: "auto",
-        overflowY: "hidden",
-        scrollSnapType: "x mandatory",
-        scrollbarWidth: "none",
-        msOverflowStyle: "none",
-        padding: "4px 2px 14px",
-        margin: "-4px -2px -14px",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
+const tileKey = (t: { id: string }) => t.id;
 
 function MadeForYou() {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext = useQueueStore((s) => s.playContext);
   const { data: recs = [], isLoading } = useQuery({
@@ -929,10 +834,7 @@ function MadeForYou() {
     placeholderData: (prev) => prev,
     refetchOnWindowFocus: false,
   });
-
-  const scroll = (dir: -1 | 1) => {
-    scrollRef.current?.scrollBy({ left: dir * 380, behavior: "smooth" });
-  };
+  const carousel = useCarousel([recs.length]);
 
   function play(i: number) {
     const start = playContext(recs, i, "made-for-you");
@@ -940,36 +842,35 @@ function MadeForYou() {
   }
 
   return (
-    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="Made for you">
-      <SectionTitle onPrev={() => scroll(-1)} onNext={() => scroll(1)}>Top Picks for You</SectionTitle>
+    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-labelledby="home-top-picks">
+      <SectionTitle id="home-top-picks" right={<CarouselControls carousel={carousel} label="top picks" />}>
+        Top picks for you
+      </SectionTitle>
       {isLoading ? (
         <TileSkeleton />
       ) : recs.length === 0 ? (
-        <p style={{ margin: 0, fontSize: 13, color: "var(--color-text-dim)" }}>
-          Play and follow some artists, recommendations will grow here.
-        </p>
+        <EmptyHint>Play and follow some artists, recommendations will grow here.</EmptyHint>
       ) : (
-        <HorizontalScrollRow scrollRef={scrollRef}>
-          {recs.map((t, i) => (
-            <div key={t.id} style={{ flex: TILE_FLEX, width: TILE_COVER, maxWidth: TILE_COVER, minWidth: 0, height: TILE_H, scrollSnapAlign: "start" }}>
-              <RecTile track={t} onPlay={() => play(i)} />
-            </div>
-          ))}
-        </HorizontalScrollRow>
+        <CarouselTrack
+          carousel={carousel}
+          label="Top picks for you"
+          items={recs}
+          getKey={tileKey}
+          itemWidth={TILE_COVER}
+          itemHeight={TILE_H}
+          renderItem={(t, i) => <RecTile track={t} onPlay={() => play(i)} />}
+        />
       )}
     </motion.section>
   );
 }
 
 function RecentlyPlayed() {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const { data = [], isLoading } = useRecentlyPlayed();
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext = useQueueStore((s) => s.playContext);
-
-  const scroll = (dir: -1 | 1) => {
-    scrollRef.current?.scrollBy({ left: dir * 360, behavior: "smooth" });
-  };
+  const shown = data.slice(0, 18);
+  const carousel = useCarousel([shown.length]);
 
   function play(i: number) {
     const start = playContext(data, i, "recently-played");
@@ -978,18 +879,22 @@ function RecentlyPlayed() {
 
   if (!isLoading && data.length === 0) return null;
   return (
-    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="Jump back in">
-      <SectionTitle onPrev={() => scroll(-1)} onNext={() => scroll(1)}>Jump back in</SectionTitle>
+    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-labelledby="home-jump-back">
+      <SectionTitle id="home-jump-back" right={<CarouselControls carousel={carousel} label="recently played" />}>
+        Jump back in
+      </SectionTitle>
       {isLoading ? (
         <TileSkeleton />
       ) : (
-        <HorizontalScrollRow scrollRef={scrollRef}>
-          {data.slice(0, 18).map((t, i) => (
-            <div key={t.id} style={{ flex: TILE_FLEX, width: TILE_COVER, maxWidth: TILE_COVER, minWidth: 0, height: TILE_H, scrollSnapAlign: "start" }}>
-              <RecTile track={t} onPlay={() => play(i)} />
-            </div>
-          ))}
-        </HorizontalScrollRow>
+        <CarouselTrack
+          carousel={carousel}
+          label="Jump back in"
+          items={shown}
+          getKey={tileKey}
+          itemWidth={TILE_COVER}
+          itemHeight={TILE_H}
+          renderItem={(t, i) => <RecTile track={t} onPlay={() => play(i)} />}
+        />
       )}
     </motion.section>
   );
@@ -1027,7 +932,21 @@ function RangeSlider({
 }
 
 function EmptyHint({ children }: { children: React.ReactNode }) {
-  return <p style={{ margin: 0, fontSize: 12.5, color: "var(--color-text-dim)" }}>{children}</p>;
+  return <p className="t-caption" style={{ margin: 0, fontSize: 12.5, color: "var(--color-text-dim)" }}>{children}</p>;
+}
+
+/* while a new range loads, keep the last one on screen and dim it. swapping in
+a skeleton blanked the whole grid on every segment tap; this keeps the page
+continuous and the change reads as the content updating, not reloading. */
+function Refreshing({ busy, children }: { busy: boolean; children: React.ReactNode }) {
+  return (
+    <div
+      aria-busy={busy || undefined}
+      style={{ opacity: busy ? 0.5 : 1, transition: "opacity 0.2s ease" }}
+    >
+      {children}
+    </div>
+  );
 }
 
 const rangeWord = (r: TimeRange) =>
@@ -1048,18 +967,27 @@ function ArtistTiles({ artists }: { artists: ArtistItem[] }) {
 
 function TopTracks() {
   const [range, setRange] = useState<TimeRange>("medium_term");
-  const { data = [], isLoading } = useTopTracks(range);
+  const { data = [], isLoading, isPlaceholderData, isError, refetch } = useTopTracks(range);
   const probe = useTopTracks("medium_term");
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;
   return (
-    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="Your top tracks">
-      <SectionTitle right={<RangeSlider value={range} onChange={setRange} layoutId="home-top-tracks-range" />}>Your top tracks</SectionTitle>
+    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-labelledby="home-top-tracks">
+      <SectionTitle id="home-top-tracks" right={<RangeSlider value={range} onChange={setRange} layoutId="home-top-tracks-range" />}>Your top tracks</SectionTitle>
       {isLoading ? (
         <TileSkeleton />
+      ) : isError && data.length === 0 ? (
+        <EmptyHint>
+          Couldn't load this range.{" "}
+          <button type="button" className="btn-text" onClick={() => refetch()} style={{ color: "var(--color-text-hi)", fontWeight: 600 }}>
+            Try again
+          </button>
+        </EmptyHint>
       ) : data.length === 0 ? (
         <EmptyHint>Not enough listening from {rangeWord(range)} yet.</EmptyHint>
       ) : (
-        <TrackTiles tracks={data.slice(0, 16)} context={`top-tracks-${range}`} />
+        <Refreshing busy={isPlaceholderData}>
+          <TrackTiles tracks={data.slice(0, 16)} context={`top-tracks-${range}`} />
+        </Refreshing>
       )}
     </motion.section>
   );
@@ -1067,45 +995,55 @@ function TopTracks() {
 
 function TopArtists() {
   const [range, setRange] = useState<TimeRange>("medium_term");
-  const { data = [], isLoading } = useTopArtists(range);
+  const { data = [], isLoading, isPlaceholderData, isError, refetch } = useTopArtists(range);
   const probe = useTopArtists("medium_term");
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;
   return (
-    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="Your top artists">
-      <SectionTitle right={<RangeSlider value={range} onChange={setRange} layoutId="home-top-artists-range" />}>Your top artists</SectionTitle>
+    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-labelledby="home-top-artists">
+      <SectionTitle id="home-top-artists" right={<RangeSlider value={range} onChange={setRange} layoutId="home-top-artists-range" />}>Your top artists</SectionTitle>
       {isLoading ? (
         <EvenGridSkeleton minColWidth={TILE_COVER} gap={14} maxRows={1} borderRadius={999} />
+      ) : isError && data.length === 0 ? (
+        <EmptyHint>
+          Couldn't load this range.{" "}
+          <button type="button" className="btn-text" onClick={() => refetch()} style={{ color: "var(--color-text-hi)", fontWeight: 600 }}>
+            Try again
+          </button>
+        </EmptyHint>
       ) : data.length === 0 ? (
         <EmptyHint>Not enough listening from {rangeWord(range)} yet.</EmptyHint>
       ) : (
-        <ArtistTiles artists={data.slice(0, 16)} />
+        <Refreshing busy={isPlaceholderData}>
+          <ArtistTiles artists={data.slice(0, 16)} />
+        </Refreshing>
       )}
     </motion.section>
   );
 }
 
 function NewReleases() {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const { data = [], isLoading } = useNewReleases();
-
-  const scroll = (dir: -1 | 1) => {
-    scrollRef.current?.scrollBy({ left: dir * 360, behavior: "smooth" });
-  };
+  const shown = data.slice(0, 18);
+  const carousel = useCarousel([shown.length]);
 
   if (!isLoading && data.length === 0) return null;
   return (
-    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-label="New releases">
-      <SectionTitle onPrev={() => scroll(-1)} onNext={() => scroll(1)}>New releases</SectionTitle>
+    <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-labelledby="home-new-releases">
+      <SectionTitle id="home-new-releases" right={<CarouselControls carousel={carousel} label="new releases" />}>
+        New releases
+      </SectionTitle>
       {isLoading ? (
         <TileSkeleton />
       ) : (
-        <HorizontalScrollRow scrollRef={scrollRef}>
-          {data.slice(0, 18).map((al, i) => (
-            <div key={al.id} style={{ flex: TILE_FLEX, width: TILE_COVER, maxWidth: TILE_COVER, minWidth: 0, height: TILE_H, scrollSnapAlign: "start" }}>
-              <AlbumCard album={al} index={i} style={{ height: TILE_H, maxWidth: TILE_COVER }} />
-            </div>
-          ))}
-        </HorizontalScrollRow>
+        <CarouselTrack
+          carousel={carousel}
+          label="New releases"
+          items={shown}
+          getKey={tileKey}
+          itemWidth={TILE_COVER}
+          itemHeight={TILE_H}
+          renderItem={(al, i) => <AlbumCard album={al} index={i} style={{ height: TILE_H, maxWidth: TILE_COVER }} />}
+        />
       )}
     </motion.section>
   );
@@ -1116,16 +1054,28 @@ function greeting() {
   return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }
 
+// the greeting line. display role: large, light, tightly tracked; rem so it
+// follows the root text size
+const GREETING_STYLE: React.CSSProperties = {
+  margin: 0,
+  fontSize: "clamp(2rem, 3.8vw, 2.714rem)",
+  fontWeight: 400,
+  letterSpacing: "var(--type-display-track)",
+  lineHeight: 1.14,
+  color: "rgba(255, 255, 255, 0.62)",
+  textWrap: "balance",
+} as React.CSSProperties;
+
 export default function Home() {
   useReflowPulse();
-  const { loggedIn, displayName, isLoading, login, loggingIn } = useAuth();
+  const { loggedIn, displayName, isLoading } = useAuth();
   const hello = greeting();
   const firstName = displayName ? displayName.trim().split(" ")[0] : null;
 
   if (isLoading) {
     return (
       <div>
-        <h1 style={{ margin: "0 0 16px", fontSize: "clamp(28px, 3.8vw, 38px)", fontWeight: 400, letterSpacing: "-0.035em", color: "rgba(255, 255, 255, 0.62)" }}>{hello}</h1>
+        <h1 style={{ ...GREETING_STYLE, margin: "0 0 16px" }}>{hello}</h1>
         <Loader fill={false} />
       </div>
     );
@@ -1133,49 +1083,11 @@ export default function Home() {
 
   if (!loggedIn) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "clamp(24px, 3vw, 36px)" }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: "clamp(28px, 3.8vw, 38px)", fontWeight: 800, letterSpacing: "-0.03em", color: "var(--color-text-hi)" }}>
-            Welcome to Musique
-          </h1>
-        </div>
-
-        <EmptyState
-          icon={
-            <MusiqueLogo
-              size={56}
-              style={{
-                filter: "drop-shadow(0 8px 24px rgba(88, 115, 216, 0.32))",
-              }}
-            />
-          }
-          iconContainerStyle={{ opacity: 1, marginBottom: 8 }}
-          title="Sign in with Spotify"
-          description="Connect your account to listen to your music, playlists, and recommendations."
-          action={
-            <button
-              onClick={() => login()}
-              disabled={loggingIn}
-              style={{
-                height: 38,
-                padding: "0 24px",
-                borderRadius: 99,
-                border: "none",
-                background: "var(--color-accent)",
-                color: "#ffffff",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: loggingIn ? "default" : "pointer",
-                opacity: loggingIn ? 0.6 : 1,
-                transition: "opacity 0.15s ease",
-              }}
-            >
-              {loggingIn ? "Waiting for browser..." : "Log in with Spotify"}
-            </button>
-          }
-          hint={loggingIn ? "Finish signing in in your browser. The app is listening on port 8989." : undefined}
-        />
-      </div>
+      <SignInPrompt
+        heading="Welcome to Musique"
+        title="Sign in with Spotify"
+        description="Connect your account to listen to your music, playlists, and recommendations."
+      />
     );
   }
 
@@ -1186,17 +1098,7 @@ export default function Home() {
         transformTemplate={zTransform}
         transition={{ layout: REFLOW }}
       >
-        <h1
-          style={{
-            margin: 0,
-            fontSize: "clamp(28px, 3.8vw, 38px)",
-            fontWeight: 400,
-            letterSpacing: "-0.035em",
-            lineHeight: 1.14,
-            color: "rgba(255, 255, 255, 0.62)",
-            textWrap: "balance",
-          } as React.CSSProperties}
-        >
+        <h1 style={GREETING_STYLE}>
           {hello}
           {firstName ? (
             <>
@@ -1205,7 +1107,6 @@ export default function Home() {
                 style={{
                   fontWeight: 800,
                   color: "var(--color-text-hi)",
-                  letterSpacing: "-0.03em",
                 }}
               >
                 {firstName}

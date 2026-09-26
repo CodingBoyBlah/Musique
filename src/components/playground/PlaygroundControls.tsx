@@ -1,6 +1,7 @@
 import { useState, useRef, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AnimatedPlayPause } from "./AnimatedIcons";
+import "../../styles/ui.css";
 
 // 1. Primary Glow Button (Fully rounded pill, matches Album Page play button, animated play/pause icon)
 export function PrimaryPlayButton({
@@ -213,6 +214,7 @@ export function SegmentedControl({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
+      role="radiogroup"
       style={{
         position: "relative",
         display: "inline-flex",
@@ -247,6 +249,9 @@ export function SegmentedControl({
             // adornment tooltip from opening - exactly when it's the only
             // thing explaining why the option is greyed out.
             aria-disabled={off || undefined}
+            role="radio"
+            aria-checked={active}
+            className="seg-opt"
             onClick={() => { if (!off) onChange(opt); }}
             style={{
               position: "relative",
@@ -257,14 +262,13 @@ export function SegmentedControl({
               borderRadius: 8,
               border: "none",
               background: "transparent",
-              fontSize: "clamp(11.5px, 1.2vw, 12.5px)",
+              fontSize: "0.875rem",
               fontWeight: 600,
               color: active ? "var(--color-accent-text)" : "var(--color-text-dim)",
               opacity: off ? 0.45 : 1,
               cursor: off ? "default" : "pointer",
               zIndex: 1,
               transition: "color 0.15s ease, opacity 0.15s ease",
-              outline: "none",
               userSelect: "none",
               whiteSpace: "nowrap",
             }}

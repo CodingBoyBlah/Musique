@@ -1,8 +1,8 @@
-import { useRef, useMemo } from "react";
+import { useMemo } from "react";
 import { coverUrl } from "../lib/coverUrl";
 import { useParams, Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Pin, ChevronLeft, ChevronRight } from "@/lib/icons";
+import { Pin } from "@/lib/icons";
 import { useAlbum } from "../hooks/useAlbum";
 import { useArtist } from "../hooks/useArtist";
 import { AlbumCard } from "../components/ui/AlbumCard";
@@ -11,6 +11,9 @@ import { PlayActions } from "../components/ui/PlayActions";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ExpandableDescription } from "../components/ui/ExpandableDescription";
 import { Loader } from "../components/ui/Loader";
+import { EmptyState } from "../components/ui/EmptyState";
+import { SectionTitle } from "../components/ui/SectionTitle";
+import { useCarousel, CarouselControls, CarouselTrack } from "../components/ui/Carousel";
 import { useTrackTools } from "../components/ui/TrackToolbar";
 import { releaseYear } from "../utils/fmt";
 import { playTrack } from "../api/playback";
@@ -23,12 +26,13 @@ import { useContextMenu } from "../components/ui/ContextMenu";
 import { errMsg } from "../lib/err";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 
-const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
+const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
+const MORE_BY_TILE = "clamp(140px, 16vw, 175px)";
 
 export default function AlbumPage() {
   useReflowPulse();
   const { id }                     = useParams<{ id: string }>();
-  const { data, isLoading, error } = useAlbum(id);
+  const { data, isLoading, error, refetch } = useAlbum(id);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const enqueue         = useQueueStore((s) => s.enqueue);
   const playContext     = useQueueStore((s) => s.playContext);
@@ -37,7 +41,11 @@ export default function AlbumPage() {
   const toggleLike = useToggleLike();
   const { open: openMenu, element: menuEl } = useContextMenu();
   const { data: artistDetail } = useArtist(data?.artists[0]?.id);
-  const carouselRef = useRef<HTMLDivElement>(null);
+  const moreBy = useMemo(
+    () => (artistDetail?.albums ?? []).filter((a) => a.id !== data?.id).slice(0, 10),
+    [artistDetail?.albums, data?.id],
+  );
+  const carousel = useCarousel([moreBy.length]);
 
   const tracks = data?.tracks ?? [];
   const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
@@ -50,7 +58,17 @@ export default function AlbumPage() {
     return <Loader label="Loading album" />;
   }
   if (error) {
-    return <p className="text-sm" style={{ color: "var(--color-danger)" }}>{errMsg(error)}</p>;
+    return (
+      <EmptyState
+        title="Couldn't load this album"
+        description={errMsg(error)}
+        action={
+          <button type="button" className="btn-pill" onClick={() => refetch()}>
+            Try again
+          </button>
+        }
+      />
+    );
   }
   if (!data) return null;
 
@@ -88,7 +106,7 @@ export default function AlbumPage() {
               {data.artists.map((a, i) => (
                 <span key={a.id}>
                   {i > 0 && ", "}
-                  <Link to={`/artist/${a.id}`} style={{ color: "inherit", textDecoration: "none" }} className="hover:underline">
+                  <Link to={`/artist/${a.id}`} style={{ color: "inherit", textDecoration: "none" }} className="hover:underline focus-ring">
                     {a.name}
                   </Link>
                 </span>
@@ -145,7 +163,7 @@ export default function AlbumPage() {
       </section>
 
       {/* release metadata footer (Cider Screenshot 5) */}
-      <div style={{ padding: "28px 4px 16px", display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--color-text-dim)" }}>
+      <div className="t-caption tnum" style={{ padding: "28px 4px 16px", display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--color-text-dim)" }}>
         <p style={{ margin: 0, fontWeight: 500 }}>
           {data.release_date} • {data.total_tracks} {data.total_tracks === 1 ? "track" : "tracks"}
           {tracks.length > 0 && (() => {
@@ -158,96 +176,26 @@ export default function AlbumPage() {
         </p>
       </div>
 
-      {/* More By Artist section (Cider Screenshot 5) */}
-      {artistDetail && artistDetail.albums && artistDetail.albums.filter((a) => a.id !== data.id).length > 0 && (
-        <div style={{ marginTop: 28 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-            <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--color-text-hi)" }}>
-              <Link to={`/artist/${artistDetail.id}`} style={{ color: "inherit", textDecoration: "none" }} className="hover:underline">
-                More By {artistDetail.name} &rsaquo;
-              </Link>
-            </h3>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <button
-                onClick={() => carouselRef.current?.scrollBy({ left: -340, behavior: "smooth" })}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: "50%",
-                  border: "1px solid rgba(255, 255, 255, 0.10)",
-                  background: "rgba(255, 255, 255, 0.05)",
-                  color: "var(--color-text-dim)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  transition: "background 0.15s, color 0.15s",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.10)";
-                  (e.currentTarget as HTMLElement).style.color = "#ffffff";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.05)";
-                  (e.currentTarget as HTMLElement).style.color = "var(--color-text-dim)";
-                }}
-              >
-                <ChevronLeft size={14} strokeWidth={2.4} />
-              </button>
-              <button
-                onClick={() => carouselRef.current?.scrollBy({ left: 340, behavior: "smooth" })}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: "50%",
-                  border: "1px solid rgba(255, 255, 255, 0.10)",
-                  background: "rgba(255, 255, 255, 0.05)",
-                  color: "var(--color-text-dim)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  transition: "background 0.15s, color 0.15s",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.10)";
-                  (e.currentTarget as HTMLElement).style.color = "#ffffff";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.background = "rgba(255, 255, 255, 0.05)";
-                  (e.currentTarget as HTMLElement).style.color = "var(--color-text-dim)";
-                }}
-              >
-                <ChevronRight size={14} strokeWidth={2.4} />
-              </button>
-            </div>
-          </div>
-          <div
-            ref={carouselRef}
-            style={{
-              display: "flex",
-              gap: 14,
-              overflowX: "auto",
-              overflowY: "hidden",
-              padding: "4px 0 12px",
-              scrollbarWidth: "none",
-            }}
+      {/* More by this artist: the same shelf Home uses */}
+      {artistDetail && moreBy.length > 0 && (
+        <section style={{ marginTop: 28 }} aria-labelledby="album-more-by">
+          <SectionTitle
+            id="album-more-by"
+            right={<CarouselControls carousel={carousel} label={`more by ${artistDetail.name}`} />}
           >
-            {artistDetail.albums.filter((a) => a.id !== data.id).slice(0, 10).map((al, i) => (
-              <div
-                key={al.id}
-                style={{
-                  flex: "0 0 clamp(140px, 16vw, 175px)",
-                  width: "clamp(140px, 16vw, 175px)",
-                  maxWidth: "clamp(140px, 16vw, 175px)",
-                  minWidth: 0,
-                }}
-              >
-                <AlbumCard album={al} index={i} />
-              </div>
-            ))}
-          </div>
-        </div>
+            <Link to={`/artist/${artistDetail.id}`} style={{ color: "inherit", textDecoration: "none" }} className="hover:underline focus-ring">
+              More by {artistDetail.name} &rsaquo;
+            </Link>
+          </SectionTitle>
+          <CarouselTrack
+            carousel={carousel}
+            label={`More by ${artistDetail.name}`}
+            items={moreBy}
+            getKey={(al) => al.id}
+            itemWidth={MORE_BY_TILE}
+            renderItem={(al, i) => <AlbumCard album={al} index={i} />}
+          />
+        </section>
       )}
       {menuEl}
     </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties } from "react";
 import type { LyricLine } from "../api/lyrics";
 import { usePlayerStore } from "../store/player.store";
@@ -159,8 +159,14 @@ export interface Tone {
  * active row was also what pushed text past the right edge of the panel: a
  * transform scaled from `left center` grows the box to the right without the
  * layout knowing, so a row that fit at 1.0 clipped at 1.12. */
-export function lyricTone(distance: number, past: boolean): Tone {
+export function lyricTone(distance: number, past: boolean, solid = false): Tone {
   if (distance === 0) return { blur: 0, alpha: 1 };
+  /* Increased contrast: no line dissolves into light. Distance is carried by
+     opacity alone, and never so low a reader who asked for contrast loses it. */
+  if (solid) {
+    const d = distance - 1;
+    return { blur: 0, alpha: Math.max(0.5, (past ? 0.62 : 0.72) - d * 0.06) };
+  }
   /* The line either side of the active one stays sharp and plainly readable -
      in the reference it is the second line out that starts to soften. Falling
      off faster than this is what turns the panel into mush: the eye has nothing
@@ -170,6 +176,22 @@ export function lyricTone(distance: number, past: boolean): Tone {
     blur: Math.min(6.5, d * 2.2),
     alpha: Math.max(0.1, (past ? 0.42 : 0.54) - d * 0.12),
   };
+}
+
+/* The OS "increase contrast" setting, live. Blurred distant lines are the one
+   thing CSS alone cannot undo, since the blur is baked into a text-shadow. */
+const CONTRAST_Q = "(prefers-contrast: more)";
+function subscribeContrast(cb: () => void) {
+  const mq = window.matchMedia?.(CONTRAST_Q);
+  mq?.addEventListener?.("change", cb);
+  return () => mq?.removeEventListener?.("change", cb);
+}
+export function useMoreContrast(): boolean {
+  return useSyncExternalStore(
+    subscribeContrast,
+    () => !!window.matchMedia?.(CONTRAST_Q).matches,
+    () => false,
+  );
 }
 
 /* A blurred line, drawn as light with no body.
@@ -413,6 +435,7 @@ export function LyricRowText({
   glowRgb = "255, 255, 255",
   inkRgb = "255, 255, 255",
   align = "left",
+  tracking = "-0.022em",
 }: {
   words: RenderWord[];
   active: boolean;
@@ -426,6 +449,8 @@ export function LyricRowText({
   /** near-white carrying the cover's hue - see lib/ambient */
   inkRgb?: string;
   align?: "left" | "right" | "center";
+  /** letter-spacing. tight for lead lines; smaller secondary voices open up */
+  tracking?: string;
 }) {
   const spans = useRef<(HTMLSpanElement | null)[]>([]);
   const lastProps = useRef<{ a: string; b: string; g: string }[]>([]);
@@ -521,7 +546,7 @@ export function LyricRowText({
         margin: 0,
         fontSize: size,
         lineHeight: 1.26,
-        letterSpacing: "-0.022em",
+        letterSpacing: tracking,
         fontWeight: weight,
         textAlign: align,
         ["--glow" as string]: glowRgb,

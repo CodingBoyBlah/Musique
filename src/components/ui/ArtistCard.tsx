@@ -5,7 +5,8 @@ import { ArrowUpRight, User } from "@/lib/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { CoverArt } from "./CoverArt";
 import { prefetchArtist } from "../../lib/prefetch";
-import { gpuLayer, zTransform, REFLOW_SPRING, getGridItemTransition } from "../../lib/motion";
+import { gpuLayer, zTransform, REFLOW_SPRING, SPRING, EASE_OUT, getGridItemTransition } from "../../lib/motion";
+import "../../styles/ui.css";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
 
 interface Props {
@@ -47,10 +48,14 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
     <MotionLink
       to={`/artist/${artist.id}`}
       layout="position"
+      className="card-link"
       transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchArtist(qc, artist.id); }}
       onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
       whileHover={{ y: -3 }}
+      whileTap={{ scale: 0.98 }}
       transition={{
         type: "spring",
         stiffness: 520,
@@ -95,7 +100,7 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
         {artist.image_url ? (
           <motion.div
             animate={{ scale: hover ? 1.05 : 1 }}
-            transition={{ duration: 0.35, ease: [0.23, 1, 0.32, 1] }}
+            transition={{ duration: 0.35, ease: EASE_OUT }}
             style={{ width: "100%", height: "100%" }}
           >
             <CoverArt
@@ -150,10 +155,11 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
         <AnimatePresence>
           {hover && (
             <motion.div
-              initial={{ opacity: 0, scale: 0.75, y: 6 }}
+              initial={{ opacity: 0, scale: 0.9, y: 6 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.75, y: 6 }}
-              transition={{ type: "spring", stiffness: 450, damping: 26 }}
+              exit={{ opacity: 0, scale: 0.9, y: 6, transition: { duration: 0.12, ease: EASE_OUT } }}
+              // critically damped: a hover carries no momentum to overshoot with
+              transition={SPRING}
               style={{
                 position: "absolute",
                 right: 8,
@@ -199,7 +205,7 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
           {artist.name}
         </span>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 6, height: 16, fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", whiteSpace: "nowrap", width: "100%", minWidth: 0, maxWidth: "100%", flexShrink: 0 }}>
+        <div className="t-caption" style={{ display: "flex", alignItems: "center", gap: 6, height: 16, fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", whiteSpace: "nowrap", width: "100%", minWidth: 0, maxWidth: "100%", flexShrink: 0 }}>
           <span
             style={{
               width: 5,
@@ -211,7 +217,9 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
             }}
           />
           <span style={{ transition: "color 0.16s ease", color: hover ? "var(--color-text)" : "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {hover ? "View profile" : "Artist"}
+            {/* static: text that changes under the pointer reads as the
+                card moving, and the arrow already says where this goes */}
+            Artist
           </span>
         </div>
       </div>

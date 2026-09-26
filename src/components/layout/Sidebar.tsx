@@ -12,7 +12,7 @@ import {
 import { usePinsStore } from "../../store/pins.store";
 import { useUIStore } from "../../store/ui.store";
 import { useContextMenu } from "../ui/ContextMenu";
-import { gpuLayer, zTransform } from "../../lib/motion";
+import { gpuLayer, zTransform, EASE_OUT, SPRING, PRESS_TRANSITION } from "../../lib/motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchPlaylist, prefetchAlbum } from "../../lib/prefetch";
 import { Tooltip } from "../ui/Tooltip";
@@ -27,11 +27,15 @@ function NavItem({
 }) {
   const btn = (
     <motion.button
-      className="nav-item"
+      // hover fill is CSS (.sb-item, hover-capable pointers only); framer's
+      // whileHover also fired on touch taps and stuck there
+      className="nav-item sb-item focus-ring"
+      data-active={active || undefined}
+      aria-current={active ? "page" : undefined}
+      aria-label={collapsed ? label : undefined}
       onClick={onClick}
       whileTap={{ scale: 0.98 }}
-      whileHover={active ? {} : { backgroundColor: "var(--color-hover)" }}
-      transition={{ type: "spring", stiffness: 400, damping: 26 }}
+      transition={PRESS_TRANSITION}
       transformTemplate={zTransform}
       style={{
         ...gpuLayer,
@@ -59,7 +63,7 @@ function NavItem({
       {active && (
         <motion.div
           layoutId="activeNavPill"
-          transition={{ type: "spring", stiffness: 500, damping: 36 }}
+          transition={SPRING}
           style={{
             position: "absolute",
             inset: 0,
@@ -109,17 +113,19 @@ function Section({
     <div>
       <button
         onClick={onToggle}
+        aria-expanded={expanded}
+        className="sb-section-head focus-ring"
         style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
           width: "100%", height: 28, padding: "0 10px", border: "none", background: "transparent",
-          color: "rgba(255, 255, 255, 0.40)", fontSize: 11, fontWeight: 700,
+          borderRadius: 6,
+          color: "rgba(255, 255, 255, 0.45)", fontSize: 11, fontWeight: 700,
           letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer",
+          font: "inherit",
         }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-hi)"; }}
-        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255, 255, 255, 0.40)"; }}
       >
-        <span>{label}</span>
-        <motion.span animate={{ rotate: expanded ? 0 : -90 }} transition={{ duration: 0.18 }} style={{ display: "flex" }}>
+        <span style={{ fontSize: 11 }}>{label}</span>
+        <motion.span animate={{ rotate: expanded ? 0 : -90 }} transition={{ duration: 0.18, ease: EASE_OUT }} style={{ display: "flex" }}>
           <ChevronDown size={12} strokeWidth={2.5} />
         </motion.span>
       </button>
@@ -129,7 +135,7 @@ function Section({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+            transition={{ duration: 0.2, ease: EASE_OUT }}
             style={{ overflow: "hidden" }}
           >
             <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: "2px 0 6px" }}>
@@ -194,9 +200,14 @@ export default function Sidebar() {
   const [pinsOpen,    setPinsOpen]    = useState(true);
 
   return (
+    /* The width tween stays: the rail's labels clip rather than reflow as it
+       narrows, and a 220ms ease-out is short enough that the per-frame layout
+       it costs never lands on anything the user is reading. Replacing it with
+       a transform would mean the page card no longer tracks the rail edge. */
     <motion.nav
+      aria-label="Sidebar"
       animate={{ width: railWidth }}
-      transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
+      transition={{ duration: 0.22, ease: EASE_OUT }}
       style={{
         width:         railWidth,
         flexShrink:    0,
@@ -255,6 +266,7 @@ export default function Sidebar() {
             !isCollapsed ? (
               <div style={{ padding: "0 2px" }}>
                 <div
+                  className="t-caption"
                   style={{
                     borderRadius: 8,
                     border:       "1.5px dashed var(--color-glass-border)",
@@ -284,9 +296,12 @@ export default function Sidebar() {
                     { label: "Unpin", icon: <PinOff size={14} />, onSelect: () => removePin(p.id) },
                   ])}
                   title={isCollapsed ? undefined : p.name}
+                  aria-label={isCollapsed ? p.name : undefined}
+                  aria-current={active ? "page" : undefined}
+                  className="sb-item focus-ring"
+                  data-active={active || undefined}
                   whileTap={{ scale: 0.98 }}
-                  whileHover={active ? {} : { backgroundColor: "var(--color-hover)" }}
-                  transition={{ type: "spring", stiffness: 400, damping: 26 }}
+                  transition={PRESS_TRANSITION}
                   transformTemplate={zTransform}
                   style={{
                     ...gpuLayer,
@@ -306,7 +321,7 @@ export default function Sidebar() {
                     cursor:        "pointer",
                     textAlign:     isCollapsed ? "center" : "left",
                   }}
-                  onMouseEnter={() => {
+                  onPointerEnter={() => {
                     if (p.type === "album") prefetchAlbum(qc, p.id);
                     else prefetchPlaylist(qc, p.id);
                   }}
@@ -314,7 +329,7 @@ export default function Sidebar() {
                   {active && (
                     <motion.div
                       layoutId="activeNavPill"
-                      transition={{ type: "spring", stiffness: 500, damping: 36 }}
+                      transition={SPRING}
                       style={{
                         position: "absolute",
                         inset: 0,

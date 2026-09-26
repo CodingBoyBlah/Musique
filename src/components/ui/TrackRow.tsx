@@ -6,7 +6,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TrackItem } from "../../types/spotify";
 import { fmtMs } from "../../utils/fmt";
-import { gpuLayer, zTransform } from "../../lib/motion";
+import { EASE_OUT, PRESS, PRESS_TRANSITION, gpuLayer, zTransform } from "../../lib/motion";
 import { prefetchArtist, prefetchAlbum } from "../../lib/prefetch";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
 import { shareSpotifyLink, shareUniversalLink } from "../../lib/share";
@@ -19,6 +19,7 @@ import { toast } from "../../store/toast.store";
 import { transportPlay, transportPause } from "../../hooks/usePlayerControls";
 import { AnimatedPlayPause, AnimatedHeart } from "../playground/AnimatedIcons";
 import { Tooltip } from "./Tooltip";
+import "../../styles/ui.css";
 
 interface Props {
   track:         TrackItem;
@@ -35,7 +36,9 @@ interface Props {
 
 const stop = (e: React.MouseEvent) => e.stopPropagation();
 
-// prominent animated row action button
+// row action button (like / queue). Pressed and hovered constantly while
+// browsing a list, so the motion is deliberately small: no hover scale (the
+// colour change says enough), a light press, and no overshoot.
 function ActionBtn({
   children, onClick, title, active, className, accent,
 }: {
@@ -49,22 +52,21 @@ function ActionBtn({
   return (
     <motion.button
       onClick={onClick}
-      title={title}
-      className={className}
-      whileHover={{ scale: 1.18 }}
-      whileTap={{ scale: 0.86 }}
-      transition={{ type: "spring", stiffness: 420, damping: 22 }}
+      // the label comes from the wrapping <Tooltip>; a native title would
+      // pop a second, unstyled tooltip on top of it
+      aria-label={title || undefined}
+      aria-pressed={active}
+      className={`row-action ${className ?? ""}`}
+      data-active={Boolean(active || accent)}
+      whileTap={PRESS}
+      transition={PRESS_TRANSITION}
       transformTemplate={zTransform}
       style={{
         ...gpuLayer,
         display: "flex", alignItems: "center", justifyContent: "center",
         width: 30, height: 30, borderRadius: "50%", border: "none",
-        background: active ? "var(--color-accent-dim)" : "transparent",
-        color: active ? "var(--color-accent)" : (accent ? "var(--color-accent)" : "var(--color-text-dim)"),
         cursor: "pointer", flexShrink: 0,
       }}
-      onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-hi)"; }}
-      onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLButtonElement).style.color = accent ? "var(--color-accent)" : "var(--color-text-dim)"; }}
     >
       {children}
     </motion.button>
@@ -168,7 +170,7 @@ function TrackRowImpl({
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
         onContextMenu={openMenu(menuEntries)}
-        className="group"
+        className="group track-row"
         style={{
           position: "relative",
           zIndex: hover ? 40 : 1,
@@ -189,8 +191,9 @@ function TrackRowImpl({
           <div style={{ position: "relative", width: 28, height: 28, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             {hover || isThisPlaying ? (
               <motion.button
-                whileHover={{ scale: 1.15 }}
-                whileTap={{ scale: 0.88 }}
+                whileTap={PRESS}
+                transition={PRESS_TRANSITION}
+                className="focus-ring"
                 onClick={(e) => {
                   stop(e);
                   handlePlayToggle();
@@ -219,10 +222,10 @@ function TrackRowImpl({
               </motion.button>
             ) : (
               <span
+                className="tnum"
                 style={{
                   fontSize: 13,
                   color: isThisCurrent ? "var(--color-accent)" : "var(--color-text-muted)",
-                  fontVariantNumeric: "tabular-nums",
                 }}
               >
                 {index != null ? index + 1 : ""}
@@ -277,7 +280,7 @@ function TrackRowImpl({
             )}
           </div>
 
-          <p style={{ margin: "2px 0 0", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-dim)" }}>
+          <p className="t-caption" style={{ margin: "2px 0 0", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-dim)" }}>
             {track.explicit && (
               <span style={{ display: "inline-block", marginRight: 5, padding: "1px 4px", borderRadius: 3, fontSize: 9.5, fontWeight: 700, background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.70)" }}>
                 E
@@ -289,9 +292,8 @@ function TrackRowImpl({
                 <Link
                   to={`/artist/${a.id}`}
                   onClick={stop}
-                  style={{ color: "inherit", textDecoration: "none" }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline"; prefetchArtist(qc, a.id); }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none"; }}
+                  className="link-inline"
+                  onMouseEnter={() => prefetchArtist(qc, a.id)}
                 >
                   {a.name}
                 </Link>
@@ -303,9 +305,8 @@ function TrackRowImpl({
                 <Link
                   to={`/album/${track.album.id}`}
                   onClick={stop}
-                  style={{ color: "inherit", textDecoration: "none" }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline"; prefetchAlbum(qc, track.album!.id); }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none"; }}
+                  className="link-inline"
+                  onMouseEnter={() => prefetchAlbum(qc, track.album!.id)}
                 >
                   {track.album.name}
                 </Link>
@@ -318,7 +319,7 @@ function TrackRowImpl({
           <Tooltip label={liked ? "Remove from Liked Songs" : "Save to Liked Songs"} side="top">
             <ActionBtn
               onClick={(e) => { stop(e); onToggleLike(track); }}
-              title=""
+              title={liked ? "Remove from Liked Songs" : "Save to Liked Songs"}
               className={liked ? "" : "queue-btn"}
               active={liked}
               accent={liked}
@@ -333,7 +334,7 @@ function TrackRowImpl({
             <div style={{ position: "relative", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
               <ActionBtn
                 onClick={handleEnqueue}
-                title=""
+                title={isQueued || justAdded ? "In queue" : "Add to queue"}
                 className={isQueued || justAdded ? "" : "queue-btn"}
                 active={isQueued || justAdded}
                 accent={isQueued || justAdded}
@@ -342,10 +343,10 @@ function TrackRowImpl({
                   {isQueued || justAdded ? (
                     <motion.span
                       key="check"
-                      initial={{ scale: 0.3, rotate: -45, opacity: 0 }}
-                      animate={{ scale: 1, rotate: 0, opacity: 1 }}
-                      exit={{ scale: 0.3, rotate: 45, opacity: 0 }}
-                      transition={{ type: "spring", stiffness: 480, damping: 24 }}
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0.8, opacity: 0 }}
+                      transition={{ duration: 0.14, ease: EASE_OUT }}
                       style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
                     >
                       <Check size={14} strokeWidth={2.8} />
@@ -353,10 +354,10 @@ function TrackRowImpl({
                   ) : (
                     <motion.span
                       key="plus"
-                      initial={{ scale: 0.3, opacity: 0 }}
+                      initial={{ scale: 0.8, opacity: 0 }}
                       animate={{ scale: 1, opacity: 1 }}
-                      exit={{ scale: 0.3, opacity: 0 }}
-                      transition={{ duration: 0.15 }}
+                      exit={{ scale: 0.8, opacity: 0 }}
+                      transition={{ duration: 0.14, ease: EASE_OUT }}
                       style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
                     >
                       <Plus size={15} strokeWidth={2.5} />
@@ -365,26 +366,11 @@ function TrackRowImpl({
                 </AnimatePresence>
               </ActionBtn>
 
-              {/* Radiant ripple pulse ring on click */}
-              {justAdded && (
-                <motion.span
-                  initial={{ scale: 0.8, opacity: 0.85 }}
-                  animate={{ scale: 2.2, opacity: 0 }}
-                  transition={{ duration: 0.5, ease: "easeOut" }}
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    borderRadius: "50%",
-                    border: "2px solid var(--color-accent)",
-                    pointerEvents: "none",
-                  }}
-                />
-              )}
             </div>
           </Tooltip>
         )}
 
-        <span style={{ fontSize: 12.5, flexShrink: 0, color: "rgba(255,255,255,0.35)", fontVariantNumeric: "tabular-nums" }}>
+        <span className="tnum t-caption" style={{ fontSize: 12.5, flexShrink: 0, color: "rgba(255,255,255,0.35)" }}>
           {fmtMs(track.duration_ms)}
         </span>
       </div>

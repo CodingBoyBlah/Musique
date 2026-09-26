@@ -4,7 +4,9 @@ import { motion } from "framer-motion";
 import { useSearch } from "../hooks/useSearch";
 import { useAuth } from "../hooks/useAuth";
 import { EmptyState } from "../components/ui/EmptyState";
-import { MusiqueLogo } from "../components/ui/MusiqueLogo";
+import { SignInPrompt } from "../components/ui/SignInPrompt";
+import { SectionTitle, ShowAllButton } from "../components/ui/SectionTitle";
+import { TopResultSkeleton, TrackRowsSkeleton, CardGridSkeleton } from "../components/ui/Skeletons";
 import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
 import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
 import { CoverArt } from "../components/ui/CoverArt";
@@ -17,8 +19,9 @@ import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
 import { errMsg } from "../lib/err";
+import { toast } from "../store/toast.store";
 import { useReflowPulse } from "../hooks/useReflowPulse";
-import { getGridItemTransition } from "../lib/motion";
+import { getGridItemTransition, EASE_OUT, PRESS } from "../lib/motion";
 import type {
   PlaylistCard as PlaylistCardType,
   ArtistItem,
@@ -30,7 +33,7 @@ import type {
 const CATEGORIES = ["all", "songs", "artists", "albums", "playlists"] as const;
 type Category = (typeof CATEGORIES)[number];
 
-const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
+const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
 const MotionLink = motion.create(Link);
 
 // ─── Top Result resolution & card ───────────────────────────────────────────
@@ -76,12 +79,15 @@ const TopResultCard = memo(function TopResultCard({
   result,
   onPlay,
   isPlaying,
+  pending,
 }: {
   result: TopResult;
-  onPlay: (e: React.MouseEvent) => void;
+  onPlay: (e?: React.MouseEvent) => void;
   isPlaying: boolean;
+  pending: boolean;
 }) {
   const [hover, setHover] = useState(false);
+  const [focused, setFocused] = useState(false);
   const navigate = useNavigate();
 
   const isArtist = result.type === "artist";
@@ -111,22 +117,45 @@ const TopResultCard = memo(function TopResultCard({
     ? `/album/${result.item.album.id}`
     : undefined;
 
+  // a song's card plays it; an artist's or album's card opens it
   function handleClick() {
     if (isTrack) {
-      onPlay({} as React.MouseEvent);
+      onPlay();
     } else if (targetPath) {
       navigate(targetPath);
     }
   }
 
+  /* the card is one big mouse target, but its keyboard stops are the two real
+  controls inside it - the title (open / play) and the play button - so there
+  is no focusable wrapper holding a nested <button>. focusing either lights the
+  card the way hovering does. */
+  const lit = hover || focused;
+  const titleStyle: React.CSSProperties = {
+    color: "inherit",
+    textDecoration: "none",
+    font: "inherit",
+    letterSpacing: "inherit",
+    textAlign: "left",
+    background: "none",
+    border: "none",
+    padding: 0,
+    cursor: "pointer",
+    borderRadius: 4,
+  };
+
   return (
     <motion.div
       layout="position"
-      transition={{ layout: REFLOW }}
+      transition={{ layout: REFLOW, y: { duration: 0.18, ease: EASE_OUT }, scale: { duration: 0.12, ease: EASE_OUT } }}
       onClick={handleClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       whileHover={{ y: -2 }}
+      whileTap={PRESS}
+      aria-busy={pending || undefined}
       style={{
         position: "relative",
         display: "flex",
@@ -135,12 +164,12 @@ const TopResultCard = memo(function TopResultCard({
         gap: 16,
         padding: "clamp(16px, 2vw, 22px)",
         borderRadius: 14,
-        background: hover
+        background: lit
           ? "var(--color-surface-hover, rgba(255,255,255,0.10))"
           : "var(--color-surface, rgba(255,255,255,0.05))",
         border: "1px solid rgba(255, 255, 255, 0.06)",
-        boxShadow: hover ? "0 12px 32px rgba(0,0,0,0.38)" : "0 2px 10px rgba(0,0,0,0.18)",
-        cursor: "pointer",
+        boxShadow: lit ? "0 12px 32px rgba(0,0,0,0.38)" : "0 2px 10px rgba(0,0,0,0.18)",
+        cursor: pending ? "progress" : "pointer",
         transition: "background 0.18s ease, box-shadow 0.18s ease",
         overflow: "hidden",
         userSelect: "none",
@@ -178,21 +207,41 @@ const TopResultCard = memo(function TopResultCard({
           className="line-clamp-2"
           style={{
             margin: 0,
-            fontSize: "clamp(22px, 2.8vw, 30px)",
+            fontSize: "clamp(1.571rem, 2.8vw, 2.143rem)",
             fontWeight: 800,
-            letterSpacing: "-0.03em",
+            letterSpacing: "var(--type-display-track)",
             color: "var(--color-text-hi)",
             lineHeight: 1.15,
           }}
         >
-          {title}
+          {isTrack ? (
+            <button
+              type="button"
+              className="focus-ring"
+              onClick={(e) => { e.stopPropagation(); onPlay(e); }}
+              style={titleStyle}
+            >
+              {title}
+            </button>
+          ) : targetPath ? (
+            <Link
+              to={targetPath}
+              className="focus-ring"
+              onClick={(e) => e.stopPropagation()}
+              style={titleStyle}
+            >
+              {title}
+            </Link>
+          ) : (
+            title
+          )}
         </h3>
 
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 13, fontWeight: 500, color: "var(--color-text-dim)" }}>
           <span style={{ fontWeight: 600, color: "var(--color-text-hi)" }}>{badge}</span>
           {subtitle && subtitle !== badge && (
             <>
-              <span>•</span>
+              <span aria-hidden>•</span>
               <span className="line-clamp-1">{subtitle}</span>
             </>
           )}
@@ -202,7 +251,8 @@ const TopResultCard = memo(function TopResultCard({
       <div style={{ position: "absolute", right: 18, bottom: 18, zIndex: 2 }}>
         <CirclePlayButton
           isPlaying={isPlaying}
-          visible={hover || isPlaying}
+          visible={lit || isPlaying || pending}
+          pending={pending}
           onClick={onPlay}
           size={46}
           iconSize={19}
@@ -225,6 +275,7 @@ const PlaylistResultCard = memo(function PlaylistResultCard({ playlist, index = 
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       whileHover={{ y: -3 }}
+      whileTap={{ scale: 0.98 }}
       transition={getGridItemTransition(index)}
       style={{
         display: "flex", flexDirection: "column", gap: 8,
@@ -258,6 +309,7 @@ const PlaylistResultCard = memo(function PlaylistResultCard({ playlist, index = 
         {playlist.name}
       </span>
       <span
+        className="t-caption"
         style={{
           display: "block",
           fontSize: 12,
@@ -283,7 +335,7 @@ const PlaylistResultCard = memo(function PlaylistResultCard({ playlist, index = 
 
 export default function Search() {
   useReflowPulse();
-  const { loggedIn, login, loggingIn } = useAuth();
+  const { loggedIn } = useAuth();
   const [params]        = useSearchParams();
   const query           = (params.get("q") ?? "").trim();
   const [cat, setCat]   = useState<Category>("all");
@@ -293,7 +345,10 @@ export default function Search() {
   const playContext     = useQueueStore((s) => s.playContext);
   const toggleLike      = useToggleLike();
 
-  const { data, isLoading, error } = useSearch(query);
+  const { data, isLoading, error, refetch } = useSearch(query);
+  // top-result play fetches the artist's / album's tracks first; show that
+  // it was heard from the click, not from when the network answers
+  const [topPending, setTopPending] = useState(false);
   const trackIds = useMemo(() => data?.tracks.map((t) => t.id) ?? [], [data?.tracks]);
   const { data: savedIds = [] } = useSavedTrackIds(trackIds);
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
@@ -337,83 +392,36 @@ export default function Search() {
       return;
     }
 
-    if (topResult.type === "artist") {
-      try {
-        const full = await getArtist(topResult.item.id);
-        const tracks = full?.top_tracks ?? [];
-        if (tracks.length > 0) {
-          const start = playContext(tracks, 0, topResult.item.id);
-          if (start) {
-            setCurrentTrack(start);
-            playTrack(start.id).then(() => usePlayerStore.getState().setPlaying(true)).catch(console.error);
-          }
-        }
-      } catch (err) {
-        console.error(err);
+    if (topPending) return;
+    setTopPending(true);
+    try {
+      const tracks =
+        topResult.type === "artist"
+          ? (await getArtist(topResult.item.id))?.top_tracks ?? []
+          : (await getAlbum(topResult.item.id))?.tracks ?? [];
+      if (tracks.length === 0) {
+        toast.info(`Nothing to play from ${topResult.item.name}`);
+        return;
       }
-      return;
-    }
-
-    if (topResult.type === "album") {
-      try {
-        const full = await getAlbum(topResult.item.id);
-        const tracks = full?.tracks ?? [];
-        if (tracks.length > 0) {
-          const start = playContext(tracks, 0, topResult.item.id);
-          if (start) {
-            setCurrentTrack(start);
-            playTrack(start.id).then(() => usePlayerStore.getState().setPlaying(true)).catch(console.error);
-          }
-        }
-      } catch (err) {
-        console.error(err);
+      const start = playContext(tracks, 0, topResult.item.id);
+      if (start) {
+        setCurrentTrack(start);
+        playTrack(start.id).then(() => usePlayerStore.getState().setPlaying(true)).catch(console.error);
       }
-      return;
+    } catch (err) {
+      toast.error(`Couldn't play ${topResult.item.name}: ${errMsg(err)}`);
+    } finally {
+      setTopPending(false);
     }
   }
 
   if (!loggedIn) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>
-          Search
-        </h1>
-        <EmptyState
-          icon={
-            <MusiqueLogo
-              size={56}
-              style={{
-                filter: "drop-shadow(0 8px 24px rgba(88, 115, 216, 0.32))",
-              }}
-            />
-          }
-          iconContainerStyle={{ opacity: 1, marginBottom: 8 }}
-          title="Sign in to search Spotify"
-          description="Log in with your Spotify account to search for songs, albums, and artists."
-          action={
-            <button
-              onClick={() => login()}
-              disabled={loggingIn}
-              style={{
-                height: 38,
-                padding: "0 24px",
-                borderRadius: 99,
-                border: "none",
-                background: "var(--color-accent)",
-                color: "#fff",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: loggingIn ? "default" : "pointer",
-                opacity: loggingIn ? 0.6 : 1,
-                transition: "opacity 0.15s ease",
-              }}
-            >
-              {loggingIn ? "Waiting for browser…" : "Log in with Spotify"}
-            </button>
-          }
-          hint={loggingIn ? "Finish signing in in your browser. The app is listening on port 8989." : undefined}
-        />
-      </div>
+      <SignInPrompt
+        heading="Search"
+        title="Sign in to search Spotify"
+        description="Log in with your Spotify account to search for songs, albums, and artists."
+      />
     );
   }
 
@@ -443,25 +451,12 @@ export default function Search() {
       <motion.div
         layout="position"
         transition={{ layout: REFLOW }}
-        style={{ display: "flex", flexDirection: "column", gap: 4 }}
       >
-        <p
-          style={{
-            margin: 0,
-            fontSize: 13,
-            fontWeight: 600,
-            letterSpacing: "0.02em",
-            color: "var(--color-text-dim)",
-          }}
-        >
-          Search results
-        </p>
         <h1
+          className="t-display"
           style={{
             margin: 0,
-            fontSize: "clamp(22px, 3.2vw, 32px)",
-            fontWeight: 800,
-            letterSpacing: "-0.03em",
+            fontSize: "clamp(1.571rem, 3.2vw, var(--type-display-size))",
             color: "var(--color-text-hi)",
             textWrap: "balance",
           } as React.CSSProperties}
@@ -488,12 +483,11 @@ export default function Search() {
           return (
             <motion.button
               key={c}
-              layout="position"
-              transition={{ layout: REFLOW }}
               role="tab"
               aria-selected={on}
-              whileHover={{ scale: 1.04 }}
-              whileTap={{ scale: 0.96 }}
+              className="focus-ring"
+              whileTap={PRESS}
+              transition={{ duration: 0.12, ease: EASE_OUT }}
               onClick={() => setCat(c)}
               style={{
                 padding: "7px 18px",
@@ -513,7 +507,6 @@ export default function Search() {
                 transition:
                   "background 0.16s ease, color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease",
                 userSelect: "none",
-                outline: "none",
               }}
             >
               {c}
@@ -523,23 +516,27 @@ export default function Search() {
       </motion.div>
 
       {isLoading && (
-        <motion.p
-          layout="position"
-          transition={{ layout: REFLOW }}
-          style={{ fontSize: 13.5, color: "var(--color-text-dim)", margin: 0 }}
-        >
-          Searching…
-        </motion.p>
+        <div role="status" aria-label="Searching">
+          {cat === "all" ? (
+            <TopResultSkeleton />
+          ) : cat === "songs" ? (
+            <TrackRowsSkeleton count={10} />
+          ) : (
+            <CardGridSkeleton count={10} round={cat === "artists"} />
+          )}
+        </div>
       )}
 
-      {error && (
-        <motion.p
-          layout="position"
-          transition={{ layout: REFLOW }}
-          style={{ fontSize: 13.5, color: "var(--color-danger)", margin: 0 }}
-        >
-          {errMsg(error)}
-        </motion.p>
+      {error && !data && (
+        <EmptyState
+          title="Search didn't go through"
+          description={errMsg(error)}
+          action={
+            <button type="button" className="btn-pill" onClick={() => refetch()}>
+              Try again
+            </button>
+          }
+        />
       )}
 
       {!isLoading && !error && !hasResults && (
@@ -574,22 +571,13 @@ export default function Search() {
                   transition={{ layout: REFLOW }}
                   style={{ display: "flex", flexDirection: "column", height: "100%" }}
                 >
-                  <h2
-                    style={{
-                      margin: "0 0 14px",
-                      fontSize: "clamp(18px, 2vw, 22px)",
-                      fontWeight: 700,
-                      letterSpacing: "-0.01em",
-                      color: "var(--color-text-hi)",
-                    }}
-                  >
-                    Top result
-                  </h2>
+                  <SectionTitle>Top result</SectionTitle>
                   <div style={{ flex: 1, minHeight: 0 }}>
                     <TopResultCard
                       result={topResult}
                       onPlay={handlePlayTopResult}
                       isPlaying={isTopResultPlaying}
+                      pending={topPending}
                     />
                   </div>
                 </motion.section>
@@ -601,52 +589,11 @@ export default function Search() {
                   transition={{ layout: REFLOW }}
                   style={{ display: "flex", flexDirection: "column", height: "100%" }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      marginBottom: 14,
-                    }}
+                  <SectionTitle
+                    right={data.tracks.length > 4 && <ShowAllButton onClick={() => setCat("songs")} />}
                   >
-                    <h2
-                      style={{
-                        margin: 0,
-                        fontSize: "clamp(18px, 2vw, 22px)",
-                        fontWeight: 700,
-                        letterSpacing: "-0.01em",
-                        color: "var(--color-text-hi)",
-                      }}
-                    >
-                      Songs
-                    </h2>
-                    {data.tracks.length > 4 && (
-                      <button
-                        onClick={() => setCat("songs")}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: "var(--color-text-dim)",
-                          fontSize: 12.5,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          padding: "4px 8px",
-                          borderRadius: 6,
-                          transition: "color 0.15s ease",
-                        }}
-                        onMouseEnter={(e) =>
-                          ((e.currentTarget as HTMLButtonElement).style.color =
-                            "var(--color-text-hi)")
-                        }
-                        onMouseLeave={(e) =>
-                          ((e.currentTarget as HTMLButtonElement).style.color =
-                            "var(--color-text-dim)")
-                        }
-                      >
-                        Show all
-                      </button>
-                    )}
-                  </div>
+                    Songs
+                  </SectionTitle>
                   <div className="flex flex-col">
                     {data.tracks.slice(0, 4).map((t, i) => (
                       <TrackRow
@@ -680,17 +627,7 @@ export default function Search() {
           {/* FULL SONGS LIST (when 'songs' category is selected) */}
           {cat === "songs" && data.tracks.length > 0 && (
             <motion.section layout="position" transition={{ layout: REFLOW }}>
-              <h2
-                style={{
-                  margin: "0 0 14px",
-                  fontSize: "clamp(18px, 2vw, 22px)",
-                  fontWeight: 700,
-                  letterSpacing: "-0.01em",
-                  color: "var(--color-text-hi)",
-                }}
-              >
-                Songs
-              </h2>
+              <SectionTitle>Songs</SectionTitle>
               <div className="flex flex-col">
                 {data.tracks.map((t, i) => (
                   <TrackRow
@@ -722,170 +659,43 @@ export default function Search() {
           {/* ARTISTS GRID */}
           {show("artists") && data.artists.length > 0 && (
             <motion.section layout="position" transition={{ layout: REFLOW }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  marginBottom: 14,
-                }}
+              <SectionTitle
+                right={cat === "all" && data.artists.length > 7 && <ShowAllButton onClick={() => setCat("artists")} />}
               >
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: "clamp(18px, 2vw, 22px)",
-                    fontWeight: 700,
-                    letterSpacing: "-0.01em",
-                    color: "var(--color-text-hi)",
-                  }}
-                >
-                  Artists
-                </h2>
-                {cat === "all" && data.artists.length > 7 && (
-                  <button
-                    onClick={() => setCat("artists")}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: "var(--color-text-dim)",
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      padding: "4px 8px",
-                      borderRadius: 6,
-                      transition: "color 0.15s ease",
-                    }}
-                    onMouseEnter={(e) =>
-                      ((e.currentTarget as HTMLButtonElement).style.color =
-                        "var(--color-text-hi)")
-                    }
-                    onMouseLeave={(e) =>
-                      ((e.currentTarget as HTMLButtonElement).style.color =
-                        "var(--color-text-dim)")
-                    }
-                  >
-                    Show all
-                  </button>
-                )}
-              </div>
-              <motion.div layout="position" transition={{ layout: REFLOW }}>
-                <ArtistGrid>
-                  {(cat === "all" ? data.artists.slice(0, 7) : data.artists).map((a, i) => (
-                    <ArtistCard key={a.id} artist={a} index={i} />
-                  ))}
-                </ArtistGrid>
-              </motion.div>
+                Artists
+              </SectionTitle>
+              <ArtistGrid>
+                {(cat === "all" ? data.artists.slice(0, 7) : data.artists).map((a, i) => (
+                  <ArtistCard key={a.id} artist={a} index={i} />
+                ))}
+              </ArtistGrid>
             </motion.section>
           )}
 
           {/* ALBUMS GRID */}
           {show("albums") && data.albums.length > 0 && (
             <motion.section layout="position" transition={{ layout: REFLOW }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  marginBottom: 14,
-                }}
+              <SectionTitle
+                right={cat === "all" && data.albums.length > 7 && <ShowAllButton onClick={() => setCat("albums")} />}
               >
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: "clamp(18px, 2vw, 22px)",
-                    fontWeight: 700,
-                    letterSpacing: "-0.01em",
-                    color: "var(--color-text-hi)",
-                  }}
-                >
-                  Albums
-                </h2>
-                {cat === "all" && data.albums.length > 7 && (
-                  <button
-                    onClick={() => setCat("albums")}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: "var(--color-text-dim)",
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      padding: "4px 8px",
-                      borderRadius: 6,
-                      transition: "color 0.15s ease",
-                    }}
-                    onMouseEnter={(e) =>
-                      ((e.currentTarget as HTMLButtonElement).style.color =
-                        "var(--color-text-hi)")
-                    }
-                    onMouseLeave={(e) =>
-                      ((e.currentTarget as HTMLButtonElement).style.color =
-                        "var(--color-text-dim)")
-                    }
-                  >
-                    Show all
-                  </button>
-                )}
-              </div>
-              <motion.div layout="position" transition={{ layout: REFLOW }}>
-                <AlbumGrid>
-                  {(cat === "all" ? data.albums.slice(0, 7) : data.albums).map((al, i) => (
-                    <AlbumCard key={al.id} album={al} index={i} />
-                  ))}
-                </AlbumGrid>
-              </motion.div>
+                Albums
+              </SectionTitle>
+              <AlbumGrid>
+                {(cat === "all" ? data.albums.slice(0, 7) : data.albums).map((al, i) => (
+                  <AlbumCard key={al.id} album={al} index={i} />
+                ))}
+              </AlbumGrid>
             </motion.section>
           )}
 
           {/* PLAYLISTS GRID */}
           {show("playlists") && data.playlists.length > 0 && (
             <motion.section layout="position" transition={{ layout: REFLOW }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  marginBottom: 14,
-                }}
+              <SectionTitle
+                right={cat === "all" && data.playlists.length > 7 && <ShowAllButton onClick={() => setCat("playlists")} />}
               >
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: "clamp(18px, 2vw, 22px)",
-                    fontWeight: 700,
-                    letterSpacing: "-0.01em",
-                    color: "var(--color-text-hi)",
-                  }}
-                >
-                  Playlists
-                </h2>
-                {cat === "all" && data.playlists.length > 7 && (
-                  <button
-                    onClick={() => setCat("playlists")}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: "var(--color-text-dim)",
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      padding: "4px 8px",
-                      borderRadius: 6,
-                      transition: "color 0.15s ease",
-                    }}
-                    onMouseEnter={(e) =>
-                      ((e.currentTarget as HTMLButtonElement).style.color =
-                        "var(--color-text-hi)")
-                    }
-                    onMouseLeave={(e) =>
-                      ((e.currentTarget as HTMLButtonElement).style.color =
-                        "var(--color-text-dim)")
-                    }
-                  >
-                    Show all
-                  </button>
-                )}
-              </div>
+                Playlists
+              </SectionTitle>
               <motion.div
                 layout="position"
                 transition={{ layout: REFLOW }}

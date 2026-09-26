@@ -17,6 +17,7 @@ import { isMac } from "../../lib/platform";
 import { usePlayerStore } from "../../store/player.store";
 import { useUIStore } from "../../store/ui.store";
 import { TopSearch } from "./TopSearch";
+import { EASE_OUT } from "../../lib/motion";
 
 /* size of the windows caption cluster, measured from the window's top-right
    corner. the top bar is exactly this tall, so the buttons and the bar share
@@ -27,35 +28,34 @@ export const TOP_BAR_H = CAPTION_H;
 
 // win11 caption button (transparent and full-height)
 
+// hover / press are CSS (.cap-btn in styles/layout.css): the old useState
+// hover re-rendered the button on every enter/leave for a colour change
 function CaptionBtn({
   onClick,
   children,
   danger,
+  label,
 }: {
   onClick: () => void;
   children: React.ReactNode;
   danger?: boolean;
+  label: string;
 }) {
-  const [hover, setHover] = useState(false);
   return (
     <button
       onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      aria-label={label}
+      className="cap-btn"
+      data-danger={danger || undefined}
       style={{
         width:          46,
         height:         "100%",
         borderRadius:   0,
         border:         "none",
-        background:     hover
-          ? danger ? "#e81123" : "rgba(255,255,255,0.09)"
-          : "transparent",
-        color:          hover && danger ? "#fff" : hover ? "#ffffff" : "rgba(255,255,255,0.72)",
         cursor:         "pointer",
         display:        "flex",
         alignItems:     "center",
         justifyContent: "center",
-        transition:     "background 0.12s, color 0.12s",
         flexShrink:     0,
         ...({ WebkitAppRegion: "no-drag" } as React.CSSProperties),
       }}
@@ -79,7 +79,7 @@ function CapsuleButton({
   label, onClick, children, on, off, tone, align, ...rest
 }: {
   label: React.ReactNode;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   children: React.ReactNode;
   on?: boolean;
   off?: boolean;
@@ -90,7 +90,7 @@ function CapsuleButton({
     <Tooltip label={label} side="bottom" align={align}>
       <button
         className="tb-btn"
-        onClick={() => { if (!off) onClick(); }}
+        onClick={(e) => { if (!off) onClick(e); }}
         aria-disabled={off || undefined}
         data-on={on ? "true" : undefined}
         data-tone={tone}
@@ -136,10 +136,11 @@ const STATUS_DOT: Record<ConnectionStatus, string> = {
   valid:        "#34d399",
   invalid:      "#ff453a",
 };
+// plain words: what the connection is doing, not how the quota is billed
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
-  unconfigured: "Shared Quota (Ready)",
-  configured:   "Custom Quota (Saved)",
-  validating:   "Testing API…",
+  unconfigured: "Ready",
+  configured:   "Using your own Spotify app",
+  validating:   "Checking connection…",
   valid:        "Connected",
   invalid:      "Check API keys",
 };
@@ -149,19 +150,17 @@ function AccountMenuItem({
 }: {
   icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean;
 }) {
-  const [hover, setHover] = useState(false);
   return (
     <button
+      role="menuitem"
       onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      className="row-btn acct-item"
+      data-danger={danger || undefined}
       style={{
-        display: "flex", alignItems: "center", gap: 11, width: "100%",
-        height: 36, padding: "0 10px", borderRadius: 8, border: "none",
-        background: hover ? (danger ? "rgba(255,69,58,0.14)" : "var(--color-hover)") : "transparent",
+        gap: 11,
+        height: 36, padding: "0 10px", borderRadius: 8,
         color: danger ? "var(--color-danger)" : "var(--color-text-hi)",
-        fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "left",
-        transition: "background 0.1s",
+        fontSize: 13, fontWeight: 500,
       }}
     >
       <span style={{ width: 16, display: "flex", color: danger ? "var(--color-danger)" : "var(--color-text)" }}>{icon}</span>
@@ -174,20 +173,56 @@ function AccountMenu() {
   const [open, setOpen] = useState(false);
   const navigate    = useNavigate();
   const ref         = useRef<HTMLDivElement>(null);
+  const menuRef     = useRef<HTMLDivElement>(null);
+  // opened from the keyboard -> move focus into the menu so arrows work
+  const [keyboardOpened, setKeyboardOpened] = useState(false);
   const displayName = useAuthStore((s) => s.displayName);
   const imageUrl    = useAuthStore((s) => s.imageUrl);
   const loggedIn    = useAuthStore((s) => s.loggedIn);
   const status      = useCredentialsStore((s) => s.status);
   const { login, logout } = useAuth();
 
+  const trigger = () => ref.current?.querySelector<HTMLButtonElement>(".tb-btn") ?? null;
+
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
+    // Escape closes and hands focus back to the avatar; arrows walk the items
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+        trigger()?.focus();
+        return;
+      }
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
+      const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+      if (items.length === 0) return;
+      e.preventDefault();
+      const at = items.indexOf(document.activeElement as HTMLButtonElement);
+      const next =
+        e.key === "Home" ? 0
+        : e.key === "End" ? items.length - 1
+        : e.key === "ArrowDown" ? (at + 1) % items.length
+        : (at - 1 + items.length) % items.length;
+      items[next]?.focus();
+    };
     window.addEventListener("mousedown", onDown);
-    return () => window.removeEventListener("mousedown", onDown);
+    // on document, not window: stopPropagation here keeps Escape from also
+    // reaching window-level handlers (Immersive closes on Escape)
+    document.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !keyboardOpened) return;
+    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+  }, [open, keyboardOpened]);
 
   const go = (path: string) => { setOpen(false); navigate(path); };
 
@@ -202,7 +237,11 @@ function AccountMenu() {
       <CapsuleButton
         label={needsAttention ? STATUS_LABEL.invalid : (displayName ?? "Account")}
         align="start"
-        onClick={() => setOpen((v) => !v)}
+        onClick={(e) => {
+          // detail 0 = activated by Enter/Space rather than a pointer
+          setKeyboardOpened(e.detail === 0);
+          setOpen((v) => !v);
+        }}
         on={open}
         aria-label="Account"
         aria-expanded={open}
@@ -233,11 +272,15 @@ function AccountMenu() {
       <AnimatePresence>
         {open && (
           <motion.div
+            ref={menuRef}
             role="menu"
+            aria-label="Account"
+            className="glass-solid-fallback"
             initial={{ opacity: 0, y: -6, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -6, scale: 0.97 }}
-            transition={{ duration: 0.16, ease: [0.23, 1, 0.32, 1] }}
+            // out faster than in: the user has already decided
+            exit={{ opacity: 0, y: -4, scale: 0.98, transition: { duration: 0.12, ease: EASE_OUT } }}
+            transition={{ duration: 0.16, ease: EASE_OUT }}
             style={{
               position:      "absolute",
               top:           36,
@@ -269,7 +312,7 @@ function AccountMenu() {
                 </p>
                 <span style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: STATUS_DOT[status], flexShrink: 0 }} />
-                  <span style={{ fontSize: 11.5, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span className="t-caption" style={{ fontSize: 11.5, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {STATUS_LABEL[status]}
                   </span>
                 </span>
@@ -339,14 +382,14 @@ export function WindowCaptionControls() {
       }}
     >
       <Tooltip label="Minimize" side="bottom">
-        <CaptionBtn onClick={() => win.minimize()}>
+        <CaptionBtn label="Minimize" onClick={() => win.minimize()}>
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
             <path d="M0 5H10" stroke="currentColor" strokeWidth="1" />
           </svg>
         </CaptionBtn>
       </Tooltip>
       <Tooltip label={maximized ? "Restore" : "Maximize"} side="bottom">
-        <CaptionBtn onClick={() => win.toggleMaximize()}>
+        <CaptionBtn label={maximized ? "Restore" : "Maximize"} onClick={() => win.toggleMaximize()}>
           {maximized ? (
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
               <path d="M2.5 0.5H9.5V7.5H7.5" fill="none" stroke="currentColor" strokeWidth="1" />
@@ -360,7 +403,7 @@ export function WindowCaptionControls() {
         </CaptionBtn>
       </Tooltip>
       <Tooltip label="Close" side="bottom" align="end">
-        <CaptionBtn onClick={() => win.close()} danger>
+        <CaptionBtn label="Close" onClick={() => win.close()} danger>
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
             <path d="M1 1L9 9M9 1L1 9" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
           </svg>

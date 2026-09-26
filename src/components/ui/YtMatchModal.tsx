@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Music, RefreshCw, X } from "@/lib/icons";
 import { useYtMatchStore } from "../../store/ytMatch.store";
@@ -12,6 +11,7 @@ import {
 import { toast } from "../../store/toast.store";
 import { errMsg } from "../../lib/err";
 import { fmtMs } from "../../utils/fmt";
+import { Modal } from "./Modal";
 
 /**
  * "Which YouTube upload is this?" picker.
@@ -58,7 +58,7 @@ export function YtMatchModal() {
       toast("Match pinned - this track will always use that upload");
       close();
     } catch (e) {
-      toast(errMsg(e));
+      toast.error(errMsg(e));
     } finally {
       setBusy(false);
     }
@@ -73,146 +73,121 @@ export function YtMatchModal() {
       toast("Match cleared - it'll be resolved again on next play");
       close();
     } catch (e) {
-      toast(errMsg(e));
+      toast.error(errMsg(e));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.14 }}
-          onClick={close}
-          style={{
-            position: "fixed", inset: 0, zIndex: 1050,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)",
-          }}
-        >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96, y: 8 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.97, y: 6 }}
-            transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "min(520px, calc(100vw - 32px))", maxHeight: "74vh",
-              display: "flex", flexDirection: "column",
-              borderRadius: 16, background: "rgba(20,20,26,0.97)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              boxShadow: "0 24px 64px rgba(0,0,0,0.6)", overflow: "hidden",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 18px 10px" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  YouTube Music source
-                </h2>
-                <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {label ?? "this track"}
-                </p>
-              </div>
-              <button onClick={close} title="Close" style={iconBtn}><X size={16} /></button>
-            </div>
+    <Modal
+      open={open}
+      onClose={close}
+      labelledBy="yt-match-title"
+      panelStyle={{
+        width: "min(520px, calc(100vw - 32px))", maxHeight: "74vh",
+        display: "flex", flexDirection: "column", overflow: "hidden",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 18px 10px" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 id="yt-match-title" style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            YouTube Music source
+          </h2>
+          <p className="t-caption" style={{ margin: "2px 0 0", fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {label ?? "this track"}
+          </p>
+        </div>
+        <button onClick={close} aria-label="Close" title="Close" className="btn-icon" style={iconBtn}><X size={16} /></button>
+      </div>
 
-            {/* Current state: matched, refused, or not yet resolved. */}
-            <div style={{ padding: "0 18px 12px" }}>
-              <div style={{
-                padding: "9px 12px", borderRadius: 9,
-                background: "rgba(0,0,0,0.25)", border: "1px solid var(--color-border)",
-                fontSize: 12, color: "var(--color-text-dim)", lineHeight: 1.45,
-              }}>
-                {match?.video_id ? (
-                  <>
-                    Currently using <strong style={{ color: "var(--color-text-hi)", fontWeight: 600 }}>{match.video_id}</strong>
-                    {match.pinned && <span style={{ color: "var(--color-accent)" }}> (pinned by you)</span>}
-                    {match.reason && <><br />{match.reason}</>}
-                  </>
-                ) : match ? (
-                  <>
-                    No acceptable match was found, so this track won't play.
-                    {match.reason && <><br />{match.reason}</>}
-                  </>
-                ) : (
-                  "Not resolved yet - it'll be matched the first time you play it."
-                )}
-              </div>
-            </div>
+      {/* Current state: matched, refused, or not yet resolved. */}
+      <div style={{ padding: "0 18px 12px" }}>
+        <div style={{
+          padding: "9px 12px", borderRadius: 9,
+          background: "rgba(0,0,0,0.25)", border: "1px solid var(--color-border)",
+          fontSize: 12, color: "var(--color-text-dim)", lineHeight: 1.45,
+        }}>
+          {match?.video_id ? (
+            <>
+              Currently using <strong style={{ color: "var(--color-text-hi)", fontWeight: 600 }}>{match.video_id}</strong>
+              {match.pinned && <span style={{ color: "var(--color-accent)" }}> (pinned by you)</span>}
+              {match.reason && <><br />{match.reason}</>}
+            </>
+          ) : match ? (
+            <>
+              No acceptable match was found, so this track won't play.
+              {match.reason && <><br />{match.reason}</>}
+            </>
+          ) : (
+            "Not resolved yet - it'll be matched the first time you play it."
+          )}
+        </div>
+      </div>
 
-            <div style={{ padding: "0 18px 8px", fontSize: 11.5, color: "var(--color-text-dim)" }}>
-              All search results, including ones automatic matching rejected.
-            </div>
+      <div style={{ padding: "0 18px 8px", fontSize: 11.5, color: "var(--color-text-dim)" }}>
+        All search results, including ones automatic matching rejected.
+      </div>
 
-            <div style={{ flex: 1, overflowY: "auto", padding: "0 10px 10px" }}>
-              {isLoading ? (
-                <p style={hint}>Searching YouTube Music…</p>
-              ) : isError ? (
-                <p style={hint}>{errMsg(error)}</p>
-              ) : candidates.length === 0 ? (
-                <p style={hint}>No results.</p>
-              ) : (
-                candidates.map((c) => {
-                  const active = c.video_id === match?.video_id;
-                  return (
-                    <button
-                      key={c.video_id}
-                      onClick={() => pick(c.video_id)}
-                      disabled={busy}
-                      style={{ ...rowBtn, background: active ? "var(--color-hover)" : "transparent" }}
-                      onMouseEnter={hoverOn}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = active ? "var(--color-hover)" : "transparent"; }}
-                    >
-                      <span style={{ ...thumb, background: "var(--color-surface-2)" }}>
-                        {active
-                          ? <Check size={16} style={{ color: "var(--color-accent)" }} />
-                          : <Music size={15} style={{ color: "var(--color-text-dim)" }} />}
-                      </span>
-                      <span style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
-                        <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {c.title}
-                          {c.explicit && <span style={explicitTag}>E</span>}
-                        </span>
-                        <span style={{ display: "block", fontSize: 11.5, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {[c.artists.join(", "), c.album, c.duration_ms != null ? fmtMs(c.duration_ms) : null]
-                            .filter(Boolean)
-                            .join("  ·  ")}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "10px 18px 14px", borderTop: "1px solid var(--color-border)" }}>
-              <button onClick={reset} disabled={busy || !match} style={secondaryBtn}>
-                <RefreshCw size={13} strokeWidth={2.2} />
-                Clear &amp; re-match
+      <div style={{ flex: 1, overflowY: "auto", padding: "0 10px 10px" }}>
+        {isLoading ? (
+          <p style={hint}>Searching YouTube Music…</p>
+        ) : isError ? (
+          <p style={hint}>{errMsg(error)}</p>
+        ) : candidates.length === 0 ? (
+          <p style={hint}>No results.</p>
+        ) : (
+          candidates.map((c) => {
+            const active = c.video_id === match?.video_id;
+            return (
+              <button
+                key={c.video_id}
+                onClick={() => pick(c.video_id)}
+                disabled={busy}
+                className="row-btn"
+                data-active={active}
+                aria-current={active || undefined}
+                style={rowBtn}
+              >
+                <span style={{ ...thumb, background: "var(--color-surface-2)" }}>
+                  {active
+                    ? <Check size={16} style={{ color: "var(--color-accent)" }} />
+                    : <Music size={15} style={{ color: "var(--color-text-dim)" }} />}
+                </span>
+                <span style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
+                  <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {c.title}
+                    {c.explicit && <span style={explicitTag}>E</span>}
+                  </span>
+                  <span className="t-caption tnum" style={{ display: "block", fontSize: 11.5, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {[c.artists.join(", "), c.album, c.duration_ms != null ? fmtMs(c.duration_ms) : null]
+                      .filter(Boolean)
+                      .join("  ·  ")}
+                  </span>
+                </span>
               </button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+            );
+          })
+        )}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "10px 18px 14px", borderTop: "1px solid var(--color-border)" }}>
+        <button onClick={reset} disabled={busy || !match} className="btn-pill" style={secondaryBtn}>
+          <RefreshCw size={13} strokeWidth={2.2} />
+          Clear &amp; re-match
+        </button>
+      </div>
+    </Modal>
   );
 }
 
 const iconBtn: React.CSSProperties = {
-  display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28,
-  borderRadius: 6, border: "none", background: "transparent", color: "var(--color-text)",
-  cursor: "pointer", flexShrink: 0,
+  width: 28, height: 28, borderRadius: 6, color: "var(--color-text)",
 };
 
 const rowBtn: React.CSSProperties = {
-  display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "8px 10px",
-  border: "none", borderRadius: 10, cursor: "pointer", transition: "background 0.1s",
+  gap: 11, padding: "8px 10px", borderRadius: 10,
 };
-const hoverOn = (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = "var(--color-hover)"; };
 
 const thumb: React.CSSProperties = {
   width: 36, height: 36, borderRadius: 6, flexShrink: 0,
@@ -227,10 +202,7 @@ const explicitTag: React.CSSProperties = {
 };
 
 const secondaryBtn: React.CSSProperties = {
-  display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 8,
-  border: "1px solid var(--color-border)", background: "transparent",
-  color: "var(--color-text)", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-  fontFamily: "inherit",
+  height: 32, padding: "0 13px", borderRadius: 8, fontSize: 12.5,
 };
 
 const hint: React.CSSProperties = { margin: 0, padding: "12px 10px", fontSize: 12.5, color: "var(--color-text-dim)" };

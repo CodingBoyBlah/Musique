@@ -45,6 +45,32 @@
     --color-dock-highlight: rgba(255, 255, 255, 0.12);
 
     --color-danger: #ff453a;
+    --color-warning: #ffb340;
+}
+
+/* ── motion + type tokens ─────────────────────────────────────────────────
+   One vocabulary for the whole app (mirrored in lib/motion.ts for framer).
+   The same kind of motion always uses the same curve. */
+:root {
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+    --press-scale: 0.96;
+
+    /* type scale. tracking is set per size, never one value for all of them:
+       large type tightens, small type opens up a touch to stay legible. rem,
+       so the whole scale follows the root size. */
+    --type-display-size: 2.285rem;   /* 32px */
+    --type-display-track: -0.032em;
+    --type-display-lead: 1.08;
+    --type-title-size: 1.857rem;     /* 26px */
+    --type-title-track: -0.026em;
+    --type-title-lead: 1.12;
+    --type-section-size: 1.571rem;   /* 22px */
+    --type-section-track: -0.022em;
+    --type-section-lead: 1.2;
+    --type-body-track: -0.011em;
+    --type-caption-track: 0.004em;
 }
 
 
@@ -271,9 +297,8 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
 
 /* ── immersive ambient ────────────────────────────────────────────────────
  *
- * Three copies of the cover drifting over each other at unrelated rates, which
- * is what makes the colour actually flow rather than sit there - put two frames
- * of the reference four seconds apart and the whole field has rearranged.
+ * A pre-blurred copy of the cover drifting slowly behind the view, which is
+ * what makes the colour flow rather than sit there.
  *
  * The motion is the same idea the first version of this view had. What was
  * wrong with it was never the look, it was that each layer carried a live
@@ -296,11 +321,9 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
      * every frame, and it is not the box that matters but the box times the
      * largest scale the keyframes reach: at -22% and scale 1.24 the layer
      * rastered at about 1.79x the window in each direction, which is 3.2x the
-     * window's pixels. At -12% and scale 1.16 it is 1.39x each way, about 1.9x
-     * the pixels - a third of the fill, for motion that reads identically
-     * because the source is a blur to begin with. Rotation is kept to 4deg so
-     * the box still covers the window at its corners. */
-    inset: -12%;
+     * window's pixels. The drift now peaks at scale 1.06 with no rotation, so
+     * -8% is enough to keep the corners covered at 3% travel. */
+    inset: -8%;
     background-size: cover;
     background-position: center;
     will-change: transform;
@@ -318,10 +341,16 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
    running at full rate. */
 .amb-parked { animation-play-state: paused; }
 
+/* Gentle on purpose. This layer fills the whole window, and a full-viewport
+   field that swells and turns is exactly the kind of motion that unsettles
+   people - so no rotation, a small scale range and a few percent of travel.
+   The colour still flows; it just no longer lurches. The drift can be turned
+   off in Settings (prefs.ambientMotion) and stops for reduced motion or
+   reduced transparency. */
 @keyframes amb-drift-1 {
-    0%, 100% { transform: scale(1.02) translate3d(0, 0, 0) rotate(0deg); }
-    33%      { transform: scale(1.16) translate3d(6%, -5%, 0) rotate(4deg); }
-    66%      { transform: scale(1.08) translate3d(-5%, 4%, 0) rotate(-4deg); }
+    0%, 100% { transform: scale(1.02) translate3d(0, 0, 0); }
+    33%      { transform: scale(1.06) translate3d(3%, -2.5%, 0); }
+    66%      { transform: scale(1.04) translate3d(-2.5%, 2%, 0); }
 }
 
 /* ── lyrics ───────────────────────────────────────────────────────────────
@@ -677,5 +706,351 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
     }
     .tb-btn:active {
         transform: none;
+    }
+}
+
+
+/* ═══ shared interaction primitives ══════════════════════════════════════
+   Every pressable thing in the app follows the pattern .tb-btn established:
+   hover is CSS (never onMouseEnter writing node.style - any re-render while
+   the pointer is still there wipes it), hover only where a real hover pointer
+   exists, feedback on press rather than on release, and a visible
+   focus-visible ring.
+
+   .pressable     press feedback only. drop on anything clickable.
+   .btn-icon      square icon button, transparent at rest
+   .btn-text      text link / text button (dim -> bright)
+   .btn-pill      small filled secondary pill
+   .btn-primary   accent pill
+   .btn-danger    destructive pill
+   .row-btn       full-width list/menu row
+   .focus-ring    focus-visible ring for custom controls */
+
+.pressable,
+.btn-icon,
+.btn-text,
+.btn-pill,
+.btn-primary,
+.btn-danger,
+.row-btn {
+    transition:
+        background-color 0.14s ease,
+        color 0.14s ease,
+        border-color 0.14s ease,
+        box-shadow 0.14s ease,
+        opacity 0.14s ease,
+        transform 0.12s var(--ease-out);
+}
+
+.pressable:active:not([aria-disabled="true"]):not(:disabled),
+.btn-icon:active:not([aria-disabled="true"]):not(:disabled),
+.btn-pill:active:not([aria-disabled="true"]):not(:disabled),
+.btn-primary:active:not([aria-disabled="true"]):not(:disabled),
+.btn-danger:active:not([aria-disabled="true"]):not(:disabled) {
+    transform: scale(var(--press-scale));
+}
+/* rows are wide; a 4% scale would move their far edge a long way */
+.row-btn:active:not([aria-disabled="true"]):not(:disabled) {
+    transform: scale(0.985);
+}
+.btn-text:active:not([aria-disabled="true"]):not(:disabled) {
+    opacity: 0.7;
+}
+
+.btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--color-text-dim);
+    cursor: pointer;
+    font: inherit;
+}
+.btn-icon[data-on="true"] {
+    color: var(--color-accent-hover);
+}
+
+.btn-text {
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--color-text-dim);
+    cursor: pointer;
+    font: inherit;
+}
+
+.btn-pill,
+.btn-primary,
+.btn-danger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 99px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.006em;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.btn-pill {
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--color-text-hi);
+}
+.btn-primary {
+    background: var(--color-accent);
+    border-color: transparent;
+    color: var(--color-accent-text);
+}
+.btn-danger {
+    background: rgba(255, 69, 58, 0.14);
+    border-color: rgba(255, 69, 58, 0.3);
+    color: #ff6961;
+}
+
+.row-btn {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--color-text);
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+}
+.row-btn[data-active="true"] {
+    background: var(--color-active);
+    color: var(--color-text-hi);
+}
+
+.btn-icon:disabled,
+.btn-icon[aria-disabled="true"],
+.btn-pill:disabled,
+.btn-pill[aria-disabled="true"],
+.btn-primary:disabled,
+.btn-primary[aria-disabled="true"],
+.btn-text:disabled,
+.btn-text[aria-disabled="true"] {
+    opacity: 0.4;
+    cursor: default;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .btn-icon:hover:not(:disabled):not([aria-disabled="true"]) {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--color-text-hi);
+    }
+    .btn-icon[data-on="true"]:hover:not(:disabled) {
+        color: #aebdf7;
+    }
+    .btn-text:hover:not(:disabled):not([aria-disabled="true"]) {
+        color: var(--color-text-hi);
+    }
+    .btn-pill:hover:not(:disabled):not([aria-disabled="true"]) {
+        background: rgba(255, 255, 255, 0.12);
+    }
+    .btn-primary:hover:not(:disabled):not([aria-disabled="true"]) {
+        background: var(--color-accent-hover);
+    }
+    .btn-danger:hover:not(:disabled):not([aria-disabled="true"]) {
+        background: rgba(255, 69, 58, 0.22);
+    }
+    .row-btn:hover:not(:disabled):not([aria-disabled="true"]):not([data-active="true"]) {
+        background: var(--color-hover);
+        color: var(--color-text-hi);
+    }
+}
+
+/* one focus ring for every custom control. keyboard only - :focus-visible
+   never fires for a mouse click. */
+.pressable:focus-visible,
+.btn-icon:focus-visible,
+.btn-text:focus-visible,
+.btn-pill:focus-visible,
+.btn-primary:focus-visible,
+.btn-danger:focus-visible,
+.row-btn:focus-visible,
+.focus-ring:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+.row-btn:focus-visible {
+    outline-offset: -2px;
+}
+/* text fields: ring the wrapper, since the input itself is borderless */
+.focus-within-ring:focus-within {
+    border-color: rgba(88, 115, 216, 0.75) !important;
+    box-shadow: 0 0 0 3px rgba(88, 115, 216, 0.2);
+}
+
+/* keyboard users land on hover-revealed controls too */
+.group:focus-within .queue-btn,
+.group:focus-within .row-play,
+.group:focus-within .rec-play {
+    opacity: 1 !important;
+}
+.group:focus-within .row-idx {
+    opacity: 0;
+}
+.group:focus-within .rec-play {
+    transform: translateY(0) !important;
+}
+input[type="range"]:focus-visible {
+    outline: none;
+}
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+    opacity: 1;
+    box-shadow: 0 0 0 3px rgba(88, 115, 216, 0.55), 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* ── type roles ────────────────────────────────────────────────────────── */
+.t-display {
+    font-size: var(--type-display-size);
+    font-weight: 800;
+    line-height: var(--type-display-lead);
+    letter-spacing: var(--type-display-track);
+}
+.t-title {
+    font-size: var(--type-title-size);
+    font-weight: 800;
+    line-height: var(--type-title-lead);
+    letter-spacing: var(--type-title-track);
+}
+.t-section {
+    font-size: var(--type-section-size);
+    font-weight: 700;
+    line-height: var(--type-section-lead);
+    letter-spacing: var(--type-section-track);
+}
+/* 10.5-12.5px secondary text: open the tracking back up. the body's
+   -0.011em is right at 14px and cramped below 13. */
+.t-caption {
+    letter-spacing: var(--type-caption-track);
+}
+.tnum {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── loader ────────────────────────────────────────────────────────────── */
+.loader {
+    opacity: 0;
+    animation: loader-in 0.25s var(--ease-out) 0.3s forwards;
+}
+.loader-arc {
+    animation: spin 0.8s linear infinite;
+}
+@keyframes loader-in {
+    to { opacity: 1; }
+}
+
+/* ── carousels: scroll-edge fade instead of a hard clip ────────────────── */
+.edge-fade-x[data-fade-start="true"][data-fade-end="true"] {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 36px, #000 calc(100% - 36px), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 36px, #000 calc(100% - 36px), transparent 100%);
+}
+.edge-fade-x[data-fade-start="true"]:not([data-fade-end="true"]) {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 36px);
+    mask-image: linear-gradient(to right, transparent 0, #000 36px);
+}
+.edge-fade-x[data-fade-end="true"]:not([data-fade-start="true"]) {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent 100%);
+    mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent 100%);
+}
+
+/* ── lyrics tabs / immersive close: press feedback ─────────────────────── */
+.lyr-tab {
+    transition: background 0.16s ease, color 0.16s ease, transform 0.12s var(--ease-out);
+}
+.lyr-tab:active {
+    transform: scale(var(--press-scale));
+}
+.imm-close {
+    transition: background 0.16s ease, color 0.16s ease, transform 0.12s var(--ease-out);
+}
+.imm-close:active {
+    transform: scale(var(--press-scale));
+}
+
+/* ═══ accessibility preferences ══════════════════════════════════════════ */
+
+/* Reduced motion: gentler, not none. Movement goes, opacity and colour stay. */
+@media (prefers-reduced-motion: reduce) {
+    .eq-bar,
+    .eq-bar-q {
+        animation: none;
+        transform: scaleY(0.6);
+    }
+    .pressable,
+    .btn-icon,
+    .btn-pill,
+    .btn-primary,
+    .btn-danger,
+    .row-btn,
+    .lyr-tab,
+    .imm-close {
+        transition-property: background-color, color, border-color, box-shadow, opacity;
+    }
+    .pressable:active,
+    .btn-icon:active,
+    .btn-pill:active,
+    .btn-primary:active,
+    .btn-danger:active,
+    .row-btn:active,
+    .lyr-tab:active,
+    .imm-close:active {
+        transform: none !important;
+    }
+    .loader-arc {
+        animation-duration: 2.4s;
+    }
+    .group:hover .rec-play {
+        transform: none !important;
+    }
+}
+
+/* Reduced transparency: glass becomes solid. Anything that opts in with
+   .glass-solid-fallback (popovers, menus, tooltips, toasts, the dock, the
+   lyrics card) drops its blur and goes near-opaque. */
+@media (prefers-reduced-transparency: reduce) {
+    .glass-solid-fallback {
+        background: rgb(28, 28, 32) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+    }
+    .amb-layer {
+        animation: none !important;
+    }
+}
+
+/* Increased contrast: near-solid surfaces with a defined edge, dim text
+   brought up. */
+@media (prefers-contrast: more) {
+    :root {
+        --color-text: rgba(255, 255, 255, 0.95);
+        --color-text-dim: rgba(255, 255, 255, 0.78);
+        --color-text-muted: rgba(255, 255, 255, 0.78);
+        --color-border: rgba(255, 255, 255, 0.28);
+        --color-glass-border: rgba(255, 255, 255, 0.3);
+        --color-dock-border: rgba(255, 255, 255, 0.3);
+    }
+    .glass-solid-fallback {
+        background: rgb(20, 20, 24) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        border-color: rgba(255, 255, 255, 0.4) !important;
+    }
+    .btn-pill,
+    .btn-primary,
+    .btn-danger,
+    .tb-search {
+        border-color: rgba(255, 255, 255, 0.4);
     }
 }

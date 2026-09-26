@@ -21,26 +21,37 @@ import { CoverArt } from "../ui/CoverArt";
 import { Tooltip } from "../ui/Tooltip";
 import { fmtMs } from "../../utils/fmt";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
-import { gpuLayer, zTransform } from "../../lib/motion";
+import { gpuLayer, zTransform, EASE_OUT, PRESS, PRESS_TRANSITION } from "../../lib/motion";
 
+/* Transport buttons. These are pressed dozens of times a day, so the feedback
+   is small and immediate: a 0.96 press, no hover growth (the colour change is
+   enough), no bounce. Hover is CSS (.pb-btn in styles/layout.css) - the old
+   onMouseEnter wrote node.style, which any re-render wiped. */
 function IconBtn({
-  children, onClick, active, large, title, disabled,
+  children, onClick, active, large, title, disabled, ariaLabel, pressed,
 }: {
-  children:  React.ReactNode;
-  onClick?:  () => void;
-  active?:   boolean;
-  large?:    boolean;
-  title?:    string;
-  disabled?: boolean;
+  children:   React.ReactNode;
+  onClick?:   () => void;
+  active?:    boolean;
+  large?:     boolean;
+  title?:     string;
+  disabled?:  boolean;
+  ariaLabel?: string;
+  // for toggles (shuffle, repeat): exposes on/off to assistive tech
+  pressed?:   boolean;
 }) {
   return (
     <motion.button
       onClick={disabled ? undefined : onClick}
       title={title}
+      aria-label={ariaLabel}
+      aria-pressed={pressed}
       disabled={disabled}
-      whileHover={disabled ? {} : { scale: 1.10 }}
-      whileTap={disabled   ? {} : { scale: 0.92 }}
-      transition={{ type: "spring", stiffness: 420, damping: 24 }}
+      className="pb-btn focus-ring"
+      data-on={active || undefined}
+      data-large={large || undefined}
+      whileTap={disabled ? undefined : PRESS}
+      transition={PRESS_TRANSITION}
       transformTemplate={zTransform}
       style={{
         ...gpuLayer,
@@ -59,19 +70,8 @@ function IconBtn({
             ? "var(--color-accent)"
             : disabled
               ? "rgba(242,238,233,0.18)"
-              : "rgba(255, 255, 255, 0.72)",
+              : undefined,
         cursor:         disabled ? "default" : "pointer",
-        transition:     "color 0.15s",
-      }}
-      onMouseEnter={(e) => {
-        if (!disabled && !active && !large) {
-          (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-        }
-      }}
-      onMouseLeave={(e) => {
-        if (!disabled && !active && !large) {
-          (e.currentTarget as HTMLButtonElement).style.color = "rgba(255, 255, 255, 0.72)";
-        }
       }}
     >
       {children}
@@ -87,9 +87,10 @@ function PlayPauseButton({
   return (
     <motion.button
       onClick={onClick}
-      whileHover={{ scale: 1.14 }}
-      whileTap={{ scale: 0.88 }}
-      transition={{ type: "spring", stiffness: 440, damping: 22 }}
+      aria-label={isPlaying ? "Pause" : "Play"}
+      className="focus-ring"
+      whileTap={PRESS}
+      transition={PRESS_TRANSITION}
       transformTemplate={zTransform}
       style={{
         ...gpuLayer,
@@ -109,7 +110,7 @@ function PlayPauseButton({
           initial={{ opacity: 0, scale: 0.55, filter: "blur(5px)" }}
           animate={{ opacity: 1, scale: 1,    filter: "blur(0px)" }}
           exit={{    opacity: 0, scale: 0.55, filter: "blur(5px)" }}
-          transition={{ duration: 0.19, ease: [0.23, 1, 0.32, 1] }}
+          transition={{ duration: 0.19, ease: EASE_OUT }}
           style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
         >
           {isPlaying
@@ -122,12 +123,18 @@ function PlayPauseButton({
   );
 }
 
+const SEEK_STEP_MS = 5000;
+
 const PlayerScrubber = memo(function PlayerScrubber({
   durationMs,
   doSeek,
+  showTimes,
 }: {
   durationMs: number;
   doSeek: (ms: number) => void;
+  // elapsed / remaining either side of the line. dropped when the dock is too
+  // narrow to give the line itself a useful length.
+  showTimes: boolean;
 }) {
   const positionMs = usePlayerStore((s) => s.positionMs);
   const [isScrubHovered, setIsScrubHovered] = useState(false);
@@ -135,6 +142,10 @@ const PlayerScrubber = memo(function PlayerScrubber({
   const [dragFrac, setDragFrac] = useState<number | null>(null);
   const [hoverFrac, setHoverFrac] = useState<number | null>(null);
   const scrubBarRef = useRef<HTMLDivElement>(null);
+  // the pointer handlers read these, not state: pointerup can land before the
+  // render that would have carried the last pointermove's value
+  const draggingRef = useRef(false);
+  const dragFracRef = useRef<number | null>(null);
 
   const activeFrac = isDragging && dragFrac !== null
     ? dragFrac
@@ -152,12 +163,29 @@ const PlayerScrubber = memo(function PlayerScrubber({
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   }
 
+  function setDrag(f: number | null) {
+    dragFracRef.current = f;
+    setDragFrac(f);
+  }
+
+  function endDrag(commit: boolean) {
+    if (!draggingRef.current) return;
+    const f = dragFracRef.current;
+    if (commit && f !== null && durationMs > 0) {
+      doSeek(Math.floor(f * durationMs));
+    }
+    draggingRef.current = false;
+    setIsDragging(false);
+    setDrag(null);
+  }
+
   function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (!durationMs) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     const f = fracFromClientX(e.clientX);
+    draggingRef.current = true;
     setIsDragging(true);
-    setDragFrac(f);
+    setDrag(f);
     setHoverFrac(f);
   }
 
@@ -165,109 +193,170 @@ const PlayerScrubber = memo(function PlayerScrubber({
     if (!durationMs) return;
     const f = fracFromClientX(e.clientX);
     setHoverFrac(f);
-    if (isDragging) {
-      setDragFrac(f);
-    }
+    if (draggingRef.current) setDrag(f);
   }
 
   function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
-    if (isDragging && dragFrac !== null && durationMs > 0) {
-      const targetMs = Math.floor(dragFrac * durationMs);
-      doSeek(targetMs);
-    }
-    setIsDragging(false);
-    setDragFrac(null);
+    endDrag(true);
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch {}
+  }
+
+  // the OS or browser took the pointer away (alt-tab, touch cancelled): drop
+  // the drag where it was rather than leaving the bar stuck in drag mode
+  function handlePointerCancel() {
+    endDrag(false);
+    setHoverFrac(null);
+    setIsScrubHovered(false);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (!durationMs) return;
+    const pos = usePlayerStore.getState().positionMs;
+    let target: number | null = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") target = pos + SEEK_STEP_MS;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") target = pos - SEEK_STEP_MS;
+    else if (e.key === "PageUp") target = pos + durationMs * 0.1;
+    else if (e.key === "PageDown") target = pos - durationMs * 0.1;
+    else if (e.key === "Home") target = 0;
+    else if (e.key === "End") target = durationMs - 1000;
+    if (target === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    doSeek(Math.max(0, Math.min(durationMs, Math.floor(target))));
   }
 
   const showTooltip = (hoverFrac !== null || isDragging) && durationMs > 0;
   const tooltipFrac = isDragging && dragFrac !== null ? dragFrac : (hoverFrac ?? activeFrac);
   const isLineExpanded = isScrubHovered || isDragging;
 
+  const shownMs = Math.floor(activeFrac * durationMs);
+  const remainingMs = Math.max(0, durationMs - shownMs);
+
+  const timeStyle: React.CSSProperties = {
+    flexShrink: 0,
+    minWidth: 30,
+    fontSize: 10.5,
+    fontWeight: 500,
+    lineHeight: 1,
+    color: "var(--color-text-dim)",
+  };
+
   return (
-    <div
-      ref={scrubBarRef}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onMouseEnter={() => setIsScrubHovered(true)}
-      onMouseLeave={() => {
-        if (!isDragging) {
-          setIsScrubHovered(false);
-          setHoverFrac(null);
-        }
-      }}
-      style={{
-        position: "relative",
-        width: "100%",
-        height: 12,
-        display: "flex",
-        alignItems: "center",
-        cursor: durationMs > 0 ? "pointer" : "default",
-        touchAction: "none",
-      }}
-    >
-      {/* Expanding hairline track */}
+    <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
+      {showTimes && durationMs > 0 && (
+        <span className="tnum t-caption" aria-hidden style={{ ...timeStyle, textAlign: "right" }}>
+          {fmtMs(shownMs)}
+        </span>
+      )}
       <div
+        ref={scrubBarRef}
+        className="scrub"
+        role="slider"
+        tabIndex={durationMs > 0 ? 0 : -1}
+        aria-label="Seek"
+        aria-valuemin={0}
+        aria-valuemax={Math.round(durationMs / 1000)}
+        aria-valuenow={Math.round(shownMs / 1000)}
+        aria-valuetext={durationMs > 0 ? `${fmtMs(shownMs)} of ${fmtMs(durationMs)}` : "Nothing playing"}
+        aria-disabled={durationMs > 0 ? undefined : true}
+        onKeyDown={handleKeyDown}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        onLostPointerCapture={() => endDrag(false)}
+        onPointerEnter={() => setIsScrubHovered(true)}
+        onPointerLeave={() => {
+          if (!draggingRef.current) {
+            setIsScrubHovered(false);
+            setHoverFrac(null);
+          }
+        }}
         style={{
           position: "relative",
-          width: "100%",
-          height: 5,
-          borderRadius: 9999,
-          background: isLineExpanded ? "rgba(255, 255, 255, 0.22)" : "rgba(255, 255, 255, 0.14)",
-          overflow: "hidden",
-          transform: isLineExpanded ? "scaleY(1)" : "scaleY(0.45)",
-          transformOrigin: "center",
-          transition: isDragging ? "none" : "transform 0.20s cubic-bezier(0.16, 1, 0.3, 1), background 0.20s",
+          flex: 1,
+          minWidth: 0,
+          height: 12,
+          display: "flex",
+          alignItems: "center",
+          cursor: durationMs > 0 ? "pointer" : "default",
+          touchAction: "none",
         }}
       >
+        {/* Expanding hairline track */}
         <div
+          className="scrub-track"
           style={{
-            position: "absolute",
-            inset: 0,
-            transformOrigin: "left",
+            position: "relative",
+            width: "100%",
+            height: 5,
             borderRadius: 9999,
-            background: "#ffffff",
-            transform: `scaleX(${pct / 100})`,
-            transition: isDragging ? "none" : "transform 0.12s linear",
-            boxShadow: isLineExpanded ? "0 0 8px rgba(255, 255, 255, 0.45)" : "none",
+            background: isLineExpanded ? "rgba(255, 255, 255, 0.22)" : "rgba(255, 255, 255, 0.14)",
+            overflow: "hidden",
+            transform: isLineExpanded ? "scaleY(1)" : "scaleY(0.45)",
+            transformOrigin: "center",
+            transition: isDragging ? "none" : "transform 0.20s var(--ease-out), background 0.20s",
           }}
-        />
-      </div>
-
-      {/* Floating Tooltip displaying the scrubbed timestamp on interaction */}
-      <AnimatePresence>
-        {showTooltip && (
-          <motion.div
-            initial={{ opacity: 0, y: 3, scale: 0.92 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 3, scale: 0.92 }}
-            transition={{ duration: 0.12 }}
+        >
+          <div
             style={{
               position: "absolute",
-              left: `${tooltipFrac * 100}%`,
-              bottom: "calc(100% + 5px)",
-              transform: "translateX(-50%)",
-              pointerEvents: "none",
-              whiteSpace: "nowrap",
-              padding: "2px 6px",
-              borderRadius: 5,
-              background: "rgba(22, 22, 26, 0.96)",
-              border: "1px solid rgba(255, 255, 255, 0.14)",
-              boxShadow: "0 4px 14px rgba(0, 0, 0, 0.55)",
-              fontSize: 10.5,
-              fontWeight: 600,
-              fontVariantNumeric: "tabular-nums",
-              color: "#ffffff",
-              zIndex: 60,
+              inset: 0,
+              transformOrigin: "left",
+              borderRadius: 9999,
+              background: "#ffffff",
+              transform: `scaleX(${pct / 100})`,
+              transition: isDragging ? "none" : "transform 0.12s linear",
+              boxShadow: isLineExpanded ? "0 0 8px rgba(255, 255, 255, 0.45)" : "none",
             }}
-          >
-            {fmtMs(Math.floor(tooltipFrac * durationMs))}
-          </motion.div>
-        )}
-      </AnimatePresence>
+          />
+        </div>
+
+        {/* Floating Tooltip displaying the scrubbed timestamp on interaction */}
+        <AnimatePresence>
+          {showTooltip && (
+            <motion.div
+              initial={{ opacity: 0, y: 3, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 3, scale: 0.94 }}
+              transition={{ duration: 0.12, ease: EASE_OUT }}
+              className="tnum"
+              style={{
+                position: "absolute",
+                left: `${tooltipFrac * 100}%`,
+                bottom: "calc(100% + 5px)",
+                // framer composes its own transform from x/y/scale, so the
+                // centring has to be one of its values - a transform string
+                // here would be thrown away and the label would hang off the
+                // cursor's right-hand side
+                x: "-50%",
+                transformOrigin: "bottom center",
+                pointerEvents: "none",
+                whiteSpace: "nowrap",
+                padding: "2px 6px",
+                borderRadius: 5,
+                background: "rgba(22, 22, 26, 0.96)",
+                border: "1px solid rgba(255, 255, 255, 0.14)",
+                boxShadow: "0 4px 14px rgba(0, 0, 0, 0.55)",
+                fontSize: 10.5,
+                fontWeight: 600,
+                letterSpacing: "var(--type-caption-track)",
+                color: "#ffffff",
+                zIndex: 60,
+              }}
+            >
+              {fmtMs(Math.floor(tooltipFrac * durationMs))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+      {showTimes && durationMs > 0 && (
+        <span className="tnum t-caption" aria-hidden style={timeStyle}>
+          -{fmtMs(remainingMs)}
+        </span>
+      )}
     </div>
   );
 });
@@ -345,8 +434,20 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
         setVolPopupOpen(false);
       }
     }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setVolPopupOpen(false);
+      volBtnRef.current?.querySelector("button")?.focus();
+    }
     window.addEventListener("mousedown", handleClickOutside);
-    return () => window.removeEventListener("mousedown", handleClickOutside);
+    // on document, not window: stopPropagation here keeps Escape from also
+    // reaching window-level handlers (Immersive closes on Escape)
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKey);
+    };
   }, [volPopupOpen]);
 
   useEffect(() => {
@@ -417,16 +518,25 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
       {/* Remote playback banner */}
       <AnimatePresence>
         {isRemotePlayback && activeDevice && (
-          <motion.div
-            initial={{ height: 0, opacity: 0, y: 8 }}
-            animate={{ height: 28, opacity: 1, y: 0 }}
-            exit={{ height: 0, opacity: 0, y: 8 }}
-            transition={{ duration: 0.22, ease: "easeOut" }}
+          /* No height animation: this column is pinned to the bottom, so the
+             banner grows upward from the dock without pushing anything - it
+             only needs to rise and fade in, which is compositor-only work. */
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, y: 8, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.98, transition: { duration: 0.14, ease: EASE_OUT } }}
+            transition={{ duration: 0.22, ease: EASE_OUT }}
+            whileTap={PRESS}
             onClick={toggleDevices}
             data-devices-trigger="true"
+            aria-label={`Listening on ${activeDevice.name}. Change device`}
+            className="glass-solid-fallback focus-ring t-caption"
             style={{
               pointerEvents: "auto",
+              height: 28,
               marginBottom: 6,
+              font: "inherit",
               background: "rgba(22, 22, 26, 0.90)",
               backdropFilter: "blur(20px)",
               WebkitBackdropFilter: "blur(20px)",
@@ -441,6 +551,7 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
               padding: "0 14px",
               fontSize: 11.5,
               fontWeight: 500,
+              lineHeight: 1,
               cursor: "pointer",
               userSelect: "none",
               overflow: "hidden",
@@ -449,13 +560,14 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
             <Devices size={13} strokeWidth={2} active style={{ color: "var(--color-text-dim)" }} />
             <span>Listening on <strong style={{ fontWeight: 600 }}>{activeDevice.name}</strong></span>
             <span style={{ fontSize: 10.5, color: "var(--color-text-dim)", textDecoration: "underline", marginLeft: 4 }}>Change</span>
-          </motion.div>
+          </motion.button>
         )}
       </AnimatePresence>
 
       {/* Dock Container: Scaled down from full page width to a tailored floating island */}
       <div
         ref={barContainerRef}
+        className={immersive ? undefined : "glass-solid-fallback"}
         style={{
           pointerEvents: "auto",
           width: immersive ? "100%" : "min(740px, calc(100% - 32px))",
@@ -492,14 +604,14 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
         <div style={{ display: "flex", alignItems: "center", gap: "clamp(4px, 0.8vw, 8px)", flexShrink: 0 }}>
           {showSecondaryControls && (
             <Tooltip label={shuffle ? "Shuffle on" : "Shuffle off"}>
-              <IconBtn active={shuffle} onClick={toggleShuffle}>
+              <IconBtn active={shuffle} pressed={shuffle} ariaLabel="Shuffle" onClick={toggleShuffle}>
                 <Shuffle size={15} strokeWidth={1.75} />
               </IconBtn>
             </Tooltip>
           )}
 
           <Tooltip label="Previous">
-            <IconBtn onClick={handlePrev}>
+            <IconBtn ariaLabel="Previous" onClick={handlePrev}>
               <SkipBack size={15} strokeWidth={1.75} fill="currentColor" />
             </IconBtn>
           </Tooltip>
@@ -512,14 +624,14 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
           </Tooltip>
 
           <Tooltip label="Next">
-            <IconBtn onClick={handleNext}>
+            <IconBtn ariaLabel="Next" onClick={handleNext}>
               <SkipForward size={15} strokeWidth={1.75} fill="currentColor" />
             </IconBtn>
           </Tooltip>
 
           {showSecondaryControls && (
             <Tooltip label={repeatLabel}>
-              <IconBtn active={repeat !== "none"} onClick={cycleRepeat}>
+              <IconBtn active={repeat !== "none"} pressed={repeat !== "none"} ariaLabel={repeatLabel} onClick={cycleRepeat}>
                 <RepeatIcon size={15} strokeWidth={1.75} />
               </IconBtn>
             </Tooltip>
@@ -543,7 +655,10 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
               and a 44px copy of it next to the title is just noise. */}
           {!immersive && (
           <div
-            className="group"
+            className="group pressable"
+            role={currentTrack ? "button" : undefined}
+            tabIndex={currentTrack ? 0 : undefined}
+            aria-label={currentTrack ? "Open full-screen player" : undefined}
             style={{
               position: "relative",
               width: 44,
@@ -555,7 +670,13 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
               boxShadow: "0 2px 8px rgba(0, 0, 0, 0.4)",
             }}
             onClick={() => { if (currentTrack) setImmersiveOpen(true); }}
-            title={currentTrack ? "Open immersive view" : undefined}
+            onKeyDown={(e) => {
+              if (currentTrack && (e.key === "Enter" || e.key === " ")) {
+                e.preventDefault();
+                setImmersiveOpen(true);
+              }
+            }}
+            title={currentTrack ? "Open full-screen player" : undefined}
           >
             <AnimatePresence initial={false}>
               <motion.div
@@ -563,7 +684,7 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
                 initial={{ opacity: 0, filter: "blur(10px)", scale: 1.06 }}
                 animate={{ opacity: 1, filter: "blur(0px)", scale: 1 }}
                 exit={{ opacity: 0, filter: "blur(8px)", scale: 1.04 }}
-                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                transition={{ duration: 0.3, ease: EASE_OUT }}
                 style={{ position: "absolute", inset: 0 }}
               >
                 <CoverArt url={currentTrack?.album?.image_url ?? null} alt={currentTrack?.name ?? ""} size={44} />
@@ -597,14 +718,10 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
                   <Link
                     to={`/album/${currentTrack.album.id}`}
                     onClick={() => setImmersiveOpen(false)}
-                    style={{ color: "inherit", textDecoration: "none" }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline";
-                      prefetchAlbum(qc, currentTrack.album?.id);
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none";
-                    }}
+                    className="pb-link"
+                    style={{ color: "inherit" }}
+                    // hover only prefetches now; the underline is CSS
+                    onPointerEnter={() => prefetchAlbum(qc, currentTrack.album?.id)}
                     title={`Go to album: ${currentTrack.album.name}`}
                   >
                     {currentTrack.name}
@@ -613,7 +730,7 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
                   currentTrack?.name ?? "Not playing"
                 )}
               </p>
-              <p style={{ margin: "2px 0 0", fontSize: 12.5, fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-dim)", lineHeight: 1.2 }}>
+              <p className="t-caption" style={{ margin: "2px 0 0", fontSize: 12.5, fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-dim)", lineHeight: 1.2 }}>
                 {currentTrack ? (
                   currentTrack.artists.map((a, i) => (
                     <span key={a.id || i}>
@@ -622,14 +739,9 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
                         <Link
                           to={`/artist/${a.id}`}
                           onClick={() => setImmersiveOpen(false)}
-                          style={{ color: "inherit", textDecoration: "none", transition: "color 0.15s" }}
-                          onMouseEnter={(e) => {
-                            (e.currentTarget as HTMLAnchorElement).style.textDecoration = "underline";
-                            prefetchArtist(qc, a.id);
-                          }}
-                          onMouseLeave={(e) => {
-                            (e.currentTarget as HTMLAnchorElement).style.textDecoration = "none";
-                          }}
+                          className="pb-link"
+                          style={{ color: "inherit" }}
+                          onPointerEnter={() => prefetchArtist(qc, a.id)}
                         >
                           {a.name}
                         </Link>
@@ -645,7 +757,7 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
             </div>
 
             {/* Progress line under album title: isolated leaf scrubber so PlayerBar does not re-render every second */}
-            <PlayerScrubber durationMs={durationMs} doSeek={doSeek} />
+            <PlayerScrubber durationMs={durationMs} doSeek={doSeek} showTimes={showSecondaryControls} />
           </div>
         </div>
 
@@ -653,7 +765,11 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end", position: "relative", flexShrink: 0 }}>
           <Tooltip label={showInlineVolume ? (muted ? "Unmute" : `Mute (${volume}%)`) : (volPopupOpen ? "Close volume" : `Volume (${volume}%)`)}>
             <span ref={volBtnRef}>
-              <IconBtn active={!showInlineVolume && volPopupOpen} onClick={handleVolumeButtonClick}>
+              <IconBtn
+                active={!showInlineVolume && volPopupOpen}
+                ariaLabel={showInlineVolume ? (muted ? "Unmute" : "Mute") : "Volume"}
+                onClick={handleVolumeButtonClick}
+              >
                 <VolumeIcon size={16} strokeWidth={1.75} />
               </IconBtn>
             </span>
@@ -662,6 +778,7 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
             <Tooltip label={muted ? "Muted" : `Volume ${volume}%`}>
               <input
                 className="vol"
+                aria-label="Volume"
                 type="range" min={0} max={100}
                 value={muted ? 0 : volume}
                 onChange={handleVolumeChange}
@@ -676,11 +793,17 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
             {!showInlineVolume && volPopupOpen && (
               <motion.div
                 ref={volPopupRef}
-                initial={{ opacity: 0, y: 8, scale: 0.94 }}
+                className="glass-solid-fallback"
+                role="dialog"
+                aria-label="Volume"
+                // rises out of the volume button, which sits under its
+                // bottom-right corner
+                initial={{ opacity: 0, y: 6, scale: 0.96 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 8, scale: 0.94 }}
-                transition={{ duration: 0.16, ease: [0.23, 1, 0.32, 1] }}
+                exit={{ opacity: 0, y: 4, scale: 0.97, transition: { duration: 0.12, ease: EASE_OUT } }}
+                transition={{ duration: 0.16, ease: EASE_OUT }}
                 style={{
+                  transformOrigin: "bottom right",
                   position: "absolute",
                   bottom: 44,
                   right: 0,
@@ -701,15 +824,13 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
               >
                 <button
                   onClick={handleMuteToggle}
+                  className="btn-icon"
+                  aria-label={muted ? "Unmute" : "Mute"}
                   style={{
-                    background: "transparent",
-                    border: "none",
+                    width: 24,
+                    height: 24,
+                    borderRadius: 6,
                     color: muted ? "var(--color-accent)" : "var(--color-text-hi)",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: 2,
                   }}
                   title={muted ? "Unmute" : "Mute"}
                 >
@@ -717,6 +838,8 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
                 </button>
                 <input
                   className="vol"
+                  aria-label="Volume"
+                  autoFocus
                   type="range"
                   min={0}
                   max={100}
@@ -734,10 +857,10 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
                   } as React.CSSProperties}
                 />
                 <span
+                  className="tnum t-caption"
                   style={{
                     fontSize: 11,
                     fontWeight: 600,
-                    fontVariantNumeric: "tabular-nums",
                     color: "rgba(255, 255, 255, 0.7)",
                     minWidth: 32,
                     textAlign: "right",

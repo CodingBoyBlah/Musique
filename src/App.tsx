@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { MotionConfig } from "framer-motion";
 import Layout from "./components/layout/Layout";
 import { Loader } from "./components/ui/Loader";
 import { ThemeEngine } from "./components/ThemeEngine";
@@ -263,10 +264,10 @@ Home recs so they're cached before the user gets there
         if (isCurrent && tid && !retriedUnavailable.current.has(tid)) {
           retriedUnavailable.current.add(tid);
           retryPlayTrack(tid).catch(() => {
-            toast("Can't play this track. Try another.");
+            toast.error("Can't play this track. Try another.");
           });
         } else if (isCurrent) {
-          toast("Can't play this track. Skipping to next.");
+          toast.error("Can't play this track. Skipping to next.");
           const next = useQueueStore.getState().advance(currentTrack);
           if (next) {
             usePlayerStore.getState().setCurrentTrack(next);
@@ -352,6 +353,9 @@ Home recs so they're cached before the user gets there
 
 export default function App() {
   return (
+    // reducedMotion="user": every framer transform animation in the app honours
+    // the OS "reduce motion" setting, keeping only opacity/colour changes.
+    <MotionConfig reducedMotion="user">
     <BrowserRouter>
       <AppInit />
       <ThemeEngine />
@@ -430,5 +434,6 @@ export default function App() {
         </Route>
       </Routes>
     </BrowserRouter>
+    </MotionConfig>
   );
 }

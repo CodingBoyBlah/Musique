@@ -8,6 +8,7 @@ import { playTrack } from "../../api/playback";
 import { CoverArt } from "../ui/CoverArt";
 import { fmtMs } from "../../utils/fmt";
 import { isMac } from "../../lib/platform";
+import { EASE_OUT } from "../../lib/motion";
 
 /* the search field in the middle of the top bar.
 
@@ -22,7 +23,7 @@ const SECTION_HEAD: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: "0.08em",
   textTransform: "uppercase",
-  color: "rgba(255, 255, 255, 0.35)",
+  color: "rgba(255, 255, 255, 0.42)",
   padding: "10px 12px 4px",
 };
 
@@ -31,22 +32,27 @@ const ROW_TITLE: React.CSSProperties = {
   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
 };
 
+// small type opens its tracking back up a touch (see --type-caption-track)
 const ROW_SUB: React.CSSProperties = {
-  margin: "2px 0 0", fontSize: 11.5, color: "rgba(255, 255, 255, 0.45)",
+  margin: "2px 0 0", fontSize: 11.5, color: "rgba(255, 255, 255, 0.5)",
+  letterSpacing: "var(--type-caption-track)",
   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
 };
 
 const KIND_TAG: React.CSSProperties = {
-  fontSize: 10, fontWeight: 650, color: "rgba(255, 255, 255, 0.4)",
+  fontSize: 10, fontWeight: 650, color: "rgba(255, 255, 255, 0.45)",
+  letterSpacing: "0.01em",
   background: "rgba(255, 255, 255, 0.06)", padding: "2px 6px", borderRadius: 4,
 };
 
+/* No transition on the selection fill. Arrow keys move it, fast and
+   repeatedly, and a fade trailing behind each keypress reads as lag - a
+   keyboard action should land on the frame the key goes down. */
 function rowStyle(selected: boolean): React.CSSProperties {
   return {
     display: "flex", alignItems: "center", gap: 12,
     padding: "7px 10px", borderRadius: 8, cursor: "pointer",
     background: selected ? "rgba(255, 255, 255, 0.08)" : "transparent",
-    transition: "background 0.1s",
   };
 }
 
@@ -66,6 +72,10 @@ export function TopSearch() {
   /* the last ?q= this field wrote itself. when the url changes to that value
      it is our own echo and must not overwrite what is still being typed. */
   const pushedRef = useRef<string | null>(null);
+  /* Ctrl+K is a shortcut people hit many times a day: when it brings back a
+     dropdown that already has a query in it, the results appear at once, with
+     no entrance. Only a dropdown opened by typing gets the short fade. */
+  const instantOpenRef = useRef(false);
 
   // the field mirrors the url: full query on the search page, empty elsewhere.
   // keyed on the navigation itself, so opening a result from the dropdown
@@ -78,7 +88,10 @@ export function TopSearch() {
   }, [location.key, onSearchPage, urlQuery]);
 
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedQuery(query.trim()), onSearchPage ? 220 : 110);
+    // short: every millisecond here sits between a keystroke and the page
+    // responding to it. keepPreviousData dims the old results meanwhile, so a
+    // shorter wait costs no flashing.
+    const t = setTimeout(() => setDebouncedQuery(query.trim()), onSearchPage ? 120 : 110);
     return () => clearTimeout(t);
   }, [query, onSearchPage]);
 
@@ -95,6 +108,7 @@ export function TopSearch() {
     function onKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
+        instantOpenRef.current = true;
         inputRef.current?.focus();
         inputRef.current?.select();
       }
@@ -188,13 +202,15 @@ export function TopSearch() {
           // an invisible control char would still count as "has text"
           onChange={(e) => { setQuery(e.target.value.replace(/[\x00-\x1f\x7f]/g, "")); setSelectedIndex(0); }}
           onFocus={() => { setFocused(true); setSelectedIndex(0); }}
-          onBlur={() => setFocused(false)}
+          onBlur={() => { setFocused(false); instantOpenRef.current = false; }}
           onKeyDown={handleKeyDown}
           placeholder="What do you want to play?"
           spellCheck={false}
           aria-label="Search"
           aria-expanded={open}
           aria-controls="top-search-results"
+          aria-activedescendant={open ? `ts-opt-${selectedIndex}` : undefined}
+          aria-autocomplete="list"
           role="combobox"
         />
         {query ? (
@@ -216,10 +232,12 @@ export function TopSearch() {
           <motion.div
             id="top-search-results"
             role="listbox"
-            initial={{ opacity: 0, y: -4, scale: 0.98 }}
+            aria-label="Search suggestions"
+            className="glass-solid-fallback"
+            initial={instantOpenRef.current ? false : { opacity: 0, y: -4, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.98 }}
-            transition={{ duration: 0.14, ease: [0.23, 1, 0.32, 1] }}
+            exit={{ opacity: 0, y: -4, scale: 0.98, transition: { duration: 0.1, ease: EASE_OUT } }}
+            transition={{ duration: 0.14, ease: EASE_OUT }}
             // keep focus in the field while picking a result
             onMouseDown={(e) => e.preventDefault()}
             style={{
@@ -255,6 +273,8 @@ export function TopSearch() {
             >
               <div
                 data-index="0"
+                id="ts-opt-0"
+                className="ts-row"
                 role="option"
                 aria-selected={selectedIndex === 0}
                 onClick={() => handleSelect(0)}
@@ -275,10 +295,10 @@ export function TopSearch() {
               </div>
 
               {!settled && resultCount === 0 && (
-                <div style={{ padding: "10px 12px", fontSize: 12, color: "rgba(255, 255, 255, 0.4)" }}>Searching…</div>
+                <div className="t-caption" style={{ padding: "10px 12px", fontSize: 12, color: "rgba(255, 255, 255, 0.5)" }}>Searching…</div>
               )}
               {settled && resultCount === 0 && (
-                <div style={{ padding: "10px 12px", fontSize: 12, color: "rgba(255, 255, 255, 0.4)" }}>No matches</div>
+                <div className="t-caption" style={{ padding: "10px 12px", fontSize: 12, color: "rgba(255, 255, 255, 0.5)" }}>No matches for “{query.trim()}”</div>
               )}
 
               {tracks.length > 0 && <div style={SECTION_HEAD}>Songs</div>}
@@ -286,7 +306,7 @@ export function TopSearch() {
                 const idx = 1 + i;
                 const sel = selectedIndex === idx;
                 return (
-                  <div key={t.id} data-index={idx} role="option" aria-selected={sel}
+                  <div key={t.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
                     onClick={() => handleSelect(idx)} onMouseEnter={() => setSelectedIndex(idx)} style={rowStyle(sel)}>
                     <div style={{ position: "relative", width: 34, height: 34, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
                       <CoverArt url={t.album?.image_url} alt={t.name} size={34} />
@@ -300,7 +320,7 @@ export function TopSearch() {
                       <p style={{ ...ROW_TITLE, color: sel ? "#fff" : "rgba(255, 255, 255, 0.9)" }}>{t.name}</p>
                       <p style={ROW_SUB}>{t.artists.map((a) => a.name).join(", ")}</p>
                     </div>
-                    <span style={{ fontSize: 11, color: "rgba(255, 255, 255, 0.35)", fontVariantNumeric: "tabular-nums" }}>
+                    <span className="tnum t-caption" style={{ fontSize: 11, color: "rgba(255, 255, 255, 0.4)" }}>
                       {fmtMs(t.duration_ms)}
                     </span>
                   </div>
@@ -312,7 +332,7 @@ export function TopSearch() {
                 const idx = 1 + tracks.length + i;
                 const sel = selectedIndex === idx;
                 return (
-                  <div key={a.id} data-index={idx} role="option" aria-selected={sel}
+                  <div key={a.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
                     onClick={() => handleSelect(idx)} onMouseEnter={() => setSelectedIndex(idx)} style={rowStyle(sel)}>
                     <div style={{ width: 34, height: 34, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
                       <CoverArt url={a.image_url} alt={a.name} size={34} />
@@ -331,7 +351,7 @@ export function TopSearch() {
                 const idx = 1 + tracks.length + albums.length + i;
                 const sel = selectedIndex === idx;
                 return (
-                  <div key={ar.id} data-index={idx} role="option" aria-selected={sel}
+                  <div key={ar.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
                     onClick={() => handleSelect(idx)} onMouseEnter={() => setSelectedIndex(idx)} style={rowStyle(sel)}>
                     <div style={{ width: 34, height: 34, borderRadius: "50%", overflow: "hidden", flexShrink: 0 }}>
                       <CoverArt url={ar.image_url} alt={ar.name} size={34} />

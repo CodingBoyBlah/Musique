@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   getLikedSongs,
   getLikedSongsCount,
@@ -82,6 +82,9 @@ export function useTopTracks(range: TimeRange = "medium_term") {
   return useQuery({
     queryKey: LIBRARY_KEYS.topTracks(range),
     queryFn:  () => getTopTracks(range),
+    // switching range keeps the last range on screen (dimmed) until the new
+    // one lands, instead of blanking to a skeleton
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -89,6 +92,9 @@ export function useTopArtists(range: TimeRange = "medium_term") {
   return useQuery({
     queryKey: LIBRARY_KEYS.topArtists(range),
     queryFn:  () => getTopArtists(range),
+    // switching range keeps the last range on screen (dimmed) until the new
+    // one lands, instead of blanking to a skeleton
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -106,10 +112,13 @@ export function useNewReleases() {
   });
 }
 
+export const LIBRARY_SYNC_KEY = ["library-sync"] as const;
+
 // kick off a full library sync, invalidate all library queries on success
 export function useSyncLibrary() {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: LIBRARY_SYNC_KEY,
     mutationFn: syncLibrary,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["library"] });

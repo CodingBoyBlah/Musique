@@ -53,27 +53,15 @@ export function ExpandableDescription({
             e.stopPropagation();
             setExpanded(!expanded);
           }}
+          className="btn-text t-caption"
           style={{
-            background: "none",
-            border: "none",
             padding: "3px 0 0",
-            cursor: "pointer",
             fontSize: 12,
             fontWeight: 600,
-            color: "var(--color-text-hi)",
-            opacity: 0.85,
+            color: "var(--color-text)",
             display: "inline-flex",
             alignItems: "center",
             gap: 4,
-            transition: "color 0.15s ease, opacity 0.15s ease",
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = "var(--color-accent)";
-            (e.currentTarget as HTMLButtonElement).style.opacity = "1";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-hi)";
-            (e.currentTarget as HTMLButtonElement).style.opacity = "0.85";
           }}
           aria-expanded={expanded}
         >

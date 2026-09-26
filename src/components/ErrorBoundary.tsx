@@ -54,6 +54,8 @@ export class ErrorBoundary extends Component<Props, State> {
         </code>
         <button
           onClick={() => { this.setState({ error: null }); window.location.reload(); }}
+          className="pressable"
+          autoFocus
           style={{
             padding: "9px 22px", borderRadius: 99, border: "none", cursor: "pointer",
             fontSize: 13.5, fontWeight: 600,

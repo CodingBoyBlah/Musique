@@ -28,6 +28,8 @@ interface QueueStore {
   playNext:      (track: TrackItem) => void;
   removeAt:      (idx: number) => void;
   reorder:       (from: number, to: number) => void;
+  // replace the upcoming order wholesale (live drag-to-reorder in the queue)
+  setQueue:      (queue: TrackItem[]) => void;
   clearQueue:    () => void;
   clearHistory:  () => void;
   clearAll:      () => void;
@@ -57,8 +59,12 @@ export const useQueueStore = create<QueueStore>()(
       shuffle:       false,
       repeat:        "none",
 
+      // each queue entry gets its own object, even when the same track is
+      // queued twice. the queue panel keys rows by object identity, so two
+      // entries sharing one object would share one row (and removing one
+      // would animate the other out).
       enqueue: (track) =>
-        set((s) => ({ queue: [...s.queue, track] })),
+        set((s) => ({ queue: [...s.queue, { ...track }] })),
 
       playContext: (tracks, startIndex, contextId = null) => {
         const start = tracks[startIndex] ?? null;
@@ -88,7 +94,7 @@ export const useQueueStore = create<QueueStore>()(
       },
 
       playNext: (track) =>
-        set((s) => ({ queue: [track, ...s.queue] })),
+        set((s) => ({ queue: [{ ...track }, ...s.queue] })),
 
       appendTracks: (tracks) =>
         set((s) => {
@@ -107,6 +113,8 @@ export const useQueueStore = create<QueueStore>()(
           q.splice(to, 0, item);
           return { queue: q };
         }),
+
+      setQueue: (queue) => set({ queue }),
 
       clearQueue:   () => set({ queue: [] }),
       clearHistory: () => set({ history: [] }),

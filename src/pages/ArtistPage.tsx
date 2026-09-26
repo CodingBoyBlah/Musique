@@ -1,17 +1,20 @@
 import { useState, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Check, UserPlus, Share2, Shuffle } from "@/lib/icons";
+import { Check, UserPlus, Link2, Globe } from "@/lib/icons";
 import { useArtist } from "../hooks/useArtist";
-import { CoverArt } from "../components/ui/CoverArt";
-import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
-import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
+import { AlbumCard } from "../components/ui/AlbumCard";
+import { ArtistCard } from "../components/ui/ArtistCard";
 import { TrackRow } from "../components/ui/TrackRow";
+import { PageHeader } from "../components/ui/PageHeader";
+import { PlayActions } from "../components/ui/PlayActions";
 import { Loader } from "../components/ui/Loader";
+import { EmptyState } from "../components/ui/EmptyState";
+import { SectionTitle, ShowAllButton } from "../components/ui/SectionTitle";
+import { useCarousel, CarouselControls, CarouselTrack } from "../components/ui/Carousel";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { Tooltip } from "../components/ui/Tooltip";
 import { shareSpotifyLink, shareUniversalLink } from "../lib/share";
-import { Link2, Globe } from "@/lib/icons";
 import {
   useIsArtistFollowed,
   useToggleFollow,
@@ -21,50 +24,67 @@ import {
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { useSpeedDialStore } from "../store/speedDial.store";
-import { playTrack, pausePlayback } from "../api/playback";
-import { gpuLayer, zTransform } from "../lib/motion";
+import { playTrack } from "../api/playback";
+import { EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING } from "../lib/motion";
 import { errMsg } from "../lib/err";
-import { AnimatedPlayPause } from "../components/playground/AnimatedIcons";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 
 const TOP_TRACKS_COLLAPSED = 5;
-const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
+// same tile the album page's "More by" shelf uses, so shelves line up app-wide
+const SHELF_TILE = "clamp(140px, 16vw, 175px)";
+
+/* a horizontal shelf (Albums, Singles & EPs, Fans also like). Each owns its
+carousel so the arrows track their own row. These used to be full grids, and a
+prolific artist pushed "Fans also like" several screens down. */
+function Shelf<T>({
+  id,
+  title,
+  items,
+  getKey,
+  renderItem,
+}: {
+  id: string;
+  title: string;
+  items: T[];
+  getKey: (item: T) => string;
+  renderItem: (item: T, index: number) => React.ReactNode;
+}) {
+  const carousel = useCarousel([items.length]);
+  if (items.length === 0) return null;
+  return (
+    <section aria-labelledby={id}>
+      <SectionTitle id={id} right={<CarouselControls carousel={carousel} label={title.toLowerCase()} />}>
+        {title}
+      </SectionTitle>
+      <CarouselTrack
+        carousel={carousel}
+        label={title}
+        items={items}
+        getKey={getKey}
+        itemWidth={SHELF_TILE}
+        renderItem={renderItem}
+      />
+    </section>
+  );
+}
 
 export default function ArtistPage() {
   useReflowPulse();
   const { id } = useParams<{ id: string }>();
-  const { data, isLoading, error } = useArtist(id);
+  const { data, isLoading, error, refetch } = useArtist(id);
   const { data: following = false } = useIsArtistFollowed(id);
   const toggleFollow = useToggleFollow();
 
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
-  const queueOpen = usePlayerStore((s) => s.queueOpen);
-  const isCompact = lyricsOpen || queueOpen;
   const enqueue = useQueueStore((s) => s.enqueue);
   const playContext = useQueueStore((s) => s.playContext);
-  const playContextShuffled = useQueueStore((s) => s.playContextShuffled);
   const toggleLike = useToggleLike();
 
   const [showAllTop, setShowAllTop] = useState(false);
   const { open: openMenu, element: menuEl } = useContextMenu();
-  const shareEntries = [
-    {
-      label: "Copy Spotify link",
-      icon: <Link2 size={14} />,
-      onSelect: () => id && shareSpotifyLink("artist", id),
-    },
-    {
-      label: "Copy universal link",
-      icon: <Globe size={14} />,
-      onSelect: () => id && shareUniversalLink("artist", id),
-    },
-  ];
 
   const topTracks = data?.top_tracks ?? [];
   const topTrackIds = useMemo(() => topTracks.map((t) => t.id), [topTracks]);
-  const isTopTrackPlaying = usePlayerStore((s) => Boolean(s.currentTrack?.id && topTrackIds.includes(s.currentTrack.id)));
   const { data: savedIds = [] } = useSavedTrackIds(topTrackIds);
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
 
@@ -72,539 +92,173 @@ export default function ArtistPage() {
 
   if (error) {
     return (
-      <div className="flex flex-col gap-4">
-        <p className="text-sm" style={{ color: "var(--color-danger)" }}>
-          {errMsg(error)}
-        </p>
-      </div>
+      <EmptyState
+        title="Couldn't load this artist"
+        description={errMsg(error)}
+        action={
+          <button type="button" className="btn-pill" onClick={() => refetch()}>
+            Try again
+          </button>
+        }
+      />
     );
   }
   if (!data) return null;
 
-  const shownTop = showAllTop
-    ? topTracks
-    : topTracks.slice(0, TOP_TRACKS_COLLAPSED);
+  // one context id for the header's Play and the rows, so Play reads "Pause"
+  // whichever of them started the music
+  const contextId = `artist-top-${data.id}`;
+  const artistItem = { id: data.id, name: data.name, image_url: data.image_url, type: "artist" as const };
+  const shownTop = showAllTop ? topTracks : topTracks.slice(0, TOP_TRACKS_COLLAPSED);
+  const genres = data.genres.slice(0, 3);
 
+  const shareEntries = [
+    { label: "Copy Spotify link", icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("artist", data.id) },
+    { label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("artist", data.id) },
+  ];
+
+  // a row plays from itself onward through the whole top list, not just the
+  // five on screen - the queue keeps going the way the header's Play would
   function startTop(index: number) {
-    const start = playContext(
-      showAllTop ? topTracks : topTracks.slice(0, TOP_TRACKS_COLLAPSED),
-      index,
-      `artist-top-${data!.id}`,
-    );
+    const start = playContext(topTracks, index, contextId);
     if (start) {
       setCurrentTrack(start);
       playTrack(start.id).catch(console.error);
-      if (data) {
-        useSpeedDialStore.getState().recordArtist({ id: data.id, name: data.name, image_url: data.image_url });
-      }
+      useSpeedDialStore.getState().recordArtist({ id: data!.id, name: data!.name, image_url: data!.image_url });
     }
   }
 
-  const isContextPlaying = isPlaying && isTopTrackPlaying;
-
-  function playAll() {
-    if (isContextPlaying) {
-      pausePlayback().catch(console.error);
-      return;
-    }
-    const start = playContext(topTracks, 0, `artist-top-${data!.id}`);
-    if (start) {
-      setCurrentTrack(start);
-      playTrack(start.id).catch(console.error);
-      if (data) {
-        useSpeedDialStore.getState().recordArtist({ id: data.id, name: data.name, image_url: data.image_url });
-      }
-    }
-  }
-
-  function shuffleAll() {
-    const start = playContextShuffled(topTracks, `artist-top-${data!.id}`);
-    if (start) {
-      setCurrentTrack(start);
-      playTrack(start.id).catch(console.error);
-      if (data) {
-        useSpeedDialStore.getState().recordArtist({ id: data.id, name: data.name, image_url: data.image_url });
-      }
-    }
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "clamp(24px, 3.5vw, 36px)" }}>
-      {/* header - smoothly scales down with spring physics when lyrics/queue rail opens */}
-      <div
+  const followButton = (
+    <Tooltip label={following ? "Unfollow artist" : "Follow artist"} side="top">
+      <motion.button
+        type="button"
+        onClick={() => toggleFollow.mutate({ id: data.id, following })}
+        aria-pressed={following}
+        className="ghost-pill focus-ring"
+        data-on={following}
+        whileTap={PRESS}
+        transition={PRESS_TRANSITION}
         style={{
+          height: 36,
+          padding: "0 16px",
+          borderRadius: 99,
+          color: "#ffffff",
+          fontSize: 13,
+          fontWeight: 600,
           display: "flex",
-          alignItems: "flex-end",
-          gap: "clamp(14px, 2.2vw, 24px)",
-          flexWrap: "wrap",
-          minWidth: 0,
+          alignItems: "center",
+          gap: 6,
+          cursor: "pointer",
+          flexShrink: 0,
         }}
       >
-        <div
-          style={{
-            width: isCompact ? "clamp(120px, 15vw, 160px)" : "clamp(130px, 18vw, 200px)",
-            height: isCompact ? "clamp(120px, 15vw, 160px)" : "clamp(130px, 18vw, 200px)",
-            flexShrink: 0,
-            borderRadius: "50%",
-            overflow: "hidden",
-          }}
-        >
-          <div style={{ width: "100%", height: "100%" }}>
-            <CoverArt url={data.image_url} alt={data.name} size={200} rounded style={{ width: "100%", height: "100%" }} />
-          </div>
-        </div>
+        {following ? <Check size={14} strokeWidth={2.4} /> : <UserPlus size={14} strokeWidth={2.2} />}
+        <span>{following ? "Following" : "Follow"}</span>
+      </motion.button>
+    </Tooltip>
+  );
 
-        <div
-          className="flex flex-col gap-2 min-w-0"
-          style={{ flex: "1 1 260px" }}
-        >
-          <p
-            className="text-[10px] font-bold uppercase tracking-widest"
-            style={{ color: "var(--color-text-dim)", margin: 0 }}
-          >
-            Artist
-          </p>
-
-          <h1
-            className="font-black"
-            style={{
-              fontSize: isCompact ? "clamp(26px, 3.8vw, 36px)" : "clamp(30px, 4.5vw, 48px)",
-              lineHeight: 1.05,
-              letterSpacing: "-0.02em",
-              color: "#ffffff",
-              margin: 0,
-            }}
-          >
-            {data.name}
-          </h1>
-
-          {data.popularity != null && (
-            <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
-              Popularity: {data.popularity} / 100
-            </p>
-          )}
-
+  return (
+    <div className="flex flex-col" onContextMenu={openMenu(shareEntries)}>
+      <PageHeader round imageUrl={data.image_url} eyebrow="Artist" title={data.name}>
+        {genres.length > 0 && (
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 10,
+              gap: 6,
               marginTop: 4,
-              flexWrap: "nowrap",
+              flexWrap: "wrap",
+              fontSize: 14.5,
+              fontWeight: 500,
+              color: "rgba(255, 255, 255, 0.65)",
+              textTransform: "capitalize",
             }}
           >
-            {topTracks.length > 0 && (
-              <Tooltip label={isContextPlaying ? "Pause" : "Play top tracks"} side="top">
-                <motion.button
-                  initial={false}
-                  onClick={playAll}
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.96 }}
-                  animate={{
-                    width: isCompact ? 44 : 114,
-                    paddingLeft: isCompact ? 0 : 20,
-                    paddingRight: isCompact ? 0 : 20,
-                  }}
-                  transition={{ type: "spring", stiffness: 320, damping: 30 }}
-                  transformTemplate={zTransform}
-                  style={{
-                    ...gpuLayer,
-                    width: isCompact ? 44 : 114,
-                    paddingLeft: isCompact ? 0 : 20,
-                    paddingRight: isCompact ? 0 : 20,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    height: 44,
-                    minWidth: 44,
-                    borderRadius: 99,
-                    border: "none",
-                    background: "var(--color-accent)",
-                    color: "var(--color-accent-text, #ffffff)",
-                    fontSize: 14,
-                    fontWeight: 700,
-                    letterSpacing: "-0.01em",
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    boxShadow: isContextPlaying
-                      ? "0 0 0 4px var(--color-accent-dim), 0 4px 18px var(--color-accent-dim)"
-                      : "0 4px 18px -2px var(--color-accent-dim)",
-                    transition: "box-shadow 0.2s, background 0.15s",
-                    overflow: "hidden",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  <AnimatedPlayPause
-                    isPlaying={isContextPlaying}
-                    size={16}
-                    strokeWidth={0}
-                    fill="currentColor"
-                  />
-                  <motion.span
-                    initial={false}
-                    animate={{
-                      maxWidth: isCompact ? 0 : 54,
-                      opacity: isCompact ? 0 : 1,
-                      filter: isCompact ? "blur(6px)" : "blur(0px)",
-                      scale: isCompact ? 0.75 : 1,
-                      marginLeft: isCompact ? 0 : 8,
-                    }}
-                    transition={{
-                      maxWidth: { type: "spring", stiffness: 320, damping: 30 },
-                      marginLeft: { type: "spring", stiffness: 320, damping: 30 },
-                      opacity: {
-                        duration: isCompact ? 0.15 : 0.24,
-                        delay: isCompact ? 0 : 0.06,
-                        ease: [0.23, 1, 0.32, 1],
-                      },
-                      filter: {
-                        duration: isCompact ? 0.15 : 0.24,
-                        delay: isCompact ? 0 : 0.06,
-                        ease: [0.23, 1, 0.32, 1],
-                      },
-                      scale: {
-                        duration: isCompact ? 0.15 : 0.24,
-                        delay: isCompact ? 0 : 0.06,
-                        ease: [0.23, 1, 0.32, 1],
-                      },
-                    }}
-                    style={{
-                      maxWidth: isCompact ? 0 : 54,
-                      opacity: isCompact ? 0 : 1,
-                      marginLeft: isCompact ? 0 : 8,
-                      display: "inline-block",
-                      overflow: "hidden",
-                      whiteSpace: "nowrap",
-                      willChange: "transform, filter, opacity, max-width",
-                    }}
-                  >
-                    {isContextPlaying ? "Pause" : "Play"}
-                  </motion.span>
-                </motion.button>
-              </Tooltip>
-            )}
-
-            {topTracks.length > 0 && (
-              <Tooltip label="Shuffle play" side="top">
-                <motion.button
-                  initial={false}
-                  onClick={shuffleAll}
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.96 }}
-                  animate={{
-                    width: isCompact ? 44 : 114,
-                    paddingLeft: isCompact ? 0 : 18,
-                    paddingRight: isCompact ? 0 : 18,
-                  }}
-                  transition={{ type: "spring", stiffness: 320, damping: 30 }}
-                  transformTemplate={zTransform}
-                  style={{
-                    ...gpuLayer,
-                    width: isCompact ? 44 : 114,
-                    paddingLeft: isCompact ? 0 : 18,
-                    paddingRight: isCompact ? 0 : 18,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    height: 44,
-                    minWidth: 44,
-                    borderRadius: 99,
-                    border: "1px solid rgba(255, 255, 255, 0.16)",
-                    background: "rgba(255, 255, 255, 0.08)",
-                    color: "#ffffff",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    letterSpacing: "-0.01em",
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    overflow: "hidden",
-                    whiteSpace: "nowrap",
-                    transition: "border 0.2s, background 0.2s",
-                  }}
-                >
-                  <Shuffle size={16} strokeWidth={2.2} />
-                  <motion.span
-                    initial={false}
-                    animate={{
-                      maxWidth: isCompact ? 0 : 56,
-                      opacity: isCompact ? 0 : 1,
-                      filter: isCompact ? "blur(6px)" : "blur(0px)",
-                      scale: isCompact ? 0.75 : 1,
-                      marginLeft: isCompact ? 0 : 8,
-                    }}
-                    transition={{
-                      maxWidth: { type: "spring", stiffness: 320, damping: 30 },
-                      marginLeft: { type: "spring", stiffness: 320, damping: 30 },
-                      opacity: {
-                        duration: isCompact ? 0.15 : 0.24,
-                        delay: isCompact ? 0 : 0.06,
-                        ease: [0.23, 1, 0.32, 1],
-                      },
-                      filter: {
-                        duration: isCompact ? 0.15 : 0.24,
-                        delay: isCompact ? 0 : 0.06,
-                        ease: [0.23, 1, 0.32, 1],
-                      },
-                      scale: {
-                        duration: isCompact ? 0.15 : 0.24,
-                        delay: isCompact ? 0 : 0.06,
-                        ease: [0.23, 1, 0.32, 1],
-                      },
-                    }}
-                    style={{
-                      maxWidth: isCompact ? 0 : 56,
-                      opacity: isCompact ? 0 : 1,
-                      marginLeft: isCompact ? 0 : 8,
-                      display: "inline-block",
-                      overflow: "hidden",
-                      whiteSpace: "nowrap",
-                      willChange: "transform, filter, opacity, max-width",
-                    }}
-                  >
-                    Shuffle
-                  </motion.span>
-                </motion.button>
-              </Tooltip>
-            )}
-
-            <Tooltip label={following ? "Unfollow artist" : "Follow artist"} side="top">
-              <motion.button
-                onClick={() => id && toggleFollow.mutate({ id, following })}
-                whileHover={{ scale: 1.04 }}
-                whileTap={{ scale: 0.96 }}
-                transformTemplate={zTransform}
-                style={{
-                  ...gpuLayer,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  height: 44,
-                  padding: "0 18px",
-                  width: "fit-content",
-                  borderRadius: 99,
-                  flexShrink: 0,
-                  border: following ? "1px solid var(--color-border)" : "none",
-                  background: following ? "transparent" : "var(--color-accent)",
-                  color: following ? "var(--color-text-hi)" : "#fff",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                {following ? (
-                  <>
-                    <Check size={15} strokeWidth={2.5} /> Following
-                  </>
-                ) : (
-                  <>
-                    <UserPlus size={15} strokeWidth={2.5} /> Follow
-                  </>
+            {genres.map((g, i) => (
+              <span key={g} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {i > 0 && (
+                  <span aria-hidden style={{ color: "rgba(255, 255, 255, 0.35)", fontSize: 10, userSelect: "none" }}>•</span>
                 )}
-              </motion.button>
-            </Tooltip>
-
-            <Tooltip label="Share options" side="top">
-              <motion.button
-                onClick={(e) => openMenu(shareEntries)(e)}
-                onContextMenu={openMenu(shareEntries)}
-                whileHover={{ scale: 1.06 }}
-                whileTap={{ scale: 0.94 }}
-                transformTemplate={zTransform}
-                style={{
-                  ...gpuLayer,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 44,
-                  height: 44,
-                  flexShrink: 0,
-                  borderRadius: "50%",
-                  border: "1px solid var(--color-border)",
-                  background: "transparent",
-                  color: "var(--color-text)",
-                  cursor: "pointer",
-                }}
-              >
-                <Share2 size={16} />
-              </motion.button>
-            </Tooltip>
+                {g}
+              </span>
+            ))}
           </div>
+        )}
+        <PlayActions tracks={topTracks} contextId={contextId} pinItem={artistItem} accessory={followButton} />
+      </PageHeader>
 
-          {data.genres.length > 0 && (
-            <div className="flex flex-wrap" style={{ gap: 8, marginTop: 6 }}>
-              {data.genres.slice(0, 5).map((g) => (
-                <span
-                  key={g}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    padding: "4px 12px",
-                    borderRadius: 99,
-                    background: "var(--color-surface)",
-                    border: "1px solid var(--color-border)",
-                    color: "var(--color-text-dim)",
-                    fontSize: 11.5,
-                    fontWeight: 600,
-                    lineHeight: 1.2,
-                    letterSpacing: "0.01em",
-                    textTransform: "capitalize",
-                    whiteSpace: "nowrap",
+      <div style={{ display: "flex", flexDirection: "column", gap: "clamp(28px, 4vw, 44px)", paddingTop: 8 }}>
+        {topTracks.length > 0 && (
+          <section aria-labelledby="artist-popular">
+            <SectionTitle
+              id="artist-popular"
+              right={
+                topTracks.length > TOP_TRACKS_COLLAPSED && (
+                  <ShowAllButton
+                    onClick={() => setShowAllTop((v) => !v)}
+                    label={showAllTop ? "Show less" : "Show all"}
+                  />
+                )
+              }
+            >
+              Popular
+            </SectionTitle>
+            <div>
+              {shownTop.map((t, i) => (
+                <motion.div
+                  key={t.id}
+                  layout="position"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{
+                    layout: REFLOW_SPRING,
+                    duration: 0.28,
+                    delay: Math.min(i % TOP_TRACKS_COLLAPSED, 6) * 0.03,
+                    ease: EASE_OUT,
                   }}
+                  style={{ position: "relative" }}
+                  whileHover={{ zIndex: 40 }}
                 >
-                  {g}
-                </span>
+                  <TrackRow
+                    track={t}
+                    index={i}
+                    showAlbum
+                    liked={likedSet.has(t.id)}
+                    onPlay={() => startTop(i)}
+                    onQueue={(track) => enqueue(track)}
+                    onToggleLike={(track) =>
+                      toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })
+                    }
+                  />
+                </motion.div>
               ))}
             </div>
-          )}
-        </div>
+          </section>
+        )}
+
+        <Shelf
+          id="artist-albums"
+          title="Albums"
+          items={data.albums}
+          getKey={(al) => al.id}
+          renderItem={(al, i) => <AlbumCard album={al} index={i} />}
+        />
+        <Shelf
+          id="artist-singles"
+          title="Singles & EPs"
+          items={data.singles}
+          getKey={(al) => al.id}
+          renderItem={(al, i) => <AlbumCard album={al} index={i} />}
+        />
+        <Shelf
+          id="artist-related"
+          title="Fans also like"
+          items={data.related_artists ?? []}
+          getKey={(ar) => ar.id}
+          renderItem={(ar, i) => <ArtistCard artist={ar} index={i} />}
+        />
       </div>
-
-      {/* top tracks */}
-      {topTracks.length > 0 && (
-        <section>
-          <h2
-            style={{
-              fontSize: "clamp(18px, 2vw, 22px)",
-              fontWeight: 700,
-              letterSpacing: "-0.02em",
-              color: "var(--color-text-hi)",
-              margin: "0 0 16px",
-            }}
-          >
-            Popular
-          </h2>
-          <div>
-            {shownTop.map((t, i) => (
-              <motion.div
-                key={t.id}
-                layout="position"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{
-                  layout: REFLOW,
-                  duration: 0.28,
-                  delay: Math.min(i, 6) * 0.03,
-                  ease: [0.23, 1, 0.32, 1],
-                }}
-                style={{ position: "relative" }}
-                whileHover={{ zIndex: 40 }}
-              >
-                <TrackRow
-                  track={t}
-                  index={i}
-                  showAlbum
-                  liked={likedSet.has(t.id)}
-                  onPlay={() => startTop(i)}
-                  onQueue={(track) => enqueue(track)}
-                  onToggleLike={(track) =>
-                    toggleLike.mutate({
-                      id: track.id,
-                      liked: likedSet.has(track.id),
-                    })
-                  }
-                />
-              </motion.div>
-            ))}
-          </div>
-          {topTracks.length > TOP_TRACKS_COLLAPSED && (
-            <button
-              onClick={() => setShowAllTop((v) => !v)}
-              style={{
-                marginTop: 8,
-                padding: "8px 12px",
-                borderRadius: 6,
-                border: "none",
-                background: "transparent",
-                color: "var(--color-text-dim)",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: "pointer",
-                transition: "color 0.15s, background 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color =
-                  "var(--color-text-hi)";
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "rgba(255, 255, 255, 0.05)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.color =
-                  "var(--color-text-dim)";
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "transparent";
-              }}
-            >
-              {showAllTop ? "Show less" : "Show more"}
-            </button>
-          )}
-        </section>
-      )}
-
-      {/* discography (albums) */}
-      {data.albums.length > 0 && (
-        <section>
-          <h2
-            style={{
-              fontSize: "clamp(18px, 2vw, 22px)",
-              fontWeight: 700,
-              letterSpacing: "-0.02em",
-              color: "var(--color-text-hi)",
-              margin: "0 0 16px",
-            }}
-          >
-            Discography
-          </h2>
-          <AlbumGrid>
-            {data.albums.map((al, i) => (
-              <AlbumCard key={al.id} album={al} index={i} />
-            ))}
-          </AlbumGrid>
-        </section>
-      )}
-
-      {/* singles & EPs */}
-      {data.singles.length > 0 && (
-        <section>
-          <h2
-            style={{
-              fontSize: "clamp(18px, 2vw, 22px)",
-              fontWeight: 700,
-              letterSpacing: "-0.02em",
-              color: "var(--color-text-hi)",
-              margin: "0 0 16px",
-            }}
-          >
-            Singles & EPs
-          </h2>
-          <AlbumGrid>
-            {data.singles.map((al, i) => (
-              <AlbumCard key={al.id} album={al} index={i} />
-            ))}
-          </AlbumGrid>
-        </section>
-      )}
-
-      {/* fans also like / related artists */}
-      {data.related_artists && data.related_artists.length > 0 && (
-        <section>
-          <h2
-            style={{
-              fontSize: "clamp(18px, 2vw, 22px)",
-              fontWeight: 700,
-              letterSpacing: "-0.02em",
-              color: "var(--color-text-hi)",
-              margin: "0 0 16px",
-            }}
-          >
-            Fans Also Like
-          </h2>
-          <ArtistGrid>
-            {data.related_artists.map((ar, i) => (
-              <ArtistCard key={ar.id} artist={ar} index={i} />
-            ))}
-          </ArtistGrid>
-        </section>
-      )}
       {menuEl}
     </div>
   );

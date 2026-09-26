@@ -1,6 +1,9 @@
 import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
+import { Music } from "@/lib/icons";
+import { SPRING } from "@/lib/motion";
+import "../../styles/ui.css";
 import { useQuery } from "@tanstack/react-query";
 import { search } from "../../api/spotify";
 import { useTopTracks, useSavedAlbums } from "../../hooks/useLibrary";
@@ -13,369 +16,10 @@ export interface CrateAlbum {
   coverUrl: string;
 }
 
-// Fallback curated albums for all genres (ensures zero empty states and immediate rendering)
-const FALLBACK_GENRE_ALBUMS: Record<string, CrateAlbum[]> = {
-  Pop: [
-    {
-      id: "pop-1",
-      title: "1989",
-      artist: "Taylor Swift",
-      coverUrl: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "pop-2",
-      title: "Future Nostalgia",
-      artist: "Dua Lipa",
-      coverUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "pop-3",
-      title: "SOUR",
-      artist: "Olivia Rodrigo",
-      coverUrl: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  "Hip-Hop": [
-    {
-      id: "hh-1",
-      title: "DAMN.",
-      artist: "Kendrick Lamar",
-      coverUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "hh-2",
-      title: "Heroes & Villains",
-      artist: "Metro Boomin",
-      coverUrl: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "hh-3",
-      title: "Illmatic",
-      artist: "Nas",
-      coverUrl: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Rock: [
-    {
-      id: "rk-1",
-      title: "AM",
-      artist: "Arctic Monkeys",
-      coverUrl: "https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "rk-2",
-      title: "Rumours",
-      artist: "Fleetwood Mac",
-      coverUrl: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "rk-3",
-      title: "Nevermind",
-      artist: "Nirvana",
-      coverUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  "R&B": [
-    {
-      id: "rnb-1",
-      title: "SOS",
-      artist: "SZA",
-      coverUrl: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "rnb-2",
-      title: "Blonde",
-      artist: "Frank Ocean",
-      coverUrl: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "rnb-3",
-      title: "After Hours",
-      artist: "The Weeknd",
-      coverUrl: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Indie: [
-    {
-      id: "ind-1",
-      title: "Currents",
-      artist: "Tame Impala",
-      coverUrl: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "ind-2",
-      title: "Punisher",
-      artist: "Phoebe Bridgers",
-      coverUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "ind-3",
-      title: "Immunity",
-      artist: "Clairo",
-      coverUrl: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Electronic: [
-    {
-      id: "el-1",
-      title: "Discovery",
-      artist: "Daft Punk",
-      coverUrl: "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "el-2",
-      title: "Cross",
-      artist: "Justice",
-      coverUrl: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "el-3",
-      title: "Settle",
-      artist: "Disclosure",
-      coverUrl: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Chill: [
-    {
-      id: "ch-1",
-      title: "For Emma, Forever Ago",
-      artist: "Bon Iver",
-      coverUrl: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "ch-2",
-      title: "Cry",
-      artist: "Cigarettes After Sex",
-      coverUrl: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "ch-3",
-      title: "In Between Dreams",
-      artist: "Jack Johnson",
-      coverUrl: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Focus: [
-    {
-      id: "foc-1",
-      title: "Music for Airports",
-      artist: "Brian Eno",
-      coverUrl: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "foc-2",
-      title: "Immunity",
-      artist: "Jon Hopkins",
-      coverUrl: "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "foc-3",
-      title: "All Melody",
-      artist: "Nils Frahm",
-      coverUrl: "https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Workout: [
-    {
-      id: "wo-1",
-      title: "The Eminem Show",
-      artist: "Eminem",
-      coverUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "wo-2",
-      title: "Graduation",
-      artist: "Kanye West",
-      coverUrl: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "wo-3",
-      title: "Quest For Fire",
-      artist: "Skrillex",
-      coverUrl: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Party: [
-    {
-      id: "pa-1",
-      title: "BRAT",
-      artist: "Charli xcx",
-      coverUrl: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "pa-2",
-      title: "Funk Wav Bounces",
-      artist: "Calvin Harris",
-      coverUrl: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "pa-3",
-      title: "RENAISSANCE",
-      artist: "Beyoncé",
-      coverUrl: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Jazz: [
-    {
-      id: "jz-1",
-      title: "Kind of Blue",
-      artist: "Miles Davis",
-      coverUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "jz-2",
-      title: "Bewitched",
-      artist: "Laufey",
-      coverUrl: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "jz-3",
-      title: "A Love Supreme",
-      artist: "John Coltrane",
-      coverUrl: "https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Classical: [
-    {
-      id: "cl-1",
-      title: "Divenire",
-      artist: "Ludovico Einaudi",
-      coverUrl: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "cl-2",
-      title: "Sleep",
-      artist: "Max Richter",
-      coverUrl: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "cl-3",
-      title: "re:member",
-      artist: "Ólafur Arnalds",
-      coverUrl: "https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  "Lo-fi": [
-    {
-      id: "lf-1",
-      title: "Life",
-      artist: "Jinsang",
-      coverUrl: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "lf-2",
-      title: "Rainy Evening",
-      artist: "Idealism",
-      coverUrl: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "lf-3",
-      title: "Harbor",
-      artist: "Tomppabeats",
-      coverUrl: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Metal: [
-    {
-      id: "met-1",
-      title: "Master of Puppets",
-      artist: "Metallica",
-      coverUrl: "https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "met-2",
-      title: "White Pony",
-      artist: "Deftones",
-      coverUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "met-3",
-      title: "Toxicity",
-      artist: "System of a Down",
-      coverUrl: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  "K-Pop": [
-    {
-      id: "kp-1",
-      title: "Get Up",
-      artist: "NewJeans",
-      coverUrl: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "kp-2",
-      title: "Map of the Soul: 7",
-      artist: "BTS",
-      coverUrl: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "kp-3",
-      title: "THE ALBUM",
-      artist: "BLACKPINK",
-      coverUrl: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Country: [
-    {
-      id: "co-1",
-      title: "Zach Bryan",
-      artist: "Zach Bryan",
-      coverUrl: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "co-2",
-      title: "Golden Hour",
-      artist: "Kacey Musgraves",
-      coverUrl: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "co-3",
-      title: "Traveller",
-      artist: "Chris Stapleton",
-      coverUrl: "https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Soul: [
-    {
-      id: "so-1",
-      title: "Coming Home",
-      artist: "Leon Bridges",
-      coverUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "so-2",
-      title: "Back to Black",
-      artist: "Amy Winehouse",
-      coverUrl: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "so-3",
-      title: "What's Going On",
-      artist: "Marvin Gaye",
-      coverUrl: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-  Acoustic: [
-    {
-      id: "ac-1",
-      title: "+",
-      artist: "Ed Sheeran",
-      coverUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "ac-2",
-      title: "O",
-      artist: "Damien Rice",
-      coverUrl: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&auto=format&fit=crop&q=80",
-    },
-    {
-      id: "ac-3",
-      title: "Our Endless Numbered Days",
-      artist: "Iron & Wine",
-      coverUrl: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80",
-    },
-  ],
-};
+/* No fallback albums. This used to fill a thin crate with stock photos
+   captioned as real records ("1989 - Taylor Swift" over an Unsplash picture),
+   which is a small lie on every render. A crate with fewer real covers shows
+   plain placeholder sleeves instead - honest, and still the right shape. */
 
 const MotionLink = motion.create(Link);
 
@@ -384,16 +28,19 @@ export function GenreCrate({
   albums: customAlbums,
   to,
   onPlay,
+  isPlaying = false,
   style,
 }: {
   genre: string;
   albums?: CrateAlbum[];
   to?: string;
   onPlay?: () => void;
+  // whether this crate's music is what's playing now. owned by the caller,
+  // which knows what onPlay started - the crate never guesses.
+  isPlaying?: boolean;
   style?: React.CSSProperties;
 }) {
   const [hover, setHover] = useState(false);
-  const [playing, setPlaying] = useState(false);
 
   // 1. Fetch real Spotify albums for this genre if customAlbums not provided
   const { data: searchResults } = useQuery({
@@ -470,35 +117,25 @@ export function GenreCrate({
       }
     }
 
-    // Fallback if fewer than 3 albums found
-    const fallbacks = FALLBACK_GENRE_ALBUMS[genre] || FALLBACK_GENRE_ALBUMS.Pop;
-    for (const fb of fallbacks) {
-      if (collected.length >= 3) break;
-      if (!seenIds.has(fb.id)) {
-        seenIds.add(fb.id);
-        collected.push(fb);
-      }
-    }
-
-    return collected.length >= 3 ? collected : fallbacks;
+    return collected;
   }, [customAlbums, genre, searchResults, savedAlbums, topTracks]);
 
-  // Pick 3 cards to show in the crate slot
-  const visibleCards = [
-    albums[0] || albums[0],
-    albums[1] || albums[0],
-    albums[2] || albums[0],
-  ];
+  // Pick 3 sleeves for the crate slot; missing ones are blank placeholders
+  const visibleCards: (CrateAlbum | null)[] = [albums[0] ?? null, albums[1] ?? null, albums[2] ?? null];
 
   const destination = to || `/search?q=${encodeURIComponent(genre)}`;
 
   return (
     <MotionLink
       to={destination}
+      className="card-link"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
       whileHover={{ y: -4 }}
-      transition={{ type: "spring", stiffness: 420, damping: 30 }}
+      whileTap={{ scale: 0.98 }}
+      transition={SPRING}
       style={{
         position: "relative",
         display: "block",
@@ -506,18 +143,18 @@ export function GenreCrate({
         aspectRatio: "1 / 1",
         borderRadius: 14,
         overflow: "hidden",
+        /* solid tint, no backdrop-filter: this card lifts on hover, and a blur
+           under a moving layer is recomputed on every frame of the spring */
         background: hover
           ? "rgba(255, 255, 255, 0.08)"
           : "var(--color-surface, rgba(255, 255, 255, 0.035))",
-        backdropFilter: "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
         border: "1px solid var(--color-glass-border, rgba(255, 255, 255, 0.08))",
         textDecoration: "none",
         userSelect: "none",
         boxShadow: hover
           ? "0 14px 32px rgba(0, 0, 0, 0.45)"
           : "0 4px 14px rgba(0, 0, 0, 0.2)",
-        transition: "all 0.22s cubic-bezier(0.23, 1, 0.32, 1)",
+        transition: "background-color 0.22s var(--ease-out), box-shadow 0.22s var(--ease-out)",
         cursor: "pointer",
         ...style,
       }}
@@ -551,14 +188,15 @@ export function GenreCrate({
 
           return (
             <motion.div
-              key={`${album.id}-${idx}`}
+              key={album ? `${album.id}-${idx}` : `empty-${idx}`}
               animate={{
                 x: currentTransform.x,
                 y: currentTransform.y,
                 rotate: currentTransform.rotate,
                 scale: currentTransform.scale,
               }}
-              transition={{ type: "spring", stiffness: 380, damping: 26 }}
+              // no overshoot: the fan is a hover response, not a throw
+              transition={SPRING}
               style={{
                 position: "absolute",
                 width: "56%",
@@ -571,18 +209,35 @@ export function GenreCrate({
                 boxShadow: "0 6px 18px rgba(0, 0, 0, 0.4)",
               }}
             >
-              <img
-                src={album.coverUrl}
-                alt={album.title}
-                loading="lazy"
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                  aspectRatio: "1 / 1",
-                  display: "block",
-                }}
-              />
+              {album ? (
+                <img
+                  src={album.coverUrl}
+                  alt={album.title}
+                  loading="lazy"
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    aspectRatio: "1 / 1",
+                    display: "block",
+                  }}
+                />
+              ) : (
+                <div
+                  aria-hidden
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "linear-gradient(135deg, rgba(88, 115, 216, 0.2) 0%, rgba(255, 255, 255, 0.04) 100%)",
+                    color: "rgba(255, 255, 255, 0.35)",
+                  }}
+                >
+                  <Music size={22} />
+                </div>
+              )}
             </motion.div>
           );
         })}
@@ -590,6 +245,7 @@ export function GenreCrate({
 
       {/* Acrylic Pocket with ONLY the Genre Name */}
       <div
+        className="glass-solid-fallback"
         style={{
           position: "absolute",
           bottom: 0,
@@ -614,7 +270,7 @@ export function GenreCrate({
       >
         <span
           style={{
-            fontSize: "clamp(13px, 1.4vw, 15px)",
+            fontSize: "1rem",
             fontWeight: 700,
             letterSpacing: "-0.01em",
             color: "var(--color-text-hi, rgba(255, 255, 255, 0.97))",
@@ -626,18 +282,20 @@ export function GenreCrate({
           {genre}
         </span>
 
-        <CirclePlayButton
-          isPlaying={playing}
-          visible={hover || playing}
-          size={28}
-          iconSize={12}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setPlaying(!playing);
-            onPlay?.();
-          }}
-        />
+        {onPlay && (
+          <CirclePlayButton
+            isPlaying={isPlaying}
+            visible={hover || isPlaying}
+            size={28}
+            iconSize={12}
+            ariaLabel={isPlaying ? `Pause ${genre}` : `Play ${genre}`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onPlay();
+            }}
+          />
+        )}
       </div>
     </MotionLink>
   );

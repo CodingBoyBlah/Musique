@@ -14,6 +14,7 @@ import { getAlbum } from "../../api/spotify";
 import { playTrack } from "../../api/playback";
 import { transportPlay, transportPause } from "../../hooks/usePlayerControls";
 import { gpuLayer, zTransform, REFLOW_SPRING, getGridItemTransition } from "../../lib/motion";
+import "../../styles/ui.css";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
 
 const MotionLink = motion.create(Link);
@@ -49,6 +50,9 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
   useReflowPulse();
   const imgSize = size - 24;
   const [hover, setHover] = useState(false);
+  // the album is being fetched after a play press - shown on the button at
+  // once, so a slow network never reads as a dead click
+  const [pending, setPending] = useState(false);
   const qc = useQueryClient();
 
   const isCurrentAlbum = usePlayerStore((s) => Boolean(album.id && s.currentTrack?.album?.id === album.id));
@@ -66,6 +70,8 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
       transportPlay();
       return;
     }
+    if (pending) return;
+    setPending(true);
     try {
       const full = await getAlbum(album.id);
       const tracks = full?.tracks ?? [];
@@ -78,6 +84,8 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
       }
     } catch (err) {
       console.error(err);
+    } finally {
+      setPending(false);
     }
   }
 
@@ -85,10 +93,14 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
     <MotionLink
       to={`/album/${album.id}`}
       layout="position"
+      className="card-link"
       transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchAlbum(qc, album.id); }}
       onMouseLeave={() => setHover(false)}
-      whileHover={{ y: -4, scale: 1.01 }}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
+      whileHover={{ y: -3 }}
+      whileTap={{ scale: 0.98 }}
       transition={{
         type: "spring",
         stiffness: 480,
@@ -132,7 +144,8 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
         {/* Hover play button with blur and scale icon morph from playground */}
         <CirclePlayButton
           isPlaying={isThisAlbumPlaying}
-          visible={hover || isThisAlbumPlaying}
+          visible={hover || isThisAlbumPlaying || pending}
+          pending={pending}
           onClick={handlePlayAlbum}
           size={40}
           iconSize={16}
@@ -177,6 +190,7 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
           <ReleaseCountdown date={album.release_date!} />
         ) : (
           <span
+            className="t-caption"
             style={{
               fontSize: 12,
               lineHeight: "15px",

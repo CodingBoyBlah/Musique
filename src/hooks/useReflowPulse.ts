@@ -55,4 +55,7 @@ export function useReflowPulse(): void {
   // side panels & sidebar toggles eat/free horizontal space -> grid re-columns.
   usePlayerStore((s) => (s.lyricsOpen ? 1 : 0) | (s.queueOpen ? 2 : 0));
   useUIStore((s) => s.sidebarCollapsed);
+  // a closing panel keeps its rail until it has slid out; the column only
+  // widens when that settles, so that is the render the grid has to catch.
+  useUIStore((s) => s.railSettleTick);
 }

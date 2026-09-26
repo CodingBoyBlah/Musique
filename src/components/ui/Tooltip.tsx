@@ -1,6 +1,16 @@
 import { useState, useRef, useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { EASE_OUT } from "@/lib/motion";
+
+/* Warm state, shared by every tooltip. The first tooltip waits a beat so a
+   pointer passing over the toolbar doesn't spray labels; once one has been
+   shown, moving to its neighbour opens the next one at once and without an
+   animation - running along a row of controls should feel instant. */
+const WARM_MS = 400;
+let openCount = 0;
+let lastClosedAt = 0;
+const isWarm = () => openCount > 0 || performance.now() - lastClosedAt < WARM_MS;
 
 interface Props {
   label:    ReactNode;
@@ -19,7 +29,20 @@ stays visible while the pointers over the control, so clicking toggle
 verticalAlign:middle + lineHeight:0 keep the wrapped button on the text
 baseline so its scale animation doesnt make it jump. */
 export function Tooltip({ label, children, side = "top", align = "center" }: Props) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpenState] = useState(false);
+  // opened from the warm state: skip the animation too, not just the delay
+  const [instant, setInstant] = useState(false);
+  const openRef = useRef(false);
+  const setOpen = (v: boolean) => {
+    if (v === openRef.current) return;
+    openRef.current = v;
+    if (v) openCount++;
+    else {
+      openCount = Math.max(0, openCount - 1);
+      lastClosedAt = performance.now();
+    }
+    setOpenState(v);
+  };
   const [effectiveAlign, setEffectiveAlign] = useState(align);
   /* Trigger position in viewport coordinates, captured on hover. The tooltip
      is rendered in a portal (see below), so it can't be placed relative to the
@@ -32,6 +55,11 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
   useEffect(() => {
     return () => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
+      if (openRef.current) {
+        openRef.current = false;
+        openCount = Math.max(0, openCount - 1);
+        lastClosedAt = performance.now();
+      }
     };
   }, []);
 
@@ -41,11 +69,16 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
   useEffect(() => {
     if (!open) return;
     const dismiss = () => setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     window.addEventListener("scroll", dismiss, true);
     window.addEventListener("resize", dismiss);
+    window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("scroll", dismiss, true);
       window.removeEventListener("resize", dismiss);
+      window.removeEventListener("keydown", onKey);
     };
   }, [open]);
 
@@ -66,9 +99,29 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
       setEffectiveAlign(align);
     }
     if (timerRef.current) window.clearTimeout(timerRef.current);
+    if (isWarm()) {
+      setInstant(true);
+      setOpen(true);
+      return;
+    }
+    setInstant(false);
     timerRef.current = window.setTimeout(() => {
       setOpen(true);
     }, 140);
+  };
+
+  /* Keyboard focus shows the label too - a keyboard user tabbing onto an
+     icon-only button otherwise has no way to learn what it does. Only for
+     :focus-visible, so a mouse click doesn't pin the tooltip open. */
+  const handleFocus = (e: React.FocusEvent) => {
+    const t = e.target as HTMLElement;
+    let visible = false;
+    try {
+      visible = t.matches(":focus-visible");
+    } catch {
+      visible = false;
+    }
+    if (visible) handleMouseEnter();
   };
 
   const handleMouseLeave = () => {
@@ -102,6 +155,11 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
             : { top: rect.bottom + 9 }),
         };
   const tx = effectiveAlign === "center" ? "-50%" : "0%";
+  /* grow out of the trigger, not from the label's own centre */
+  const originX = effectiveAlign === "center" ? "center" : effectiveAlign === "end" ? "right" : "left";
+  const transformOrigin = isRight
+    ? "left center"
+    : `${originX} ${side === "top" ? "bottom" : "top"}`;
 
   return (
     <span
@@ -113,6 +171,8 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
+      onFocus={handleFocus}
+      onBlur={handleMouseLeave}
     >
       {children}
       {/* Rendered into <body> rather than next to the trigger.
@@ -130,8 +190,10 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
             initial={isRight ? { opacity: 0, x: -4, y: "-50%", scale: 0.94 } : { opacity: 0, y: off, scale: 0.94, x: tx }}
             animate={isRight ? { opacity: 1, x: 0, y: "-50%", scale: 1 } : { opacity: 1, y: 0, scale: 1, x: tx }}
             exit={isRight ? { opacity: 0, x: -4, y: "-50%", scale: 0.94 } : { opacity: 0, y: off, scale: 0.94, x: tx }}
-            transition={{ duration: 0.15, ease: [0.23, 1, 0.32, 1] }}
+            transition={instant ? { duration: 0 } : { duration: 0.15, ease: EASE_OUT }}
+            className="glass-solid-fallback t-caption"
             style={{
+              transformOrigin,
               position:      "fixed",
               ...horiz,
               whiteSpace:    "nowrap",
@@ -147,7 +209,6 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
               boxShadow:     "0 8px 22px rgba(0,0,0,0.45)",
               fontSize:      11.5,
               fontWeight:    600,
-              letterSpacing: "0.01em",
               color:         "var(--color-text-hi)",
             }}
           >

@@ -1,0 +1,130 @@
+/* Component-level interaction styles for components/ui.
+ *
+ * Same rules as the shared primitives in index.css: hover lives in CSS (an
+ * onMouseEnter that writes node.style is wiped by the next re-render), hover
+ * only where a real hover pointer exists, press feedback on :active, and a
+ * visible :focus-visible ring. */
+
+/* ── track row ─────────────────────────────────────────────────────────── */
+.track-row:active {
+    background: var(--color-active) !important;
+}
+.track-row:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+}
+
+/* like / queue buttons at the end of a row. colour state is data-driven so
+   hover can brighten an idle button without fighting an inline colour. */
+.row-action {
+    color: var(--color-text-dim);
+    background: transparent;
+    transition: color 0.14s ease, background-color 0.14s ease;
+}
+.row-action[data-active="true"] {
+    color: var(--color-accent);
+    background: var(--color-accent-dim);
+}
+@media (hover: hover) and (pointer: fine) {
+    .row-action:not([data-active="true"]):hover {
+        color: var(--color-text-hi);
+    }
+}
+.row-action:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+/* inline text link inside secondary text (artist / album names) */
+.link-inline {
+    color: inherit;
+    text-decoration: none;
+}
+@media (hover: hover) and (pointer: fine) {
+    .link-inline:hover {
+        text-decoration: underline;
+        color: var(--color-text-hi);
+    }
+}
+.link-inline:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+    border-radius: 2px;
+}
+
+/* ── cards ─────────────────────────────────────────────────────────────── */
+.card-link:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 3px;
+    border-radius: 12px;
+}
+
+/* ── settings ──────────────────────────────────────────────────────────── */
+.switch:focus-visible,
+.seg-opt:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+.disclosure {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 10px;
+    transition: background-color 0.14s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+    .disclosure:hover {
+        background: var(--color-hover);
+    }
+}
+.disclosure:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+/* status dot pulse (e.g. "Validating…"). opacity only, so it stays under
+   reduced motion as a gentle cue. */
+@keyframes status-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+}
+.status-pulse {
+    animation: status-pulse 1.2s ease-in-out infinite;
+}
+
+/* ── translucent ghost pill (Pin, More options on page headers) ────────── */
+.ghost-pill {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.ghost-pill[data-on="true"] {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.28);
+}
+@media (hover: hover) and (pointer: fine) {
+    .ghost-pill:hover {
+        background: rgba(255, 255, 255, 0.14);
+        border-color: rgba(255, 255, 255, 0.22);
+    }
+}
+
+/* settings text fields: the field is where input goes, so focus borrows the
+   accent the same way the top-bar search does */
+.settings-input {
+    transition: border-color 0.14s ease, box-shadow 0.14s ease, background-color 0.14s ease;
+}
+.settings-input:focus {
+    border-color: rgba(88, 115, 216, 0.75) !important;
+    box-shadow: 0 0 0 3px rgba(88, 115, 216, 0.2);
+}
+.settings-input:disabled {
+    opacity: 0.6;
+}

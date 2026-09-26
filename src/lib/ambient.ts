@@ -175,6 +175,14 @@ const mem = new Map<string, Ambient>();
    every track change decoded the image and ran the blur twice. */
 const inflight = new Map<string, Promise<Ambient>>();
 
+/** what is already in memory for this cover, synchronously - so a view that
+    opens on a cover it has seen before paints the right room on its first
+    frame instead of one frame of the fallback */
+export function peekAmbient(url: string | null | undefined): Ambient | undefined {
+  if (!url) return AMBIENT_FALLBACK;
+  return mem.get(url);
+}
+
 export function loadAmbient(url: string | null | undefined): Promise<Ambient> {
   if (!url) return Promise.resolve(AMBIENT_FALLBACK);
 

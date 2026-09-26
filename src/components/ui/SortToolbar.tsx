@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Search, X } from "@/lib/icons";
 import { Dropdown, type DropdownOption } from "./Dropdown";
+import { SortDirectionToggle } from "./SortDirectionToggle";
 
 type SortKey = "name" | "popularity";
 type Dir = "asc" | "desc";
@@ -36,18 +37,16 @@ export function useSortTools<T extends NamedPop>(
     { value: "name",       label: "Name" },
     { value: "popularity", label: "Popularity" },
   ];
-  const dirOptions: DropdownOption<Dir>[] = [
-    { value: "asc",  label: "Ascending" },
-    { value: "desc", label: "Descending" },
-  ];
 
   const toolbar = (
     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, width: "100%", boxSizing: "border-box", padding: "0 2px 14px" }}>
       <div
+        className="focus-within-ring"
         style={{
           display: "flex", alignItems: "center", gap: 8, height: 32,
           flex: "0 1 280px", minWidth: 0, padding: "0 11px", borderRadius: 8,
           background: "var(--color-glass)", border: "1px solid var(--color-glass-border)",
+          transition: "border-color 0.14s ease, box-shadow 0.14s ease",
         }}
       >
         <Search size={14} strokeWidth={2.2} style={{ color: "var(--color-text-dim)", flexShrink: 0 }} />
@@ -55,6 +54,7 @@ export function useSortTools<T extends NamedPop>(
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={placeholder}
+          aria-label={placeholder}
           spellCheck={false}
           style={{
             flex: 1, minWidth: 0, height: "100%", border: "none", outline: "none",
@@ -66,7 +66,9 @@ export function useSortTools<T extends NamedPop>(
           <button
             onClick={() => setQuery("")}
             title="Clear"
-            style={{ display: "flex", border: "none", background: "transparent", color: "var(--color-text-dim)", cursor: "pointer", padding: 0, flexShrink: 0 }}
+            aria-label="Clear"
+            className="btn-icon"
+            style={{ width: 20, height: 20, borderRadius: 6, padding: 0 }}
           >
             <X size={13} strokeWidth={2.4} />
           </button>
@@ -75,7 +77,7 @@ export function useSortTools<T extends NamedPop>(
 
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginLeft: "auto" }}>
         <Dropdown value={sort} options={sortOptions} onChange={setSort} align="right" minWidth={150} title="Sort by" />
-        <Dropdown value={dir}  options={dirOptions}  onChange={setDir}  align="right" minWidth={140} title="Direction" />
+        <SortDirectionToggle dir={dir} onChange={setDir} />
       </div>
     </div>
   );

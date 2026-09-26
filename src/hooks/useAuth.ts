@@ -96,7 +96,7 @@ export function useAuth() {
     },
     onError: (err) => {
       console.error("[auth] login failed:", err);
-      toast(errMsg(err));
+      toast.error(errMsg(err));
       /* The backend may have got part way (tokens stored, profile call failed),
          so ask it what actually happened rather than assuming either outcome. */
       qc.invalidateQueries({ queryKey: ["auth-status"] });
@@ -112,7 +112,7 @@ export function useAuth() {
     },
     onError: (err) => {
       console.error("[auth] logout reported an error:", err);
-      toast(`Signed out, but some data could not be cleared: ${errMsg(err)}`);
+      toast.error(`Signed out, but some data could not be cleared: ${errMsg(err)}`);
     },
     onSettled: () => {
       clearLocalAccountState();

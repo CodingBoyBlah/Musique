@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Smartphone,
   Laptop,
@@ -13,7 +13,7 @@ import {
 } from "@/lib/icons";
 import { useDevices } from "../../hooks/useDevices";
 import type { SpotifyDevice } from "../../api/connect";
-import { gpuLayer, zTransform } from "../../lib/motion";
+import { gpuLayer, zTransform, EASE_OUT } from "../../lib/motion";
 
 function getDeviceIcon(type: string) {
   const t = type.toLowerCase();
@@ -24,53 +24,81 @@ function getDeviceIcon(type: string) {
   return Cast;
 }
 
+type PopoverPos = { top?: number; bottom?: number; right: number };
+
+// the visible trigger (title bar button, or the player-bar "playing on" banner)
+function findTrigger(): HTMLElement | null {
+  const triggers = document.querySelectorAll<HTMLElement>("[data-devices-trigger]");
+  for (const t of triggers) {
+    const r = t.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return t;
+  }
+  return null;
+}
+
+// below a trigger in the top half of the window, above one in the bottom half
+function measurePos(): PopoverPos {
+  const trigger = findTrigger();
+  if (!trigger) return { top: 48, right: 16 };
+  const rect = trigger.getBoundingClientRect();
+  const right = Math.max(12, window.innerWidth - rect.right);
+  if (rect.top > window.innerHeight / 2) {
+    return { bottom: Math.max(16, window.innerHeight - rect.top + 8), right };
+  }
+  return { top: Math.max(12, rect.bottom + 8), right };
+}
+
+/* Outer shell: owns presence, so closing actually plays the exit instead of
+   the popover being unmounted out from under its own animation. It is also
+   the one always-mounted useDevices() - that hook runs the device/playback
+   polling, so the card below takes its data as props rather than starting a
+   second set of pollers. */
 export function DevicesPopover() {
-  const {
-    devices,
-    activeDevice,
-    musiqueDeviceId,
-    devicesOpen,
-    setDevicesOpen,
-    transfer,
-    transferringId,
-    refreshDevices,
-    isRemotePlayback,
-  } = useDevices();
+  const devicesState = useDevices();
+  return (
+    <AnimatePresence>
+      {devicesState.devicesOpen && <DevicesPopoverCard key="devices" {...devicesState} />}
+    </AnimatePresence>
+  );
+}
+
+function DevicesPopoverCard({
+  devices,
+  activeDevice,
+  musiqueDeviceId,
+  setDevicesOpen,
+  transfer,
+  transferringId,
+  refreshDevices,
+  isRemotePlayback,
+}: ReturnType<typeof useDevices>) {
 
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number }>({ top: 48, right: 16 });
+  // measured on the render that opens it, so the first painted frame is
+  // already in place (it used to paint at a default spot, then jump) and the
+  // slide direction is known before the enter animation starts
+  const [pos, setPos] = useState<PopoverPos>(measurePos);
+  // whatever had focus when it opened (normally the trigger) gets it back
+  const returnFocus = useRef<HTMLElement | null>(
+    document.activeElement instanceof HTMLElement ? document.activeElement : null,
+  );
 
-  useEffect(() => {
-    if (!devicesOpen) return;
-    const updatePos = () => {
-      const triggers = document.querySelectorAll("[data-devices-trigger]");
-      let activeTrigger: Element | null = null;
-      for (const t of triggers) {
-        const r = t.getBoundingClientRect();
-        if (r.width > 0 && r.height > 0) {
-          activeTrigger = t;
-          break;
-        }
-      }
-      if (activeTrigger) {
-        const rect = activeTrigger.getBoundingClientRect();
-        const right = Math.max(12, window.innerWidth - rect.right);
-        if (rect.top > window.innerHeight / 2) {
-          setPos({ bottom: Math.max(16, window.innerHeight - rect.top + 8), right });
-        } else {
-          setPos({ top: Math.max(12, rect.bottom + 8), right });
-        }
-      }
-    };
+  useLayoutEffect(() => {
+    const updatePos = () => setPos(measurePos());
     updatePos();
     window.addEventListener("resize", updatePos);
     return () => window.removeEventListener("resize", updatePos);
-  }, [devicesOpen]);
+  }, []);
 
-  // Close on outside pointer click (ignoring trigger clicks)
+  const close = (restoreFocus: boolean) => {
+    setDevicesOpen(false);
+    if (restoreFocus) (returnFocus.current ?? findTrigger())?.focus?.();
+  };
+
+  // Close on outside pointer click (ignoring trigger clicks), Escape closes
+  // and hands focus back to the trigger
   useEffect(() => {
-    if (!devicesOpen) return;
     function onPointerDown(e: MouseEvent) {
       const isTrigger = Boolean((e.target as Element)?.closest?.("[data-devices-trigger]"));
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node) && !isTrigger) {
@@ -79,7 +107,9 @@ export function DevicesPopover() {
     }
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
+        e.stopPropagation();
         setDevicesOpen(false);
+        (returnFocus.current ?? findTrigger())?.focus?.();
       }
     }
     document.addEventListener("pointerdown", onPointerDown);
@@ -88,29 +118,37 @@ export function DevicesPopover() {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [devicesOpen, setDevicesOpen]);
+  }, [setDevicesOpen]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
       await refreshDevices();
     } finally {
-      setTimeout(() => setIsRefreshing(false), 450);
+      // long enough to register as "it refreshed", no longer
+      setTimeout(() => setIsRefreshing(false), 250);
     }
   };
 
-  if (!devicesOpen) return null;
+  const below = pos.top !== undefined;
 
   return (
     <motion.div
       ref={popoverRef}
-      initial={{ opacity: 0, y: pos.top !== undefined ? -8 : 8, scale: 0.96 }}
+      role="dialog"
+      aria-label="Devices"
+      className="glass-solid-fallback"
+      // grows out of its trigger: from the top-right corner when it hangs
+      // below the title-bar button, bottom-right when it rises over the
+      // player bar. no overshoot - nothing was flicked.
+      initial={{ opacity: 0, y: below ? -6 : 6, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: pos.top !== undefined ? -6 : 6, scale: 0.96 }}
-      transition={{ type: "spring", stiffness: 440, damping: 28 }}
+      exit={{ opacity: 0, y: below ? -4 : 4, scale: 0.97, transition: { duration: 0.12, ease: EASE_OUT } }}
+      transition={{ duration: 0.18, ease: EASE_OUT }}
       transformTemplate={zTransform}
       style={{
         ...gpuLayer,
+        transformOrigin: below ? "top right" : "bottom right",
         position: "fixed",
         ...(pos.top !== undefined ? { top: pos.top } : {}),
         ...(pos.bottom !== undefined ? { bottom: pos.bottom } : {}),
@@ -141,11 +179,11 @@ export function DevicesPopover() {
         }}
       >
         <span
+          className="t-caption"
           style={{
             fontSize: 12.5,
             fontWeight: 600,
             color: "var(--color-text-hi)",
-            letterSpacing: "-0.01em",
           }}
         >
           Devices
@@ -155,27 +193,9 @@ export function DevicesPopover() {
             type="button"
             onClick={handleRefresh}
             title="Refresh"
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--color-text-dim)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 24,
-              height: 24,
-              borderRadius: 5,
-              transition: "color 0.12s, background 0.12s",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-hi)";
-              (e.currentTarget as HTMLButtonElement).style.background = "var(--color-surface-hover)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-dim)";
-              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-            }}
+            aria-label="Refresh devices"
+            className="btn-icon"
+            style={{ width: 24, height: 24, borderRadius: 6 }}
           >
             <RefreshCw
               size={12}
@@ -186,29 +206,11 @@ export function DevicesPopover() {
           </button>
           <button
             type="button"
-            onClick={() => setDevicesOpen(false)}
+            onClick={() => close(true)}
             title="Close"
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--color-text-dim)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 24,
-              height: 24,
-              borderRadius: 5,
-              transition: "color 0.12s, background 0.12s",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-hi)";
-              (e.currentTarget as HTMLButtonElement).style.background = "var(--color-surface-hover)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-dim)";
-              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-            }}
+            aria-label="Close devices"
+            className="btn-icon"
+            style={{ width: 24, height: 24, borderRadius: 6 }}
           >
             <X size={13} />
           </button>
@@ -228,6 +230,7 @@ export function DevicesPopover() {
       >
         {devices.length === 0 ? (
           <div
+            className="t-caption"
             style={{
               padding: "24px 12px",
               textAlign: "center",
@@ -235,7 +238,7 @@ export function DevicesPopover() {
               color: "var(--color-text-dim)",
             }}
           >
-            No devices found
+            No devices found. Open Spotify on another device, then refresh.
           </div>
         ) : (
           devices.map((device: SpotifyDevice) => {
@@ -249,17 +252,19 @@ export function DevicesPopover() {
             const isTransferring = transferringId === device.id;
 
             return (
-              <motion.button
+              <button
                 key={device.id ?? device.name}
                 type="button"
+                className="dev-row"
+                data-active={isActive || undefined}
+                aria-current={isActive || undefined}
+                aria-busy={isTransferring || undefined}
                 onClick={() => {
                   if (device.id && !isActive && !isTransferring) {
                     transfer(device.id);
                   }
                 }}
                 disabled={isTransferring || isActive}
-                whileHover={!isActive ? { scale: 1.01 } : {}}
-                whileTap={!isActive ? { scale: 0.98 } : {}}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -267,26 +272,13 @@ export function DevicesPopover() {
                   gap: 10,
                   width: "100%",
                   padding: "8px 10px",
-                  borderRadius: 8,
                   border: "none",
                   background: isActive
                     ? "var(--color-surface-2)"
                     : "transparent",
                   cursor: isActive ? "default" : "pointer",
                   textAlign: "left",
-                  transition: "background 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) {
-                    (e.currentTarget as HTMLButtonElement).style.background =
-                      "var(--color-surface-hover)";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) {
-                    (e.currentTarget as HTMLButtonElement).style.background =
-                      "transparent";
-                  }
+                  font: "inherit",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
@@ -309,6 +301,7 @@ export function DevicesPopover() {
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                     <span
+                      className="t-caption"
                       style={{
                         fontSize: 12.5,
                         fontWeight: isActive ? 600 : 500,
@@ -323,6 +316,7 @@ export function DevicesPopover() {
                     </span>
                     {isActive && (
                       <span
+                        className="t-caption"
                         style={{
                           fontSize: 10.5,
                           color: "var(--color-text-dim)",
@@ -359,7 +353,7 @@ export function DevicesPopover() {
                     />
                   ) : null}
                 </div>
-              </motion.button>
+              </button>
             );
           })
         )}

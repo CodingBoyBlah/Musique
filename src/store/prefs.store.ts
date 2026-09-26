@@ -29,6 +29,10 @@ interface PrefsStore {
   // push the now-playing track to discord as rich presence
   discordPresence: boolean;
   setDiscordPresence: (v: boolean) => void;
+
+  // let the immersive view's blurred-cover background drift. off = still.
+  ambientMotion: boolean;
+  setAmbientMotion: (v: boolean) => void;
 }
 
 export const usePrefsStore = create<PrefsStore>()(
@@ -67,6 +71,9 @@ export const usePrefsStore = create<PrefsStore>()(
 
       discordPresence: true,
       setDiscordPresence: (v) => set({ discordPresence: v }),
+
+      ambientMotion: true,
+      setAmbientMotion: (v) => set({ ambientMotion: v }),
     }),
     { name: "spotify-prefs" },
   ),

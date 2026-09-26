@@ -25,7 +25,7 @@ const failPlayback = (e: unknown): never => {
   const store = usePlayerStore.getState();
   store.setPlaying(false);
   store.setTargetState("paused");
-  toast(errMsg(e));
+  toast.error(errMsg(e));
   throw e;
 };
 

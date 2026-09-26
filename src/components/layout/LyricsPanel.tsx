@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Globe,
@@ -13,7 +13,10 @@ import { useAmbient } from "../../hooks/useAmbient";
 import { seekPlayback } from "../../api/playback";
 import { Loader } from "../ui/Loader";
 import { Tooltip } from "../ui/Tooltip";
-import { zTransform } from "../../lib/motion";
+import { zTransform, EASE_OUT, PRESS, SPRING_PANEL } from "../../lib/motion";
+import { useLyricFollow } from "../../hooks/useLyricFollow";
+import { ReturnPill } from "./LyricReturnPill";
+import "../../styles/lyrics.css";
 import {
   detectLyricScript,
   canRomanize,
@@ -27,6 +30,7 @@ import {
   lyricWords,
   useActiveRow,
   useLyricClock,
+  useMoreContrast,
   type Row,
 } from "../../lib/lyrics";
 
@@ -109,19 +113,22 @@ export function LyricsPanel() {
   const { getClock, resync } = useLyricClock();
   const active = useActiveRow(rowStarts, getClock, synced);
 
-  // auto-scroll the active row to about 40%
+  /* keep the active row at about 40%. the same follower the immersive view
+     uses: a jump for the first placement, one velocity-keeping spring line to
+     line (native smooth scroll picked its own curve and length), and it lets
+     go the moment the reader scrolls */
+  const followTrackId = usePlayerStore((s) => s.currentTrack?.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
-  useEffect(() => {
-    if (active < 0) return;
-    const el = rowRefs.current[active];
-    const cont = scrollRef.current;
-    if (!el || !cont) return;
-    cont.scrollTo({
-      top: el.offsetTop - cont.clientHeight * 0.4 + el.clientHeight / 2,
-      behavior: reduceMotion ? "auto" : "smooth",
-    });
-  }, [active, reduceMotion]);
+  const moreContrast = useMoreContrast();
+  const targetFor = useCallback(
+    (el: HTMLDivElement, cont: HTMLDivElement) =>
+      el.offsetTop - cont.clientHeight * 0.4 + el.clientHeight / 2,
+    [],
+  );
+  const { detached, recenter } = useLyricFollow({
+    scrollRef, rowRefs, active, resetKey: rows, trackKey: followTrackId, targetFor, reduceMotion,
+  });
 
   function seekTo(i: number) {
     if (!synced) return;
@@ -140,11 +147,16 @@ export function LyricsPanel() {
       // open AND close), so the grid reflows in one step and the cards glide via
       // framer `layout` both ways. This panel just slides over that region; its
       // width never animates, so nothing reflows per-frame.
-      initial={{ opacity: 0, x: 60, scale: 0.96 }}
-      animate={{ opacity: 1, x: 0, scale: 1 }}
-      exit={{ opacity: 0, x: 60, scale: 0.96 }}
+      //
+      // Slides along the edge it is docked to and nothing else: the scale it
+      // used to carry pulled it off that edge, and the old spring (zeta ~0.89)
+      // overshot on a toggle that had no momentum behind it. Critically damped,
+      // and out along the same path it came in on.
+      initial={{ opacity: 0, x: 60 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 60 }}
       transformTemplate={zTransform}
-      transition={{ type: "spring", stiffness: 320, damping: 32 }}
+      transition={SPRING_PANEL}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH,
@@ -272,7 +284,7 @@ export function LyricsPanel() {
               {rows.map((row, ri) => {
                 const isActive = synced && ri === active;
                 const tone = synced
-                  ? lyricTone(Math.abs(ri - active), ri < active)
+                  ? lyricTone(Math.abs(ri - active), ri < active, moreContrast)
                   : { blur: 0, alpha: 0.92 };
                 const multi = row.voices.length > 1;
                 return (
@@ -282,6 +294,10 @@ export function LyricsPanel() {
                       rowRefs.current[ri] = el;
                     }}
                     onClick={() => seekTo(ri)}
+                    // hover + press live in styles/lyrics.css
+                    className="lyr-prow"
+                    data-seekable={synced}
+                    data-active={isActive}
                     style={{
                       /* Constant box. Growing the active row's padding reflowed
                          the whole list on every line, and scaling it from
@@ -290,11 +306,10 @@ export function LyricsPanel() {
                          this panel. Emphasis is light only now, the same as the
                          immersive view. */
                       padding: "6px 10px",
-                      borderRadius: 10,
                       cursor: synced ? "pointer" : "default",
                       transition: reduceMotion
-                        ? "none"
-                        : "opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1)",
+                        ? "opacity 0.2s ease, background-color 0.16s ease"
+                        : "opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.16s ease, scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)",
                       opacity: synced ? tone.alpha : 0.92,
                       contentVisibility: "auto",
                       containIntrinsicSize: "0 40px",
@@ -304,15 +319,6 @@ export function LyricsPanel() {
                       width: "100%",
                       minWidth: 0,
                       boxSizing: "border-box",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (synced && !isActive)
-                        (e.currentTarget as HTMLDivElement).style.background =
-                          "rgba(255,255,255,0.05)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLDivElement).style.background =
-                        "transparent";
                     }}
                   >
                     {row.voices.map((voice, vi) => {
@@ -324,7 +330,8 @@ export function LyricsPanel() {
                       const align: "left" | "right" = isDuet ? "right" : "left";
 
                       // Lead voice is primary; bg voice is visually subordinate (smaller, lower opacity, indented)
-                      const size = isSecondary ? 19 : isDuet && vi > 0 ? 22 : 25;
+                      // rem (19 / 22 / 25px at the default size), so the user's text size carries through
+                      const size = isSecondary ? "1.357rem" : isDuet && vi > 0 ? "1.571rem" : "1.786rem";
                       const weight = isSecondary ? 700 : 800;
                       const indent = isSecondary ? 16 : 0;
                       const romIdx = rowOffsets[ri] + vi;
@@ -356,6 +363,7 @@ export function LyricsPanel() {
                             glowRgb={glow}
                             inkRgb={ink}
                             align={align}
+                            tracking={isSecondary ? "-0.01em" : undefined}
                           />
                           {/* what the source itself shipped, in the same
                               quiet key as the pronunciation line that was
@@ -384,7 +392,8 @@ export function LyricsPanel() {
                   fontWeight: 600,
                   letterSpacing: "0.04em",
                   textTransform: "uppercase",
-                  color: "rgba(255,255,255,0.28)",
+                  // was 0.28 - about 2:1, unreadable at 11px over artwork
+                  color: "rgba(255,255,255,0.48)",
                 }}
               >
                 {synced
@@ -398,6 +407,7 @@ export function LyricsPanel() {
             </div>
           )}
         </div>
+        <ReturnPill show={synced && hasLyrics && detached} onClick={recenter} />
       </div>
     </motion.div>
   );
@@ -412,7 +422,8 @@ function subText(active: boolean, align: "left" | "right" = "left"): React.CSSPr
     margin: "2px 0 0",
     fontSize: 12.5,
     fontWeight: 600,
-    color: active ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.4)",
+    color: active ? "rgba(255,255,255,0.74)" : "rgba(255,255,255,0.52)",
+    letterSpacing: "0.004em",
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
     overflowWrap: "break-word",
@@ -432,9 +443,11 @@ function Pill({
 }) {
   return (
     <motion.button
-      whileHover={{ scale: 1.05 }}
-      whileTap={{ scale: 0.95 }}
-      transition={{ type: "spring", stiffness: 450, damping: 25 }}
+      className="focus-ring"
+      aria-pressed={on}
+      whileHover={{ scale: 1.03 }}
+      whileTap={PRESS}
+      transition={{ duration: 0.12, ease: EASE_OUT }}
       onClick={onClick}
       style={{
         display: "flex",
@@ -449,7 +462,7 @@ function Pill({
         color: on ? "var(--color-accent-text, #ffffff)" : "#ffffff",
         fontSize: 11.5,
         fontWeight: 650,
-        outline: "none",
+        letterSpacing: "0.004em",
         boxShadow: "0 2px 8px rgba(0, 0, 0, 0.25)",
       }}
     >
@@ -502,6 +515,7 @@ function CenterNote({
 function RetryBtn({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return (
     <button
+      className="pressable"
       onClick={onClick}
       disabled={busy}
       style={{

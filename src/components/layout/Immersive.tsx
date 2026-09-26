@@ -1,13 +1,20 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Minimize2, Captions, Queue, Music } from "@/lib/icons";
+import { useUIStore } from "../../store/ui.store";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
 import { useLyrics } from "../../hooks/useLyrics";
 import { useAmbient } from "../../hooks/useAmbient";
 import { useWindowActive } from "../../hooks/useWindowActive";
+import { useLyricFollow } from "../../hooks/useLyricFollow";
+import { ReturnPill } from "./LyricReturnPill";
+import { usePrefsStore } from "../../store/prefs.store";
+import { EASE_OUT } from "../../lib/motion";
+import { type Ambient } from "../../lib/ambient";
+import "../../styles/lyrics.css";
 import { PlayerBar } from "./PlayerBar";
 import { playTrack } from "../../api/playback";
 import {
@@ -17,6 +24,7 @@ import {
   lyricWords,
   useActiveRow,
   useLyricClock,
+  useMoreContrast,
 } from "../../lib/lyrics";
 
 /* The room the record is playing in.
@@ -36,23 +44,46 @@ import {
  * ambient moves. Blurring once into a bitmap and then only transforming it
  * costs nothing per frame, and the artwork now supplies its own texture. */
 function AmbientBg({ url }: { url: string | null | undefined }) {
-  const { art, blobs, base, glow } = useAmbient(url);
+  const ambient = useAmbient(url);
+  const { base, glow, ready } = ambient;
   const awake = useWindowActive();
+  // Settings > Animated background. still, not gone: the room keeps its colour
+  const drift = usePrefsStore((s) => s.ambientMotion);
+
+  /* Track changes crossfade rather than cut. The rooms are stacked inside the
+     one drifting layer, so the drift itself never restarts; the new room fades
+     up over the old one, which is held opaque underneath until it is covered
+     (fading both at once dips the whole window through the floor colour
+     halfway across). Each room carries its own floor colour, so each is opaque
+     on its own. Nothing is drawn until the first cover has actually been read -
+     lighting the room off the fallback palette for a frame read as a purple
+     flash on every open. */
+  const key = roomKey(ambient);
+  // the newest room is always on top, whatever order the exits leave the DOM in
+  const layers = useRef({ key: "", z: 0 });
+  if (layers.current.key !== key) layers.current = { key, z: layers.current.z + 1 };
+  const z = layers.current.z;
 
   return (
     <div
       aria-hidden
       style={{ position: "absolute", inset: 0, overflow: "hidden", background: base, pointerEvents: "none", contain: "strict" }}
     >
-      <div
-        className={awake ? "amb-layer amb-1" : "amb-layer amb-1 amb-parked"}
-        style={
-          art
-            ? { backgroundImage: `url("${art}")` }
-            : // unreadable artwork: light the room off the palette instead
-              { background: `radial-gradient(circle at 34% 40%, rgba(${blobs[0]}, 0.75) 0%, rgba(${blobs[1]}, 0.35) 52%, rgba(${blobs[2]}, 0) 78%)` }
-        }
-      />
+      <div className={awake && drift ? "amb-layer amb-1" : "amb-layer amb-1 amb-parked"}>
+        <AnimatePresence initial={false}>
+          {ready && (
+            <motion.div
+              key={key}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              // stay put under the incoming room until it is fully up
+              exit={{ opacity: 0, transition: { delay: ROOM_FADE_S, duration: 0 } }}
+              transition={{ duration: ROOM_FADE_S, ease: [0.4, 0, 0.2, 1] }}
+              style={{ position: "absolute", inset: 0, zIndex: z, backgroundSize: "cover", backgroundPosition: "center", ...roomFill(ambient) }}
+            />
+          )}
+        </AnimatePresence>
+      </div>
 
 {/* One element, two stacked gradients: the light the sleeve pools into
           the room, and the scrim over the strips the window chrome and the dock
@@ -71,6 +102,20 @@ function AmbientBg({ url }: { url: string | null | undefined }) {
       />
     </div>
   );
+}
+
+const ROOM_FADE_S = 0.6;
+
+const roomKey = (a: Ambient) => a.art || `${a.base}|${a.blobs.join("|")}`;
+
+function roomFill(a: Ambient): React.CSSProperties {
+  return a.art
+    ? { backgroundColor: a.base, backgroundImage: `url("${a.art}")` }
+    : // unreadable artwork: light the room off the palette instead
+      {
+        backgroundColor: a.base,
+        backgroundImage: `radial-gradient(circle at 34% 40%, rgba(${a.blobs[0]}, 0.75) 0%, rgba(${a.blobs[1]}, 0.35) 52%, rgba(${a.blobs[2]}, 0) 78%)`,
+      };
 }
 
 /* The sleeve, full bleed down the left.
@@ -153,46 +198,36 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
   const { getClock, resync } = useLyricClock();
   const active = useActiveRow(rowStarts, getClock, synced);
 
+  const followTrackId = usePlayerStore((s) => s.currentTrack?.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
-  useEffect(() => {
-    if (active < 0) return;
-    const el = rowRefs.current[active];
-    const cont = scrollRef.current;
-    if (!el || !cont) return;
+  const moreContrast = useMoreContrast();
 
-    /* The active line rests with its middle at 42% of the column, not 34% -
-       it was sitting close enough to the tabs to feel pinned under them.
-       Centring rather than top-aligning is what makes it size-aware: a line
-       that wraps to three rows grows in both directions instead of pushing its
-       tail off the bottom. The clamp is for the extreme case, where a line long
-       enough to fill half the column would still ride up under the header. */
+  /* Where the active line rests: its middle about 30% down the column.
+     Centring rather than top-aligning is what makes it size-aware: a line
+     that wraps to three rows grows in both directions instead of pushing its
+     tail off the bottom. The clamp is for the extreme case, where a line long
+     enough to fill half the column would still ride up under the header.
+
+     Measured from the column itself now. The old maths read `offsetTop`
+     against a positioned ancestor about a card-header above the scroller, so
+     its nominal "42%" (and "16%" clamp) actually landed the line near 28-30%
+     of the column - which is where it has been sitting, and where it stays.
+     The column's wrapper is positioned (the return pill hangs off it), which
+     makes offsetTop exact. */
+  const targetFor = useCallback((el: HTMLDivElement, cont: HTMLDivElement) => {
     const H = cont.clientHeight;
-    const target = Math.min(
-      el.offsetTop - H * 0.42 + el.clientHeight / 2,
-      el.offsetTop - H * 0.16,
+    const top = el.offsetTop - cont.offsetTop;
+    return Math.min(
+      top - H * 0.3 + el.clientHeight / 2,
+      top - H * 0.04,
     );
-    if (reduceMotion) {
-      cont.scrollTop = target;
-      return;
-    }
+  }, []);
 
-    const from = cont.scrollTop;
-    const delta = target - from;
-    if (Math.abs(delta) < 1) return;
-
-    // ease-out-quart, the curve the row's scale is on
-    const DURATION = 560;
-    const start = performance.now();
-    let raf = 0;
-    const step = (now: number) => {
-      const t = Math.min(1, (now - start) / DURATION);
-      cont.scrollTop = from + delta * (1 - Math.pow(1 - t, 4));
-      if (t < 1) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [active, reduceMotion]);
+  // first placement jumps, line-to-line springs, and the reader can take over
+  const { detached, recenter } = useLyricFollow({
+    scrollRef, rowRefs, active, resetKey: rows, trackKey: followTrackId, targetFor, reduceMotion,
+  });
 
   function seekTo(i: number) {
     if (!synced) return;
@@ -207,16 +242,20 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
   if (rows.length === 0) return <Centered>No lyrics found for this track.</Centered>;
 
   return (
+    <div style={{ position: "relative", height: "100%" }}>
     <div ref={scrollRef} data-selectable className="lyr-scroll" style={lyricsScroll}>
       {rows.map((row, ri) => {
         const isActive = synced && ri === active;
-        const tone = synced ? lyricTone(Math.abs(ri - active), ri < active) : { blur: 0, alpha: 0.9 };
+        const tone = synced ? lyricTone(Math.abs(ri - active), ri < active, moreContrast) : { blur: 0, alpha: 0.9 };
         const multi = row.voices.length > 1;
         return (
           <div
             key={ri}
             ref={(el) => { rowRefs.current[ri] = el; }}
             onClick={() => seekTo(ri)}
+            className="lyr-row"
+            data-seekable={synced}
+            data-active={isActive}
             style={{
               cursor: synced ? "pointer" : "default",
               /* Constant box: the padding never changes. Growing the active
@@ -240,9 +279,11 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                 row.voices.length === 1 && row.voices[0].role === "duet"
                   ? "right center"
                   : "left center",
+              /* On the scroll spring's clock (~0.45s to settle): the line
+                 grows as it arrives, not after. `scale` is the press. */
               transition: reduceMotion
-                ? "none"
-                : "opacity 0.44s cubic-bezier(0.22, 1, 0.36, 1), transform 0.56s cubic-bezier(0.22, 1, 0.36, 1)",
+                ? "opacity 0.2s ease"
+                : "opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1), transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)",
               display: "flex", flexDirection: "column", gap: multi ? 6 : 0,
             }}
           >
@@ -254,11 +295,14 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
               // If duet is concurrent (vi > 0 && isDuet), it aligns right opposite lead.
               const align: "left" | "right" = isDuet ? "right" : "left";
 
+              /* rem-anchored, so the user's text size carries through; the vw
+                 term still lets the column breathe with the window. Same
+                 21-34 / 24-40 / 28-46px range as before at the default size. */
               const size = isSecondary
-                ? "clamp(21px, 2.15vw, 34px)"
+                ? "clamp(1.5rem, 0.5rem + 1.66vw, 2.43rem)"
                 : isDuet && vi > 0
-                ? "clamp(24px, 2.5vw, 40px)"
-                : "clamp(28px, 2.9vw, 46px)";
+                ? "clamp(1.714rem, 0.55rem + 1.95vw, 2.857rem)"
+                : "clamp(2rem, 0.6rem + 2.3vw, 3.286rem)";
               const weight = isSecondary ? 700 : 800;
               // built for every row, not just the lit one: both states render
               // the same spans so the line can never re-wrap when it lights up
@@ -284,6 +328,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                     glowRgb={glow}
                     inkRgb={ink}
                     align={align}
+                    tracking={isSecondary ? "-0.01em" : undefined}
                   />
                 </div>
               );
@@ -291,6 +336,8 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
           </div>
         );
       })}
+    </div>
+    <ReturnPill show={synced && detached} onClick={recenter} />
     </div>
   );
 }
@@ -308,7 +355,7 @@ const lyricsScroll: React.CSSProperties = {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", color: "rgba(255,255,255,0.6)", fontSize: 15, padding: 24 }}>
+    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", color: "rgba(255,255,255,0.66)", fontSize: "1.07rem", padding: 24 }}>
       {children}
     </div>
   );
@@ -335,24 +382,21 @@ function ImmersiveQueue() {
 
   return (
     <div data-selectable style={{ height: "100%", overflowY: "auto", padding: "12px 4px 30vh" }}>
-      <p style={{ margin: "0 0 12px", fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.5)" }}>Up next</p>
+      <p style={{ margin: "0 0 12px", fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.62)" }}>Up next</p>
       {queue.map((t, i) => (
         <button
           key={`${t.id}-${i}`}
           onClick={() => jump(i)}
-          style={{
-            display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "8px 10px",
-            border: "none", background: "transparent", borderRadius: 10, cursor: "pointer", textAlign: "left",
-          }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.08)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+          // hover, press and focus from .row-btn - CSS, so a re-render can't wipe them
+          className="row-btn"
+          style={{ gap: 12, padding: "8px 10px", borderRadius: 10 }}
         >
           {t.album?.image_url
             ? <img src={coverUrl(t.album.image_url, 44) ?? t.album.image_url} alt="" style={{ width: 44, height: 44, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
             : <div style={{ width: 44, height: 44, borderRadius: 6, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Music size={18} style={{ color: "rgba(255,255,255,0.4)" }} /></div>}
           <div style={{ minWidth: 0, flex: 1 }}>
             <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</p>
-            <p style={{ margin: 0, fontSize: 12.5, color: "rgba(255,255,255,0.55)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artists.map((a) => a.name).join(", ")}</p>
+            <p className="t-caption" style={{ margin: 0, fontSize: 12.5, color: "rgba(255,255,255,0.64)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artists.map((a) => a.name).join(", ")}</p>
           </div>
         </button>
       ))}
@@ -395,8 +439,14 @@ export function Immersive() {
            * compositor can animate without touching raster at all. */
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          // out faster than in: Esc is a keyboard exit, it should get out of the way
+          exit={{ opacity: 0, transition: { duration: 0.18, ease: EASE_OUT } }}
           transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+          // tells Layout the shell is fully covered and can be hidden. fires
+          // for the exit too, so only report the finished open.
+          onAnimationComplete={() => {
+            if (usePlayerStore.getState().immersiveOpen) useUIStore.getState().setImmersiveCovered(true);
+          }}
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b" }}
         >
           <AmbientBg url={track.album?.image_url} />
@@ -439,8 +489,12 @@ export function Immersive() {
               }}
             >
               <motion.div
+                className="glass-solid-fallback"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
+                /* leaves the way the dock came in: settling back down toward
+                   the bar the view was opened from */
+                exit={{ opacity: 0, y: 10, transition: { duration: 0.18, ease: EASE_OUT } }}
                 transition={{ duration: 0.28, delay: 0.04, ease: [0.22, 1, 0.36, 1] }}
                 style={{
                   pointerEvents: "auto",
@@ -472,15 +526,21 @@ export function Immersive() {
                     <Minimize2 size={16} strokeWidth={2.2} />
                   </button>
                 </div>
-                <div style={{ flex: 1, minHeight: 0 }}>
-                  <AnimatePresence mode="wait">
+                {/* A crossfade, both panels at once - "wait" held the new tab
+                    back until the old one had finished leaving, ~320ms of
+                    nothing. The drift is sideways, toward the tab picked,
+                    because the tabs sit side by side. */}
+                <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+                  <AnimatePresence initial={false} custom={panel === "queue" ? 1 : -1}>
                     <motion.div
                       key={panel}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -6 }}
-                      transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-                      style={{ height: "100%" }}
+                      custom={panel === "queue" ? 1 : -1}
+                      variants={TAB_VARIANTS}
+                      initial="enter"
+                      animate="center"
+                      exit="exit"
+                      transition={{ duration: 0.15, ease: EASE_OUT }}
+                      style={{ position: "absolute", inset: 0 }}
                     >
                       {panel === "lyrics" ? <ImmersiveLyrics glow={glow} ink={ink} /> : <ImmersiveQueue />}
                     </motion.div>
@@ -494,6 +554,8 @@ export function Immersive() {
               <motion.div
                 initial={{ opacity: 0, y: 14 }}
                 animate={{ opacity: 1, y: 0 }}
+                // the same path out as in
+                exit={{ opacity: 0, y: 14, transition: { duration: 0.18, ease: EASE_OUT } }}
                 transition={{ duration: 0.3, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}
                 style={{ flexShrink: 0 }}
               >
@@ -506,6 +568,12 @@ export function Immersive() {
     </AnimatePresence>
   );
 }
+
+const TAB_VARIANTS = {
+  enter: (dir: number) => ({ opacity: 0, x: dir * 10 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: -dir * 10 }),
+};
 
 function PanelTab({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
   return (

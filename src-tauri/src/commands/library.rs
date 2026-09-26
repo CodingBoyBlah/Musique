@@ -352,6 +352,9 @@ pub async fn add_track_to_playlist(
     app: AppHandle,
     playlist_id: String,
     track_id: String,
+    // zero-based insert index. None appends. Used by "Undo" after a remove so
+    // the track goes back where it was rather than to the bottom.
+    position: Option<u32>,
 ) -> Result<(), AppError> {
     let s = app.state::<AppState>();
     let pool = s.db.clone();
@@ -359,11 +362,15 @@ pub async fn add_track_to_playlist(
     drop(s);
 
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
+    let mut body = serde_json::json!({ "uris": [format!("spotify:track:{track_id}")] });
+    if let Some(pos) = position {
+        body["position"] = serde_json::json!(pos);
+    }
     crate::spotify::spotify_write_json(
         &token,
         reqwest::Method::POST,
         &format!("{BASE}/playlists/{playlist_id}/tracks"),
-        serde_json::json!({ "uris": [format!("spotify:track:{track_id}")] }),
+        body,
     )
     .await?;
     Ok(())

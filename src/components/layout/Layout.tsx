@@ -18,6 +18,8 @@ import { useUIStore } from "../../store/ui.store";
 import { getBackdropActive } from "../../api/window";
 import { backdropScrim } from "../../lib/backdrop";
 import { isMac } from "../../lib/platform";
+import { EASE_OUT } from "../../lib/motion";
+import "../../styles/layout.css";
 
 /* collapsed sidebar. on mac the native traffic lights live in this column at
    their fixed OS positions (12px dots, 20px pitch, first centre at x=20), so
@@ -45,15 +47,27 @@ export default function Layout() {
   const collapsedSidebarW = (isMac || macSimulated) ? MAC_COLLAPSED_SIDEBAR_W : COLLAPSED_SIDEBAR_W;
   const [willCrushMain, setWillCrushMain] = useState(false);
   const [shellHidden, setShellHidden] = useState(false);
+  const immersiveCovered = useUIStore((s) => s.immersiveCovered);
+  const setImmersiveCovered = useUIStore((s) => s.setImmersiveCovered);
 
+  /* Hide (and inert) the shell once the immersive overlay fully covers it.
+     The signal is the overlay's own animation completing (Immersive sets
+     immersiveCovered), so the two can never drift apart. The timer is only a
+     backstop in case that signal never arrives - it is well past the 260ms
+     fade, so it never races the real one. */
   useEffect(() => {
-    if (immersiveOpen) {
-      const t = setTimeout(() => setShellHidden(true), 420);
-      return () => clearTimeout(t);
-    } else {
+    if (!immersiveOpen) {
       setShellHidden(false);
+      if (immersiveCovered) setImmersiveCovered(false);
+      return;
     }
-  }, [immersiveOpen]);
+    if (immersiveCovered) {
+      setShellHidden(true);
+      return;
+    }
+    const t = setTimeout(() => setShellHidden(true), 700);
+    return () => clearTimeout(t);
+  }, [immersiveOpen, immersiveCovered, setImmersiveCovered]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -86,6 +100,43 @@ export default function Layout() {
 
   const rawPanelWidth = lyricsOpen ? 366 : queueOpen ? 272 : 0;
   const spacerWidth = willCrushMain ? 0 : rawPanelWidth;
+
+  /* Right rail width, held through a close.
+
+     The rail used to drop to display:none on the same frame the panel was told
+     to close, so its slide-out never showed and the page card snapped wider.
+     Now a closing panel keeps its rail until AnimatePresence reports the exit
+     complete; only then does the rail give its width back. That moment bumps
+     railSettleTick in the UI store, which the grid cards subscribe to through
+     useReflowPulse - so they re-render (and framer re-measures them) on the
+     very render the column widens, and glide into the space.
+
+     Refs rather than state: the hold has to be decided during the render that
+     closes the panel, or there is one painted frame with no rail at all. */
+  const railSettleTick = useUIStore((s) => s.railSettleTick);
+  const bumpRailSettle = useUIStore((s) => s.bumpRailSettle);
+  const lastRailW = useRef(spacerWidth);
+  const holdTick = useRef<number | null>(null);
+  if (rawPanelWidth > 0) {
+    if (spacerWidth > 0) lastRailW.current = spacerWidth;
+    holdTick.current = null;
+  } else if (holdTick.current === null && lastRailW.current > 0) {
+    holdTick.current = railSettleTick;
+  }
+  const holdingRail = rawPanelWidth === 0 && holdTick.current === railSettleTick;
+  const railWidth = willCrushMain
+    ? 0
+    : rawPanelWidth > 0
+    ? spacerWidth
+    : holdingRail
+    ? lastRailW.current
+    : 0;
+  if (rawPanelWidth === 0 && !holdingRail) lastRailW.current = 0;
+
+  const onPanelExitComplete = () => {
+    const s = usePlayerStore.getState();
+    if (!s.lyricsOpen && !s.queueOpen) bumpRailSettle();
+  };
 
   /* `trim_memory` used to fire 1.5s after every navigation. That call empties
      the working set of this process and of every WebView2 child, so it landed
@@ -271,7 +322,7 @@ export default function Layout() {
                     key={location.pathname}
                     initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.995 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                    transition={{ duration: 0.18, ease: EASE_OUT }}
                   >
                     <Outlet />
                   </motion.div>
@@ -287,18 +338,18 @@ export default function Layout() {
             {/* Right rail - Lyrics or Queue on base layer */}
             <div
               style={{
-                width: spacerWidth,
+                width: railWidth,
                 flexShrink: 0,
                 position: "relative",
                 overflow: "hidden",
                 height: "100%",
-                display: spacerWidth > 0 ? "flex" : "none",
+                display: railWidth > 0 ? "flex" : "none",
               }}
             >
-              <AnimatePresence initial={false}>
+              <AnimatePresence initial={false} onExitComplete={onPanelExitComplete}>
                 {lyricsOpen && <LyricsPanel key="lyrics" />}
               </AnimatePresence>
-              <AnimatePresence initial={false}>
+              <AnimatePresence initial={false} onExitComplete={onPanelExitComplete}>
                 {queueOpen && <QueuePanel key="queue" />}
               </AnimatePresence>
             </div>

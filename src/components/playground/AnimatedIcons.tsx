@@ -97,9 +97,13 @@ export function AnimatedHeart({
   size?: number;
 }) {
   return (
+    // initial={false}: the pop is feedback for the act of liking, so it
+    // plays when `liked` flips - not on mount, where every already-liked row
+    // in a list would pop at once.
     <motion.span
-      animate={liked ? { scale: [1, 1.36, 0.92, 1] } : { scale: 1 }}
-      transition={{ duration: 0.32, ease: [0.175, 0.885, 0.32, 1.275] }}
+      initial={false}
+      animate={liked ? { scale: [1, 1.24, 0.96, 1] } : { scale: 1 }}
+      transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
       style={{
         position: "relative",
         width: size,
