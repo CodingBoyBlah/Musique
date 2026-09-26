@@ -15,7 +15,7 @@ import {
   useCredentialsStore,
   type ConnectionStatus,
 } from "../store/credentials.store";
-import { usePrefsStore } from "../store/prefs.store";
+import { usePrefsStore, type SidebarMode } from "../store/prefs.store";
 import {
   type AudioQuality,
   type PlaybackBackend,
@@ -436,12 +436,19 @@ function ZoomStepper() {
   );
 }
 
+const SIDEBAR_MODE_OPTS: { value: SidebarMode; label: string }[] = [
+  { value: "pins", label: "Pins" },
+  { value: "playlists", label: "Playlists" },
+];
+
 function AppearanceCard() {
   const source = useThemeStore((s) => s.source);
   const setSource = useThemeStore((s) => s.setSource);
   const albumColors = useThemeStore((s) => s.albumColors);
   const setAlbumColors = useThemeStore((s) => s.setAlbumColors);
   const ambientMotion = usePrefsStore((s) => s.ambientMotion);
+  const sidebarMode = usePrefsStore((s) => s.sidebarMode);
+  const setSidebarMode = usePrefsStore((s) => s.setSidebarMode);
   const setAmbientMotion = usePrefsStore((s) => s.setAmbientMotion);
 
   return (
@@ -450,6 +457,19 @@ function AppearanceCard() {
         label="Zoom"
         hint={`Make everything bigger or smaller, for large or high-resolution screens. ${MOD_KEY} + and ${MOD_KEY} − work anywhere, ${MOD_KEY} 0 resets.`}
         control={<ZoomStepper />}
+      />
+      <Divider />
+      <SettingRow
+        label="Sidebar"
+        hint="Pins shows only the playlists and albums you pin. Playlists lists every playlist in your library."
+        control={
+          <Segmented
+            value={sidebarMode}
+            options={SIDEBAR_MODE_OPTS}
+            onChange={setSidebarMode}
+            layoutId="settings-sidebar-mode"
+          />
+        }
       />
       <Divider />
       <SettingRow

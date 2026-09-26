@@ -9,6 +9,10 @@ import {
 } from "../api/playback";
 import { requestNotificationPermission } from "../api/media";
 
+// what the sidebar's last section lists: only what you pinned, or every
+// playlist in your library
+export type SidebarMode = "pins" | "playlists";
+
 interface PrefsStore {
   // audio streaming bitrate (96: Normal, 160: High, 320: Very high)
   audioQuality: AudioQuality;
@@ -37,6 +41,9 @@ interface PrefsStore {
   // whole-app zoom factor (1 = 100%). applied to the webview by lib/zoom.ts
   uiZoom: number;
   setUiZoom: (v: number) => void;
+
+  sidebarMode: SidebarMode;
+  setSidebarMode: (v: SidebarMode) => void;
 }
 
 export const usePrefsStore = create<PrefsStore>()(
@@ -81,6 +88,9 @@ export const usePrefsStore = create<PrefsStore>()(
 
       uiZoom: 1,
       setUiZoom: (v) => set({ uiZoom: v }),
+
+      sidebarMode: "pins",
+      setSidebarMode: (v) => set({ sidebarMode: v }),
     }),
     { name: "spotify-prefs" },
   ),

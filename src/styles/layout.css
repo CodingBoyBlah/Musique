@@ -170,9 +170,26 @@
 .sb-section-head {
     transition: color 0.14s ease;
 }
+.sb-section-head .sb-chev {
+    opacity: 0;
+    transition: opacity 0.14s ease;
+}
+.sb-section-head:focus-visible .sb-chev,
+.sb-section-head[aria-expanded="false"] .sb-chev {
+    opacity: 1;
+}
 @media (hover: hover) and (pointer: fine) {
     .sb-section-head:hover {
         color: var(--color-text-hi) !important;
+    }
+    .sb-section-head:hover .sb-chev {
+        opacity: 1;
+    }
+}
+/* no hover on touch: keep the chevron visible so folding is discoverable */
+@media not all and (hover: hover) {
+    .sb-section-head .sb-chev {
+        opacity: 1;
     }
 }
 

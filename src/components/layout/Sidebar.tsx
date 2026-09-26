@@ -9,13 +9,15 @@ import {
   ChevronDown,
   type LucideIcon,
 } from "@/lib/icons";
-import { usePinsStore } from "../../store/pins.store";
+import { usePinsStore, type PinnedItem } from "../../store/pins.store";
+import { useMyPlaylists } from "../../hooks/useLibrary";
 import { useUIStore } from "../../store/ui.store";
 import { useContextMenu } from "../ui/ContextMenu";
 import { gpuLayer, zTransform, EASE_OUT, SPRING, PRESS_TRANSITION } from "../../lib/motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchPlaylist, prefetchAlbum } from "../../lib/prefetch";
 import { Tooltip } from "../ui/Tooltip";
+import { OverlayScrollbar } from "../ui/OverlayScrollbar";
 import { isMac } from "../../lib/platform";
 import { usePrefsStore } from "../../store/prefs.store";
 import { chromePx } from "../../lib/zoom";
@@ -225,8 +227,13 @@ function Section({
     );
   }
 
+  /* section headers read as quiet labels: small capitals, a lighter weight
+     than the old 700, set a step dimmer than the rows so the rows lead. The
+     chevron only shows when it has something to say - on hover or keyboard
+     focus, or while the section is folded so a hidden group is never lost.
+     Groups after the first get air above them instead of a rule. */
   return (
-    <div>
+    <div style={{ marginTop: first ? 0 : 10 }}>
       <button
         onClick={onToggle}
         aria-expanded={expanded}
@@ -235,14 +242,20 @@ function Section({
           display: "flex", alignItems: "center", justifyContent: "space-between",
           width: "100%", height: 28, padding: "0 10px", border: "none", background: "transparent",
           borderRadius: 6,
-          color: "rgba(255, 255, 255, 0.45)", fontSize: 11, fontWeight: 700,
-          letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer",
           font: "inherit",
+          // capitals at 11px want open tracking or they clump into a block
+          color: "rgba(255, 255, 255, 0.5)", fontSize: 11, fontWeight: 600,
+          letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer",
         }}
       >
-        <span style={{ fontSize: 11 }}>{label}</span>
-        <motion.span animate={{ rotate: expanded ? 0 : -90 }} transition={{ duration: 0.18, ease: EASE_OUT }} style={{ display: "flex" }}>
-          <ChevronDown size={12} strokeWidth={2.5} />
+        <span>{label}</span>
+        <motion.span
+          className="sb-chev"
+          animate={{ rotate: expanded ? 0 : -90 }}
+          transition={{ duration: 0.18, ease: EASE_OUT }}
+          style={{ display: "flex" }}
+        >
+          <ChevronDown size={12} strokeWidth={2.4} />
         </motion.span>
       </button>
       <AnimatePresence initial={false}>
@@ -271,6 +284,8 @@ export default function Sidebar() {
   const location    = useLocation();
   const pins        = usePinsStore((s) => s.pins);
   const removePin   = usePinsStore((s) => s.removePin);
+  const sidebarMode = usePrefsStore((s) => s.sidebarMode);
+  const { data: myPlaylists = [], isLoading: playlistsLoading } = useMyPlaylists();
   const qc          = useQueryClient();
   const { open: openMenu, element: menuEl } = useContextMenu();
 
@@ -278,15 +293,22 @@ export default function Sidebar() {
   const tab  = new URLSearchParams(location.search).get("tab") ?? "songs";
   const onLibrary = path === "/library";
 
-  /* which library item (if any) is open + is it pinned. lets the sidebar light
-   up the specific pinned playlist when its open, and only fall back to
-   lighting the "Playlists" button for unpinned ones */
+  /* the last section lists either your pins or every playlist you have
+   (Settings -> Sidebar). both are the same kind of row, so one list drives it */
+  const showAllPlaylists = sidebarMode === "playlists";
+  const entries: PinnedItem[] = showAllPlaylists
+    ? myPlaylists.map((pl) => ({ id: pl.id, name: pl.name, image_url: pl.image_url, type: "playlist" as const }))
+    : pins;
+
+  /* which library item (if any) is open + is it in that list. lets the
+   sidebar light up the specific row when it's open, and only fall back to
+   lighting the "Playlists" button for playlists that have no row */
 
   const openMatch      = path.match(/^\/(playlist|album)\/(.+)$/);
   const openType       = openMatch?.[1] ?? null;   // "playlist" | "album"
   const openId         = openMatch?.[2] ?? null;
-  const openIsPinned   = openId != null && pins.some((p) => p.id === openId);
-  const onUnpinnedPlaylist = openType === "playlist" && !openIsPinned;
+  const openInSidebar  = openId != null && entries.some((p) => p.id === openId && p.type === openType);
+  const onPlaylistWithoutRow = openType === "playlist" && !openInSidebar;
 
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const macSimulated     = useUIStore((s) => s.macSimulated);
@@ -317,7 +339,7 @@ export default function Sidebar() {
   const railWidth = isCollapsed ? (macChrome ? Math.max(64, px(72)) : 64) : 232;
 
   const railRef = useRef<HTMLDivElement>(null);
-  const rail = useRailIndicator(railRef, isCollapsed, [isCollapsed, path, location.search, pins]);
+  const rail = useRailIndicator(railRef, isCollapsed, [isCollapsed, path, location.search, entries.length, sidebarMode]);
 
   const [spotifyOpen, setSpotifyOpen] = useState(true);
   const [libraryOpen, setLibraryOpen] = useState(true);
@@ -373,11 +395,17 @@ export default function Sidebar() {
       )}
 
       {/* nav */}
-      <div ref={railRef} style={{ position: "relative", flex: 1, overflowY: "auto", overflowX: "hidden", padding: isCollapsed ? "6px 6px 12px" : "4px 8px", scrollbarWidth: isCollapsed ? "none" : undefined }}>
+      {/* the list scrolls under a floating overlay scrollbar rather than a
+          native one: a long playlist list no longer gives up a 10px strip
+          of the rail's width to a gutter. the right inset is 4px, not 8:
+          the page card's own 4px margin makes up the rest, so rows reach
+          the same distance from the card as from the window's left edge */}
+      <div className="ovs-host" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <div ref={railRef} className="ovs-hide" style={{ position: "relative", flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", padding: isCollapsed ? "6px 6px 12px" : "4px 4px 4px 8px" }}>
         {isCollapsed && <RailIndicator top={rail.top} height={rail.height} visible={rail.visible} />}
         <Section label="Discover" first expanded={spotifyOpen} onToggle={() => setSpotifyOpen(v => !v)} collapsed={isCollapsed}>
           <NavItem icon={Home} label="Home"      active={path === "/"}                                          onClick={() => navigate("/")} collapsed={isCollapsed} />
-          <NavItem icon={ListMusic} label="Playlists" active={path === "/playlists" || onUnpinnedPlaylist}           onClick={() => navigate("/playlists")} collapsed={isCollapsed} />
+          <NavItem icon={ListMusic} label="Playlists" active={path === "/playlists" || onPlaylistWithoutRow}           onClick={() => navigate("/playlists")} collapsed={isCollapsed} />
         </Section>
 
         <Section label="Library" expanded={libraryOpen} onToggle={() => setLibraryOpen(v => !v)} collapsed={isCollapsed}>
@@ -386,9 +414,10 @@ export default function Sidebar() {
           <NavItem icon={User} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} collapsed={isCollapsed} />
         </Section>
 
-        <Section label="Pins" expanded={pinsOpen} onToggle={() => setPinsOpen(v => !v)} collapsed={isCollapsed}>
-          {pins.length === 0 ? (
-            !isCollapsed ? (
+        <Section label={showAllPlaylists ? "Your playlists" : "Pins"} expanded={pinsOpen} onToggle={() => setPinsOpen(v => !v)} collapsed={isCollapsed}>
+          {entries.length === 0 ? (
+            // nothing to say while the library is still loading
+            !isCollapsed && !(showAllPlaylists && playlistsLoading) ? (
               <div style={{ padding: "0 2px" }}>
                 <div
                   className="t-caption"
@@ -405,13 +434,22 @@ export default function Sidebar() {
                     gap:          8,
                   }}
                 >
-                  <Pin size={13} strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
-                  <span>No pins yet. Right-click a playlist to pin it.</span>
+                  {showAllPlaylists ? (
+                    <>
+                      <ListMusic size={13} strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
+                      <span>No playlists yet. Ones you make or follow show up here.</span>
+                    </>
+                  ) : (
+                    <>
+                      <Pin size={13} strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
+                      <span>No pins yet. Right-click a playlist to pin it.</span>
+                    </>
+                  )}
                 </div>
               </div>
             ) : null
           ) : (
-            pins.map((p) => {
+            entries.map((p) => {
               const active = openId === p.id && openType === p.type;
               const coverSize = isCollapsed ? RAIL_COVER : 26;
               const coverRadius = isCollapsed ? RAIL_RADIUS - (RAIL_ITEM - RAIL_COVER) / 2 : 5;
@@ -419,7 +457,9 @@ export default function Sidebar() {
                 <motion.button
                   key={p.id}
                   onClick={() => navigate(`/${p.type}/${p.id}`)}
-                  onContextMenu={openMenu([
+                  // pinning means nothing while the sidebar lists every playlist,
+                  // so those rows have no menu; a pin row can be unpinned
+                  onContextMenu={showAllPlaylists ? undefined : openMenu([
                     { label: "Unpin", icon: <PinOff size={14} />, onSelect: () => removePin(p.id) },
                   ])}
                   title={isCollapsed ? undefined : p.name}
@@ -491,6 +531,8 @@ export default function Sidebar() {
             })
           )}
         </Section>
+      </div>
+      <OverlayScrollbar target={railRef} />
       </div>
       {menuEl}
     </motion.nav>

@@ -1073,3 +1073,62 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
         border-color: rgba(255, 255, 255, 0.4);
     }
 }
+
+/* ── overlay scrollbar (components/ui/OverlayScrollbar) ─────────────────── */
+.ovs-hide {
+    scrollbar-width: none;
+}
+.ovs-hide::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+.ovs-host {
+    position: relative;
+}
+/* a 10px hit strip on the right edge; only live when there is something to scroll */
+.ovs-track {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    right: 0;
+    width: 10px;
+    z-index: 5;
+    pointer-events: none;
+}
+.ovs-track[data-on="true"] {
+    pointer-events: auto;
+}
+/* 3px at rest, anchored to the right so it widens inward when grabbed */
+.ovs-thumb {
+    position: absolute;
+    top: 0;
+    right: 2px;
+    width: 3px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.26);
+    opacity: 0;
+    cursor: default;
+    transition: opacity 0.3s ease, width 0.15s var(--ease-out, ease-out), background-color 0.15s ease;
+}
+.ovs-track[data-visible="true"] .ovs-thumb {
+    opacity: 1;
+    transition-duration: 0.1s, 0.15s, 0.15s;
+}
+@media (hover: hover) and (pointer: fine) {
+    .ovs-host:hover .ovs-thumb {
+        opacity: 1;
+    }
+    .ovs-track:hover .ovs-thumb {
+        width: 6px;
+        background: rgba(255, 255, 255, 0.42);
+    }
+}
+.ovs-track[data-dragging="true"] .ovs-thumb {
+    width: 6px;
+    background: rgba(255, 255, 255, 0.5);
+}
+@media (prefers-contrast: more) {
+    .ovs-thumb {
+        background: rgba(255, 255, 255, 0.6);
+    }
+}
