@@ -115,7 +115,7 @@ function ContextMenuView({
         minWidth:      180,
         padding:       5,
         borderRadius:  10,
-        background:    "rgba(28, 28, 32, 0.96)",
+        background:    "var(--color-popover)",
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
         border:        "1px solid var(--color-border)",

@@ -41,6 +41,12 @@
     
     --color-player: var(--color-sidebar);
     --color-dock-bg: rgba(18, 18, 18, 0.94);
+
+    /* every floating popup (menus, search results, tooltips, toasts, modals,
+       the volume and devices popovers): one neutral near-black. Several had
+       drifted to blue-tinted greys like rgb(24, 24, 28). */
+    --color-popover: rgba(19, 19, 22, 0.96);
+    --color-popover-solid: rgb(19, 19, 22);
     --color-dock-border: rgba(255, 255, 255, 0.09);
     --color-dock-highlight: rgba(255, 255, 255, 0.12);
 
@@ -1021,7 +1027,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    lyrics card) drops its blur and goes near-opaque. */
 @media (prefers-reduced-transparency: reduce) {
     .glass-solid-fallback {
-        background: rgb(28, 28, 32) !important;
+        background: var(--color-popover-solid) !important;
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;
     }
@@ -1042,7 +1048,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
         --color-dock-border: rgba(255, 255, 255, 0.3);
     }
     .glass-solid-fallback {
-        background: rgb(20, 20, 24) !important;
+        background: var(--color-popover-solid) !important;
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;
         border-color: rgba(255, 255, 255, 0.4) !important;

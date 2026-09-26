@@ -202,7 +202,7 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
               padding:       "5px 9px",
               borderRadius:  7,
               lineHeight:    1.2,
-              background:    "rgba(26, 26, 30, 0.96)",
+              background:    "var(--color-popover)",
               backdropFilter:       "blur(20px)",
               WebkitBackdropFilter: "blur(20px)",
               border:        "1px solid var(--color-glass-border)",

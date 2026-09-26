@@ -35,7 +35,7 @@ export function UpdatePrompt() {
       panelStyle={{
         width: "calc(100% - 48px)",
         maxWidth: 420,
-        background: "#141418",
+        background: "var(--color-popover)",
         border: "1px solid var(--color-border)",
         boxShadow: "0 24px 70px rgba(0,0,0,0.55)",
         padding: 22,

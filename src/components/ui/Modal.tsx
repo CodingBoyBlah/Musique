@@ -55,7 +55,7 @@ export function Modal({
             style={{
               outline: "none",
               borderRadius: 16,
-              background: "rgba(20,20,26,0.97)",
+              background: "var(--color-popover)",
               border: "1px solid rgba(255,255,255,0.12)",
               boxShadow: "0 24px 64px rgba(0,0,0,0.6)",
               ...panelStyle,

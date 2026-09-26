@@ -289,7 +289,7 @@ function AccountMenu() {
               padding:       6,
               borderRadius:  12,
               transformOrigin: "top left",
-              background:    "rgba(28, 28, 32, 0.92)",
+              background:    "var(--color-popover)",
               backdropFilter: "blur(40px) saturate(1.4)",
               WebkitBackdropFilter: "blur(40px) saturate(1.4)",
               border:        "1px solid var(--color-border)",

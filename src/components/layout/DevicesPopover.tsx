@@ -157,7 +157,7 @@ function DevicesPopoverCard({
         maxHeight: 380,
         display: "flex",
         flexDirection: "column",
-        background: "rgba(18, 18, 22, 0.96)",
+        background: "var(--color-popover)",
         backdropFilter: "blur(32px)",
         WebkitBackdropFilter: "blur(32px)",
         border: "1px solid var(--color-glass-border)",

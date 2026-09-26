@@ -38,7 +38,7 @@ export function Toaster() {
               style={{
                 display: "flex", alignItems: "center", gap: 9,
                 padding: t.action ? "6px 6px 6px 16px" : "10px 18px", borderRadius: 99,
-                background: "rgba(24,24,28,0.94)",
+                background: "var(--color-popover)",
                 backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
                 border: "1px solid rgba(255,255,255,0.14)",
                 boxShadow: "0 12px 36px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05)",

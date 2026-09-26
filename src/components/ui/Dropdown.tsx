@@ -91,7 +91,7 @@ export function Dropdown<T extends string>({
               right: align === "right" ? 0 : undefined,
               padding: 5, borderRadius: 11, zIndex: 60,
               transformOrigin: align === "right" ? "top right" : "top left",
-              background: "rgba(28, 28, 32, 0.94)",
+              background: "var(--color-popover)",
               backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
               border: "1px solid var(--color-border)",
               boxShadow: "0 12px 32px rgba(0,0,0,0.45)",

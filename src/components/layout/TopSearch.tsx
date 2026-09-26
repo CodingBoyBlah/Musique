@@ -248,7 +248,7 @@ export function TopSearch() {
               width: "max(100%, min(440px, 92vw))",
               transformOrigin: "top center",
               borderRadius: 12,
-              background: "rgba(24, 24, 28, 0.96)",
+              background: "var(--color-popover)",
               backdropFilter: "blur(40px) saturate(1.4)",
               WebkitBackdropFilter: "blur(40px) saturate(1.4)",
               border: "1px solid var(--color-border)",
