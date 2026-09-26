@@ -26,6 +26,7 @@ import {
 import {
   LyricRowText,
   buildRows,
+  voiceLayout,
   lyricTone,
   lyricWords,
   useActiveRow,
@@ -286,6 +287,7 @@ export function LyricsPanel() {
                   ? lyricTone(Math.abs(ri - active), ri < active, moreContrast)
                   : { blur: 0, alpha: 0.92 };
                 const multi = row.voices.length > 1;
+                const layout = voiceLayout(row);
                 return (
                   <div
                     key={ri}
@@ -322,31 +324,30 @@ export function LyricsPanel() {
                   >
                     {row.voices.map((voice, vi) => {
                       const isDuet = voice.role === "duet";
-                      const isSecondary = vi > 0 && !isDuet;
-                      // Apple Music: lead voice stays left, duet voice gets opposite horizontal alignment (right).
-                      // If duet is the solo voice of a row (vi === 0 && isDuet), it also aligns right.
-                      // If duet is concurrent (vi > 0 && isDuet), it aligns right opposite the lead.
-                      const align: "left" | "right" = isDuet ? "right" : "left";
+                      // lead left, duet right, a backing vocal on the side of
+                      // the singer it's under (lib/lyricsRows voiceLayout)
+                      const { side: align, secondary: isSecondary } = layout[vi];
 
                       // Lead voice is primary; bg voice is visually subordinate (smaller, lower opacity, indented)
                       // rem (19 / 22 / 25px at the default size), so the user's text size carries through
                       const size = isSecondary ? "1.357rem" : isDuet && vi > 0 ? "1.571rem" : "1.786rem";
                       const weight = isSecondary ? 700 : 800;
-                      const indent = isSecondary ? 16 : 0;
                       const romIdx = rowOffsets[ri] + vi;
                       const words = lyricWords(voice, row.startMs, row.endMs);
                       return (
                         <div
                           key={vi}
                           style={{
-                            marginLeft: indent,
-                            borderLeft:
-                              isSecondary
-                                ? "2px solid rgba(255,255,255,0.18)"
-                                : "none",
-                            paddingLeft: isSecondary ? 8 : 0,
+                            // a backing vocal hangs off its singer's side:
+                            // indented from that edge, with the rule on it.
+                            // no width: 100% - with the indent as a margin
+                            // that ran the box past the panel's edge
+                            ...(isSecondary
+                              ? align === "right"
+                                ? { marginRight: 16, borderRight: "2px solid rgba(255,255,255,0.18)", paddingRight: 8 }
+                                : { marginLeft: 16, borderLeft: "2px solid rgba(255,255,255,0.18)", paddingLeft: 8 }
+                              : null),
                             opacity: isSecondary ? 0.78 : 1,
-                            width: "100%",
                             minWidth: 0,
                             boxSizing: "border-box",
                             textAlign: align,

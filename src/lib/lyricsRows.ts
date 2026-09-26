@@ -109,3 +109,21 @@ export function buildRows(data: Lyrics | LyricLine[] | undefined): Row[] {
 
   return out;
 }
+
+export type VoiceSide = "left" | "right";
+
+/* Where each voice in a row sits, Apple Music style: the lead singer on the
+left, the duet singer on the right. A backing vocal (any non-duet voice after
+the first) is sung UNDER someone, so it takes that singer's side - the voice
+before it that isn't itself a backing vocal. It used to be pinned left
+regardless, so a duet line's backing vocal sat on the wrong side of the
+screen from the line it belongs to. */
+export function voiceLayout(row: Row): { side: VoiceSide; secondary: boolean }[] {
+  let owner: VoiceSide = "left";
+  return row.voices.map((v, i) => {
+    const secondary = i > 0 && v.role !== "duet";
+    if (secondary) return { side: owner, secondary };
+    owner = v.role === "duet" ? "right" : "left";
+    return { side: owner, secondary };
+  });
+}

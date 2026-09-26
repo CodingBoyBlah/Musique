@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRows, CONCURRENT_TOL_MS, type Row } from "./lyricsRows";
+import { buildRows, voiceLayout, CONCURRENT_TOL_MS, type Row } from "./lyricsRows";
 import type { LyricLine } from "../api/lyrics";
 
 // line-level helper (no word timings, like LRCLIB)
@@ -163,5 +163,37 @@ describe("buildRows", () => {
     expect(rows.every((r) => r.voices.length === 1)).toBe(true);
     expect(rows[0].startMs).toBe(-1);
     expect(rows[0].endMs).toBe(-1);
+  });
+});
+
+describe("voiceLayout", () => {
+  const row = (...voices: LyricLine[]): Row => ({ startMs: 0, endMs: 1000, voices });
+
+  it("puts a lead line left and a duet line right", () => {
+    expect(voiceLayout(row(L(0, "a")))).toEqual([{ side: "left", secondary: false }]);
+    expect(voiceLayout(row(L(0, "a", "duet")))).toEqual([{ side: "right", secondary: false }]);
+  });
+
+  it("gives a backing vocal the side of the line it is sung under", () => {
+    expect(voiceLayout(row(L(0, "a"), L(0, "(a)", "bg")))).toEqual([
+      { side: "left", secondary: false },
+      { side: "left", secondary: true },
+    ]);
+    expect(voiceLayout(row(L(0, "a", "duet"), L(0, "(a)", "bg")))).toEqual([
+      { side: "right", secondary: false },
+      { side: "right", secondary: true },
+    ]);
+  });
+
+  it("follows the nearest owner when a lead and a duet share a row", () => {
+    expect(
+      voiceLayout(row(L(0, "a"), L(0, "(a)", "bg"), L(0, "b", "duet"), L(0, "(b)", "bg"))).map((v) => v.side),
+    ).toEqual(["left", "left", "right", "right"]);
+  });
+
+  it("works from the row buildRows makes for a duet line with a nested backing vocal", () => {
+    const duet: LyricLine = { ...L(0, "Could you be mine?", "duet"), bg: L(0, "(my love)", "bg") };
+    const [r] = buildRows([duet]);
+    expect(voiceLayout(r).map((v) => v.side)).toEqual(["right", "right"]);
   });
 });

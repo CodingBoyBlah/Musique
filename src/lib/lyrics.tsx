@@ -6,7 +6,7 @@ import { getOutputLatencyMs, startLatencyPolling } from "./outputLatency";
 import { useWindowActive } from "../hooks/useWindowActive";
 
 
-export { CONCURRENT_TOL_MS, buildRows, type Row } from "./lyricsRows";
+export { CONCURRENT_TOL_MS, buildRows, voiceLayout, type Row, type VoiceSide } from "./lyricsRows";
 
 const cleanSpaces = (s: string) => (s || "").replace(/[\u00A0\u200B\u202F\uFEFF]/g, " ");
 

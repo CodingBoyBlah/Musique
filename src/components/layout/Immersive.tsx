@@ -20,6 +20,7 @@ import { playTrack } from "../../api/playback";
 import {
   LyricRowText,
   buildRows,
+  voiceLayout,
   lyricTone,
   lyricWords,
   useActiveRow,
@@ -248,6 +249,8 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
         const isActive = synced && ri === active;
         const tone = synced ? lyricTone(Math.abs(ri - active), ri < active, moreContrast) : { blur: 0, alpha: 0.9 };
         const multi = row.voices.length > 1;
+        const layout = voiceLayout(row);
+        const ease = "0.45s cubic-bezier(0.22, 1, 0.36, 1)";
         return (
           <div
             key={ri}
@@ -274,26 +277,27 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                  large the ratio gets. */
               padding: "5px 0",
               opacity: tone.alpha,
-              transform: isActive ? "scale(1)" : "scale(0.79)",
-              transformOrigin:
-                row.voices.length === 1 && row.voices[0].role === "duet"
-                  ? "right center"
-                  : "left center",
-              /* On the scroll spring's clock (~0.45s to settle): the line
-                 grows as it arrives, not after. `scale` is the press. */
+              /* On the scroll spring's clock (~0.45s to settle). The size
+                 step lives on each voice below; `scale` here is the press. */
               transition: reduceMotion
                 ? "opacity 0.2s ease"
-                : "opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1), transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)",
+                : `opacity ${ease}, scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)`,
               display: "flex", flexDirection: "column", gap: multi ? 6 : 0,
             }}
           >
             {row.voices.map((voice, vi) => {
               const isDuet = voice.role === "duet";
-              const isSecondary = vi > 0 && !isDuet;
-              // Apple Music: lead voice stays left, duet voice gets opposite horizontal alignment (right).
-              // If duet is solo in row (vi === 0 && isDuet), it also aligns right.
-              // If duet is concurrent (vi > 0 && isDuet), it aligns right opposite lead.
-              const align: "left" | "right" = isDuet ? "right" : "left";
+              // lead left, duet right, a backing vocal on the side of the
+              // singer it's under (lib/lyricsRows voiceLayout)
+              const { side: align, secondary: isSecondary } = layout[vi];
+              /* Each voice shrinks toward its OWN side. The whole row used to
+                 scale from one origin - left unless the row was a lone duet
+                 line - so a right-aligned duet line with a backing vocal
+                 shrank away from the right edge and floated mid-screen.
+                 Vertically, a stacked pair draws toward the seam between them,
+                 as the row-level scale did, instead of spreading apart. */
+              const n = row.voices.length;
+              const originY = n === 1 ? "center" : vi === 0 ? "bottom" : vi === n - 1 ? "top" : "center";
 
               /* rem-anchored, so the user's text size carries through; the vw
                  term still lets the column breathe with the window. Same
@@ -311,11 +315,14 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                 <div
                   key={vi}
                   style={{
-                    marginLeft: isSecondary ? 18 : 0,
-                    borderLeft: isSecondary ? "2px solid rgba(255,255,255,0.18)" : "none",
-                    paddingLeft: isSecondary ? 12 : 0,
+                    // a backing vocal hangs off its singer's side: indented
+                    // from that edge, with the rule on that edge
+                    ...(isSecondary ? secondaryInset(align, 18, 12) : null),
                     opacity: isSecondary ? 0.78 : 1,
                     textAlign: align,
+                    transform: isActive ? "scale(1)" : "scale(0.79)",
+                    transformOrigin: `${align} ${originY}`,
+                    transition: reduceMotion ? undefined : `transform ${ease}`,
                   }}
                 >
                   <LyricRowText
@@ -340,6 +347,14 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
     <ReturnPill show={synced && detached} onClick={recenter} />
     </div>
   );
+}
+
+// the backing-vocal rule and indent, on whichever side the voice sits
+function secondaryInset(side: "left" | "right", indent: number, pad: number): React.CSSProperties {
+  const rule = "2px solid rgba(255,255,255,0.18)";
+  return side === "right"
+    ? { marginRight: indent, borderRight: rule, paddingRight: pad }
+    : { marginLeft: indent, borderLeft: rule, paddingLeft: pad };
 }
 
 const lyricsScroll: React.CSSProperties = {
