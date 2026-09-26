@@ -11,7 +11,7 @@ import { PlayActions } from "../components/ui/PlayActions";
 import { Loader } from "../components/ui/Loader";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SectionTitle, ShowAllButton } from "../components/ui/SectionTitle";
-import { useCarousel, CarouselControls, CarouselTrack } from "../components/ui/Carousel";
+import { Shelf } from "../components/ui/Shelf";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { Tooltip } from "../components/ui/Tooltip";
 import { shareSpotifyLink, shareUniversalLink } from "../lib/share";
@@ -30,43 +30,6 @@ import { errMsg } from "../lib/err";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 
 const TOP_TRACKS_COLLAPSED = 5;
-// same tile the album page's "More by" shelf uses, so shelves line up app-wide
-const SHELF_TILE = "clamp(140px, 16vw, 175px)";
-
-/* a horizontal shelf (Albums, Singles & EPs, Fans also like). Each owns its
-carousel so the arrows track their own row. These used to be full grids, and a
-prolific artist pushed "Fans also like" several screens down. */
-function Shelf<T>({
-  id,
-  title,
-  items,
-  getKey,
-  renderItem,
-}: {
-  id: string;
-  title: string;
-  items: T[];
-  getKey: (item: T) => string;
-  renderItem: (item: T, index: number) => React.ReactNode;
-}) {
-  const carousel = useCarousel([items.length]);
-  if (items.length === 0) return null;
-  return (
-    <section aria-labelledby={id}>
-      <SectionTitle id={id} right={<CarouselControls carousel={carousel} label={title.toLowerCase()} />}>
-        {title}
-      </SectionTitle>
-      <CarouselTrack
-        carousel={carousel}
-        label={title}
-        items={items}
-        getKey={getKey}
-        itemWidth={SHELF_TILE}
-        renderItem={renderItem}
-      />
-    </section>
-  );
-}
 
 export default function ArtistPage() {
   useReflowPulse();

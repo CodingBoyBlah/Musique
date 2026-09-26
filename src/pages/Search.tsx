@@ -1,4 +1,4 @@
-import { useState, useMemo, memo } from "react";
+import { useState, useMemo, useEffect, memo } from "react";
 import { Link, Navigate, useSearchParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useSearch } from "../hooks/useSearch";
@@ -9,19 +9,24 @@ import { SectionTitle, ShowAllButton } from "../components/ui/SectionTitle";
 import { TopResultSkeleton, TrackRowsSkeleton, CardGridSkeleton } from "../components/ui/Skeletons";
 import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
 import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
+import { Shelf } from "../components/ui/Shelf";
 import { CoverArt } from "../components/ui/CoverArt";
 import { TrackRow } from "../components/ui/TrackRow";
-import { CirclePlayButton } from "../components/ui/CirclePlayButton";
+import { SegmentedControl } from "../components/playground/PlaygroundControls";
+import { AnimatedPlayPause } from "../components/playground/AnimatedIcons";
 import { getArtist, getAlbum } from "../api/spotify";
 import { playTrack } from "../api/playback";
 import { transportPlay, transportPause } from "../hooks/usePlayerControls";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
+import { useUIStore } from "../store/ui.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
+import { coverUrl } from "../lib/coverUrl";
+import { releaseYear } from "../utils/fmt";
 import { errMsg } from "../lib/err";
 import { toast } from "../store/toast.store";
 import { useReflowPulse } from "../hooks/useReflowPulse";
-import { getGridItemTransition, EASE_OUT, PRESS } from "../lib/motion";
+import { getGridItemTransition, EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING } from "../lib/motion";
 import type {
   PlaylistCard as PlaylistCardType,
   ArtistItem,
@@ -32,8 +37,20 @@ import type {
 
 const CATEGORIES = ["all", "songs", "artists", "albums", "playlists"] as const;
 type Category = (typeof CATEGORIES)[number];
+const CATEGORY_LABEL: Record<Category, string> = {
+  all: "All",
+  songs: "Songs",
+  artists: "Artists",
+  albums: "Albums",
+  playlists: "Playlists",
+};
+const LABEL_TO_CATEGORY = Object.fromEntries(
+  CATEGORIES.map((c) => [CATEGORY_LABEL[c], c]),
+) as Record<string, Category>;
 
-const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
+// songs shown beside the top result before "Show all"
+const SONGS_PREVIEW = 4;
+
 const MotionLink = motion.create(Link);
 
 // ─── Top Result resolution & card ───────────────────────────────────────────
@@ -75,6 +92,14 @@ function getTopResult(data: SearchResults, query: string): TopResult | null {
   return null;
 }
 
+function topResultImage(r: TopResult): string | null {
+  if (r.type === "track") return r.item.album?.image_url ?? null;
+  return r.item.image_url ?? null;
+}
+
+/* The top result, laid out like the album page's header: artwork on the left,
+eyebrow / title / byline / Play pill on the right. The old card put a small
+image in one corner and the name in the other, and most of it was empty. */
 const TopResultCard = memo(function TopResultCard({
   result,
   onPlay,
@@ -92,30 +117,30 @@ const TopResultCard = memo(function TopResultCard({
 
   const isArtist = result.type === "artist";
   const isTrack = result.type === "track";
-  const isAlbum = result.type === "album";
 
   const title = result.item.name;
-  const image = isArtist
-    ? result.item.image_url
-    : isTrack
-    ? result.item.album?.image_url
-    : result.item.image_url;
+  const image = topResultImage(result);
 
-  const subtitle = isArtist
-    ? "Artist"
-    : isTrack
-    ? result.item.artists.map((a) => a.name).join(", ")
-    : result.item.artists.map((a) => a.name).join(", ");
+  const eyebrow =
+    result.type === "artist" ? "Artist" : result.type === "track" ? "Song" : result.item.album_type || "Album";
 
-  const badge = isArtist ? "Artist" : isTrack ? "Song" : "Album";
+  // who made it, then where it lives (song) or when it came out (album)
+  const byline = result.type === "artist" ? null : result.item.artists.map((a) => a.name).join(", ");
+  const detail =
+    result.type === "track"
+      ? result.item.album?.name
+      : result.type === "album"
+      ? releaseYear(result.item.release_date)
+      : null;
 
-  const targetPath = isArtist
-    ? `/artist/${result.item.id}`
-    : isAlbum
-    ? `/album/${result.item.id}`
-    : result.item.album?.id
-    ? `/album/${result.item.album.id}`
-    : undefined;
+  const targetPath =
+    result.type === "artist"
+      ? `/artist/${result.item.id}`
+      : result.type === "album"
+      ? `/album/${result.item.id}`
+      : result.item.album?.id
+      ? `/album/${result.item.album.id}`
+      : undefined;
 
   // a song's card plays it; an artist's or album's card opens it
   function handleClick() {
@@ -127,8 +152,8 @@ const TopResultCard = memo(function TopResultCard({
   }
 
   /* the card is one big mouse target, but its keyboard stops are the two real
-  controls inside it - the title (open / play) and the play button - so there
-  is no focusable wrapper holding a nested <button>. focusing either lights the
+  controls inside it - the title (open / play) and the Play pill - so there is
+  no focusable wrapper holding a nested <button>. focusing either lights the
   card the way hovering does. */
   const lit = hover || focused;
   const titleStyle: React.CSSProperties = {
@@ -147,117 +172,184 @@ const TopResultCard = memo(function TopResultCard({
   return (
     <motion.div
       layout="position"
-      transition={{ layout: REFLOW, y: { duration: 0.18, ease: EASE_OUT }, scale: { duration: 0.12, ease: EASE_OUT } }}
+      transition={{ layout: REFLOW_SPRING, scale: PRESS_TRANSITION }}
       onClick={handleClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
-      whileHover={{ y: -2 }}
-      whileTap={PRESS}
+      whileTap={{ scale: 0.99 }}
       aria-busy={pending || undefined}
       style={{
         position: "relative",
         display: "flex",
-        flexDirection: "column",
-        justifyContent: "space-between",
-        gap: 16,
-        padding: "clamp(16px, 2vw, 22px)",
-        borderRadius: 14,
-        background: lit
-          ? "var(--color-surface-hover, rgba(255,255,255,0.10))"
-          : "var(--color-surface, rgba(255,255,255,0.05))",
-        border: "1px solid rgba(255, 255, 255, 0.06)",
-        boxShadow: lit ? "0 12px 32px rgba(0,0,0,0.38)" : "0 2px 10px rgba(0,0,0,0.18)",
-        cursor: pending ? "progress" : "pointer",
-        transition: "background 0.18s ease, box-shadow 0.18s ease",
-        overflow: "hidden",
-        userSelect: "none",
+        alignItems: "center",
         height: "100%",
+        minHeight: 220,
         boxSizing: "border-box",
+        padding: "clamp(18px, 2.2vw, 26px)",
+        borderRadius: 16,
+        overflow: "hidden",
+        isolation: "isolate",
+        background: "var(--color-surface)",
+        border: "1px solid rgba(255, 255, 255, 0.07)",
+        boxShadow: lit ? "0 14px 36px rgba(0, 0, 0, 0.4)" : "0 2px 10px rgba(0, 0, 0, 0.18)",
+        cursor: pending ? "progress" : "pointer",
+        transition: "box-shadow 0.2s ease",
+        userSelect: "none",
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start" }}>
+      {/* the card takes the artwork's colour: the same blurred bloom the
+          album and playlist headers cast on the page, held inside the card
+          and darkened toward the corner so the type always reads */}
+      {image && (
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: -1,
+            backgroundImage: `url(${coverUrl(image, 64) ?? image})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            filter: "blur(56px) saturate(1.25)",
+            transform: "scale(1.5)",
+            opacity: lit ? 0.22 : 0.15,
+            transition: "opacity 0.25s ease",
+          }}
+        />
+      )}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: -1,
+          background: "linear-gradient(160deg, rgba(0, 0, 0, 0) 20%, rgba(0, 0, 0, 0.38) 100%)",
+        }}
+      />
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "clamp(16px, 2.2vw, 24px)",
+          width: "100%",
+          minWidth: 0,
+        }}
+      >
         <div
           style={{
-            width: "clamp(84px, 9.5vw, 108px)",
-            height: "clamp(84px, 9.5vw, 108px)",
-            borderRadius: isArtist ? "50%" : 10,
+            width: "clamp(104px, 11vw, 144px)",
+            height: "clamp(104px, 11vw, 144px)",
+            borderRadius: isArtist ? "50%" : 12,
             overflow: "hidden",
             flexShrink: 0,
-            boxShadow: isArtist
-              ? "0 8px 24px rgba(0,0,0,0.45)"
-              : "0 6px 18px rgba(0,0,0,0.35)",
-            outline: "1px solid rgba(255,255,255,0.1)",
-            outlineOffset: -1,
+            boxShadow: "0 18px 40px rgba(0, 0, 0, 0.5)",
           }}
         >
           <CoverArt
-            url={image ?? null}
+            url={image}
             alt={title}
-            size={108}
+            size={144}
             rounded={isArtist}
-            style={{ width: "100%", height: "100%" }}
+            style={{ width: "100%", height: "100%", borderRadius: "inherit" }}
           />
         </div>
-      </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0, paddingRight: 58 }}>
-        <h3
-          className="line-clamp-2"
-          style={{
-            margin: 0,
-            fontSize: "clamp(1.571rem, 2.8vw, 2.143rem)",
-            fontWeight: 800,
-            letterSpacing: "var(--type-display-track)",
-            color: "var(--color-text-hi)",
-            lineHeight: 1.15,
-          }}
-        >
-          {isTrack ? (
-            <button
-              type="button"
-              className="focus-ring"
-              onClick={(e) => { e.stopPropagation(); onPlay(e); }}
-              style={titleStyle}
-            >
-              {title}
-            </button>
-          ) : targetPath ? (
-            <Link
-              to={targetPath}
-              className="focus-ring"
-              onClick={(e) => e.stopPropagation()}
-              style={titleStyle}
-            >
-              {title}
-            </Link>
-          ) : (
-            title
-          )}
-        </h3>
+        <div className="flex flex-col min-w-0" style={{ flex: "1 1 180px", gap: 6 }}>
+          <p
+            className="font-bold uppercase"
+            style={{ margin: 0, fontSize: 11, letterSpacing: "0.06em", color: "rgba(255, 255, 255, 0.6)" }}
+          >
+            {eyebrow}
+          </p>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 13, fontWeight: 500, color: "var(--color-text-dim)" }}>
-          <span style={{ fontWeight: 600, color: "var(--color-text-hi)" }}>{badge}</span>
-          {subtitle && subtitle !== badge && (
-            <>
-              <span aria-hidden>•</span>
-              <span className="line-clamp-1">{subtitle}</span>
-            </>
+          <h3
+            className="line-clamp-2 break-words"
+            title={title}
+            style={{
+              margin: 0,
+              fontSize: "clamp(1.5rem, 2.6vw, 2.25rem)",
+              fontWeight: 900,
+              lineHeight: 1.06,
+              letterSpacing: "-0.028em",
+              color: "#ffffff",
+            }}
+          >
+            {isTrack ? (
+              <button
+                type="button"
+                className="focus-ring"
+                onClick={(e) => { e.stopPropagation(); onPlay(e); }}
+                style={titleStyle}
+              >
+                {title}
+              </button>
+            ) : targetPath ? (
+              <Link
+                to={targetPath}
+                className="focus-ring"
+                onClick={(e) => e.stopPropagation()}
+                style={titleStyle}
+              >
+                {title}
+              </Link>
+            ) : (
+              title
+            )}
+          </h3>
+
+          {(byline || detail) && (
+            <div
+              className="line-clamp-1"
+              style={{ fontSize: 14, fontWeight: 500, color: "rgba(255, 255, 255, 0.65)" }}
+            >
+              {byline && <span style={{ fontWeight: 700, color: "#ffffff" }}>{byline}</span>}
+              {byline && detail && (
+                <span aria-hidden style={{ color: "rgba(255, 255, 255, 0.35)", fontSize: 10, margin: "0 6px" }}>•</span>
+              )}
+              {detail}
+            </div>
           )}
+
+          {/* the album page's Play pill, always shown: the one thing you'd do
+              with a top result shouldn't hide behind a hover */}
+          <motion.button
+            type="button"
+            className="focus-ring"
+            onClick={(e) => { e.stopPropagation(); onPlay(e); }}
+            aria-label={isPlaying ? `Pause ${title}` : `Play ${title}`}
+            whileTap={PRESS}
+            transition={PRESS_TRANSITION}
+            style={{
+              marginTop: 10,
+              alignSelf: "flex-start",
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              height: 36,
+              padding: "0 18px 0 16px",
+              borderRadius: 99,
+              border: "none",
+              background: "#ffffff",
+              color: "#000000",
+              fontSize: 13.5,
+              fontWeight: 700,
+              letterSpacing: "-0.01em",
+              cursor: pending ? "progress" : "pointer",
+              opacity: pending ? 0.7 : 1,
+              boxShadow: isPlaying
+                ? "0 0 0 4px rgba(255, 255, 255, 0.25), 0 4px 16px rgba(0, 0, 0, 0.35)"
+                : "0 2px 10px rgba(255, 255, 255, 0.20)",
+              transition: "opacity 0.15s ease, box-shadow 0.2s ease",
+            }}
+          >
+            <AnimatedPlayPause isPlaying={isPlaying} size={15} strokeWidth={0} fill="currentColor" />
+            <span>{isPlaying ? "Pause" : "Play"}</span>
+          </motion.button>
         </div>
-      </div>
-
-      <div style={{ position: "absolute", right: 18, bottom: 18, zIndex: 2 }}>
-        <CirclePlayButton
-          isPlaying={isPlaying}
-          visible={lit || isPlaying || pending}
-          pending={pending}
-          onClick={onPlay}
-          size={46}
-          iconSize={19}
-          ariaLabel={isPlaying ? `Pause ${title}` : `Play ${title}`}
-        />
       </div>
     </motion.div>
   );
@@ -265,6 +357,8 @@ const TopResultCard = memo(function TopResultCard({
 
 // ─── Playlist card ──────────────────────────────────────────────────────────
 
+// dressed exactly like AlbumCard so a shelf of playlists sits flush with a
+// shelf of albums: same padding, radius, artwork shadow and type
 const PlaylistResultCard = memo(function PlaylistResultCard({ playlist, index = 0 }: { playlist: PlaylistCardType; index?: number }) {
   useReflowPulse();
   const [hover, setHover] = useState(false);
@@ -272,38 +366,56 @@ const PlaylistResultCard = memo(function PlaylistResultCard({ playlist, index = 
     <MotionLink
       to={`/playlist/${playlist.id}`}
       layout="position"
+      className="card-link"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
       whileHover={{ y: -3 }}
       whileTap={{ scale: 0.98 }}
-      transition={getGridItemTransition(index)}
+      transition={{ type: "spring", stiffness: 480, damping: 36, ...getGridItemTransition(index) }}
       style={{
-        display: "flex", flexDirection: "column", gap: 8,
-        padding: 14, borderRadius: 14, width: "100%", boxSizing: "border-box",
-        textDecoration: "none", color: "inherit",
-        background: hover ? "var(--color-surface-elevated)" : "transparent",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        padding: 10,
+        borderRadius: 12,
+        width: "100%",
+        boxSizing: "border-box",
+        textDecoration: "none",
+        color: "inherit",
+        background: hover ? "var(--color-surface-hover)" : "transparent",
         transition: "background 0.18s ease",
         minWidth: 0,
         overflow: "hidden",
       }}
     >
-      <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 8, overflow: "hidden", flexShrink: 0 }}>
-        <CoverArt url={playlist.image_url} alt={playlist.name} size={136} style={{ width: "100%", height: "100%" }} />
+      <div
+        style={{
+          width: "100%",
+          aspectRatio: "1 / 1",
+          borderRadius: 8,
+          overflow: "hidden",
+          flexShrink: 0,
+          boxShadow: hover ? "0 12px 28px rgba(0, 0, 0, 0.5)" : "0 4px 14px rgba(0, 0, 0, 0.3)",
+          transition: "box-shadow 0.25s ease",
+        }}
+      >
+        <CoverArt url={playlist.image_url} alt={playlist.name} size={160} style={{ width: "100%", height: "100%" }} />
       </div>
       <span
         style={{
           display: "block",
-          fontSize: 14,
-          fontWeight: 500,
-          lineHeight: "18px",
-          height: 18,
+          fontSize: 13.5,
+          fontWeight: 600,
+          letterSpacing: "-0.012em",
+          lineHeight: "17px",
+          height: 17,
+          color: "var(--color-text-hi)",
           whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",
-          width: "100%",
           minWidth: 0,
-          maxWidth: "100%",
-          flexShrink: 0,
         }}
       >
         {playlist.name}
@@ -319,10 +431,7 @@ const PlaylistResultCard = memo(function PlaylistResultCard({ playlist, index = 
           whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",
-          width: "100%",
           minWidth: 0,
-          maxWidth: "100%",
-          flexShrink: 0,
         }}
       >
         {playlist.owner_name ? `By ${playlist.owner_name}` : "Playlist"}
@@ -330,6 +439,23 @@ const PlaylistResultCard = memo(function PlaylistResultCard({ playlist, index = 
     </MotionLink>
   );
 });
+
+function PlaylistGrid({ children }: { children: React.ReactNode }) {
+  return (
+    <motion.div
+      layout="position"
+      transition={{ layout: REFLOW_SPRING }}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(clamp(120px, 14vw, 175px), 1fr))",
+        gap: "clamp(10px, 1.5vw, 16px)",
+        width: "100%",
+      }}
+    >
+      {children}
+    </motion.div>
+  );
+}
 
 // ─── Search Page ────────────────────────────────────────────────────────────
 
@@ -343,6 +469,7 @@ export default function Search() {
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
   const enqueue         = useQueueStore((s) => s.enqueue);
   const playContext     = useQueueStore((s) => s.playContext);
+  const setPageTint     = useUIStore((s) => s.setPageTint);
   const toggleLike      = useToggleLike();
 
   const { data, isLoading, error, refetch } = useSearch(query);
@@ -357,6 +484,14 @@ export default function Search() {
     if (!data) return null;
     return getTopResult(data, query);
   }, [data, query]);
+
+  // the page takes the top result's colour, the way an album or artist page
+  // takes its artwork's
+  const tintUrl = topResult ? topResultImage(topResult) : null;
+  useEffect(() => {
+    setPageTint(tintUrl);
+    return () => setPageTint(null);
+  }, [tintUrl, setPageTint]);
 
   const isTopResultPlaying = usePlayerStore((s) => {
     if (!s.isPlaying || !topResult || !s.currentTrack) return false;
@@ -434,86 +569,90 @@ export default function Search() {
         data.albums.length > 0 ||
         data.playlists.length > 0)
   );
-  const show = (c: Category) => cat === "all" || cat === c;
+
+  function playFromSearch(i: number) {
+    if (!data) return;
+    const start = playContext(data.tracks, i, "search");
+    if (start) {
+      setCurrentTrack(start);
+      playTrack(start.id).catch(console.error);
+    }
+  }
+
+  const songRows = (tracks: TrackItem[]) =>
+    tracks.map((t, i) => (
+      <TrackRow
+        key={t.id}
+        track={t}
+        index={i}
+        showAlbum
+        liked={likedSet.has(t.id)}
+        onPlay={() => playFromSearch(i)}
+        onQueue={(track) => enqueue(track)}
+        onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
+      />
+    ));
+
+  const showAll = (c: Category) => <ShowAllButton onClick={() => setCat(c)} />;
 
   return (
     <div
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: "clamp(24px, 3.2vw, 36px)",
+        gap: "clamp(28px, 3.6vw, 40px)",
         width: "100%",
         maxWidth: "100%",
         boxSizing: "border-box",
       }}
     >
-      {/* Search query header */}
-      <motion.div
+      {/* header: an eyebrow and the query as the title, set like the album
+          page's header, with the category switch on the same line when there
+          is room. The query used to be painted in the accent colour, which
+          the cover-tinted theme turned an arbitrary pink. */}
+      <motion.header
         layout="position"
-        transition={{ layout: REFLOW }}
-      >
-        <h1
-          className="t-display"
-          style={{
-            margin: 0,
-            fontSize: "clamp(1.571rem, 3.2vw, var(--type-display-size))",
-            color: "var(--color-text-hi)",
-            textWrap: "balance",
-          } as React.CSSProperties}
-        >
-          Results for <span style={{ color: "var(--color-accent)" }}>“{query}”</span>
-        </h1>
-      </motion.div>
-
-      {/* category filter chips */}
-      <motion.div
-        layout="position"
-        transition={{ layout: REFLOW }}
-        role="tablist"
-        aria-label="Filter categories"
+        transition={{ layout: REFLOW_SPRING }}
         style={{
           display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
           flexWrap: "wrap",
-          alignItems: "center",
-          gap: "clamp(6px, 1vw, 10px)",
+          gap: "12px 24px",
+          paddingTop: 12,
         }}
       >
-        {CATEGORIES.map((c) => {
-          const on = cat === c;
-          return (
-            <motion.button
-              key={c}
-              role="tab"
-              aria-selected={on}
-              className="focus-ring"
-              whileTap={PRESS}
-              transition={{ duration: 0.12, ease: EASE_OUT }}
-              onClick={() => setCat(c)}
-              style={{
-                padding: "7px 18px",
-                borderRadius: 999,
-                border: on
-                  ? "1px solid rgba(255, 255, 255, 0.15)"
-                  : "1px solid rgba(255, 255, 255, 0.08)",
-                background: on
-                  ? "var(--color-text-hi, #ffffff)"
-                  : "var(--color-surface, rgba(255,255,255,0.06))",
-                color: on ? "#0a0a0c" : "var(--color-text, rgba(255,255,255,0.85))",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: "pointer",
-                textTransform: "capitalize",
-                boxShadow: on ? "0 2px 10px rgba(0,0,0,0.25)" : "none",
-                transition:
-                  "background 0.16s ease, color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease",
-                userSelect: "none",
-              }}
-            >
-              {c}
-            </motion.button>
-          );
-        })}
-      </motion.div>
+        <div className="flex flex-col min-w-0" style={{ gap: 8, flex: "1 1 260px" }}>
+          <p
+            className="font-bold uppercase"
+            style={{ color: "var(--color-text-dim)", margin: 0, fontSize: 11, letterSpacing: "0.06em" }}
+          >
+            Search results
+          </p>
+          <h1
+            className="font-black line-clamp-2 break-words"
+            title={query}
+            style={{
+              margin: 0,
+              fontSize: "clamp(24px, 3.8vw, 40px)",
+              lineHeight: 1.06,
+              letterSpacing: "-0.028em",
+              color: "#ffffff",
+            }}
+          >
+            “{query}”
+          </h1>
+        </div>
+
+        <div role="group" aria-label="Filter results" style={{ maxWidth: "100%" }}>
+          <SegmentedControl
+            options={CATEGORIES.map((c) => CATEGORY_LABEL[c])}
+            value={CATEGORY_LABEL[cat]}
+            onChange={(label) => setCat(LABEL_TO_CATEGORY[label] ?? "all")}
+            layoutId="search-category"
+          />
+        </div>
+      </motion.header>
 
       {isLoading && (
         <div role="status" aria-label="Searching">
@@ -540,180 +679,133 @@ export default function Search() {
       )}
 
       {!isLoading && !error && !hasResults && (
-        <motion.div layout="position" transition={{ layout: REFLOW }}>
-          <EmptyState
-            title={`No results found for “${query}”`}
-            description="Please make sure your words are spelled correctly, or use fewer or different keywords."
-          />
-        </motion.div>
+        <EmptyState
+          title={`No results for “${query}”`}
+          description="Check the spelling, or try fewer or different words."
+        />
       )}
 
-      {data && (
-        <>
-          {/* TOP RESULT & SONGS ROW (when in 'all' view) */}
-          {cat === "all" && (topResult || data.tracks.length > 0) && (
-            <motion.div
-              layout="position"
-              transition={{ layout: REFLOW }}
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  topResult && data.tracks.length > 0
-                    ? "repeat(auto-fit, minmax(min(100%, 320px), 1fr))"
-                    : "1fr",
-                gap: "clamp(16px, 2.2vw, 28px)",
-                alignItems: "stretch",
-              }}
-            >
-              {topResult && (
-                <motion.section
+      {data && hasResults && (
+        // a category switch reads as the results updating, not a new page:
+        // a short fade-up on the new set, no exit to wait on
+        <motion.div
+          key={cat}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: EASE_OUT }}
+          style={{ display: "flex", flexDirection: "column", gap: "clamp(28px, 3.6vw, 40px)" }}
+        >
+          {cat === "all" && (
+            <>
+              {(topResult || data.tracks.length > 0) && (
+                <motion.div
                   layout="position"
-                  transition={{ layout: REFLOW }}
-                  style={{ display: "flex", flexDirection: "column", height: "100%" }}
+                  transition={{ layout: REFLOW_SPRING }}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                      topResult && data.tracks.length > 0
+                        ? "repeat(auto-fit, minmax(min(100%, 340px), 1fr))"
+                        : "1fr",
+                    gap: "clamp(20px, 2.6vw, 32px)",
+                    alignItems: "stretch",
+                  }}
                 >
-                  <SectionTitle>Top result</SectionTitle>
-                  <div style={{ flex: 1, minHeight: 0 }}>
-                    <TopResultCard
-                      result={topResult}
-                      onPlay={handlePlayTopResult}
-                      isPlaying={isTopResultPlaying}
-                      pending={topPending}
-                    />
-                  </div>
-                </motion.section>
+                  {topResult && (
+                    <section aria-labelledby="search-top" style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                      <SectionTitle id="search-top">Top result</SectionTitle>
+                      <div style={{ flex: 1, minHeight: 0 }}>
+                        <TopResultCard
+                          result={topResult}
+                          onPlay={handlePlayTopResult}
+                          isPlaying={isTopResultPlaying}
+                          pending={topPending}
+                        />
+                      </div>
+                    </section>
+                  )}
+
+                  {data.tracks.length > 0 && (
+                    <section aria-labelledby="search-songs" style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                      <SectionTitle
+                        id="search-songs"
+                        right={data.tracks.length > SONGS_PREVIEW && showAll("songs")}
+                      >
+                        Songs
+                      </SectionTitle>
+                      <div className="flex flex-col">{songRows(data.tracks.slice(0, SONGS_PREVIEW))}</div>
+                    </section>
+                  )}
+                </motion.div>
               )}
 
-              {data.tracks.length > 0 && (
-                <motion.section
-                  layout="position"
-                  transition={{ layout: REFLOW }}
-                  style={{ display: "flex", flexDirection: "column", height: "100%" }}
-                >
-                  <SectionTitle
-                    right={data.tracks.length > 4 && <ShowAllButton onClick={() => setCat("songs")} />}
-                  >
-                    Songs
-                  </SectionTitle>
-                  <div className="flex flex-col">
-                    {data.tracks.slice(0, 4).map((t, i) => (
-                      <TrackRow
-                        key={t.id}
-                        track={t}
-                        index={i}
-                        showAlbum
-                        liked={likedSet.has(t.id)}
-                        onPlay={() => {
-                          const start = playContext(data.tracks, i, "search");
-                          if (start) {
-                            setCurrentTrack(start);
-                            playTrack(start.id).catch(console.error);
-                          }
-                        }}
-                        onQueue={(track) => enqueue(track)}
-                        onToggleLike={(track) =>
-                          toggleLike.mutate({
-                            id: track.id,
-                            liked: likedSet.has(track.id),
-                          })
-                        }
-                      />
-                    ))}
-                  </div>
-                </motion.section>
-              )}
-            </motion.div>
+              {/* the rest as shelves, the same rows Home and the artist page
+                  use; "Show all" opens the full grid for that kind */}
+              <Shelf
+                id="search-artists"
+                title="Artists"
+                items={data.artists}
+                getKey={(a) => a.id}
+                renderItem={(a, i) => <ArtistCard artist={a} index={i} />}
+                extra={showAll("artists")}
+              />
+              <Shelf
+                id="search-albums"
+                title="Albums"
+                items={data.albums}
+                getKey={(al) => al.id}
+                renderItem={(al, i) => <AlbumCard album={al} index={i} />}
+                extra={showAll("albums")}
+              />
+              <Shelf
+                id="search-playlists"
+                title="Playlists"
+                items={data.playlists}
+                getKey={(pl) => pl.id}
+                renderItem={(pl, i) => <PlaylistResultCard playlist={pl} index={i} />}
+                extra={showAll("playlists")}
+              />
+            </>
           )}
 
-          {/* FULL SONGS LIST (when 'songs' category is selected) */}
-          {cat === "songs" && data.tracks.length > 0 && (
-            <motion.section layout="position" transition={{ layout: REFLOW }}>
-              <SectionTitle>Songs</SectionTitle>
-              <div className="flex flex-col">
-                {data.tracks.map((t, i) => (
-                  <TrackRow
-                    key={t.id}
-                    track={t}
-                    index={i}
-                    showAlbum
-                    liked={likedSet.has(t.id)}
-                    onPlay={() => {
-                      const start = playContext(data.tracks, i, "search");
-                      if (start) {
-                        setCurrentTrack(start);
-                        playTrack(start.id).catch(console.error);
-                      }
-                    }}
-                    onQueue={(track) => enqueue(track)}
-                    onToggleLike={(track) =>
-                      toggleLike.mutate({
-                        id: track.id,
-                        liked: likedSet.has(track.id),
-                      })
-                    }
-                  />
-                ))}
-              </div>
-            </motion.section>
+          {cat === "songs" && (
+            data.tracks.length > 0 ? (
+              <section>{songRows(data.tracks)}</section>
+            ) : (
+              <EmptyState title="No songs match" description="Try All to see other kinds of results." />
+            )
           )}
 
-          {/* ARTISTS GRID */}
-          {show("artists") && data.artists.length > 0 && (
-            <motion.section layout="position" transition={{ layout: REFLOW }}>
-              <SectionTitle
-                right={cat === "all" && data.artists.length > 7 && <ShowAllButton onClick={() => setCat("artists")} />}
-              >
-                Artists
-              </SectionTitle>
+          {cat === "artists" && (
+            data.artists.length > 0 ? (
               <ArtistGrid>
-                {(cat === "all" ? data.artists.slice(0, 7) : data.artists).map((a, i) => (
-                  <ArtistCard key={a.id} artist={a} index={i} />
-                ))}
+                {data.artists.map((a, i) => <ArtistCard key={a.id} artist={a} index={i} />)}
               </ArtistGrid>
-            </motion.section>
+            ) : (
+              <EmptyState title="No artists match" description="Try All to see other kinds of results." />
+            )
           )}
 
-          {/* ALBUMS GRID */}
-          {show("albums") && data.albums.length > 0 && (
-            <motion.section layout="position" transition={{ layout: REFLOW }}>
-              <SectionTitle
-                right={cat === "all" && data.albums.length > 7 && <ShowAllButton onClick={() => setCat("albums")} />}
-              >
-                Albums
-              </SectionTitle>
+          {cat === "albums" && (
+            data.albums.length > 0 ? (
               <AlbumGrid>
-                {(cat === "all" ? data.albums.slice(0, 7) : data.albums).map((al, i) => (
-                  <AlbumCard key={al.id} album={al} index={i} />
-                ))}
+                {data.albums.map((al, i) => <AlbumCard key={al.id} album={al} index={i} />)}
               </AlbumGrid>
-            </motion.section>
+            ) : (
+              <EmptyState title="No albums match" description="Try All to see other kinds of results." />
+            )
           )}
 
-          {/* PLAYLISTS GRID */}
-          {show("playlists") && data.playlists.length > 0 && (
-            <motion.section layout="position" transition={{ layout: REFLOW }}>
-              <SectionTitle
-                right={cat === "all" && data.playlists.length > 7 && <ShowAllButton onClick={() => setCat("playlists")} />}
-              >
-                Playlists
-              </SectionTitle>
-              <motion.div
-                layout="position"
-                transition={{ layout: REFLOW }}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns:
-                    "repeat(auto-fill, minmax(clamp(120px, 14vw, 175px), 1fr))",
-                  gap: "clamp(10px, 1.5vw, 16px)",
-                  width: "100%",
-                }}
-              >
-                {(cat === "all" ? data.playlists.slice(0, 7) : data.playlists).map((pl, i) => (
-                  <PlaylistResultCard key={pl.id} playlist={pl} index={i} />
-                ))}
-              </motion.div>
-            </motion.section>
+          {cat === "playlists" && (
+            data.playlists.length > 0 ? (
+              <PlaylistGrid>
+                {data.playlists.map((pl, i) => <PlaylistResultCard key={pl.id} playlist={pl} index={i} />)}
+              </PlaylistGrid>
+            ) : (
+              <EmptyState title="No playlists match" description="Try All to see other kinds of results." />
+            )
           )}
-        </>
+        </motion.div>
       )}
     </div>
   );
