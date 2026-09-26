@@ -241,7 +241,6 @@ export function LyricsPanel() {
         {/* lyrics body */}
         <div
           ref={scrollRef}
-          data-selectable
           className="scroll-y"
           style={{
             position: "relative",

@@ -106,15 +106,28 @@ body,
     letter-spacing: -0.011em;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    user-select: none;
     overflow: hidden;
 }
 
-main,
+/* no text selection anywhere in the app - it's an app, not a document.
+   WebKit (macOS, Linux) still needs the prefixed property. Only the places
+   you type keep it, so you can still select and edit what you entered. Images
+   and links don't drag out as ghost copies either. */
+*,
+*::before,
+*::after {
+    -webkit-user-select: none;
+    user-select: none;
+}
 input,
 textarea,
-[data-selectable] {
+[contenteditable="true"] {
+    -webkit-user-select: text;
     user-select: text;
+}
+img,
+a {
+    -webkit-user-drag: none;
 }
 
 

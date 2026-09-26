@@ -18,6 +18,8 @@ import { useUIStore } from "../../store/ui.store";
 import { getBackdropActive } from "../../api/window";
 import { backdropScrim } from "../../lib/backdrop";
 import { isMac } from "../../lib/platform";
+import { usePrefsStore } from "../../store/prefs.store";
+import { chromePx } from "../../lib/zoom";
 import { EASE_OUT } from "../../lib/motion";
 import "../../styles/layout.css";
 
@@ -44,7 +46,11 @@ export default function Layout() {
 
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const macSimulated = useUIStore((s) => s.macSimulated);
-  const collapsedSidebarW = (isMac || macSimulated) ? MAC_COLLAPSED_SIDEBAR_W : COLLAPSED_SIDEBAR_W;
+  const uiZoom = usePrefsStore((s) => s.uiZoom);
+  // same sum as the Sidebar's rail: the traffic lights' room in physical px
+  const collapsedSidebarW = (isMac || macSimulated)
+    ? Math.max(COLLAPSED_SIDEBAR_W, chromePx(MAC_COLLAPSED_SIDEBAR_W, uiZoom))
+    : COLLAPSED_SIDEBAR_W;
   const [willCrushMain, setWillCrushMain] = useState(false);
   const [shellHidden, setShellHidden] = useState(false);
   const immersiveCovered = useUIStore((s) => s.immersiveCovered);
@@ -306,7 +312,6 @@ export default function Layout() {
               <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden" }}>
                 <main
                   ref={mainRef}
-                  data-selectable
                   style={{
                     position: "absolute",
                     inset: 0,

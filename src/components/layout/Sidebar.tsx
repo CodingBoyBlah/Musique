@@ -17,6 +17,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { prefetchPlaylist, prefetchAlbum } from "../../lib/prefetch";
 import { Tooltip } from "../ui/Tooltip";
 import { isMac } from "../../lib/platform";
+import { usePrefsStore } from "../../store/prefs.store";
+import { chromePx } from "../../lib/zoom";
 
 // nav item. active state passed in explicitly so we don't get multi highlight
 
@@ -193,7 +195,12 @@ export default function Sidebar() {
      at x=20, last edge at x=66. the collapsed rail widens to 72 so all three
      still fit instead of being cropped down to the red one. */
   const macChrome = isMac || macSimulated;
-  const railWidth = isCollapsed ? (macChrome ? 72 : 64) : 232;
+  // the lights don't scale with the app's zoom, so their room is sized in
+  // physical pixels (chromePx), but never below the normal 64 CSS px rail
+  // that the nav icons need when zoomed in
+  const zoom = usePrefsStore((s) => s.uiZoom);
+  const px = (n: number) => chromePx(n, zoom);
+  const railWidth = isCollapsed ? (macChrome ? Math.max(64, px(72)) : 64) : 232;
 
   const [spotifyOpen, setSpotifyOpen] = useState(true);
   const [libraryOpen, setLibraryOpen] = useState(true);
@@ -230,14 +237,14 @@ export default function Sidebar() {
            real buttons rather than beside them. */
         <div
           data-tauri-drag-region
-          style={{ height: 32, display: "flex", alignItems: "center", gap: 8, padding: "0 14px", flexShrink: 0 }}
+          style={{ height: px(32), display: "flex", alignItems: "center", gap: px(8), padding: `0 ${px(14)}px`, flexShrink: 0 }}
           title={!isMac ? "Mac traffic lights preview (Ctrl+Shift+M to toggle)" : undefined}
         >
           {["#ff5f57", "#febc2e", "#28c840"].map((c) => (
             <div
               key={c}
               style={{
-                width: 12, height: 12, flexShrink: 0, borderRadius: "50%",
+                width: px(12), height: px(12), flexShrink: 0, borderRadius: "50%",
                 background: c, boxShadow: "inset 0 0 0 1px rgba(0, 0, 0, 0.18)",
               }}
             />

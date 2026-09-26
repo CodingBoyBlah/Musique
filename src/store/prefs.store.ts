@@ -33,6 +33,10 @@ interface PrefsStore {
   // let the immersive view's blurred-cover background drift. off = still.
   ambientMotion: boolean;
   setAmbientMotion: (v: boolean) => void;
+
+  // whole-app zoom factor (1 = 100%). applied to the webview by lib/zoom.ts
+  uiZoom: number;
+  setUiZoom: (v: number) => void;
 }
 
 export const usePrefsStore = create<PrefsStore>()(
@@ -74,6 +78,9 @@ export const usePrefsStore = create<PrefsStore>()(
 
       ambientMotion: true,
       setAmbientMotion: (v) => set({ ambientMotion: v }),
+
+      uiZoom: 1,
+      setUiZoom: (v) => set({ uiZoom: v }),
     }),
     { name: "spotify-prefs" },
   ),

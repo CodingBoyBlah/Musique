@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, RotateCcw, ChevronDown, Info } from "@/lib/icons";
+import { Eye, EyeOff, RotateCcw, ChevronDown, Info, Minus, Plus } from "@/lib/icons";
+import { stepZoom, resetZoom, zoomLabel, ZOOM_MIN, ZOOM_MAX } from "../lib/zoom";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { Tooltip } from "../components/ui/Tooltip";
 import {
@@ -381,6 +382,60 @@ const THEME_OPTS: { value: ThemeSource; label: string }[] = [
     : []),
 ];
 
+const MOD_KEY = isMac ? "⌘" : "Ctrl";
+
+/* − 100% + , the same steps as the keyboard. The percentage is the reset:
+   clicking it goes back to 100%, the way a browser's zoom badge does. */
+function ZoomStepper() {
+  const zoom = usePrefsStore((s) => s.uiZoom);
+  const btn: React.CSSProperties = {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    border: "1px solid var(--color-border)",
+    background: "var(--color-surface)",
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <Tooltip label={`Zoom out (${MOD_KEY} −)`}>
+        <button
+          type="button"
+          className="btn-icon"
+          aria-label="Zoom out"
+          aria-disabled={zoom <= ZOOM_MIN || undefined}
+          onClick={() => zoom > ZOOM_MIN && stepZoom(-1, { quiet: true })}
+          style={btn}
+        >
+          <Minus size={15} strokeWidth={2.2} />
+        </button>
+      </Tooltip>
+      <Tooltip label={zoom === 1 ? "Actual size" : `Reset to 100% (${MOD_KEY} 0)`}>
+        <button
+          type="button"
+          className="btn-text tnum"
+          aria-label={`Zoom ${zoomLabel(zoom)}. Reset to 100%`}
+          onClick={() => resetZoom({ quiet: true })}
+          style={{ minWidth: 56, height: 32, borderRadius: 8, fontSize: 13, fontWeight: 700, color: "var(--color-text-hi)" }}
+        >
+          {zoomLabel(zoom)}
+        </button>
+      </Tooltip>
+      <Tooltip label={`Zoom in (${MOD_KEY} +)`}>
+        <button
+          type="button"
+          className="btn-icon"
+          aria-label="Zoom in"
+          aria-disabled={zoom >= ZOOM_MAX || undefined}
+          onClick={() => zoom < ZOOM_MAX && stepZoom(1, { quiet: true })}
+          style={btn}
+        >
+          <Plus size={15} strokeWidth={2.2} />
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
 function AppearanceCard() {
   const source = useThemeStore((s) => s.source);
   const setSource = useThemeStore((s) => s.setSource);
@@ -391,6 +446,12 @@ function AppearanceCard() {
 
   return (
     <Card title="Appearance">
+      <SettingRow
+        label="Zoom"
+        hint={`Make everything bigger or smaller, for large or high-resolution screens. ${MOD_KEY} + and ${MOD_KEY} − work anywhere, ${MOD_KEY} 0 resets.`}
+        control={<ZoomStepper />}
+      />
+      <Divider />
       <SettingRow
         label="Accent color"
         hint={

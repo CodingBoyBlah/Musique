@@ -243,7 +243,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
 
   return (
     <div style={{ position: "relative", height: "100%" }}>
-    <div ref={scrollRef} data-selectable className="lyr-scroll" style={lyricsScroll}>
+    <div ref={scrollRef} className="lyr-scroll" style={lyricsScroll}>
       {rows.map((row, ri) => {
         const isActive = synced && ri === active;
         const tone = synced ? lyricTone(Math.abs(ri - active), ri < active, moreContrast) : { blur: 0, alpha: 0.9 };
@@ -381,7 +381,7 @@ function ImmersiveQueue() {
   }
 
   return (
-    <div data-selectable style={{ height: "100%", overflowY: "auto", padding: "12px 4px 30vh" }}>
+    <div style={{ height: "100%", overflowY: "auto", padding: "12px 4px 30vh" }}>
       <p style={{ margin: "0 0 12px", fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.62)" }}>Up next</p>
       {queue.map((t, i) => (
         <button

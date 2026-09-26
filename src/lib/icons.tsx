@@ -111,6 +111,7 @@ export const iconPaths = {
   LogOut: "M10 4H6.5A2.5 2.5 0 0 0 4 6.5v11A2.5 2.5 0 0 0 6.5 20H10M16 8l4 4-4 4M20 12H9.5",
   Maximize2: "M14.5 3.5h6v6M20.5 3.5 14 10M9.5 20.5h-6v-6M3.5 20.5 10 14",
   Minimize2: "M14 4v6h6M14 10l6.5-6.5M10 20v-6H4M10 14l-6.5 6.5",
+  Minus: "M5 12h14",
   MonitorSpeaker:
     rrect(2.5, 4.5, 11, 9, 2) + "M8 13.5v3M5.5 17h5" + rrect(16, 3.5, 5.5, 17, 2) +
     circle(18.75, 14, 1.5) + "M18.75 7h.01",
@@ -341,6 +342,7 @@ export const LogOut = createIcon("LogOut");
 export const Maximize2 = createIcon("Maximize2");
 // the counterpart to Maximize2, which is what opens the immersive view
 export const Minimize2 = createIcon("Minimize2");
+export const Minus = createIcon("Minus");
 export const MonitorSpeaker = createIcon("MonitorSpeaker");
 export const MoreHorizontal = createIcon("MoreHorizontal");
 export const Music = createIcon("Music");
@@ -382,7 +384,7 @@ const ICONS: Record<string, LucideIcon> = {
   AlertTriangle, ArrowRight, ArrowUpRight, Captions, Cast, Check,
   ChevronDown, ChevronLeft, ChevronRight, Clock, Devices, Disc3, Eye, EyeOff,
   Globe, GripVertical, Heart, Home, Info, Languages, Laptop, Link, Link2,
-  ListMusic, ListPlus, Loader2, LogIn, LogOut, Maximize2, Minimize2,
+  ListMusic, ListPlus, Loader2, LogIn, LogOut, Maximize2, Minimize2, Minus,
   MonitorSpeaker, MoreHorizontal, Music, Music2, PanelLeft, PanelLeftClose,
   Pause, Pin, PinOff, Play, Plus, Queue, RefreshCw, Repeat, Repeat1, RotateCcw,
   RotateCw, Search, Settings, Share2, Shuffle, SkipBack, SkipForward,

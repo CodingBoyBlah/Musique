@@ -12,6 +12,7 @@
     "core:window:allow-destroy",
     "core:window:allow-is-maximized",
     "core:window:allow-start-dragging",
+    "core:webview:allow-set-webview-zoom",
     "updater:default",
     "process:default",
     "notification:default"

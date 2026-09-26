@@ -70,7 +70,7 @@ export function UpdatePrompt() {
           <h2 id="update-prompt-title" style={titleStyle}>Musique {version} is available</h2>
           <p style={subStyle}>A new version is ready to install.</p>
           {notes && (
-            <div style={notesBox} data-selectable>
+            <div style={notesBox}>
               <p
                 style={{
                   margin: 0,
