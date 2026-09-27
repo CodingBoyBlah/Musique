@@ -8,6 +8,7 @@ import { useArtist } from "../hooks/useArtist";
 import { AlbumCard } from "../components/ui/AlbumCard";
 import { TrackRow } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
+import { SaveAlbumButton } from "../components/ui/SaveAlbumButton";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ExpandableDescription } from "../components/ui/ExpandableDescription";
 import { Loader } from "../components/ui/Loader";
@@ -125,7 +126,7 @@ export default function AlbumPage() {
         {data.description && (
           <ExpandableDescription text={data.description} />
         )}
-        <PlayActions tracks={tracks} contextId={data.id} pinItem={pinItem} />
+        <PlayActions tracks={tracks} contextId={data.id} pinItem={pinItem} accessory={<SaveAlbumButton id={data.id} />} />
       </PageHeader>
 
       <section>

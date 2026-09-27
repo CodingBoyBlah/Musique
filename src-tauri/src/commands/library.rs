@@ -307,6 +307,97 @@ pub async fn unfollow_artist(app: AppHandle, id: String) -> Result<(), AppError>
     Ok(())
 }
 
+/// save an album to the library, on spotify + in the local mirror
+#[tauri::command]
+pub async fn save_album(app: AppHandle, id: String) -> Result<(), AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    let auth = s.auth.clone();
+    drop(s);
+
+    let token = crate::auth::get_valid_token(&pool, &auth).await?;
+    crate::spotify::spotify_write(
+        &token,
+        reqwest::Method::PUT,
+        &format!("{BASE}/me/albums?ids={id}"),
+    )
+    .await?;
+
+    // the album row exists from the page that offered the button; if it
+    // somehow doesn't, the FK just skips the mirror and the next sync fills it
+    let _ = sqlx::query("INSERT OR IGNORE INTO saved_albums (album_id, added_at) VALUES (?, ?)")
+        .bind(&id)
+        .bind(now_ms())
+        .execute(&pool)
+        .await;
+
+    Ok(())
+}
+
+/// remove an album from the library
+#[tauri::command]
+pub async fn unsave_album(app: AppHandle, id: String) -> Result<(), AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    let auth = s.auth.clone();
+    drop(s);
+
+    let token = crate::auth::get_valid_token(&pool, &auth).await?;
+    crate::spotify::spotify_write(
+        &token,
+        reqwest::Method::DELETE,
+        &format!("{BASE}/me/albums?ids={id}"),
+    )
+    .await?;
+
+    let _ = sqlx::query("DELETE FROM saved_albums WHERE album_id = ?")
+        .bind(&id)
+        .execute(&pool)
+        .await;
+
+    Ok(())
+}
+
+/// is this album in the library? asks spotify (`/me/albums/contains`) so an
+/// album saved from the phone since the last sync still shows as saved, and
+/// falls back to the local mirror offline
+#[tauri::command]
+pub async fn is_album_saved(app: AppHandle, id: String) -> Result<bool, AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    let auth = s.auth.clone();
+    drop(s);
+
+    let local = sqlx::query_as::<_, (String,)>("SELECT album_id FROM saved_albums WHERE album_id = ?")
+        .bind(&id)
+        .fetch_optional(&pool)
+        .await?
+        .is_some();
+
+    let Ok(token) = crate::auth::get_valid_token(&pool, &auth).await else {
+        return Ok(local);
+    };
+    match crate::spotify::spotify_get::<Vec<bool>>(&token, &format!("{BASE}/me/albums/contains?ids={id}")).await {
+        Ok(v) => {
+            let live = v.first().copied().unwrap_or(local);
+            if live && !local {
+                let _ = sqlx::query("INSERT OR IGNORE INTO saved_albums (album_id, added_at) VALUES (?, ?)")
+                    .bind(&id)
+                    .bind(now_ms())
+                    .execute(&pool)
+                    .await;
+            } else if !live && local {
+                let _ = sqlx::query("DELETE FROM saved_albums WHERE album_id = ?")
+                    .bind(&id)
+                    .execute(&pool)
+                    .await;
+            }
+            Ok(live)
+        }
+        Err(_) => Ok(local),
+    }
+}
+
 /// is this artist followed? straight from the local cache (fast, offline)
 #[tauri::command]
 pub async fn is_artist_followed(app: AppHandle, id: String) -> Result<bool, AppError> {

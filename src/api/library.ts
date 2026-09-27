@@ -50,6 +50,15 @@ export const followArtist = (id: string): Promise<void> =>
 export const unfollowArtist = (id: string): Promise<void> =>
   invoke("unfollow_artist", { id });
 
+export const saveAlbum = (id: string): Promise<void> =>
+  invoke("save_album", { id });
+
+export const unsaveAlbum = (id: string): Promise<void> =>
+  invoke("unsave_album", { id });
+
+export const isAlbumSaved = (id: string): Promise<boolean> =>
+  invoke("is_album_saved", { id });
+
 export const isArtistFollowed = (id: string): Promise<boolean> =>
   invoke("is_artist_followed", { id });
 

@@ -12,6 +12,9 @@ import {
   followArtist,
   unfollowArtist,
   isArtistFollowed,
+  saveAlbum,
+  unsaveAlbum,
+  isAlbumSaved,
   syncLibrary,
   getTopTracks,
   getTopArtists,
@@ -172,6 +175,34 @@ export function useToggleFollow() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["library", "follows"] });
       qc.invalidateQueries({ queryKey: ["library", "artists"] });
+    },
+  });
+}
+
+// whether an album is in the library (live check, local fallback offline)
+export function useIsAlbumSaved(id: string | undefined) {
+  return useQuery({
+    queryKey: ["library", "album-saved", id],
+    queryFn:  () => isAlbumSaved(id!),
+    enabled:  !!id,
+  });
+}
+
+// save/unsave an album. optimistic so the heart answers the click instantly
+export function useToggleAlbumSave() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, saved }: { id: string; saved: boolean }) =>
+      saved ? unsaveAlbum(id) : saveAlbum(id),
+    onMutate: ({ id, saved }) => {
+      qc.setQueryData(["library", "album-saved", id], !saved);
+    },
+    onError: (_e, { id, saved }) => {
+      qc.setQueryData(["library", "album-saved", id], saved);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["library", "album-saved"] });
+      qc.invalidateQueries({ queryKey: ["library", "albums"] });
     },
   });
 }
