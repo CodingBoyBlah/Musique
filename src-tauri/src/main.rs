@@ -15,5 +15,8 @@ fn main() {
     if std::env::args().any(|a| a == "--quality-probe") {
         std::process::exit(spotify_lib::quality_probe());
     }
+    if std::env::args().any(|a| a == "--lossless-probe") {
+        std::process::exit(spotify_lib::lossless_probe());
+    }
     spotify_lib::run()
 }

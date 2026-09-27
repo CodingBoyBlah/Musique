@@ -5389,6 +5389,7 @@ dependencies = [
  "flate2",
  "keyring",
  "libc",
+ "librespot-audio",
  "librespot-connect",
  "librespot-core",
  "librespot-metadata",

@@ -559,8 +559,8 @@ pub async fn warm_session_if_possible(app: AppHandle) {
 }
 
 #[tauri::command]
-pub async fn play_track(app: AppHandle, id: String) -> Result<(), AppError> {
-    eprintln!("[playback cmd] play_track id={id}");
+pub async fn play_track(app: AppHandle, id: String, context_uri: Option<String>) -> Result<(), AppError> {
+    eprintln!("[playback cmd] play_track id={id} context={context_uri:?}");
 
     if uses_youtube(&app).await {
         // A resolution failure here is a real, expected outcome (no acceptable
@@ -573,6 +573,7 @@ pub async fn play_track(app: AppHandle, id: String) -> Result<(), AppError> {
         let playback = app.state::<AppState>().playback.clone();
         let guard    = playback.lock().await;
         if let Some(inner) = guard.as_ref() {
+            inner.set_play_context(&uri, context_uri);
             inner.play_uri(uri, 0)?;
         }
     }
@@ -604,7 +605,7 @@ pub async fn play_track(app: AppHandle, id: String) -> Result<(), AppError> {
 // cuz it only runs when the failed track is the current one, i.e nothings
 // actually playing to interrupt
 #[tauri::command]
-pub async fn retry_play_track(app: AppHandle, id: String) -> Result<(), AppError> {
+pub async fn retry_play_track(app: AppHandle, id: String, context_uri: Option<String>) -> Result<(), AppError> {
     {
         // drop the wedged session so ensure_inner just builds a fresh one
         let playback = app.state::<AppState>().playback.clone();
@@ -617,6 +618,7 @@ pub async fn retry_play_track(app: AppHandle, id: String) -> Result<(), AppError
     let playback = app.state::<AppState>().playback.clone();
     let guard    = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
+        inner.set_play_context(&uri, context_uri);
         inner.play_uri(uri, 0)?;
     }
     Ok(())
@@ -691,7 +693,12 @@ pub async fn resume_playback(app: AppHandle) -> Result<(), AppError> {
 // the ▶ button. resumes if the matching track is loaded and not ended,
 // otherwise loads and plays the requested track at position_ms.
 #[tauri::command]
-pub async fn resume_or_play(app: AppHandle, id: String, position_ms: u32) -> Result<(), AppError> {
+pub async fn resume_or_play(
+    app:         AppHandle,
+    id:          String,
+    position_ms: u32,
+    context_uri: Option<String>,
+) -> Result<(), AppError> {
     eprintln!("[playback cmd] resume_or_play id={id} pos={position_ms}");
 
     if uses_youtube(&app).await {
@@ -734,6 +741,7 @@ pub async fn resume_or_play(app: AppHandle, id: String, position_ms: u32) -> Res
         let loaded = inner.loaded.load(Ordering::Relaxed);
         let same_uri = inner.current_uri().as_deref() == Some(&uri);
         let ended = inner.is_ended();
+        inner.set_play_context(&uri, context_uri);
 
         if loaded && same_uri && !ended && position_ms == 0 {
             if let Err(e) = inner.resume() {
