@@ -653,3 +653,81 @@ pub(crate) async fn internal_playlist(
         followers: None,
     })
 }
+
+// ── extracted colours (pathfinder) ───────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExtractedColor {
+    /// "#rrggbb" as spotify picked them for this artwork
+    pub raw:   Option<String>,
+    pub dark:  Option<String>,
+    pub light: Option<String>,
+}
+
+pub(crate) fn colors_from(data: &serde_json::Value) -> Vec<Option<ExtractedColor>> {
+    use crate::internal::pathfinder::get_str;
+    data.get("extractedColors")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|c| {
+                    let raw = get_str(c, &["colorRaw", "hex"]).map(str::to_string);
+                    let dark = get_str(c, &["colorDark", "hex"]).map(str::to_string);
+                    let light = get_str(c, &["colorLight", "hex"]).map(str::to_string);
+                    (raw.is_some() || dark.is_some()).then_some(ExtractedColor { raw, dark, light })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// spotify's own palette for artwork urls, same order as asked. used where
+/// the in-app extractor can't read the image
+#[tauri::command]
+pub async fn get_extracted_colors(app: AppHandle, image_urls: Vec<String>) -> Result<Vec<Option<ExtractedColor>>, AppError> {
+    use tauri::Manager;
+    if image_urls.is_empty() {
+        return Ok(Vec::new());
+    }
+    let pool = app.state::<crate::state::AppState>().db.clone();
+    let mut out: Vec<Option<ExtractedColor>> = Vec::with_capacity(image_urls.len());
+    let mut missing: Vec<String> = Vec::new();
+    for url in &image_urls {
+        let hit = crate::internal::cache::get_json::<Option<ExtractedColor>>(&pool, url, "colors", 30 * crate::internal::cache::DAY).await;
+        if hit.is_none() {
+            missing.push(url.clone());
+        }
+        out.push(hit.flatten());
+    }
+    if !missing.is_empty() {
+        let data = crate::internal::pathfinder::query(&app, "fetchExtractedColors", serde_json::json!({ "uris": missing })).await?;
+        let fetched = colors_from(&data);
+        for (url, color) in missing.iter().zip(fetched.iter()) {
+            crate::internal::cache::put_json(&pool, url, "colors", color).await;
+            if let Some(i) = image_urls.iter().position(|u| u == url) {
+                out[i] = color.clone();
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+
+    #[test]
+    fn reads_colors() {
+        let v: serde_json::Value = serde_json::from_str(
+            r##"{"extractedColors": [
+                {"colorRaw": {"hex": "#A0522D"}, "colorDark": {"hex": "#503010"}, "colorLight": {"hex": "#E0C0A0"}},
+                {"colorRaw": {"hex": ""}}
+            ]}"##,
+        )
+        .unwrap();
+        let c = colors_from(&v);
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0].as_ref().unwrap().raw.as_deref(), Some("#A0522D"));
+        assert!(c[1].is_none());
+    }
+}

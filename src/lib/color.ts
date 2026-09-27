@@ -1,3 +1,4 @@
+import { getExtractedColors } from "../api/internal";
 
 
 export interface RGB { r: number; g: number; b: number; }
@@ -127,7 +128,20 @@ export function loadCoverAccent(url: string): Promise<string | null> {
       try { localStorage.setItem("cover-accent-v2:" + url, hex ?? ""); } catch { /* quota */ }
       resolve(hex);
     };
-    img.onerror = () => { memCache.set(url, null); resolve(null); };
+    /* the image couldn't be read here (no CORS on that host, blocked, gone).
+       spotify has already picked a colour for its own artwork, so ask it */
+    img.onerror = () => {
+      getExtractedColors([url])
+        .then(([c]) => {
+          const hex = c?.raw ? rgbToHex(normalizeBrightness(hexToRgb(c.raw))) : null;
+          memCache.set(url, hex);
+          if (hex) {
+            try { localStorage.setItem("cover-accent-v2:" + url, hex); } catch { /* quota */ }
+          }
+          resolve(hex);
+        })
+        .catch(() => { memCache.set(url, null); resolve(null); });
+    };
     img.src = url;
   });
 }

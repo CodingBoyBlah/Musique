@@ -845,6 +845,7 @@ pub fn run() {
             commands::internal::get_track_radio,
             commands::internal::get_station,
             commands::internal::get_autoplay_tracks,
+            commands::internal::get_extracted_colors,
             commands::profile::get_user_profile,
             commands::podcasts::get_show,
             commands::audiobooks::get_audiobook,

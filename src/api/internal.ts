@@ -74,3 +74,13 @@ export interface ArtistExtras {
 // bio, related artists, gallery, appears-on (ARTIST_V4)
 export const getArtistExtras = (id: string): Promise<ArtistExtras> =>
   invoke("get_artist_extras", { id });
+
+export interface ExtractedColor {
+  raw: string | null;
+  dark: string | null;
+  light: string | null;
+}
+
+// spotify's own palette for artwork (pathfinder fetchExtractedColors)
+export const getExtractedColors = (imageUrls: string[]): Promise<(ExtractedColor | null)[]> =>
+  invoke("get_extracted_colors", { imageUrls });
