@@ -31,3 +31,12 @@ export interface ListeningStats {
 // computed locally from what you've played in musique - no network
 export const getListeningStats = (range: StatsRange): Promise<ListeningStats> =>
   invoke("get_listening_stats", { range });
+
+export interface MyGenre {
+  genre: string;
+  weight: number;
+  artists: ArtistItem[];
+}
+
+// your genres, weighted by plays, top artists and follows
+export const getMyGenres = (): Promise<MyGenre[]> => invoke("get_my_genres");

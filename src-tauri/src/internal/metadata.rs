@@ -128,14 +128,6 @@ pub async fn track_protos(app: &AppHandle, ids: &[String]) -> Result<HashMap<Str
     Ok(decode_all(raw))
 }
 
-pub async fn album_proto(app: &AppHandle, id: &str) -> Result<metadata::Album, AppError> {
-    let uri = to_uri("album", id);
-    let raw = fetch_batch(app, ExtensionKind::ALBUM_V4, std::slice::from_ref(&uri), TTL).await?;
-    decode_all::<metadata::Album>(raw)
-        .remove(&uri)
-        .ok_or_else(|| AppError::NotFound(format!("no metadata for {uri}")))
-}
-
 pub async fn artist_proto(app: &AppHandle, id: &str, ttl_ms: i64) -> Result<metadata::Artist, AppError> {
     let uri = to_uri("artist", id);
     let raw = fetch_batch(app, ExtensionKind::ARTIST_V4, std::slice::from_ref(&uri), ttl_ms).await?;

@@ -392,3 +392,89 @@ mod tests {
         assert!((g[1].share - 3.0 / 8.0).abs() < 1e-9);
     }
 }
+
+// ── your genres ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MyGenre {
+    pub genre:   String,
+    pub weight:  f64,
+    /// the artists that put it here, heaviest first (for the crate art/links)
+    pub artists: Vec<ArtistItem>,
+}
+
+/// (artist, weight, genres json) rows -> genres ranked by summed weight
+pub(crate) fn rank_genres(rows: Vec<(ArtistItem, f64, Option<String>)>, top: usize) -> Vec<MyGenre> {
+    let mut by_genre: HashMap<String, (f64, Vec<(f64, ArtistItem)>)> = HashMap::new();
+    for (artist, weight, genres) in rows {
+        let list: Vec<String> = genres.and_then(|g| serde_json::from_str(&g).ok()).unwrap_or_default();
+        for g in list {
+            let entry = by_genre.entry(g).or_default();
+            entry.0 += weight;
+            entry.1.push((weight, artist.clone()));
+        }
+    }
+    let mut out: Vec<MyGenre> = by_genre
+        .into_iter()
+        .map(|(genre, (weight, mut artists))| {
+            artists.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            MyGenre { genre, weight, artists: artists.into_iter().take(6).map(|(_, a)| a).collect() }
+        })
+        .collect();
+    out.sort_by(|a, b| b.weight.partial_cmp(&a.weight).unwrap_or(std::cmp::Ordering::Equal).then(a.genre.cmp(&b.genre)));
+    out.truncate(top);
+    out
+}
+
+/// the genres you actually listen to: your plays in musique, your spotify top
+/// artists and the artists you follow, weighted in that order
+#[tauri::command]
+pub async fn get_my_genres(app: AppHandle) -> Result<Vec<MyGenre>, AppError> {
+    let pool = app.state::<AppState>().db.clone();
+    let rows: Vec<(String, String, Option<String>, Option<String>, f64)> = sqlx::query_as(
+        "SELECT a.id, a.name, a.image_url, a.genres, SUM(w) FROM (
+             SELECT ta.artist_id AS id, 1.0 AS w
+               FROM listen_events e JOIN track_artists ta ON ta.track_id = e.track_id
+              WHERE e.event_type = 'play'
+             UNION ALL
+             SELECT artist_id, 8.0 - MIN(position, 49) * 0.15 FROM top_artists
+             UNION ALL
+             SELECT artist_id, 2.0 FROM followed_artists
+         ) x JOIN artists a ON a.id = x.id
+         WHERE a.genres IS NOT NULL AND a.genres != '[]'
+         GROUP BY a.id",
+    )
+    .fetch_all(&pool)
+    .await?;
+    Ok(rank_genres(
+        rows.into_iter()
+            .map(|(id, name, image_url, genres, w)| (ArtistItem { id, name, image_url, popularity: None }, w, genres))
+            .collect(),
+        24,
+    ))
+}
+
+#[cfg(test)]
+mod genre_tests {
+    use super::*;
+
+    fn artist(id: &str) -> ArtistItem {
+        ArtistItem { id: id.into(), name: id.into(), image_url: None, popularity: None }
+    }
+
+    #[test]
+    fn ranks_genres_by_weight() {
+        let g = rank_genres(
+            vec![
+                (artist("a"), 5.0, Some(r#"["rap", "hip hop"]"#.into())),
+                (artist("b"), 2.0, Some(r#"["rap"]"#.into())),
+                (artist("c"), 1.0, None),
+            ],
+            10,
+        );
+        assert_eq!(g[0].genre, "rap");
+        assert_eq!(g[0].weight, 7.0);
+        assert_eq!(g[0].artists[0].id, "a");
+        assert_eq!(g.len(), 2);
+    }
+}

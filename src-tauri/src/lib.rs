@@ -840,6 +840,7 @@ pub fn run() {
             commands::internal::get_tracks_metadata,
             commands::social::get_friend_activity,
             commands::stats::get_listening_stats,
+            commands::stats::get_my_genres,
             commands::social::get_jam,
             commands::social::start_jam,
             commands::social::join_jam,

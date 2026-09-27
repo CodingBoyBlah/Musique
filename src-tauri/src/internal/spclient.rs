@@ -52,11 +52,6 @@ pub async fn get_json_value(app: &AppHandle, endpoint: &str) -> Result<serde_jso
     serde_json::from_slice(&bytes).map_err(|e| AppError::Network(format!("decode {endpoint}: {e}")))
 }
 
-pub async fn get_json<T: serde::de::DeserializeOwned>(app: &AppHandle, endpoint: &str) -> Result<T, AppError> {
-    let bytes = get_json_bytes(app, endpoint).await?;
-    serde_json::from_slice(&bytes).map_err(|e| AppError::Network(format!("decode {endpoint}: {e}")))
-}
-
 pub async fn get_json_bytes(app: &AppHandle, endpoint: &str) -> Result<bytes::Bytes, AppError> {
     let s = session(app).await?;
     s.spclient()
@@ -87,27 +82,6 @@ pub async fn send_json(
         return Ok(serde_json::Value::Null);
     }
     serde_json::from_slice(&bytes).map_err(|e| AppError::Network(format!("decode {endpoint}: {e}")))
-}
-
-/// raw GET (protobuf endpoints like the rootlist / playlist v2)
-pub async fn get_raw(app: &AppHandle, endpoint: &str) -> Result<bytes::Bytes, AppError> {
-    let s = session(app).await?;
-    s.spclient()
-        .request(&Method::GET, endpoint, None, None)
-        .await
-        .map_err(map_err)
-}
-
-/// POST a protobuf message, get the raw response bytes back
-pub async fn post_protobuf<M>(app: &AppHandle, endpoint: &str, msg: &M) -> Result<bytes::Bytes, AppError>
-where
-    M: protobuf::Message + protobuf::MessageFull,
-{
-    let s = session(app).await?;
-    s.spclient()
-        .request_with_protobuf(&Method::POST, endpoint, None, msg)
-        .await
-        .map_err(map_err)
 }
 
 /// POST pre-encoded protobuf bytes (for messages we hand-encode via `wire`)
