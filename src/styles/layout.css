@@ -77,17 +77,84 @@
    pressed dozens of times a day), press scale comes from framer's whileTap */
 .pb-btn {
     color: rgba(255, 255, 255, 0.72);
-    transition: color 0.15s ease;
+    background-color: transparent;
+    transition: color 0.15s ease, background-color 0.15s ease;
+}
+/* shuffle / repeat while off: a mode you set once, so it sits back */
+.pb-btn[aria-pressed="false"] {
+    color: rgba(255, 255, 255, 0.5);
+}
+.pb-play {
+    background-color: transparent;
+    transition: background-color 0.15s ease;
 }
 @media (hover: hover) and (pointer: fine) {
     .pb-btn:hover:not(:disabled):not([data-on="true"]):not([data-large="true"]) {
         color: #ffffff;
     }
+    /* a faint plate behind the glyph shows what the press will hit */
+    .pb-btn:hover:not(:disabled):not([data-large="true"]),
+    .pb-play:hover {
+        background-color: rgba(255, 255, 255, 0.08);
+    }
 }
 
-/* track / artist links in the dock */
+/* the "on" mark under shuffle / repeat. grows in from a visible 0.4, never
+   from nothing */
+.pb-on-dot {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    width: 4px;
+    height: 4px;
+    margin-left: -2px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    opacity: 0;
+    transform: scale(0.4);
+    transition: opacity 0.16s var(--ease-out), transform 0.16s var(--ease-out);
+    pointer-events: none;
+}
+.pb-on-dot[data-on="true"] {
+    opacity: 1;
+    transform: scale(1);
+}
+
+/* dock titles: scroll a name too long to fit, on hover (PlayerBar Marquee).
+   the ends fade while it moves so the text slides out rather than being cut */
+.pb-marquee {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+}
+.pb-marquee-run {
+    display: inline-block;
+    animation: pb-marquee var(--dur, 6s) linear 0.35s infinite alternate;
+}
+@keyframes pb-marquee {
+    0%, 14% { transform: translateX(0); }
+    86%, 100% { transform: translateX(var(--shift, 0)); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .pb-on-dot { transform: none; }
+    .pb-marquee-run { animation: none; }
+}
+
+/* track / artist links in the dock. not the browser's underline (thick,
+   glued to the baseline, cutting through descenders): a 1px line in the
+   text's own colour, dimmed, that draws in from the left on hover and runs
+   off to the right on leave - the anchor flips sides, so it never retracts
+   back the way it came. it's a background, so it rides along when a long
+   title scrolls. */
 .pb-link {
     text-decoration: none;
+    background-image: linear-gradient(
+        color-mix(in srgb, currentColor 55%, transparent),
+        color-mix(in srgb, currentColor 55%, transparent)
+    );
+    background-repeat: no-repeat;
+    background-position: 100% 100%;
+    background-size: 0% 1px;
+    transition: background-size 0.28s cubic-bezier(0.23, 1, 0.32, 1);
 }
 .pb-link:focus-visible {
     outline: 2px solid var(--color-accent);
@@ -96,7 +163,13 @@
 }
 @media (hover: hover) and (pointer: fine) {
     .pb-link:hover {
-        text-decoration: underline;
+        background-position: 0% 100%;
+        background-size: 100% 1px;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .pb-link {
+        transition: none;
     }
 }
 
@@ -105,7 +178,7 @@
     outline: none;
 }
 .scrub:focus-visible .scrub-track {
-    box-shadow: 0 0 0 2px rgba(88, 115, 216, 0.55);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent);
 }
 
 /* top-search result rows: arrow-key selection is instant - it is a keyboard

@@ -122,8 +122,8 @@
     transition: border-color 0.14s ease, box-shadow 0.14s ease, background-color 0.14s ease;
 }
 .settings-input:focus {
-    border-color: rgba(88, 115, 216, 0.75) !important;
-    box-shadow: 0 0 0 3px rgba(88, 115, 216, 0.2);
+    border-color: color-mix(in srgb, var(--color-accent) 75%, transparent) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
 .settings-input:disabled {
     opacity: 0.6;

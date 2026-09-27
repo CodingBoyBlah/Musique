@@ -231,7 +231,7 @@ export function GenreCrate({
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    background: "linear-gradient(135deg, rgba(88, 115, 216, 0.2) 0%, rgba(255, 255, 255, 0.04) 100%)",
+                    background: "linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 20%, transparent) 0%, rgba(255, 255, 255, 0.04) 100%)",
                     color: "rgba(255, 255, 255, 0.35)",
                   }}
                 >

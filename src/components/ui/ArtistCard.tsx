@@ -118,7 +118,7 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              background: "linear-gradient(135deg, rgba(88, 115, 216, 0.22) 0%, rgba(255, 255, 255, 0.05) 100%)",
+              background: "linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 22%, transparent) 0%, rgba(255, 255, 255, 0.05) 100%)",
               color: "rgba(255, 255, 255, 0.6)",
               fontSize: 32,
               fontWeight: 700,
