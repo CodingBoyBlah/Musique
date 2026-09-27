@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { dedupedStorage } from "../lib/persistStorage";
 import type { TrackItem } from "../types/spotify";
-import type { SpotifyDevice, RemotePlaybackState } from "../api/connect";
+import type { SpotifyDevice, RemotePlaybackState, RemoteRepeat } from "../api/connect";
 
 interface PlayerStore {
   devicesOpen: boolean;
@@ -22,6 +22,12 @@ interface PlayerStore {
   setIsRemotePlayback: (isRemote: boolean) => void;
 
   syncRemotePlayback: (state: RemotePlaybackState | null) => void;
+  // shuffle/repeat as the remote device reports them. local playback keeps its
+  // own in queue.store; these only drive the buttons while another device plays
+  remoteShuffle: boolean;
+  remoteRepeat:  RemoteRepeat;
+  setRemoteShuffle: (on: boolean) => void;
+  setRemoteRepeat:  (r: RemoteRepeat) => void;
 
   queueOpen:    boolean;
   toggleQueue:  () => void;
@@ -104,6 +110,11 @@ export const usePlayerStore = create<PlayerStore>()(
       isRemotePlayback: false,
       setIsRemotePlayback: (isRemote) => set({ isRemotePlayback: isRemote }),
 
+      remoteShuffle: false,
+      remoteRepeat:  "off",
+      setRemoteShuffle: (on) => set({ remoteShuffle: on }),
+      setRemoteRepeat:  (r) => set({ remoteRepeat: r }),
+
       syncRemotePlayback: (state) =>
         set((s) => {
           if (!state || !state.device || !state.device.is_active) {
@@ -163,6 +174,10 @@ export const usePlayerStore = create<PlayerStore>()(
             durationMs: state.track?.duration_ms ?? s.durationMs,
             positionMs: remotePos,
             volume: state.device.volume_percent != null ? state.device.volume_percent : s.volume,
+            remoteShuffle: state.shuffle_state,
+            remoteRepeat: (["off", "context", "track"].includes(state.repeat_state)
+              ? state.repeat_state
+              : "off") as RemoteRepeat,
           };
         }),
 

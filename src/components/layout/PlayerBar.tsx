@@ -682,14 +682,21 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
   const { togglePlay, next: handleNext, prev: handlePrev, seek: doSeek } = usePlayerControls();
   const { activeDevice, isRemotePlayback, toggleDevices } = useDevices();
 
-  const { shuffle, repeat, toggleShuffle, cycleRepeat } = useQueueStore(
+  const { localShuffle, localRepeat, toggleShuffle, cycleRepeat } = useQueueStore(
     useShallow((s) => ({
-      shuffle: s.shuffle,
-      repeat:  s.repeat,
+      localShuffle: s.shuffle,
+      localRepeat:  s.repeat,
       toggleShuffle: s.toggleShuffle,
       cycleRepeat:   s.cycleRepeat,
     }))
   );
+  // while another device plays, the buttons mirror (and drive) its state
+  const remoteShuffle = usePlayerStore((s) => s.remoteShuffle);
+  const remoteRepeat  = usePlayerStore((s) => s.remoteRepeat);
+  const shuffle = isRemotePlayback ? remoteShuffle : localShuffle;
+  const repeat  = isRemotePlayback
+    ? (remoteRepeat === "track" ? "one" : remoteRepeat === "context" ? "all" : "none")
+    : localRepeat;
 
   /* The position ticker used to live here. It does not any more - see
      hooks/usePositionTicker, which Layout owns. Two PlayerBars on screen at

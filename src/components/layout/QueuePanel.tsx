@@ -10,6 +10,8 @@ import { meshGradient } from "../../lib/mesh";
 import type { TrackItem } from "../../types/spotify";
 import { Tooltip } from "../ui/Tooltip";
 import { EASE_DRAWER, EASE_OUT, SPRING_PANEL } from "../../lib/motion";
+import { useQuery } from "@tanstack/react-query";
+import { getRemoteQueue } from "../../api/connect";
 
 const WIDTH = 272;
 
@@ -182,11 +184,43 @@ function EmptyRow({ children }: { children: React.ReactNode }) {
   );
 }
 
+/* spotify's own queue on the device that's playing. read-only: spotify's api
+can add to it but not reorder or remove, so there's nothing to drag. */
+function RemoteQueue({ deviceName }: { deviceName: string }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["remote-queue"],
+    queryFn: getRemoteQueue,
+    refetchInterval: 5000,
+    staleTime: 2000,
+  });
+  const items = data?.queue ?? [];
+  return (
+    <>
+      <SectionHead label={`Next up on ${deviceName}`} />
+      {isLoading ? (
+        <EmptyRow>Loading queue...</EmptyRow>
+      ) : isError ? (
+        <EmptyRow>Couldn't read the queue on {deviceName}</EmptyRow>
+      ) : items.length === 0 ? (
+        <EmptyRow>Nothing queued on {deviceName}</EmptyRow>
+      ) : (
+        <div style={{ padding: "0 4px" }}>
+          {items.slice(0, 30).map((track, i) => (
+            <QueueTrackRow key={track.id + i} track={track} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function QueuePanel() {
   const toggleQueue     = usePlayerStore((s) => s.toggleQueue);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const currentTrack    = usePlayerStore((s) => s.currentTrack);
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
+  const isRemote        = usePlayerStore((s) => s.isRemotePlayback);
+  const remoteName      = usePlayerStore((s) => s.activeDevice?.name ?? "device");
 
   const queue        = useQueueStore((s) => s.queue);
   const history      = useQueueStore((s) => s.history);
@@ -263,6 +297,7 @@ export function QueuePanel() {
             : <EmptyRow>Nothing playing</EmptyRow>}
 
           {/* next up */}
+          {isRemote ? <RemoteQueue deviceName={remoteName} /> : <>
           <SectionHead label="Next up" onClear={queue.length > 0 ? clearQueue : undefined} />
           {queue.length === 0 ? (
             <div className="t-caption" style={{ margin: "0 12px", padding: "16px 14px", borderRadius: 10, border: "1.5px dashed var(--color-glass-border)", background: "var(--color-glass)", display: "flex", alignItems: "center", gap: 9, fontSize: 12, color: "var(--color-text-dim)" }}>
@@ -310,6 +345,7 @@ export function QueuePanel() {
               </AnimatePresence>
             </Reorder.Group>
           )}
+          </>}
 
           {/* history */}
           {history.length > 0 && (

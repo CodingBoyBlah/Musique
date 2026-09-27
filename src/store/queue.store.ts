@@ -3,6 +3,8 @@ import { persist } from "zustand/middleware";
 import { dedupedStorage } from "../lib/persistStorage";
 import type { TrackItem } from "../types/spotify";
 import { usePlayerStore } from "./player.store";
+import { remoteAddToQueue, remoteSetShuffle, remoteSetRepeat, type RemoteRepeat } from "../api/connect";
+import { toast } from "./toast.store";
 
 const PERSIST_CAP = 1000;
 
@@ -65,8 +67,16 @@ export const useQueueStore = create<QueueStore>()(
       // queued twice. the queue panel keys rows by object identity, so two
       // entries sharing one object would share one row (and removing one
       // would animate the other out).
-      enqueue: (track) =>
-        set((s) => ({ queue: [...s.queue, { ...track }] })),
+      enqueue: (track) => {
+        // another device is playing: the queue that matters is spotify's own
+        if (usePlayerStore.getState().isRemotePlayback) {
+          remoteAddToQueue(track.id)
+            .then(() => toast(`Queued on ${usePlayerStore.getState().activeDevice?.name ?? "device"}`))
+            .catch(() => toast.error("Couldn't queue on the remote device"));
+          return;
+        }
+        set((s) => ({ queue: [...s.queue, { ...track }] }));
+      },
 
       playContext: (tracks, startIndex, contextId = null) => {
         const start = tracks[startIndex] ?? null;
@@ -122,7 +132,17 @@ export const useQueueStore = create<QueueStore>()(
       clearHistory: () => set({ history: [] }),
       clearAll:     () => set({ queue: [], history: [], contextTracks: [], contextId: null }),
 
-      toggleShuffle: () =>
+      toggleShuffle: () => {
+        const p = usePlayerStore.getState();
+        if (p.isRemotePlayback) {
+          const next = !p.remoteShuffle;
+          p.setRemoteShuffle(next);
+          remoteSetShuffle(next).catch(() => {
+            usePlayerStore.getState().setRemoteShuffle(!next);
+            toast.error("Couldn't change shuffle on the remote device");
+          });
+          return;
+        }
         set((s) => {
           if (!s.shuffle) {
             // turning on: shuffle the upcoming queue
@@ -137,14 +157,27 @@ export const useQueueStore = create<QueueStore>()(
             return { shuffle: false, queue: upcoming };
           }
           return { shuffle: false };
-        }),
+        });
+      },
 
-      cycleRepeat: () =>
+      cycleRepeat: () => {
+        const p = usePlayerStore.getState();
+        if (p.isRemotePlayback) {
+          const prev = p.remoteRepeat;
+          const next: RemoteRepeat = prev === "off" ? "context" : prev === "context" ? "track" : "off";
+          p.setRemoteRepeat(next);
+          remoteSetRepeat(next).catch(() => {
+            usePlayerStore.getState().setRemoteRepeat(prev);
+            toast.error("Couldn't change repeat on the remote device");
+          });
+          return;
+        }
         set((s) => {
           const next: Repeat =
             s.repeat === "none" ? "all" : s.repeat === "all" ? "one" : "none";
           return { repeat: next };
-        }),
+        });
+      },
 
       advance: (current) => {
         const { queue, history, contextTracks, repeat, shuffle } = get();

@@ -911,6 +911,11 @@ pub fn run() {
             commands::connect::remote_seek,
             commands::connect::remote_set_volume,
             commands::connect::get_musique_device_id,
+            commands::connect::get_remote_queue,
+            commands::connect::remote_set_shuffle,
+            commands::connect::remote_set_repeat,
+            commands::connect::remote_add_to_queue,
+            commands::connect::remote_play_context,
             mem_trim::trim_memory,
         ])
         .run(tauri::generate_context!())

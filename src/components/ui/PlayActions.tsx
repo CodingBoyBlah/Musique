@@ -7,6 +7,8 @@ import { usePinsStore, type PinnedItem } from "../../store/pins.store";
 import { useSpeedDialStore } from "../../store/speedDial.store";
 import { usePrefsStore } from "../../store/prefs.store";
 import { playTrack, pausePlayback, resumeOrPlay } from "../../api/playback";
+import { remotePlayContext, remoteSetShuffle } from "../../api/connect";
+import { toast } from "../../store/toast.store";
 import type { TrackItem } from "../../types/spotify";
 import { EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING, zTransform } from "../../lib/motion";
 import "../../styles/ui.css";
@@ -73,8 +75,26 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
   // nowhere to show up, so the button goes and Share takes its slot
   const pinnable = pinItem.type !== "artist" && sidebarMode !== "playlists";
 
+  // another device is playing: start the real context over there so its own
+  // next/prev/shuffle walk the album/playlist, not a one-track queue
+  function playRemote(shuffled: boolean): boolean {
+    const p = usePlayerStore.getState();
+    if (!p.isRemotePlayback || !/^[A-Za-z0-9]{22}$/.test(pinItem.id)) return false;
+    const deviceId = p.activeDevice?.id ?? null;
+    const go = async () => {
+      if (shuffled) {
+        await remoteSetShuffle(true).catch(() => {});
+        p.setRemoteShuffle(true);
+      }
+      await remotePlayContext({ contextUri: `spotify:${pinItem.type}:${pinItem.id}`, deviceId });
+    };
+    go().catch(() => toast.error(`Couldn't play on ${p.activeDevice?.name ?? "the remote device"}`));
+    return true;
+  }
+
   function onPlay() {
     if (playing) { pausePlayback().catch(() => {}); return; }
+    if (!isActive && playRemote(false)) return;
     if (isActive && currentTrack) {
       const pos = sessionReady ? usePlayerStore.getState().positionMs : 0;
       resumeOrPlay(currentTrack.id, pos).catch(() => {});
@@ -95,6 +115,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
   }
 
   function onShuffle() {
+    if (playRemote(true)) return;
     const start = playContextShuffled(tracks, contextId);
     if (start) {
       setCurrentTrack(start);
