@@ -589,3 +589,67 @@ mod radio_tests {
         assert_eq!(context_track_ids(&ctx), vec!["one", "two"]);
     }
 }
+
+// ── spotify-made playlists ───────────────────────────────────────────────────
+
+/// a playlist read straight off spclient's `playlist/v2` - the path for the
+/// algorithmic and editorial ones (Daily Mix, Discover Weekly, "This Is",
+/// radio mixes) the public web api 404s for most apps. tracks are hydrated
+/// through extended-metadata.
+pub(crate) async fn internal_playlist(
+    app: &AppHandle,
+    id: &str,
+) -> Result<crate::spotify::types::PlaylistDetail, AppError> {
+    use librespot_protocol::playlist4_external::SelectedListContent;
+    use protobuf::Message;
+
+    let sid = librespot_core::SpotifyId::from_base62(id)
+        .map_err(|_| AppError::InvalidInput(format!("bad playlist id: {id}")))?;
+    let s = crate::internal::spclient::session(app).await?;
+
+    let (name, description, image_url, owner, ids) = match s.spclient().get_playlist(&sid).await {
+        Ok(bytes) => {
+            let list = SelectedListContent::parse_from_bytes(&bytes)
+                .map_err(|e| AppError::Network(format!("playlist v2: {e}")))?;
+            let attrs = list.attributes.as_ref();
+            let ids: Vec<String> = list
+                .contents
+                .as_ref()
+                .map(|c| {
+                    c.items
+                        .iter()
+                        .filter(|i| i.uri().starts_with("spotify:track:"))
+                        .map(|i| crate::internal::spclient::uri_id(i.uri()).to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            (
+                attrs.map(|a| a.name().to_string()).filter(|n| !n.is_empty()),
+                attrs.map(|a| a.description().to_string()).filter(|d| !d.is_empty()),
+                attrs.filter(|a| a.has_picture()).and_then(|a| crate::internal::spclient::image_url(a.picture())),
+                Some(list.owner_username().to_string()).filter(|o| !o.is_empty()),
+                ids,
+            )
+        }
+        // some personalised lists only resolve as a context
+        Err(_) => {
+            let (title, ids) = resolve_context_ids(app, &format!("spotify:playlist:{id}")).await?;
+            (title, None, None, Some("spotify".to_string()), ids)
+        }
+    };
+
+    let tracks = crate::internal::metadata::tracks(app, &ids).await?;
+    Ok(crate::spotify::types::PlaylistDetail {
+        id: id.to_string(),
+        name: name.unwrap_or_else(|| "Playlist".into()),
+        description,
+        image_url,
+        owner_name: owner.as_deref().map(|o| if o == "spotify" { "Spotify".to_string() } else { o.to_string() }),
+        total_tracks: tracks.len() as i64,
+        tracks,
+        owner_id: owner,
+        public: None,
+        collaborative: None,
+        followers: None,
+    })
+}

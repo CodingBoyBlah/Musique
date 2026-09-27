@@ -443,6 +443,14 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
     let pl: SpPlaylist = match spotify::spotify_get(&token, &format!("{BASE}/playlists/{id}")).await {
         Ok(pl) => pl,
         Err(e) => {
+            // spotify-made playlists (daily mix, discover weekly, editorial)
+            // 404 on the public api for most apps; spclient still serves them.
+            // a real network outage falls through to whatever we cached
+            if let Ok(detail) = crate::commands::internal::internal_playlist(&app, &id).await {
+                if !detail.tracks.is_empty() {
+                    return Ok(detail);
+                }
+            }
             return match crate::commands::library::load_cached_playlist(&pool, &id).await? {
                 Some(detail) => Ok(detail),
                 None         => Err(e),
