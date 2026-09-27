@@ -19,16 +19,22 @@ import { AnimatedPlayPause } from "../playground/AnimatedIcons";
 
 // the page this row plays. Artists can't be pinned to the sidebar, so an
 // artist page passes its own right-hand control (Follow) as `accessory`.
-type ContextItem = PinnedItem | (Omit<PinnedItem, "type"> & { type: "artist" });
+type ContextItem = PinnedItem | (Omit<PinnedItem, "type"> & { type: "artist" | "show" });
 
 interface Props {
   tracks:     TrackItem[];
   contextId:  string;
   pinItem:    ContextItem;
   accessory?: ReactNode;
+  /* how to start playback once the context is queued. defaults to playing
+     the first item from the top; podcasts pass one that resumes the episode
+     where you left off */
+  onStart?:   (start: TrackItem) => void;
+  // a podcast in shuffled order makes no sense
+  hideShuffle?: boolean;
 }
 
-export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
+export function PlayActions({ tracks, contextId, pinItem, accessory, onStart, hideShuffle }: Props) {
   const setCurrentTrack     = usePlayerStore((s) => s.setCurrentTrack);
   const currentTrack        = usePlayerStore((s) => s.currentTrack);
   const isPlaying           = usePlayerStore((s) => s.isPlaying);
@@ -74,7 +80,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
   const pinned   = pins.some((p) => p.id === pinItem.id);
   // with the sidebar listing every playlist instead of pins, a pin has
   // nowhere to show up, so the button goes and Share takes its slot
-  const pinnable = pinItem.type !== "artist" && sidebarMode !== "playlists";
+  const pinnable = (pinItem.type === "playlist" || pinItem.type === "album") && sidebarMode !== "playlists";
 
   // another device is playing: start the real context over there so its own
   // next/prev/shuffle walk the album/playlist, not a one-track queue
@@ -104,7 +110,8 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
     const start = playContext(tracks, 0, contextId);
     if (start) {
       setCurrentTrack(start);
-      playTrack(start.id).catch(() => {});
+      if (onStart) onStart(start);
+      else playTrack(start.id).catch(() => {});
       if (pinItem.type === "playlist") {
         useSpeedDialStore.getState().recordPlaylist({ id: pinItem.id, name: pinItem.name, image_url: pinItem.image_url });
       } else if (pinItem.type === "album") {
@@ -135,7 +142,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
 
   // no pin button to sit beside: Share becomes a labelled pill of the same
   // size. an artist page has Follow there instead, so it keeps the icon
-  const shareLabelled = !pinnable && pinItem.type !== "artist";
+  const shareLabelled = !pinnable && pinItem.type !== "artist" && pinItem.type !== "show";
 
   return (
     <div ref={rootRef} className="flex items-center mt-2" style={{ gap: 10, width: "100%" }}>
@@ -204,7 +211,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
         </motion.button>
       </Tooltip>
 
-      <Tooltip label={shuffleActive ? "Shuffle active" : "Shuffle play"} side="top">
+      {!hideShuffle && <Tooltip label={shuffleActive ? "Shuffle active" : "Shuffle play"} side="top">
         <motion.button
           layout
           initial={false}
@@ -272,7 +279,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
             )}
           </AnimatePresence>
         </motion.button>
-      </Tooltip>
+      </Tooltip>}
 
       <div style={{ flex: 1 }} />
 
