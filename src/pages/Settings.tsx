@@ -16,6 +16,7 @@ import {
   type ConnectionStatus,
 } from "../store/credentials.store";
 import { usePrefsStore, type SidebarMode } from "../store/prefs.store";
+import { usePlayerStore } from "../store/player.store";
 import {
   type AudioQuality,
   type PlaybackBackend,
@@ -671,8 +672,24 @@ function GeneralCard() {
 function FeaturesCard() {
   const showStats = usePrefsStore((s) => s.showStats);
   const setShowStats = usePrefsStore((s) => s.setShowStats);
+  const showFriends = usePrefsStore((s) => s.showFriends);
+  const setShowFriends = usePrefsStore((s) => s.setShowFriends);
   return (
     <Card title="Features">
+      <SettingRow
+        label="Friend activity"
+        hint="The Friends panel in the top bar: what people you follow are playing, and Jams."
+        control={
+          <Switch
+            checked={showFriends}
+            onChange={(v) => {
+              setShowFriends(v);
+              if (!v && usePlayerStore.getState().friendsOpen) usePlayerStore.getState().toggleFriends();
+            }}
+          />
+        }
+      />
+      <Divider />
       <SettingRow
         label="Listening stats"
         hint="The Stats page in the sidebar: time listened, streaks, top songs and when you listen. Worked out on this device."

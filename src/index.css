@@ -1142,3 +1142,20 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
         background: rgba(255, 255, 255, 0.6);
     }
 }
+
+/* friends panel: a friend's cover turns into a play button on hover/focus */
+.fr-art-play {
+    opacity: 0;
+    transition: opacity 0.14s ease;
+}
+.fr-art:focus-visible .fr-art-play {
+    opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+    .fr-row:hover .fr-art-play {
+        opacity: 1;
+    }
+    .fr-ctx:hover {
+        color: var(--color-text-hi) !important;
+    }
+}

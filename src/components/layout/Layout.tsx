@@ -34,7 +34,10 @@ const MAC_COLLAPSED_SIDEBAR_W = 72;
 export default function Layout() {
   const queueOpen = usePlayerStore((s) => s.queueOpen);
   const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
-  const friendsOpen = usePlayerStore((s) => s.friendsOpen);
+  // the panel can be switched off in settings; a stale open flag must not keep it
+  const friendsFlag = usePlayerStore((s) => s.friendsOpen);
+  const friendsOn = usePrefsStore((s) => s.showFriends);
+  const friendsOpen = friendsFlag && friendsOn;
   const immersiveOpen = usePlayerStore((s) => s.immersiveOpen);
   // one owner for the playhead clock, whatever else is on screen
   usePositionTicker();

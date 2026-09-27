@@ -49,6 +49,8 @@ interface PrefsStore {
   // optional pages / panels the user can switch off entirely
   showStats: boolean;
   setShowStats: (v: boolean) => void;
+  showFriends: boolean;
+  setShowFriends: (v: boolean) => void;
 
   sidebarMode: SidebarMode;
   setSidebarMode: (v: SidebarMode) => void;
@@ -102,6 +104,8 @@ export const usePrefsStore = create<PrefsStore>()(
 
       showStats: true,
       setShowStats: (v) => set({ showStats: v }),
+      showFriends: true,
+      setShowFriends: (v) => set({ showFriends: v }),
 
       sidebarMode: "pins",
       setSidebarMode: (v) => set({ sidebarMode: v }),
