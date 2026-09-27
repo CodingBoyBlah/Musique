@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, UserPlus, Link2, Globe } from "@/lib/icons";
+import { Check, UserPlus, Link2 } from "@/lib/icons";
 import {
   getUserProfile,
   getUserFollowers,
@@ -176,19 +176,17 @@ export default function ProfilePage() {
               </motion.button>
             </Tooltip>
           )}
-          <Tooltip label="Copy profile link" side="top">
-            <motion.button
-              type="button"
-              className="ghost-pill focus-ring"
-              onClick={() => shareSpotifyLink("user", data.id)}
-              whileTap={PRESS}
-              transition={PRESS_TRANSITION}
-              aria-label="Copy profile link"
-              style={{ height: 36, width: 36, borderRadius: 99, color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
-            >
-              <Globe size={15} strokeWidth={2.2} />
-            </motion.button>
-          </Tooltip>
+          <motion.button
+            type="button"
+            className="ghost-pill focus-ring"
+            onClick={() => shareSpotifyLink("user", data.id)}
+            whileTap={PRESS}
+            transition={PRESS_TRANSITION}
+            style={{ height: 36, padding: "0 16px", borderRadius: 99, color: "#ffffff", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+          >
+            <Link2 size={14} strokeWidth={2.2} />
+            <span>Copy link</span>
+          </motion.button>
         </div>
       </PageHeader>
 
