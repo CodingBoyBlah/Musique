@@ -295,13 +295,13 @@ export default function ArtistPage() {
         <ArtistAbout
           name={data.name}
           biography={extras?.biography ?? null}
-          image={overview?.gallery[0] ?? extras?.gallery[0] ?? data.image_url}
-          stats={[
-            overview?.monthly_listeners != null ? `${overview.monthly_listeners.toLocaleString()} monthly listeners` : null,
-            overview?.followers != null ? `${overview.followers.toLocaleString()} followers` : null,
-            overview?.world_rank ? `#${overview.world_rank} in the world` : null,
-            extras?.active_years ? `Active ${extras.active_years}` : null,
-          ].filter((s): s is string => !!s)}
+          images={[...(overview?.gallery ?? []), ...(extras?.gallery ?? []), ...(data.image_url ? [data.image_url] : [])].filter((v, i, arr) => arr.indexOf(v) === i)}
+          stats={{
+            monthlyListeners: overview?.monthly_listeners,
+            followers: overview?.followers,
+            worldRank: overview?.world_rank,
+            activeYears: extras?.active_years,
+          }}
           cities={overview?.top_cities}
           links={overview?.external_links}
         />
