@@ -40,7 +40,7 @@ import type {
   SearchResults,
 } from "../types/spotify";
 
-const CATEGORIES = ["all", "songs", "artists", "albums", "playlists", "podcasts"] as const;
+const CATEGORIES = ["all", "songs", "artists", "albums", "playlists", "podcasts", "audiobooks"] as const;
 type Category = (typeof CATEGORIES)[number];
 const CATEGORY_LABEL: Record<Category, string> = {
   all: "All",
@@ -49,6 +49,7 @@ const CATEGORY_LABEL: Record<Category, string> = {
   albums: "Albums",
   playlists: "Playlists",
   podcasts: "Podcasts",
+  audiobooks: "Audiobooks",
 };
 const LABEL_TO_CATEGORY = Object.fromEntries(
   CATEGORIES.map((c) => [CATEGORY_LABEL[c], c]),
@@ -725,6 +726,14 @@ export default function Search() {
                 renderItem={(s, i) => <MediaTile to={`/show/${s.id}`} imageUrl={s.image_url} title={s.name} subtitle={s.publisher} index={i} />}
                 extra={showAll("podcasts")}
               />
+              <Shelf
+                id="search-audiobooks"
+                title="Audiobooks"
+                items={data.audiobooks ?? []}
+                getKey={(b) => b.id}
+                renderItem={(b, i) => <MediaTile to={`/audiobook/${b.id}`} imageUrl={b.image_url} title={b.name} subtitle={b.authors.join(", ")} index={i} />}
+                extra={showAll("audiobooks")}
+              />
             </>
           )}
 
@@ -775,6 +784,18 @@ export default function Search() {
               </div>
             ) : (
               <EmptyState title="No podcasts match" description="Try All to see other kinds of results." />
+            )
+          )}
+
+          {cat === "audiobooks" && (
+            (data.audiobooks?.length ?? 0) > 0 ? (
+              <AlbumGrid>
+                {data.audiobooks!.map((b, i) => (
+                  <MediaTile key={b.id} to={`/audiobook/${b.id}`} imageUrl={b.image_url} title={b.name} subtitle={b.authors.join(", ")} index={i} />
+                ))}
+              </AlbumGrid>
+            ) : (
+              <EmptyState title="No audiobooks match" description="Audiobooks aren't available in every country." />
             )
           )}
 

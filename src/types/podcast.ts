@@ -36,3 +36,24 @@ export interface EpisodePage {
   episodes: EpisodeItem[];
   next_offset: number | null;
 }
+
+export interface AudiobookItem {
+  id: string;
+  name: string;
+  authors: string[];
+  narrators: string[];
+  publisher: string | null;
+  image_url: string | null;
+  description: string | null;
+  total_chapters: number | null;
+  explicit: boolean;
+  edition: string | null;
+}
+
+// chapters are shaped like episodes (their uris are spotify:episode:...)
+export interface AudiobookDetail extends AudiobookItem {
+  languages: string[];
+  copyrights: string[];
+  chapters: EpisodeItem[];
+  next_offset: number | null;
+}

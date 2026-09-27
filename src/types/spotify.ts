@@ -1,4 +1,4 @@
-import type { ShowItem, EpisodeItem } from "./podcast";
+import type { ShowItem, EpisodeItem, AudiobookItem } from "./podcast";
 
 export interface ArtistItem {
   id:          string;
@@ -45,6 +45,7 @@ export interface SearchResults {
   playlists: PlaylistCard[];
   shows?:    ShowItem[];
   episodes?: EpisodeItem[];
+  audiobooks?: AudiobookItem[];
 }
 
 export interface Profile {

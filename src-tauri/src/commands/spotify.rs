@@ -188,14 +188,24 @@ pub async fn search(
 ) -> Result<SearchResults, AppError> {
     let token = tok(&app).await?;
     let t     = types.as_deref().unwrap_or("track,artist,album,playlist");
+    let want_books = t.split(',').any(|k| k.trim() == "audiobook");
+    let t: String = t.split(',').map(str::trim).filter(|k| *k != "audiobook").collect::<Vec<_>>().join(",");
 
     let mut url = url::Url::parse(&format!("{BASE}/search")).unwrap();
     url.query_pairs_mut()
         .append_pair("q",     &query)
-        .append_pair("type",  t)
+        .append_pair("type",  &t)
         .append_pair("limit", "20");
 
-    let raw: SpSearchResponse = spotify::spotify_get(&token, url.as_str()).await?;
+    let books = async {
+        if want_books {
+            crate::commands::audiobooks::search_audiobooks(&token, &query).await
+        } else {
+            Vec::new()
+        }
+    };
+    let (raw, audiobooks) = tokio::join!(spotify::spotify_get::<SpSearchResponse>(&token, url.as_str()), books);
+    let raw = raw?;
 
     let result = SearchResults {
         artists: raw.artists.as_ref()
@@ -227,6 +237,7 @@ pub async fn search(
             .map(|a| a.iter().filter(|e| !e.is_null())
                 .filter_map(|e| crate::commands::podcasts::episode_from(e, None)).collect())
             .unwrap_or_default(),
+        audiobooks,
     };
 
     let pool = &app.state::<AppState>().db.clone();

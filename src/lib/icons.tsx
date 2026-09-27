@@ -73,6 +73,8 @@ export const iconPaths = {
   AlertTriangle: "M10.27 4.5a2 2 0 0 1 3.46 0l7.5 13a2 2 0 0 1-1.73 3H4.5a2 2 0 0 1-1.73-3zM12 9.5v4M12 17h.01",
   ArrowRight: "M5 12h14M13 6l6 6-6 6",
   ArrowUpRight: "M7 17 17 7M8.5 7H17v8.5",
+  Book:
+    "M5 5.5A2.5 2.5 0 0 1 7.5 3H19v14H7.5A2.5 2.5 0 0 0 5 19.5zM5 19.5A2.5 2.5 0 0 0 7.5 22H19v-5M9 7.5h6",
   Captions: rrect(3, 5, 18, 14, 3) + "M7 12h3.5M13.5 12h3.5M7 15.5h6M16 15.5h1",
   Cast:
     "M2.5 8V6.5A2.5 2.5 0 0 1 5 4h14a2.5 2.5 0 0 1 2.5 2.5v11A2.5 2.5 0 0 1 19 20h-5" +
@@ -317,6 +319,7 @@ function createVolumeIcon(displayName: string, waves: string) {
 export const AlertTriangle = createIcon("AlertTriangle");
 export const ArrowRight = createIcon("ArrowRight");
 export const ArrowUpRight = createIcon("ArrowUpRight");
+export const Book = createIcon("Book");
 export const Captions = createIcon("Captions");
 export const Cast = createIcon("Cast");
 export const Check = createIcon("Check");
@@ -386,7 +389,7 @@ export const Volume2 = createVolumeIcon("Volume2", "M16 9.5a3.5 3.5 0 0 1 0 5M18
 export const VolumeX = createVolumeIcon("VolumeX", "M16.5 9.5l5 5M21.5 9.5l-5 5");
 
 const ICONS: Record<string, LucideIcon> = {
-  AlertTriangle, ArrowRight, ArrowUpRight, Captions, Cast, Check,
+  AlertTriangle, ArrowRight, ArrowUpRight, Book, Captions, Cast, Check,
   ChevronDown, ChevronLeft, ChevronRight, Clock, Devices, Disc3, Eye, EyeOff,
   Globe, GripVertical, Heart, Home, Info, Languages, Laptop, Link, Link2,
   ListMusic, ListPlus, Loader2, LogIn, LogOut, Maximize2, Mic, Minimize2, Minus,

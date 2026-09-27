@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Heart, Users, Disc3, Mic } from "@/lib/icons";
+import { Heart, Users, Disc3, Mic, Book } from "@/lib/icons";
+import { getSavedAudiobooks } from "../api/audiobooks";
 import { useQuery } from "@tanstack/react-query";
 import { getSavedShows } from "../api/podcasts";
 import { MediaTile } from "../components/ui/MediaTile";
@@ -30,7 +31,7 @@ import { useReflowPulse } from "../hooks/useReflowPulse";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
 
-const TAB_KEYS = ["songs", "albums", "artists", "podcasts"] as const;
+const TAB_KEYS = ["songs", "albums", "artists", "podcasts", "audiobooks"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 
 // liked songs
@@ -222,6 +223,32 @@ function PodcastsTab() {
   );
 }
 
+// audiobooks you saved
+function AudiobooksTab() {
+  const { data: books = [], isLoading } = useQuery({
+    queryKey: ["library", "audiobooks"],
+    queryFn: getSavedAudiobooks,
+    staleTime: 300_000,
+  });
+  if (isLoading) return <CardGridSkeleton count={10} />;
+  if (books.length === 0) {
+    return (
+      <EmptyState
+        icon={<Book size={22} />}
+        title="No audiobooks yet"
+        description="Save an audiobook and it lands here. Availability depends on your country."
+      />
+    );
+  }
+  return (
+    <AlbumGrid>
+      {books.map((b, i) => (
+        <MediaTile key={b.id} to={`/audiobook/${b.id}`} imageUrl={b.image_url} title={b.name} subtitle={b.authors.join(", ")} index={i} />
+      ))}
+    </AlbumGrid>
+  );
+}
+
 export default function Library() {
   useReflowPulse();
   const { loggedIn } = useAuth();
@@ -272,6 +299,7 @@ export default function Library() {
         {tab === "albums"  && <AlbumsTab />}
         {tab === "artists" && <ArtistsTab />}
         {tab === "podcasts" && <PodcastsTab />}
+        {tab === "audiobooks" && <AudiobooksTab />}
       </motion.div>
     </motion.div>
   );

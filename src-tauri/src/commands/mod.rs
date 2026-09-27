@@ -1,3 +1,4 @@
+pub mod audiobooks;
 pub mod auth;
 pub mod credentials;
 pub mod internal;
