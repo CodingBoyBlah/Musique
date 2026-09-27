@@ -11,6 +11,7 @@ import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
 import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
 import { Shelf } from "../components/ui/Shelf";
 import { CoverArt } from "../components/ui/CoverArt";
+import { MediaTile } from "../components/ui/MediaTile";
 import { TrackRow } from "../components/ui/TrackRow";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { AnimatedPlayPause } from "../components/playground/AnimatedIcons";
@@ -26,7 +27,7 @@ import { releaseYear } from "../utils/fmt";
 import { errMsg } from "../lib/err";
 import { toast } from "../store/toast.store";
 import { useReflowPulse } from "../hooks/useReflowPulse";
-import { getGridItemTransition, EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING } from "../lib/motion";
+import { EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING } from "../lib/motion";
 import type {
   PlaylistCard as PlaylistCardType,
   ArtistItem,
@@ -51,7 +52,6 @@ const LABEL_TO_CATEGORY = Object.fromEntries(
 // songs shown beside the top result before "Show all"
 const SONGS_PREVIEW = 4;
 
-const MotionLink = motion.create(Link);
 
 // ─── Top Result resolution & card ───────────────────────────────────────────
 
@@ -360,83 +360,14 @@ const TopResultCard = memo(function TopResultCard({
 // dressed exactly like AlbumCard so a shelf of playlists sits flush with a
 // shelf of albums: same padding, radius, artwork shadow and type
 const PlaylistResultCard = memo(function PlaylistResultCard({ playlist, index = 0 }: { playlist: PlaylistCardType; index?: number }) {
-  useReflowPulse();
-  const [hover, setHover] = useState(false);
   return (
-    <MotionLink
+    <MediaTile
       to={`/playlist/${playlist.id}`}
-      layout="position"
-      className="card-link"
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onFocus={() => setHover(true)}
-      onBlur={() => setHover(false)}
-      whileHover={{ y: -3 }}
-      whileTap={{ scale: 0.98 }}
-      transition={{ type: "spring", stiffness: 480, damping: 36, ...getGridItemTransition(index) }}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        padding: 10,
-        borderRadius: 12,
-        width: "100%",
-        boxSizing: "border-box",
-        textDecoration: "none",
-        color: "inherit",
-        background: hover ? "var(--color-surface-hover)" : "transparent",
-        transition: "background 0.18s ease",
-        minWidth: 0,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          aspectRatio: "1 / 1",
-          borderRadius: 8,
-          overflow: "hidden",
-          flexShrink: 0,
-          boxShadow: hover ? "0 12px 28px rgba(0, 0, 0, 0.5)" : "0 4px 14px rgba(0, 0, 0, 0.3)",
-          transition: "box-shadow 0.25s ease",
-        }}
-      >
-        <CoverArt url={playlist.image_url} alt={playlist.name} size={160} style={{ width: "100%", height: "100%" }} />
-      </div>
-      <span
-        style={{
-          display: "block",
-          fontSize: 13.5,
-          fontWeight: 600,
-          letterSpacing: "-0.012em",
-          lineHeight: "17px",
-          height: 17,
-          color: "var(--color-text-hi)",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          minWidth: 0,
-        }}
-      >
-        {playlist.name}
-      </span>
-      <span
-        className="t-caption"
-        style={{
-          display: "block",
-          fontSize: 12,
-          lineHeight: "15px",
-          height: 15,
-          color: "var(--color-text-dim)",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          minWidth: 0,
-        }}
-      >
-        {playlist.owner_name ? `By ${playlist.owner_name}` : "Playlist"}
-      </span>
-    </MotionLink>
+      imageUrl={playlist.image_url}
+      title={playlist.name}
+      subtitle={playlist.owner_name ? `By ${playlist.owner_name}` : "Playlist"}
+      index={index}
+    />
   );
 });
 

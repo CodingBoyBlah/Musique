@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Pin, Pencil, Trash2, Heart } from "@/lib/icons";
 import { usePlaylist } from "../hooks/usePlaylist";
@@ -197,7 +197,9 @@ export default function PlaylistPage() {
           <ExpandableDescription text={data.description} />
         )}
         <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
-          {data.owner_name && <>{data.owner_name} · </>}
+          {data.owner_name && (data.owner_id
+            ? <><Link to={`/user/${data.owner_id}`} style={{ color: "var(--color-text-hi)", fontWeight: 600, textDecoration: "none" }}>{data.owner_name}</Link> · </>
+            : <>{data.owner_name} · </>)}
           {data.collaborative && <>Collaborative · </>}
           {data.public === false && !data.collaborative && isOwner && <>Private · </>}
           {data.followers != null && data.followers > 0 && (

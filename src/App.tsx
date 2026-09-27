@@ -19,6 +19,7 @@ const PlaylistPage = lazy(() => import("./pages/PlaylistPage"));
 const ArtistPage = lazy(() => import("./pages/ArtistPage"));
 const AlbumPage = lazy(() => import("./pages/AlbumPage"));
 const Playground = lazy(() => import("./pages/Playground"));
+const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 import { getCredentials, validateCredentials } from "./api/credentials";
 import { getAuthStatus } from "./api/auth";
 import {
@@ -419,6 +420,22 @@ export default function App() {
             element={
               <Suspense fallback={<Loader />}>
                 <AlbumPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="profile"
+            element={
+              <Suspense fallback={<Loader />}>
+                <ProfilePage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="user/:id"
+            element={
+              <Suspense fallback={<Loader />}>
+                <ProfilePage />
               </Suspense>
             }
           />

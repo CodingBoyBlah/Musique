@@ -321,6 +321,7 @@ function AccountMenu() {
 
             <div style={{ height: 1, background: "var(--color-divider)", margin: "0 2px 6px" }} />
 
+            {loggedIn && <AccountMenuItem icon={<User size={16} strokeWidth={2} />} label="Profile" onClick={() => go("/profile")} />}
             <AccountMenuItem icon={<Settings size={16} strokeWidth={2} />} label="Settings" onClick={() => go("/settings")} />
 
             <div style={{ height: 1, background: "var(--color-divider)", margin: "6px 2px" }} />
