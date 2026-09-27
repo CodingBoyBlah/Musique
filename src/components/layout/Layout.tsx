@@ -6,6 +6,7 @@ import Sidebar from "./Sidebar";
 import { PlayerBar } from "./PlayerBar";
 import { usePositionTicker } from "../../hooks/usePositionTicker";
 import { QueuePanel } from "./QueuePanel";
+import { FriendsPanel } from "./FriendsPanel";
 import { LyricsPanel } from "./LyricsPanel";
 import { QuitConfirm } from "../ui/QuitConfirm";
 import { Toaster } from "../ui/Toaster";
@@ -33,6 +34,7 @@ const MAC_COLLAPSED_SIDEBAR_W = 72;
 export default function Layout() {
   const queueOpen = usePlayerStore((s) => s.queueOpen);
   const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
+  const friendsOpen = usePlayerStore((s) => s.friendsOpen);
   const immersiveOpen = usePlayerStore((s) => s.immersiveOpen);
   // one owner for the playhead clock, whatever else is on screen
   usePositionTicker();
@@ -82,7 +84,7 @@ export default function Layout() {
       const w = window.innerWidth;
       const isCollapsed = sidebarCollapsed || w < 768;
       const sw = isCollapsed ? collapsedSidebarW : 232;
-      const rpw = lyricsOpen ? 366 : queueOpen ? 272 : 0;
+      const rpw = lyricsOpen ? 366 : queueOpen || friendsOpen ? 272 : 0;
       const nextCrush = w - sw - rpw < 340;
       setWillCrushMain((prev) => (prev === nextCrush ? prev : nextCrush));
     };
@@ -103,9 +105,9 @@ export default function Layout() {
       window.removeEventListener("resize", onResizeThrottled);
       if (rId) cancelAnimationFrame(rId);
     };
-  }, [sidebarCollapsed, collapsedSidebarW, lyricsOpen, queueOpen]);
+  }, [sidebarCollapsed, collapsedSidebarW, lyricsOpen, queueOpen, friendsOpen]);
 
-  const rawPanelWidth = lyricsOpen ? 366 : queueOpen ? 272 : 0;
+  const rawPanelWidth = lyricsOpen ? 366 : queueOpen || friendsOpen ? 272 : 0;
   const spacerWidth = willCrushMain ? 0 : rawPanelWidth;
 
   /* Right rail width, held through a close.
@@ -142,7 +144,7 @@ export default function Layout() {
 
   const onPanelExitComplete = () => {
     const s = usePlayerStore.getState();
-    if (!s.lyricsOpen && !s.queueOpen) bumpRailSettle();
+    if (!s.lyricsOpen && !s.queueOpen && !s.friendsOpen) bumpRailSettle();
   };
 
   /* `trim_memory` used to fire 1.5s after every navigation. That call empties
@@ -357,6 +359,9 @@ export default function Layout() {
               </AnimatePresence>
               <AnimatePresence initial={false} onExitComplete={onPanelExitComplete}>
                 {queueOpen && <QueuePanel key="queue" />}
+              </AnimatePresence>
+              <AnimatePresence initial={false} onExitComplete={onPanelExitComplete}>
+                {friendsOpen && <FriendsPanel key="friends" />}
               </AnimatePresence>
             </div>
           </div>

@@ -24,7 +24,8 @@ export function PageHeader({ imageUrl, eyebrow, title, round, children }: Props)
   const setPageTint = useUIStore((s) => s.setPageTint);
   const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
   const queueOpen = usePlayerStore((s) => s.queueOpen);
-  const isCompact = lyricsOpen || queueOpen;
+  const friendsOpen = usePlayerStore((s) => s.friendsOpen);
+  const isCompact = lyricsOpen || queueOpen || friendsOpen;
 
   // publish this page's cover to the UI store for live accent tinting
   useEffect(() => {

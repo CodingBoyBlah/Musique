@@ -32,6 +32,10 @@ interface PlayerStore {
   queueOpen:    boolean;
   toggleQueue:  () => void;
 
+  // friend activity, the third panel on the right rail
+  friendsOpen:   boolean;
+  toggleFriends: () => void;
+
   lyricsOpen:   boolean;
   toggleLyrics: () => void;
   setLyricsOpen: (open: boolean) => void;
@@ -182,12 +186,15 @@ export const usePlayerStore = create<PlayerStore>()(
         }),
 
       queueOpen:    false,
-      // queue + lyrics share the right rail, so opening one closes the other
-      toggleQueue:  () => set((s) => ({ queueOpen: !s.queueOpen, lyricsOpen: false })),
+      // queue, lyrics and friends share the right rail, so opening one closes the others
+      toggleQueue:  () => set((s) => ({ queueOpen: !s.queueOpen, lyricsOpen: false, friendsOpen: false })),
+
+      friendsOpen:   false,
+      toggleFriends: () => set((s) => ({ friendsOpen: !s.friendsOpen, lyricsOpen: false, queueOpen: false })),
 
       lyricsOpen:    false,
-      toggleLyrics:  () => set((s) => ({ lyricsOpen: !s.lyricsOpen, queueOpen: false })),
-      setLyricsOpen: (open) => set({ lyricsOpen: open }),
+      toggleLyrics:  () => set((s) => ({ lyricsOpen: !s.lyricsOpen, queueOpen: false, friendsOpen: false })),
+      setLyricsOpen: (open) => set(open ? { lyricsOpen: true, queueOpen: false, friendsOpen: false } : { lyricsOpen: false }),
 
       immersiveOpen:     false,
       setImmersiveOpen:  (open) => set({ immersiveOpen: open }),
@@ -238,6 +245,7 @@ export const usePlayerStore = create<PlayerStore>()(
           targetStateTime: 0,
           queueOpen: false,
           lyricsOpen: false,
+          friendsOpen: false,
           immersiveOpen: false,
           devicesOpen: false,
           isRemotePlayback: false,

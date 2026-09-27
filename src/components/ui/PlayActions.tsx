@@ -59,7 +59,8 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  const isCondensed = lyricsOpen || queueOpen || compact;
+  const friendsOpen = usePlayerStore((s) => s.friendsOpen);
+  const isCondensed = lyricsOpen || queueOpen || friendsOpen || compact;
 
   const shareKind = pinItem.type as ShareKind;
   const shareEntries = [

@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   ChevronLeft, ChevronRight,
-  User, Settings, LogOut, LogIn,
+  User, Users, Settings, LogOut, LogIn,
   Queue, Captions, Devices,
   PanelLeft, PanelLeftClose,
 } from "@/lib/icons";
@@ -430,6 +430,8 @@ export function TitleBar() {
   const toggleLyrics = usePlayerStore((s) => s.toggleLyrics);
   const queueOpen = usePlayerStore((s) => s.queueOpen);
   const toggleQueue = usePlayerStore((s) => s.toggleQueue);
+  const friendsOpen = usePlayerStore((s) => s.friendsOpen);
+  const toggleFriends = usePlayerStore((s) => s.toggleFriends);
   const hasTrack = usePlayerStore((s) => s.currentTrack !== null);
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
@@ -535,6 +537,16 @@ export function TitleBar() {
             aria-pressed={queueOpen}
           >
             <Queue size={17} strokeWidth={1.75} active={queueOpen} />
+          </CapsuleButton>
+
+          <CapsuleButton
+            label={friendsOpen ? "Hide friend activity" : "Friend activity"}
+            onClick={toggleFriends}
+            on={friendsOpen}
+            aria-label="Friend activity"
+            aria-pressed={friendsOpen}
+          >
+            <Users size={17} strokeWidth={1.75} active={friendsOpen} />
           </CapsuleButton>
 
           <span className="tb-sep" aria-hidden />
