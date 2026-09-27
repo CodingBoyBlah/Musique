@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -425,14 +425,17 @@ pub fn audio_probe() -> i32 {
 mod db;
 mod discord;
 mod errors;
+mod http;
 mod lastfm;
 mod library;
 mod lyrics;
 mod media_controls;
 mod playback;
+mod recommend;
 mod resample;
 mod sink;
 mod spotify;
+mod youtube;
 mod state;
 mod mem_trim;
 
@@ -528,7 +531,47 @@ mod native_crash {
     }
 }
 
+// librespot's log output, teed to stderr and to a temp file.
+//
+// This used to open(), write(), close() the log file on EVERY line, from
+// whichever thread emitted it - the session thread during connect, the
+// player/decoder threads during a load. librespot is chatty at Info level while
+// a track is starting, so the first play paid a few dozen synchronous file-open
+// syscalls on exactly the threads that needed to be getting audio out the door.
+// Now the record is formatted, handed to a bounded channel, and a dedicated
+// writer thread owns one long-lived file handle. Logging from the hot path
+// costs a format plus a channel push; if the writer ever falls behind, lines are
+// dropped rather than stalling playback.
 struct PlaybackLog;
+
+static LOG_TX: OnceLock<std::sync::mpsc::SyncSender<String>> = OnceLock::new();
+
+fn log_sink() -> &'static std::sync::mpsc::SyncSender<String> {
+    LOG_TX.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<String>(1024);
+        std::thread::Builder::new()
+            .name("playback-log".into())
+            .spawn(move || {
+                let mut p = std::env::temp_dir();
+                p.push("spotify-playback.log");
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&p)
+                    .ok();
+                while let Ok(line) = rx.recv() {
+                    use std::io::Write;
+                    eprint!("{line}");
+                    if let Some(f) = file.as_mut() {
+                        let _ = f.write_all(line.as_bytes());
+                    }
+                }
+            })
+            .ok();
+        tx
+    })
+}
+
 impl log::Log for PlaybackLog {
     fn enabled(&self, m: &log::Metadata) -> bool {
         m.target().starts_with("librespot") && m.level() <= log::Level::Info
@@ -538,17 +581,8 @@ impl log::Log for PlaybackLog {
             return;
         }
         let line = format!("[{}] {}: {}\n", r.level(), r.target(), r.args());
-        eprint!("{line}");
-        let mut p = std::env::temp_dir();
-        p.push("spotify-playback.log");
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&p)
-        {
-            use std::io::Write;
-            let _ = f.write_all(line.as_bytes());
-        }
+        // never block a player/session thread on disk or on a full queue
+        let _ = log_sink().try_send(line);
     }
     fn flush(&self) {}
 }
@@ -569,7 +603,7 @@ pub fn run() {
     if std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
         std::env::set_var(
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            "--js-flags=--max-old-space-size=96,--optimize-for-size --renderer-process-limit=1 --gpu-rasterization-msaa-sample-count=0 --num-raster-threads=1 --enable-features=TrimOnMemoryPressure,NetworkServiceInProcess --disable-background-networking --disable-component-update --disable-domain-reliability --disable-sync --disable-breakpad --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,BackForwardCache,GlobalMediaControls",
+            "--js-flags=--max-old-space-size=96,--optimize-for-size --renderer-process-limit=1 --gpu-rasterization-msaa-sample-count=0 --num-raster-threads=1 --enable-zero-copy --disk-cache-size=33554432 --media-cache-size=33554432 --disable-renderer-accessibility --disable-speech-api --disable-print-preview --enable-features=TrimOnMemoryPressure,NetworkServiceInProcess --disable-background-networking --disable-component-update --disable-domain-reliability --disable-sync --disable-breakpad --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,BackForwardCache,GlobalMediaControls",
         );
     }
 
@@ -577,8 +611,6 @@ pub fn run() {
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
-
-    mem_trim::start_memory_trimmer();
 
     let _ = dotenvy::from_filename("../.env");
     let _ = dotenvy::from_filename(".env");
@@ -652,25 +684,51 @@ pub fn run() {
             let media_tx = media_controls::start(app.handle().clone(), main_hwnd);
 
             // database + auth setup
+            //
+            // This block_on runs before the event loop starts, so every
+            // millisecond here is a millisecond the window sits unpainted.
+            // Reading the OS credential store is a slow, purely independent
+            // call, so it runs on a blocking thread while sqlite opens and
+            // migrates instead of after it.
             let handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
+                let tokens = tauri::async_runtime::spawn_blocking(auth::load_stored_tokens);
                 let pool = db::connection::create_pool(&handle).await;
                 // seed spotify creds from .env on first run, does nothing if theyre already set
                 commands::credentials::seed_credentials_from_env(&pool).await;
-                let auth_state = auth::init_auth_state(&pool).await;
+                let auth_state = auth::init_auth_state_with(
+                    &pool,
+                    tokens.await.unwrap_or(None),
+                )
+                .await;
                 handle.manage(state::AppState {
                     db: pool,
                     auth: Arc::new(RwLock::new(auth_state)),
                     playback: Arc::new(tokio::sync::Mutex::new(None)),
+                    yt: Arc::new(tokio::sync::Mutex::new(None)),
                     media_tx,
+                    sync_gate: Arc::new(RwLock::new(())),
                     backdrop_active,
                 });
                 Ok::<(), Box<dyn std::error::Error>>(())
             })?;
 
+            mem_trim::start_memory_trimmer(app.handle().clone());
+
             // background loops that just keep running
             let handle2 = app.handle().clone();
             tauri::async_runtime::spawn(auth::refresh_loop(handle2));
+
+            // Build the librespot session NOW, in the background, instead of
+            // waiting for the webview to mount, resolve auth over IPC and call
+            // warmup_playback. Connecting to the access point, registering the
+            // Connect device and waiting for the country packet is most of the
+            // cost of the first play; doing it while the UI is still painting
+            // means it is usually finished before the user can click anything.
+            let handle4 = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                commands::playback::warm_session_if_possible(handle4).await;
+            });
 
             let handle3 = app.handle().clone();
             tauri::async_runtime::spawn(library::library_sync_loop(handle3));
@@ -777,6 +835,7 @@ pub fn run() {
             commands::spotify::get_track,
             commands::spotify::get_playlist,
             commands::spotify::get_recommendations,
+            commands::spotify::record_listen_event,
             commands::playback::warmup_playback,
             commands::playback::play_track,
             commands::playback::retry_play_track,
@@ -786,6 +845,12 @@ pub fn run() {
             commands::playback::stop_playback,
             commands::playback::seek_playback,
             commands::playback::preload_track,
+            commands::playback::get_playback_backend,
+            commands::playback::set_playback_backend,
+            commands::playback::get_yt_match,
+            commands::playback::search_yt_candidates,
+            commands::playback::pin_yt_match,
+            commands::playback::forget_yt_match,
             commands::playback::set_volume,
             commands::playback::set_muted,
             commands::playback::get_volume,
@@ -793,6 +858,7 @@ pub fn run() {
             commands::playback::set_audio_quality,
             commands::playback::get_audio_cache_limit,
             commands::playback::set_audio_cache_limit,
+            commands::playback::get_output_latency_ms,
             commands::library::sync_library,
             commands::library::get_liked_songs,
             commands::library::get_liked_songs_count,
@@ -820,6 +886,7 @@ pub fn run() {
             commands::window::set_window_effect,
             commands::window::get_backdrop_active,
             commands::lyrics::get_lyrics,
+            commands::lyrics::set_lyrics_source,
             commands::share::resolve_odesli,
             commands::lastfm::lastfm_status,
             commands::lastfm::lastfm_save_api,

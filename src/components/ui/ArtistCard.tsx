@@ -1,63 +1,85 @@
-import { memo, useState } from "react";
+import { memo, useState, useId } from "react";
 import { Link } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import { ArrowUpRight, User } from "lucide-react";
+import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
+import { ArrowUpRight, User } from "@/lib/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { CoverArt } from "./CoverArt";
 import { prefetchArtist } from "../../lib/prefetch";
-import { gpuLayer, zTransform } from "../../lib/motion";
+import { gpuLayer, zTransform, REFLOW_SPRING, SPRING, EASE_OUT, getGridItemTransition } from "../../lib/motion";
+import "../../styles/ui.css";
+import { useReflowPulse } from "../../hooks/useReflowPulse";
 
 interface Props {
   artist: { id: string; name: string; image_url?: string | null };
   size?:  number;
+  index?: number;
+  style?: React.CSSProperties;
 }
 
 const MotionLink = motion.create(Link);
 
 // responsive grid of editorial artist cards, even gutters, fills the row
 export function ArtistGrid({ children }: { children: React.ReactNode }) {
+  const layoutGroupId = useId();
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(clamp(116px, 14vw, 160px), 1fr))",
-        gap: "clamp(10px, 1.4vw, 16px)",
-        width: "100%",
-      }}
-    >
-      {children}
-    </div>
+    <LayoutGroup id={layoutGroupId}>
+      <motion.div
+        layout="position"
+        transition={{ layout: REFLOW_SPRING }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(clamp(120px, 14vw, 175px), 1fr))",
+          gap: "clamp(10px, 1.4vw, 16px)",
+          width: "100%",
+        }}
+      >
+        {children}
+      </motion.div>
+    </LayoutGroup>
   );
 }
 
-function ArtistCardImpl({ artist }: Props) {
+function ArtistCardImpl({ artist, index = 0, style }: Props) {
+  useReflowPulse();
   const [hover, setHover] = useState(false);
   const qc = useQueryClient();
 
   return (
     <MotionLink
       to={`/artist/${artist.id}`}
+      layout="position"
+      className="card-link"
       transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchArtist(qc, artist.id); }}
       onMouseLeave={() => setHover(false)}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
       whileHover={{ y: -3 }}
-      transition={{ type: "spring", stiffness: 520, damping: 44 }}
+      whileTap={{ scale: 0.98 }}
+      transition={{
+        type: "spring",
+        stiffness: 520,
+        damping: 44,
+        ...getGridItemTransition(index),
+      }}
       style={{
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        padding: 12,
-        borderRadius: 16,
+        padding: 10,
+        borderRadius: 12,
         width: "100%",
         boxSizing: "border-box",
         textDecoration: "none",
         color: "inherit",
-        background: hover ? "var(--color-surface-elevated)" : "transparent",
+        background: hover ? "var(--color-surface-hover)" : "transparent",
         transition: "background 0.18s ease",
         position: "relative",
         cursor: "pointer",
         minWidth: 0,
+        overflow: "hidden",
         ...gpuLayer,
+        ...style,
       }}
     >
       {/* Editorial squircle frame with ambient depth and micro-badge */}
@@ -66,8 +88,9 @@ function ArtistCardImpl({ artist }: Props) {
           position: "relative",
           width: "100%",
           aspectRatio: "1 / 1",
-          borderRadius: 14,
+          borderRadius: 10,
           overflow: "hidden",
+          flexShrink: 0,
           boxShadow: hover
             ? "0 14px 32px -4px rgba(0, 0, 0, 0.55), 0 0 20px var(--color-accent-dim)"
             : "0 6px 18px rgba(0, 0, 0, 0.35)",
@@ -77,7 +100,7 @@ function ArtistCardImpl({ artist }: Props) {
         {artist.image_url ? (
           <motion.div
             animate={{ scale: hover ? 1.05 : 1 }}
-            transition={{ duration: 0.35, ease: [0.23, 1, 0.32, 1] }}
+            transition={{ duration: 0.35, ease: EASE_OUT }}
             style={{ width: "100%", height: "100%" }}
           >
             <CoverArt
@@ -95,7 +118,7 @@ function ArtistCardImpl({ artist }: Props) {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              background: "linear-gradient(135deg, rgba(88, 115, 216, 0.22) 0%, rgba(255, 255, 255, 0.05) 100%)",
+              background: "linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 22%, transparent) 0%, rgba(255, 255, 255, 0.05) 100%)",
               color: "rgba(255, 255, 255, 0.6)",
               fontSize: 32,
               fontWeight: 700,
@@ -132,10 +155,11 @@ function ArtistCardImpl({ artist }: Props) {
         <AnimatePresence>
           {hover && (
             <motion.div
-              initial={{ opacity: 0, scale: 0.75, y: 6 }}
+              initial={{ opacity: 0, scale: 0.9, y: 6 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.75, y: 6 }}
-              transition={{ type: "spring", stiffness: 450, damping: 26 }}
+              exit={{ opacity: 0, scale: 0.9, y: 6, transition: { duration: 0.12, ease: EASE_OUT } }}
+              // critically damped: a hover carries no momentum to overshoot with
+              transition={SPRING}
               style={{
                 position: "absolute",
                 right: 8,
@@ -159,23 +183,29 @@ function ArtistCardImpl({ artist }: Props) {
       </div>
 
       {/* Typography & Subtitle */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 3, width: "100%", minWidth: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3, width: "100%", minWidth: 0, flexShrink: 0 }}>
         <span
           style={{
             fontSize: 14,
             fontWeight: 600,
+            lineHeight: "17px",
+            height: 17,
             color: hover ? "var(--color-accent)" : "var(--color-text-hi)",
             transition: "color 0.16s ease",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
+            width: "100%",
+            minWidth: 0,
             maxWidth: "100%",
+            display: "block",
+            flexShrink: 0,
           }}
         >
           {artist.name}
         </span>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--color-text-dim)" }}>
+        <div className="t-caption" style={{ display: "flex", alignItems: "center", gap: 6, height: 16, fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", whiteSpace: "nowrap", width: "100%", minWidth: 0, maxWidth: "100%", flexShrink: 0 }}>
           <span
             style={{
               width: 5,
@@ -186,8 +216,10 @@ function ArtistCardImpl({ artist }: Props) {
               flexShrink: 0,
             }}
           />
-          <span style={{ transition: "color 0.16s ease", color: hover ? "var(--color-text)" : "var(--color-text-dim)" }}>
-            {hover ? "View profile" : "Artist"}
+          <span style={{ transition: "color 0.16s ease", color: hover ? "var(--color-text)" : "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {/* static: text that changes under the pointer reads as the
+                card moving, and the arrow already says where this goes */}
+            Artist
           </span>
         </div>
       </div>

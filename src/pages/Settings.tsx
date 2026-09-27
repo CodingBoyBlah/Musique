@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, RotateCcw, ChevronDown } from "lucide-react";
+import { Eye, EyeOff, RotateCcw, ChevronDown, Info, Minus, Plus } from "@/lib/icons";
+import { stepZoom, resetZoom, zoomLabel, ZOOM_MIN, ZOOM_MAX } from "../lib/zoom";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { Tooltip } from "../components/ui/Tooltip";
 import {
@@ -14,8 +15,15 @@ import {
   useCredentialsStore,
   type ConnectionStatus,
 } from "../store/credentials.store";
-import { usePrefsStore } from "../store/prefs.store";
-import { type AudioQuality } from "../api/playback";
+import { usePrefsStore, type SidebarMode } from "../store/prefs.store";
+import {
+  type AudioQuality,
+  type PlaybackBackend,
+  setPlaybackBackend,
+} from "../api/playback";
+import { usePlaybackBackend } from "../hooks/usePlaybackBackend";
+import { toast } from "../store/toast.store";
+import { errMsg } from "../lib/err";
 import { useUIStore } from "../store/ui.store";
 import { setDiscordEnabled, requestNotificationPermission } from "../api/media";
 import {
@@ -33,14 +41,17 @@ import {
 import { isWindows, isMac } from "../lib/platform";
 import { useThemeStore, type ThemeSource } from "../store/theme.store";
 import { useReflowPulse } from "../hooks/useReflowPulse";
+import { EASE_OUT, PRESS_TRANSITION, REFLOW_SPRING, SPRING } from "../lib/motion";
+import "../styles/ui.css";
 
-const REFLOW = { type: "spring" as const, stiffness: 340, damping: 38 };
+const REFLOW = REFLOW_SPRING;
 
 const STATUS_CONFIG: Record<ConnectionStatus, { dot: string; label: string }> =
   {
-    unconfigured: { dot: "#34d399", label: "Shared Quota (Default)" },
-    configured: { dot: "#f5a623", label: "Custom Key Saved" },
-    validating: { dot: "#fa2d48", label: "Validating…" },
+    unconfigured: { dot: "#34d399", label: "Built-in access" },
+    configured: { dot: "#f5a623", label: "Custom app saved" },
+    // in progress, not a failure: amber, pulsing, never the error red
+    validating: { dot: "var(--color-warning)", label: "Checking…" },
     valid: { dot: "#34d399", label: "Connected" },
     invalid: { dot: "#ff453a", label: "Invalid credentials" },
   };
@@ -50,6 +61,7 @@ function StatusBadge({ status }: { status: ConnectionStatus }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <span
+        className={status === "validating" ? "status-pulse" : undefined}
         style={{
           width: 8,
           height: 8,
@@ -58,7 +70,7 @@ function StatusBadge({ status }: { status: ConnectionStatus }) {
           flexShrink: 0,
         }}
       />
-      <span style={{ fontSize: 12.5, color: "var(--color-text-dim)" }}>
+      <span className="t-caption" role="status" style={{ fontSize: 12.5, color: "var(--color-text-dim)" }}>
         {label}
       </span>
     </div>
@@ -98,7 +110,7 @@ function Field({
       </label>
       <div style={{ display: "flex", gap: 8 }}>{children}</div>
       {hint && (
-        <span style={{ fontSize: 11.5, color: "var(--color-text-dim)" }}>
+        <span className="t-caption" style={{ fontSize: 11.5, color: "var(--color-text-dim)" }}>
           {hint}
         </span>
       )}
@@ -119,28 +131,8 @@ function PrimaryBtn({
     <button
       onClick={onClick}
       disabled={disabled}
-      style={{
-        height: 40,
-        padding: "0 22px",
-        borderRadius: 99,
-        border: "none",
-        background: "var(--color-accent)",
-        color: "var(--color-accent-text)",
-        fontSize: 13.5,
-        fontWeight: 600,
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-        transition: "background 0.12s, opacity 0.12s",
-      }}
-      onMouseEnter={(e) => {
-        if (!disabled)
-          (e.currentTarget as HTMLButtonElement).style.background =
-            "var(--color-accent-hover)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background =
-          "var(--color-accent)";
-      }}
+      className="btn-primary"
+      style={{ height: 40, padding: "0 22px", fontSize: 13.5 }}
     >
       {children}
     </button>
@@ -152,42 +144,66 @@ function GhostBtn({
   onClick,
   disabled,
   subtle,
+  danger,
+  autoFocus,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
   subtle?: boolean;
+  danger?: boolean;
+  autoFocus?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      autoFocus={autoFocus}
+      className={danger ? "btn-danger" : subtle ? "btn-text ghost-subtle" : "btn-pill"}
       style={{
         height: 40,
         padding: "0 20px",
         borderRadius: 99,
-        border: subtle ? "none" : "1px solid var(--color-border)",
-        background: subtle ? "transparent" : "var(--color-surface)",
-        color: subtle ? "var(--color-text-dim)" : "var(--color-text-hi)",
         fontSize: 13.5,
         fontWeight: 600,
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-        transition: "background 0.12s",
-      }}
-      onMouseEnter={(e) => {
-        if (!disabled && !subtle)
-          (e.currentTarget as HTMLButtonElement).style.background =
-            "var(--color-surface-2)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = subtle
-          ? "transparent"
-          : "var(--color-surface)";
       }}
     >
       {children}
     </button>
+  );
+}
+
+/* The revert-to-default button next to a slider. At the default there is
+   nothing to revert, so it goes quiet and inert - no hover, no press - rather
+   than pretending to act. */
+function RevertBtn({
+  atDefault,
+  onClick,
+}: {
+  atDefault: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <motion.button
+      type="button"
+      whileHover={atDefault ? undefined : { scale: 1.03 }}
+      whileTap={atDefault ? undefined : { scale: 0.97 }}
+      transition={PRESS_TRANSITION}
+      onClick={() => { if (!atDefault) onClick(); }}
+      aria-disabled={atDefault || undefined}
+      aria-label="Revert to default"
+      className="btn-icon"
+      style={{
+        width: 24,
+        height: 24,
+        borderRadius: 6,
+        padding: 0,
+        color: atDefault ? "rgba(255,255,255,0.22)" : undefined,
+        opacity: 1,
+      }}
+    >
+      <RotateCcw size={13} strokeWidth={2.2} />
+    </motion.button>
   );
 }
 
@@ -224,7 +240,7 @@ function SettingRow({
       >
         <span
           style={{
-            fontSize: "clamp(13px, 1.2vw, 14px)",
+            fontSize: "1rem",
             fontWeight: 600,
             color: "var(--color-text-hi)",
           }}
@@ -233,6 +249,7 @@ function SettingRow({
         </span>
         {hint && (
           <span
+            className="t-caption"
             style={{
               fontSize: 12,
               lineHeight: 1.5,
@@ -270,6 +287,7 @@ function Switch({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
+      className="switch"
       style={{
         width: 44,
         height: 24,
@@ -283,12 +301,12 @@ function Switch({
         justifyContent: checked ? "flex-end" : "flex-start",
         background: checked ? "var(--color-accent)" : "rgba(255, 255, 255, 0.12)",
         transition: "background 0.2s",
-        outline: "none",
       }}
     >
+      {/* critically damped: a toggle flip has no momentum to overshoot with */}
       <motion.div
         layout
-        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+        transition={{ ...SPRING, duration: 0.25 }}
         style={{
           width: 20,
           height: 20,
@@ -308,13 +326,25 @@ function Segmented<T extends string>({
   layoutId = "settings-segmented",
 }: {
   value: T;
-  options: { value: T; label: string }[];
+  options: {
+    value: T;
+    label: string;
+    /** Renders greyed out and unselectable. */
+    disabled?: boolean;
+    /** Extra content after the label, e.g. an info icon saying why it's off. */
+    info?: React.ReactNode;
+  }[];
   onChange: (v: T) => void;
   layoutId?: string;
 }) {
   const labelToValue = new Map(options.map((o) => [o.label, o.value]));
   const currentOption = options.find((o) => o.value === value);
   const currentLabel = currentOption ? currentOption.label : options[0]?.label || "";
+
+  const disabled = options.filter((o) => o.disabled).map((o) => o.label);
+  const adornments = Object.fromEntries(
+    options.filter((o) => o.info).map((o) => [o.label, o.info]),
+  );
 
   return (
     <SegmentedControl
@@ -325,6 +355,8 @@ function Segmented<T extends string>({
         if (targetVal !== undefined) onChange(targetVal);
       }}
       layoutId={layoutId}
+      disabled={disabled.length ? disabled : undefined}
+      adornments={Object.keys(adornments).length ? adornments : undefined}
     />
   );
 }
@@ -350,14 +382,96 @@ const THEME_OPTS: { value: ThemeSource; label: string }[] = [
     : []),
 ];
 
+const MOD_KEY = isMac ? "⌘" : "Ctrl";
+
+/* − 100% + , the same steps as the keyboard. The percentage is the reset:
+   clicking it goes back to 100%, the way a browser's zoom badge does. */
+function ZoomStepper() {
+  const zoom = usePrefsStore((s) => s.uiZoom);
+  const btn: React.CSSProperties = {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    border: "1px solid var(--color-border)",
+    background: "var(--color-surface)",
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <Tooltip label={`Zoom out (${MOD_KEY} −)`}>
+        <button
+          type="button"
+          className="btn-icon"
+          aria-label="Zoom out"
+          aria-disabled={zoom <= ZOOM_MIN || undefined}
+          onClick={() => zoom > ZOOM_MIN && stepZoom(-1, { quiet: true })}
+          style={btn}
+        >
+          <Minus size={15} strokeWidth={2.2} />
+        </button>
+      </Tooltip>
+      <Tooltip label={zoom === 1 ? "Actual size" : `Reset to 100% (${MOD_KEY} 0)`}>
+        <button
+          type="button"
+          className="btn-text tnum"
+          aria-label={`Zoom ${zoomLabel(zoom)}. Reset to 100%`}
+          onClick={() => resetZoom({ quiet: true })}
+          style={{ minWidth: 56, height: 32, borderRadius: 8, fontSize: 13, fontWeight: 700, color: "var(--color-text-hi)" }}
+        >
+          {zoomLabel(zoom)}
+        </button>
+      </Tooltip>
+      <Tooltip label={`Zoom in (${MOD_KEY} +)`}>
+        <button
+          type="button"
+          className="btn-icon"
+          aria-label="Zoom in"
+          aria-disabled={zoom >= ZOOM_MAX || undefined}
+          onClick={() => zoom < ZOOM_MAX && stepZoom(1, { quiet: true })}
+          style={btn}
+        >
+          <Plus size={15} strokeWidth={2.2} />
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
+const SIDEBAR_MODE_OPTS: { value: SidebarMode; label: string }[] = [
+  { value: "pins", label: "Pins" },
+  { value: "playlists", label: "Playlists" },
+];
+
 function AppearanceCard() {
   const source = useThemeStore((s) => s.source);
   const setSource = useThemeStore((s) => s.setSource);
   const albumColors = useThemeStore((s) => s.albumColors);
   const setAlbumColors = useThemeStore((s) => s.setAlbumColors);
+  const ambientMotion = usePrefsStore((s) => s.ambientMotion);
+  const sidebarMode = usePrefsStore((s) => s.sidebarMode);
+  const setSidebarMode = usePrefsStore((s) => s.setSidebarMode);
+  const setAmbientMotion = usePrefsStore((s) => s.setAmbientMotion);
 
   return (
     <Card title="Appearance">
+      <SettingRow
+        label="Zoom"
+        hint={`Make everything bigger or smaller, for large or high-resolution screens. ${MOD_KEY} + and ${MOD_KEY} − work anywhere, ${MOD_KEY} 0 resets.`}
+        control={<ZoomStepper />}
+      />
+      <Divider />
+      <SettingRow
+        label="Sidebar"
+        hint="Pins shows only the playlists and albums you pin. Playlists lists every playlist in your library."
+        control={
+          <Segmented
+            value={sidebarMode}
+            options={SIDEBAR_MODE_OPTS}
+            onChange={setSidebarMode}
+            layoutId="settings-sidebar-mode"
+          />
+        }
+      />
+      <Divider />
       <SettingRow
         label="Accent color"
         hint={
@@ -380,6 +494,12 @@ function AppearanceCard() {
         hint="Recolor album & playlist pages from their cover art."
         control={<Switch checked={albumColors} onChange={setAlbumColors} />}
       />
+      <Divider />
+      <SettingRow
+        label="Animated background"
+        hint="Let the blurred cover art drift slowly behind the full-screen player. Turn off for a still background."
+        control={<Switch checked={ambientMotion} onChange={setAmbientMotion} />}
+      />
     </Card>
   );
 }
@@ -390,11 +510,67 @@ const QUALITY_OPTIONS: { value: AudioQuality; label: string }[] = [
   { value: "320", label: "Very high · 320 kbps" },
 ];
 
+/* The "Requires Premium" marker on the Spotify option. Rendered even when that
+   option is selectable, so the constraint is discoverable before someone loses
+   Premium rather than only after. */
+const PREMIUM_INFO = (
+  <Tooltip label="Requires Premium">
+    <span
+      style={{ display: "inline-flex", alignItems: "center", cursor: "help" }}
+    >
+      <Info size={12} strokeWidth={2.2} />
+    </span>
+  </Tooltip>
+);
+
+function backendOptions(spotifyAvailable: boolean): {
+  value: PlaybackBackend;
+  label: string;
+  disabled?: boolean;
+  info?: React.ReactNode;
+}[] {
+  return [
+    {
+      value: "spotify",
+      label: "Spotify",
+      // Spotify only streams audio to Premium, so a free account can't pick it.
+      disabled: !spotifyAvailable,
+      info: PREMIUM_INFO,
+    },
+    { value: "youtube", label: "YouTube Music" },
+  ];
+}
+
 function PlaybackCard() {
   const audioQuality = usePrefsStore((s) => s.audioQuality);
   const setAudioQuality = usePrefsStore((s) => s.setAudioQuality);
   const audioCacheLimitMb = usePrefsStore((s) => s.audioCacheLimitMb);
   const setAudioCacheLimitMb = usePrefsStore((s) => s.setAudioCacheLimitMb);
+
+  // Free Spotify accounts can't stream through librespot, so "Automatic"
+  // routes them to YouTube Music. The explicit options exist mainly so the
+  // YouTube path can be tried on a Premium account without downgrading it.
+  const qcBackend = useQueryClient();
+  const { data: backend } = usePlaybackBackend();
+  /* Optimistic: the pill moves the moment it's chosen, not after the IPC
+     round trip and a refetch - otherwise a drag-release snaps back to the old
+     value and then jumps forward. Rolled back if the switch fails. */
+  const [pendingBackend, setPendingBackend] = useState<PlaybackBackend | null>(null);
+  // only the latest pick may settle the pill: an older request finishing
+  // after a newer pick would otherwise snap it back to a stale value
+  const backendReq = useRef(0);
+  const changeBackend = (mode: PlaybackBackend) => {
+    const seq = ++backendReq.current;
+    setPendingBackend(mode);
+    setPlaybackBackend(mode)
+      .then(() => qcBackend.invalidateQueries({ queryKey: ["playback-backend"] }))
+      .catch((e) => {
+        if (seq === backendReq.current) toast.error(errMsg(e));
+      })
+      .finally(() => {
+        if (seq === backendReq.current) setPendingBackend(null);
+      });
+  };
 
   const cfill = Math.round(
     ((Math.max(512, Math.min(8192, audioCacheLimitMb)) - 512) / (8192 - 512)) * 100
@@ -403,6 +579,22 @@ function PlaybackCard() {
 
   return (
     <Card title="Playback">
+      <SettingRow
+        label="Audio source"
+        hint={
+          backend && !backend.spotify_available
+            ? "Your Spotify plan can't stream audio, so playback uses YouTube Music. Metadata, artwork and lyrics still come from Spotify."
+            : "Where audio is streamed from. Metadata, artwork and lyrics always come from Spotify."
+        }
+        control={
+          <Segmented
+            value={pendingBackend ?? backend?.active ?? "youtube"}
+            options={backendOptions(backend?.spotify_available ?? false)}
+            onChange={changeBackend}
+            layoutId="settings-playback-backend"
+          />
+        }
+      />
       <SettingRow
         label="Audio quality"
         hint="Higher bitrates use more data. Applied on next track."
@@ -447,53 +639,19 @@ function PlaybackCard() {
               }
             />
             <span
+              className="tnum"
               style={{
                 fontSize: 12,
                 fontWeight: 600,
                 color: "var(--color-text-hi)",
                 minWidth: 46,
                 textAlign: "right",
-                fontVariantNumeric: "tabular-nums",
               }}
             >
               {gbLabel}
             </span>
-            <Tooltip label="Revert to default (2 GB)" side="top">
-              <motion.button
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
-                onClick={() => setAudioCacheLimitMb(2048)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 24,
-                  height: 24,
-                  borderRadius: 6,
-                  border: "none",
-                  background: "transparent",
-                  color:
-                    audioCacheLimitMb === 2048
-                      ? "rgba(255,255,255,0.22)"
-                      : "var(--color-text-dim)",
-                  cursor: audioCacheLimitMb === 2048 ? "default" : "pointer",
-                  padding: 0,
-                  flexShrink: 0,
-                  transition: "color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  if (audioCacheLimitMb !== 2048)
-                    (e.currentTarget as HTMLButtonElement).style.color =
-                      "var(--color-text-hi)";
-                }}
-                onMouseLeave={(e) => {
-                  if (audioCacheLimitMb !== 2048)
-                    (e.currentTarget as HTMLButtonElement).style.color =
-                      "var(--color-text-dim)";
-                }}
-              >
-                <RotateCcw size={13} strokeWidth={2.2} />
-              </motion.button>
+            <Tooltip label={audioCacheLimitMb === 2048 ? "Already at the default (2 GB)" : "Revert to default (2 GB)"} side="top">
+              <RevertBtn atDefault={audioCacheLimitMb === 2048} onClick={() => setAudioCacheLimitMb(2048)} />
             </Tooltip>
           </div>
         }
@@ -648,9 +806,9 @@ function VisualCard() {
                   }
                 />
                 <span
+                  className="tnum"
                   style={{
                     fontSize: 12,
-                    fontVariantNumeric: "tabular-nums",
                     color: "var(--color-text-dim)",
                     width: 34,
                     textAlign: "right",
@@ -658,43 +816,8 @@ function VisualCard() {
                 >
                   {tpct}%
                 </span>
-                <Tooltip label="Revert to default" side="top">
-                  <motion.button
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={() => setTransparency(0.4)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 24,
-                      height: 24,
-                      borderRadius: 6,
-                      border: "none",
-                      background: "transparent",
-                      color:
-                        Math.abs(tval - 0.4) < 0.005
-                          ? "rgba(255,255,255,0.22)"
-                          : "var(--color-text-dim)",
-                      cursor:
-                        Math.abs(tval - 0.4) < 0.005 ? "default" : "pointer",
-                      padding: 0,
-                      flexShrink: 0,
-                      transition: "color 0.12s",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (Math.abs(tval - 0.4) >= 0.005)
-                        (e.currentTarget as HTMLButtonElement).style.color =
-                          "var(--color-text-hi)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (Math.abs(tval - 0.4) >= 0.005)
-                        (e.currentTarget as HTMLButtonElement).style.color =
-                          "var(--color-text-dim)";
-                    }}
-                  >
-                    <RotateCcw size={13} strokeWidth={2.2} />
-                  </motion.button>
+                <Tooltip label={Math.abs(tval - 0.4) < 0.005 ? "Already at the default" : "Revert to default"} side="top">
+                  <RevertBtn atDefault={Math.abs(tval - 0.4) < 0.005} onClick={() => setTransparency(0.4)} />
                 </Tooltip>
               </div>
             }
@@ -716,6 +839,9 @@ function LastfmCard() {
   const [apiSecret, setApiSecret] = useState("");
   const [phase, setPhase] = useState<"idle" | "saving" | "connecting">("idle");
   const [err, setErr] = useState<string | null>(null);
+  // forgetting the keys can't be undone (they have to be pasted again), so it
+  // asks once, inline, right where the button was
+  const [confirmForget, setConfirmForget] = useState(false);
 
   const refresh = () =>
     qc.invalidateQueries({ queryKey: ["lastfm", "status"] });
@@ -728,7 +854,7 @@ function LastfmCard() {
         await lastfmSaveApi(apiKey.trim(), apiSecret.trim());
         await refresh();
       } catch (e) {
-        setErr(String(e));
+        setErr(errMsg(e));
         setPhase("idle");
         return;
       }
@@ -741,7 +867,7 @@ function LastfmCard() {
       setApiSecret("");
       await refresh();
     } catch (e) {
-      setErr(String(e));
+      setErr(errMsg(e));
     } finally {
       setPhase("idle");
     }
@@ -752,7 +878,8 @@ function LastfmCard() {
     await refresh();
   }
   async function forget() {
-    await lastfmClear().catch(() => {});
+    setConfirmForget(false);
+    await lastfmClear().catch((e) => toast.error(errMsg(e)));
     setApiKey("");
     setApiSecret("");
     await refresh();
@@ -783,6 +910,7 @@ function LastfmCard() {
                   }}
                 />
                 <span
+                  className="t-caption"
                   style={{ fontSize: 12.5, color: "var(--color-text-dim)" }}
                 >
                   Active
@@ -791,15 +919,34 @@ function LastfmCard() {
             }
           />
           <Divider />
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-            <GhostBtn subtle onClick={disconnect}>
-              Disconnect
-            </GhostBtn>
-            <div style={{ flex: 1 }} />
-            <GhostBtn subtle onClick={forget}>
-              Forget API keys
-            </GhostBtn>
-          </div>
+          {confirmForget ? (
+            <div
+              role="alertdialog"
+              aria-label="Forget Last.fm API keys"
+              onKeyDown={(e) => { if (e.key === "Escape") setConfirmForget(false); }}
+              style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}
+            >
+              <span style={{ flex: "1 1 220px", fontSize: 13, lineHeight: 1.5, color: "var(--color-text)" }}>
+                Forget your Last.fm API key and secret? You'll need to paste them again to reconnect.
+              </span>
+              <GhostBtn autoFocus onClick={() => setConfirmForget(false)}>
+                Cancel
+              </GhostBtn>
+              <GhostBtn danger onClick={forget}>
+                Forget keys
+              </GhostBtn>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <GhostBtn subtle onClick={disconnect}>
+                Disconnect
+              </GhostBtn>
+              <div style={{ flex: 1 }} />
+              <GhostBtn subtle onClick={() => setConfirmForget(true)}>
+                Forget API keys
+              </GhostBtn>
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -826,7 +973,7 @@ function LastfmCard() {
             </a>{" "}
             to get a key + secret, paste them below, then connect.
           </p>
-          <Field label="API Key">
+          <Field label="API key">
             <input
               value={apiKey}
               onChange={(e) => setApiKey(e.currentTarget.value)}
@@ -836,10 +983,12 @@ function LastfmCard() {
               disabled={busy}
               autoComplete="off"
               spellCheck={false}
+              aria-label="Last.fm API key"
+              className="settings-input"
               style={inputStyle}
             />
           </Field>
-          <Field label="Shared Secret">
+          <Field label="Shared secret">
             <input
               type="password"
               value={apiSecret}
@@ -852,11 +1001,14 @@ function LastfmCard() {
               disabled={busy}
               autoComplete="off"
               spellCheck={false}
+              aria-label="Last.fm shared secret"
+              className="settings-input"
               style={inputStyle}
             />
           </Field>
           {err && (
             <p
+              role="alert"
               style={{
                 margin: 0,
                 fontSize: 12.5,
@@ -924,9 +1076,9 @@ function Card({
       <h2
         style={{
           margin: 0,
-          fontSize: "clamp(15px, 1.6vw, 17px)",
+          fontSize: "1.143rem",
           fontWeight: 600,
-          letterSpacing: "-0.01em",
+          letterSpacing: "-0.014em",
           color: "var(--color-text-hi)",
         }}
       >
@@ -1017,11 +1169,10 @@ export default function Settings() {
       }}
     >
       <h1
+        className="t-title"
         style={{
           margin: 0,
-          fontSize: "clamp(24px, 3vw, 30px)",
           fontWeight: 700,
-          letterSpacing: "-0.02em",
           color: "var(--color-text-hi)",
         }}
       >
@@ -1050,42 +1201,48 @@ export default function Settings() {
           boxSizing: "border-box",
         }}
       >
-        <div
+        <button
+          type="button"
+          className="disclosure"
           onClick={() => setCollapsed((v) => !v)}
+          aria-expanded={!collapsed}
+          aria-controls="spotify-dev-app-panel"
           style={{
-            display: "flex",
-            alignItems: "center",
             justifyContent: "space-between",
             flexWrap: "wrap",
             gap: 12,
-            cursor: "pointer",
+            padding: 6,
+            margin: -6,
+            width: "calc(100% + 12px)",
             userSelect: "none",
           }}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 240px", minWidth: 0 }}>
-            <h2
+          <span style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 240px", minWidth: 0 }}>
+            <span
+              role="heading"
+              aria-level={2}
               style={{
                 margin: 0,
-                fontSize: "clamp(15px, 1.6vw, 17px)",
+                fontSize: "1.143rem",
                 fontWeight: 600,
-                letterSpacing: "-0.01em",
+                letterSpacing: "-0.014em",
                 color: "var(--color-text-hi)",
               }}
             >
-              Spotify API & Authentication
-            </h2>
-            <span style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
-              {isCustom
-                ? "Using your personal developer application (Custom Quota)"
-                : "Using public shared multi-grant credentials (Default Quota)"}
+              Spotify developer app
             </span>
-          </div>
+            <span className="t-caption" style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
+              {isCustom
+                ? "Using your own Spotify developer app."
+                : "Using Musique's built-in access. Nothing to set up."}
+            </span>
+          </span>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
             <StatusBadge status={status} />
-            <motion.div
+            <motion.span
               animate={{ rotate: collapsed ? 0 : 180 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
+              transition={{ duration: 0.2, ease: EASE_OUT }}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -1098,17 +1255,18 @@ export default function Settings() {
               }}
             >
               <ChevronDown size={16} strokeWidth={2.2} />
-            </motion.div>
-          </div>
-        </div>
+            </motion.span>
+          </span>
+        </button>
 
         <AnimatePresence initial={false}>
           {!collapsed && (
             <motion.div
+              id="spotify-dev-app-panel"
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.26, ease: [0.23, 1, 0.32, 1] }}
+              exit={{ opacity: 0, height: 0, transition: { duration: 0.18, ease: EASE_OUT } }}
+              transition={{ duration: 0.26, ease: EASE_OUT }}
               style={{
                 display: "flex",
                 flexDirection: "column",
@@ -1125,9 +1283,9 @@ export default function Settings() {
                   color: "var(--color-text-dim)",
                 }}
               >
-                Musique includes built-in authentication with zero configuration needed.
-                If you are a power user experiencing rate limits, you can optionally connect your own
-                Spotify Developer App. Set the redirect URI in your dashboard to{" "}
+                Musique works out of the box. If you keep hitting Spotify's rate limits,
+                you can connect your own Spotify developer app instead. In your app's
+                dashboard, set the redirect URI to{" "}
                 <code
                   style={{
                     fontFamily: "ui-monospace, monospace",
@@ -1141,10 +1299,10 @@ export default function Settings() {
                 >
                   http://127.0.0.1:8989/login
                 </code>
-                , then paste your Client ID below. (Client Secret is optional with PKCE).
+                , then paste its client ID below. The client secret is optional.
               </p>
 
-              <Field label="Personal Client ID (Optional)">
+              <Field label="Client ID">
                 <input
                   value={clientId}
                   onChange={(e) => setClientId(e.currentTarget.value)}
@@ -1153,16 +1311,18 @@ export default function Settings() {
                       ? "Loading…"
                       : isCustom
                         ? clientId
-                        : "Leave blank to use default shared access"
+                        : "Leave blank to use built-in access"
                   }
                   disabled={busy}
                   autoComplete="off"
                   spellCheck={false}
+                  aria-label="Spotify client ID"
+                  className="settings-input"
                   style={inputStyle}
                 />
               </Field>
 
-              <Field label="Client Secret (Optional)">
+              <Field label="Client secret (optional)">
                 <input
                   type={showSecret ? "text" : "password"}
                   value={clientSecret}
@@ -1172,30 +1332,28 @@ export default function Settings() {
                       ? "Loading…"
                       : isCustom && status === "configured"
                         ? "•••••••••••••••• (saved)"
-                        : "Optional (not required for PKCE)"
+                        : "Not needed for most setups"
                   }
                   disabled={busy}
                   autoComplete="off"
                   spellCheck={false}
+                  aria-label="Spotify client secret"
+                  className="settings-input"
                   style={inputStyle}
                 />
                 <button
                   type="button"
                   onClick={() => setShowSecret((v) => !v)}
-                  tabIndex={-1}
+                  aria-label={showSecret ? "Hide client secret" : "Show client secret"}
+                  aria-pressed={showSecret}
                   title={showSecret ? "Hide" : "Show"}
+                  className="btn-pill"
                   style={{
                     width: 42,
                     height: 42,
+                    padding: 0,
                     borderRadius: 10,
-                    flexShrink: 0,
-                    border: "1px solid var(--color-border)",
-                    background: "var(--color-surface)",
                     color: "var(--color-text)",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
                   }}
                 >
                   {showSecret ? (
@@ -1208,6 +1366,7 @@ export default function Settings() {
 
               {validationError && (
                 <p
+                  role="alert"
                   style={{ margin: 0, fontSize: 12.5, color: "var(--color-danger)" }}
                 >
                   {validationError}
@@ -1216,7 +1375,7 @@ export default function Settings() {
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, paddingTop: 4 }}>
                 <PrimaryBtn onClick={() => save()} disabled={!canSave}>
-                  {saving ? "Saving…" : "Save Custom Client ID"}
+                  {saving ? "Saving…" : "Save client ID"}
                 </PrimaryBtn>
                 <div style={{ flex: 1 }} />
                 <GhostBtn
@@ -1224,7 +1383,7 @@ export default function Settings() {
                   onClick={() => resetToDefault()}
                   disabled={!canReset}
                 >
-                  {resetting ? "Resetting…" : "Reset to Default Quota"}
+                  {resetting ? "Switching…" : "Use built-in access"}
                 </GhostBtn>
               </div>
             </motion.div>

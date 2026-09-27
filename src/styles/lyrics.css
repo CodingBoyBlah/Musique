@@ -1,0 +1,88 @@
+/* Lyric rows, the immersive queue and the "Back to current line" pill.
+ *
+ * Hover lived in onMouseEnter handlers writing straight to node.style, and
+ * lyric rows re-render on every line change - so the fill was wiped out from
+ * under the pointer several times a verse. It is CSS now, gated to devices
+ * that really hover, with a press state on top so a seek feels heard. */
+
+/* Immersive rows carry their size as an inline transform (scale 0.79 / 1),
+   so the press rides the separate `scale` property, which composes with it
+   instead of replacing it. The hover plate is a pseudo-element bleeding past
+   the text, since the row itself has no horizontal padding to fill. */
+.lyr-row {
+    position: relative;
+    border-radius: 14px;
+}
+.lyr-row::before {
+    content: "";
+    position: absolute;
+    inset: 0 -14px;
+    border-radius: inherit;
+    background: transparent;
+    transition: background-color 0.16s ease;
+    z-index: -1;
+    pointer-events: none;
+}
+.lyr-row[data-seekable="true"]:active {
+    scale: 0.985;
+}
+.lyr-row[data-seekable="true"]:active::before {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* side panel rows have their own padding, so the plate is the row */
+.lyr-prow {
+    border-radius: 10px;
+    transition: background-color 0.16s ease, scale 0.12s var(--ease-out);
+}
+.lyr-prow[data-seekable="true"]:active {
+    scale: 0.985;
+    background: rgba(255, 255, 255, 0.07);
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .lyr-row[data-seekable="true"]:not([data-active="true"]):hover::before {
+        background: rgba(255, 255, 255, 0.05);
+    }
+    .lyr-prow[data-seekable="true"]:not([data-active="true"]):hover {
+        background: rgba(255, 255, 255, 0.05);
+    }
+}
+
+/* the way back after scrolling away from the sung line */
+.lyr-return {
+    position: absolute;
+    left: 50%;
+    bottom: 18px;
+    z-index: 3;
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 99px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(18, 16, 24, 0.72);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    backdrop-filter: blur(16px) saturate(160%);
+    color: rgba(255, 255, 255, 0.95);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 650;
+    letter-spacing: 0.004em;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+@media (hover: hover) and (pointer: fine) {
+    .lyr-return:hover {
+        background: rgba(34, 30, 44, 0.82);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lyr-row[data-seekable="true"]:active,
+    .lyr-prow[data-seekable="true"]:active {
+        scale: none;
+    }
+}

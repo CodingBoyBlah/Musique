@@ -147,7 +147,7 @@ export function useDevices() {
           refreshDevices();
         }, 3500);
       } catch (e) {
-        toast(`Could not transfer playback: ${errMsg(e)}`);
+        toast.error(`Could not transfer playback: ${errMsg(e)}`);
       } finally {
         setTransferringId(null);
       }

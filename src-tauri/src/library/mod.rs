@@ -118,6 +118,7 @@ pub(crate) async fn upsert_track_with_deps(pool: &SqlitePool, t: &SpTrack) -> Re
         preview_url:  t.preview_url.clone(),
         is_local:     t.is_local.unwrap_or(false),
         updated_at:   0,
+        isrc:         t.external_ids.as_ref().and_then(|e| e.isrc.clone()),
     })
     .await?;
 
@@ -616,24 +617,39 @@ pub async fn sync_all(pool: &SqlitePool, token: &str) -> Result<SyncResult, AppE
     // and thats what was killing the saved albums sync. each step is also
     // made fault tolerant, one failing endpoint just logs and returns 0 instead of
     // nuking the whole sync (and the "last synced" timestamp below)
+    //
+    // Each step is also gated on the auth epoch. A sync is long and chatty, so
+    // a sign-out (or an account switch) lands in the middle of one often enough
+    // to matter - and every step that ran on afterwards wrote the *old*
+    // account's library straight back into the tables logout had just emptied.
+    let epoch = crate::auth::auth_epoch();
     async fn step(
         label: &str,
+        epoch: u64,
         fut: impl std::future::Future<Output = Result<usize, AppError>>,
     ) -> usize {
+        if !crate::auth::epoch_is_current(epoch) {
+            return 0;
+        }
         match fut.await {
             Ok(n) => n,
             Err(e) => { eprintln!("[library] {label} sync failed: {e}"); 0 }
         }
     }
 
-    let liked       = step("liked",           sync_liked_songs(pool, token)).await;
-    let playlists   = step("playlists",       sync_playlists(pool, token)).await;
-    let artists     = step("artists",         sync_followed_artists(pool, token)).await;
-    let albums_n    = step("albums",          sync_saved_albums(pool, token)).await;
-    let top_tracks  = step("top_tracks",      sync_top_tracks(pool, token)).await;
-    let top_artists = step("top_artists",     sync_top_artists(pool, token)).await;
-    let recent      = step("recently_played", sync_recently_played(pool, token)).await;
-    let new_rel     = step("new_releases",    sync_new_releases(pool, token)).await;
+    let liked       = step("liked",           epoch, sync_liked_songs(pool, token)).await;
+    let playlists   = step("playlists",       epoch, sync_playlists(pool, token)).await;
+    let artists     = step("artists",         epoch, sync_followed_artists(pool, token)).await;
+    let albums_n    = step("albums",          epoch, sync_saved_albums(pool, token)).await;
+    let top_tracks  = step("top_tracks",      epoch, sync_top_tracks(pool, token)).await;
+    let top_artists = step("top_artists",     epoch, sync_top_artists(pool, token)).await;
+    let recent      = step("recently_played", epoch, sync_recently_played(pool, token)).await;
+    let new_rel     = step("new_releases",    epoch, sync_new_releases(pool, token)).await;
+
+    if !crate::auth::epoch_is_current(epoch) {
+        eprintln!("[library] sync abandoned: the signed-in account changed while it ran");
+        return Err(AppError::Auth("Signed out while syncing".into()));
+    }
 
     let result = SyncResult {
         liked_count:       liked,
@@ -672,9 +688,11 @@ pub async fn library_sync_loop(app: tauri::AppHandle) {
         let s    = app.state::<crate::state::AppState>();
         let pool = s.db.clone();
         let auth = s.auth.clone();
+        let gate = s.sync_gate.clone();
         drop(s);
 
         if let Ok(token) = crate::auth::get_valid_token(&pool, &auth).await {
+            let _syncing = gate.read().await;
             match sync_all(&pool, &token).await {
                 Ok(result) => {
                     let _ = app.emit("library:synced", result);

@@ -1,584 +1,494 @@
-//! lyrics, grabbed from LRCLIB (free, open, no key) + a sqlite cache
+//! lyrics: correctly-synced for every track, word-by-word wherever we can prove it.
 //!
-//! LRCLIB (https://lrclib.net) is a community lyrics db made for third party
-//! players. gives back LRC-format synced lyrics + plain text, cleanest legal source
-//! ngl, no spotify internal scraping, no paid musixmatch license. we cache every
-//! lookup (misses too, just briefly) so a replay is instant + works offline
+//! The thing that makes lyrics feel broken is almost never a provider's timing
+//! quality - it's **version mismatch**. Nearly every lyrics provider matches by
+//! fuzzy search (name + artist + duration) and hands back the document for a
+//! *different master*: the radio edit, the remaster, the live cut. That
+//! document's timing is internally consistent and completely wrong for the audio
+//! actually playing.
+//!
+//! There is exactly one source keyed to the exact track we're playing: Spotify's
+//! own `color-lyrics` endpoint, reached through the librespot session we already
+//! hold open for playback. It's line-level only, but it has zero version
+//! ambiguity. So it isn't a fallback - it's the **sync reference** that every
+//! richer candidate has to agree with before we'll trust it.
+//!
+//! ```text
+//! HOT PATH (1 request, always):
+//!   spclient.get_lyrics(track_id)
+//!       -> render LINE-LEVEL, correctly synced, instantly
+//!       -> keep as the SYNC REFERENCE
+//!
+//! BACKGROUND (non-blocking, bounded, early-exit):
+//!   word-level candidates, staged by expected yield:
+//!     AMLL -> Musixmatch / NetEase -> QQ -> Kugou
+//!         |
+//!         +- aligns to the reference -> shift by the derived offset
+//!         |                          -> silently upgrade to WORD-BY-WORD
+//!         +- none align              -> stay on correctly-synced line-level
+//! ```
+//!
+//! The governing rule, everywhere in here: **a correctly-synced line-level
+//! result beats a word-level result that drifts.** Word timing is a bonus; sync
+//! is the product.
 
-use serde::{Deserialize, Serialize};
+pub mod align;
+pub mod cache;
+pub mod parse;
+pub mod providers;
+pub mod ttml;
+pub mod types;
+pub mod voices;
+
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+
 use sqlx::SqlitePool;
-use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter};
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::errors::AppError;
+// re-exported so the commands layer and the frontend contract have one import
+// path; not every name is used inside this module itself
+#[allow(unused_imports)]
+pub use types::{Alternate, Candidate, LineRole, LyricLine, LyricWord, Lyrics, TrackRef};
 
-// how long we trust a "no lyrics found" result before hitting the network again
-// (someone might add lyrics for the track later)
-const NEG_TTL_SECS: i64 = 60 * 60 * 24 * 7; // 7 days
-// lrclib wants clients to say who they are
-const USER_AGENT: &str = "spotify-desktop-client (Tauri; personal use)";
+/// event the frontend listens on for a silent word-by-word upgrade. the panel
+/// swaps the payload into its query cache in place - no spinner, no reflow
+pub const UPGRADE_EVENT: &str = "lyrics:upgraded";
 
-// public types, these cross the ipc boundary
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LyricWord {
-    pub time_ms: i64, // start, ms from track start
-    pub end_ms:  i64, // end
-    pub text:    String,
+/// lyrics get their OWN permit pool rather than sharing the 8-permit API
+/// semaphore the rest of the app uses. background lyric fetching must never
+/// queue behind (or ahead of) playback and metadata calls - those are what the
+/// user is actually waiting on
+fn sem() -> &'static Semaphore {
+    static SEM: OnceLock<Semaphore> = OnceLock::new();
+    SEM.get_or_init(|| Semaphore::new(3))
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct LyricLine {
-    pub time_ms: i64,
-    pub text:    String,
-    // real per word timings when the source has em (netease yrc). empty for
-    // line level sources (lrclib) so the ui has no word data then
-    pub words:   Vec<LyricWord>,
+/// per-track single-flight. panel-open and queue prefetch race each other
+/// constantly; without this the same track fetches twice and we pay every
+/// provider round trip twice
+fn inflight() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
+    static INFLIGHT: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Lyrics {
-    pub track_id:     String,
-    pub lines:        Vec<LyricLine>, // time synced lines, empty if theres none
-    pub plain:        Option<String>, // unsynced fallback text
-    pub synced:       bool,
-    pub word_level:   bool,           // true when the lines carry real word timings
-    pub instrumental: bool,
-    pub source:       String,         // netease | lrclib | none
-    pub found:        bool,
+async fn track_lock(track_id: &str) -> Arc<Mutex<()>> {
+    let mut map = inflight().lock().await;
+    map.entry(track_id.to_string()).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
 }
 
-// lrclib wire types
-
-#[derive(Deserialize)]
-struct LrcLibResp {
-    #[serde(default)]
-    instrumental: bool,
-    #[serde(rename = "plainLyrics", default)]
-    plain_lyrics: Option<String>,
-    #[serde(rename = "syncedLyrics", default)]
-    synced_lyrics: Option<String>,
-    #[serde(default)]
-    duration: Option<f64>,
+/// tracks whose background upgrade is already running, so a second panel open
+/// doesn't kick off a duplicate race
+fn upgrading_set() -> &'static Mutex<std::collections::HashSet<String>> {
+    static SET: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
 }
 
-fn now() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
-}
+// building the answer
 
-// lrc parsing
+/// turn a chosen candidate into the thing the frontend renders
+fn finalize(track_id: &str, cand: &Candidate, offset_ms: i64, upgrading: bool) -> Lyrics {
+    let word_level = cand.word_level();
+    let has_translation = cand.lines.iter().any(|l| l.translation.is_some());
+    let has_roman = cand.lines.iter().any(|l| l.roman.is_some());
+    let found = !cand.lines.is_empty() || cand.plain.is_some() || cand.instrumental;
 
-// parse an lrc body into time sorted lines. handles multiple timestamps on one
-// line ([00:12.00][01:30.50] text) and skips the metadata tags ([ar:...])
-pub fn parse_lrc(raw: &str) -> Vec<LyricLine> {
-    let mut out: Vec<LyricLine> = Vec::new();
-
-    for line in raw.lines() {
-        let mut rest = line;
-        let mut stamps: Vec<i64> = Vec::new();
-        let mut is_metadata = false;
-
-        loop {
-            let r = rest.trim_start();
-            if !r.starts_with('[') {
-                rest = r;
-                break;
-            }
-            let Some(end) = r.find(']') else { rest = r; break; };
-            let tag = &r[1..end];
-            rest = &r[end + 1..];
-            match parse_stamp(tag) {
-                Some(ms) => stamps.push(ms),
-                None => { is_metadata = true; break; } // [ar:..]/[ti:..]/etc stuff
-            }
-        }
-
-        if is_metadata || stamps.is_empty() {
-            continue;
-        }
-        let text = rest.trim().to_string();
-        for ms in stamps {
-            out.push(LyricLine { time_ms: ms, text: text.clone(), words: Vec::new() });
-        }
-    }
-
-    out.sort_by_key(|l| l.time_ms);
-    out
-}
-
-// mm:ss.xx -> millis. None for tags that arent timestamps
-fn parse_stamp(tag: &str) -> Option<i64> {
-    let (mm, rest) = tag.split_once(':')?;
-    let mm: i64 = mm.trim().parse().ok()?;
-    let (ss, frac) = rest.split_once('.').unwrap_or((rest, "0"));
-    let ss: i64 = ss.trim().parse().ok()?;
-    let digits: String = frac.trim().chars().take(3).collect();
-    let val: i64 = digits.parse().ok()?;
-    let frac_ms = match digits.len() {
-        0 => 0,
-        1 => val * 100,
-        2 => val * 10,
-        _ => val,
-    };
-    Some(mm * 60_000 + ss * 1000 + frac_ms)
-}
-
-// yrc (netease word-by-word) parsing
-
-// parse a netease yrc body into lines with REAL per word timings
-// format per line: [lineStart,lineDur](wStart,wDur,0)word(wStart,wDur,0)word...
-// where every time is absolute ms. json metadata lines (start with {) get
-// skipped. this is the actual sung timing, no guessing
-pub fn parse_yrc(raw: &str) -> Vec<LyricLine> {
-    let mut out: Vec<LyricLine> = Vec::new();
-
-    for line in raw.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('{') {
-            continue;
-        }
-
-        let mut rest = line;
-        let mut line_start: Option<i64> = None;
-
-        // optional [start,dur] line header thing
-        if rest.starts_with('[') {
-            if let Some(end) = rest.find(']') {
-                let inner = &rest[1..end];
-                line_start = inner.split(',').next().and_then(|s| s.trim().parse().ok());
-                rest = &rest[end + 1..];
-            }
-        }
-
-        // (start,dur,0)text tokens. times/parens are ascii so byte slicing is
-        // safe even across multibyte word text
-        let mut words: Vec<LyricWord> = Vec::new();
-        loop {
-            let Some(open) = rest.find('(') else { break };
-            let Some(close_rel) = rest[open..].find(')') else { break };
-            let close = open + close_rel;
-
-            let mut meta = rest[open + 1..close].split(',');
-            let start: Option<i64> = meta.next().and_then(|s| s.trim().parse().ok());
-            let dur:   i64         = meta.next().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
-
-            let after    = &rest[close + 1..];
-            let text_end = after.find('(').unwrap_or(after.len());
-            let word     = &after[..text_end];
-
-            if let Some(start) = start {
-                let clean_word = word.replace('\u{a0}', " ").replace('\u{202f}', " ").replace('\u{feff}', " ");
-                if !clean_word.is_empty() {
-                    words.push(LyricWord { time_ms: start, end_ms: start + dur.max(0), text: clean_word });
-                }
-            }
-            rest = &after[text_end..];
-        }
-
-        if words.is_empty() {
-            continue;
-        }
-        let time_ms = line_start.unwrap_or(words[0].time_ms);
-        let text    = words.iter().map(|w| w.text.as_str()).collect::<String>().trim().to_string();
-        out.push(LyricLine { time_ms, text, words });
-    }
-
-    out.sort_by_key(|l| l.time_ms);
-    out
-}
-
-// musixmatch richsync parsing
-
-// parse a musixmatch richsync_body (json string) into word timed lines
-// shape: [{"ts":9.71,"te":13.2,"l":[{"c":"word ","o":0.0},...],"x":"full line"}]
-// ts/te are the line start/end in seconds, each `l` chunk is a word fragment with
-// offset `o` seconds from ts. real sung timing, massive catalogue
-pub fn parse_richsync(raw: &str) -> Vec<LyricLine> {
-    let Ok(arr) = serde_json::from_str::<serde_json::Value>(raw) else { return Vec::new() };
-    let Some(arr) = arr.as_array() else { return Vec::new() };
-
-    let mut out: Vec<LyricLine> = Vec::new();
-    for line in arr {
-        let ts = line.get("ts").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let te = line.get("te").and_then(|v| v.as_f64()).unwrap_or(ts);
-        let Some(chunks) = line.get("l").and_then(|v| v.as_array()) else { continue };
-
-        let mut words: Vec<LyricWord> = Vec::new();
-        for (i, ch) in chunks.iter().enumerate() {
-            let c = ch.get("c").and_then(|v| v.as_str()).unwrap_or("");
-            if c.is_empty() { continue; }
-            let o      = ch.get("o").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let next_o = chunks.get(i + 1).and_then(|n| n.get("o")).and_then(|v| v.as_f64());
-            let start  = ((ts + o) * 1000.0).round() as i64;
-            let end    = (next_o.map(|no| ts + no).unwrap_or(te) * 1000.0).round() as i64;
-            words.push(LyricWord { time_ms: start, end_ms: end.max(start), text: c.to_string() });
-        }
-        if words.is_empty() { continue; }
-
-        let text = line.get("x").and_then(|v| v.as_str()).map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| words.iter().map(|w| w.text.as_str()).collect::<String>().trim().to_string());
-
-        out.push(LyricLine { time_ms: (ts * 1000.0).round() as i64, text, words });
-    }
-    out.sort_by_key(|l| l.time_ms);
-    out
-}
-
-// network stuff
-
-const NE_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-
-#[derive(Deserialize)]
-struct NeSearch { result: Option<NeResult> }
-#[derive(Deserialize)]
-struct NeResult { #[serde(default)] songs: Vec<NeSong> }
-#[derive(Deserialize)]
-struct NeSong {
-    id: i64,
-    #[serde(default)] duration: i64, // ms
-}
-#[derive(Deserialize)]
-struct NeLyric { #[serde(default)] yrc: Option<NeLyricBody> }
-#[derive(Deserialize)]
-struct NeLyricBody { #[serde(default)] lyric: Option<String> }
-
-// best effort netease word level lookup. any failure (network, no match, no
-// yrc) just returns None so the caller falls back to lrclib, never errors the whole
-// request. matches by closest duration within 6s so we dont grab the wrong song
-async fn fetch_netease_yrc(
-    client: &reqwest::Client,
-    name: &str, artist: &str, dur_ms: i64,
-) -> Option<String> {
-    let query = format!("{name} {artist}");
-
-    let mut search_url = url::Url::parse("https://music.163.com/api/search/get").ok()?;
-    search_url.query_pairs_mut()
-        .append_pair("s", &query)
-        .append_pair("type", "1")
-        .append_pair("limit", "10");
-
-    let body = client
-        .get(search_url)
-        .header("User-Agent", NE_UA)
-        .header("Referer", "https://music.163.com")
-        .header("Cookie", "os=pc; appver=8.9.70")
-        .send().await.ok()?
-        .text().await.ok()?;
-
-    let songs = serde_json::from_str::<NeSearch>(&body).ok()?.result?.songs;
-
-    let mut best: Option<(i64, i64)> = None; // (gap, id)
-    for s in &songs {
-        let gap = (s.duration - dur_ms).abs();
-        if gap <= 6000 && best.map(|(b, _)| gap < b).unwrap_or(true) {
-            best = Some((gap, s.id));
-        }
-    }
-    let id = best?.1;
-
-    // interface3 host reliably serves the word level yrc field
-    let mut lyric_url = url::Url::parse("https://interface3.music.163.com/api/song/lyric/v1").ok()?;
-    lyric_url.query_pairs_mut()
-        .append_pair("id", &id.to_string())
-        .append_pair("cp", "false")
-        .append_pair("lv", "1").append_pair("kv", "1").append_pair("tv", "1")
-        .append_pair("yv", "1").append_pair("ytv", "1").append_pair("yrc", "1");
-
-    let lbody = client
-        .get(lyric_url)
-        .header("User-Agent", NE_UA)
-        .header("Referer", "https://music.163.com")
-        .header("Cookie", "os=pc; appver=8.9.70")
-        .send().await.ok()?
-        .text().await.ok()?;
-
-    let yrc = serde_json::from_str::<NeLyric>(&lbody).ok()?.yrc?.lyric?;
-    if yrc.trim().is_empty() { None } else { Some(yrc) }
-}
-
-// best effort musixmatch word level (richsync) lookup, the biggest karaoke db.
-// uses the public web desktop app token. the client MUST have a cookie store
-// enabled, token.get sets the x-mxm-* cookies the macro call needs otherwise it
-// 401s "renew". any failure just gives None and falls back
-async fn fetch_musixmatch(
-    client: &reqwest::Client,
-    name: &str, artist: &str, dur_sec: i64,
-) -> Option<String> {
-    // 1. token, carried forward thru the shared cookie store
-    let tok_body = client
-        .get("https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0&format=json")
-        .header("User-Agent", NE_UA)
-        .send().await.ok()?
-        .text().await.ok()?;
-    let tok_json: serde_json::Value = serde_json::from_str(&tok_body).ok()?;
-    let token = tok_json["message"]["body"]["user_token"].as_str()?;
-    if token.is_empty() || token.starts_with("Upgrade") {
-        return None;
-    }
-
-    // 2. richsync thru the macro endpoint, matched by track/artist/duration
-    let mut url = url::Url::parse("https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get").ok()?;
-    url.query_pairs_mut()
-        .append_pair("format", "json")
-        .append_pair("namespace", "lyrics_richsynced")
-        .append_pair("subtitle_format", "mxm")
-        .append_pair("app_id", "web-desktop-app-v1.0")
-        .append_pair("usertoken", token)
-        .append_pair("q_track", name)
-        .append_pair("q_artist", artist)
-        .append_pair("q_duration", &dur_sec.to_string());
-
-    let body = client
-        .get(url)
-        .header("User-Agent", NE_UA)
-        .send().await.ok()?
-        .text().await.ok()?;
-
-    let v: serde_json::Value = serde_json::from_str(&body).ok()?;
-    let rich = &v["message"]["body"]["macro_calls"]["track.richsync.get"]["message"]["body"]["richsync"]["richsync_body"];
-    let rich = rich.as_str()?;
-    if rich.trim().is_empty() || parse_richsync(rich).is_empty() { None } else { Some(rich.to_string()) }
-}
-
-
-async fn fetch_get(
-    client: &reqwest::Client,
-    track: &str, artist: &str, album: &str, dur_sec: i64,
-) -> Result<Option<LrcLibResp>, AppError> {
-    let mut url = url::Url::parse("https://lrclib.net/api/get").unwrap();
-    url.query_pairs_mut()
-        .append_pair("track_name",  track)
-        .append_pair("artist_name", artist)
-        .append_pair("album_name",  album)
-        .append_pair("duration",    &dur_sec.to_string());
-
-    let resp = client.get(url).header("User-Agent", USER_AGENT).send().await?;
-    if !resp.status().is_success() {
-        return Ok(None); // 404 means no exact match so fall thru to search
-    }
-    let text = resp.text().await.map_err(|e| AppError::Network(e.to_string()))?;
-    Ok(serde_json::from_str::<LrcLibResp>(&text).ok())
-}
-
-async fn fetch_search(
-    client: &reqwest::Client,
-    track: &str, artist: &str, dur_sec: i64,
-) -> Result<Option<LrcLibResp>, AppError> {
-    let mut url = url::Url::parse("https://lrclib.net/api/search").unwrap();
-    url.query_pairs_mut()
-        .append_pair("track_name",  track)
-        .append_pair("artist_name", artist);
-
-    let resp = client.get(url).header("User-Agent", USER_AGENT).send().await?;
-    if !resp.status().is_success() {
-        return Ok(None);
-    }
-    let text    = resp.text().await.map_err(|e| AppError::Network(e.to_string()))?;
-    let results: Vec<LrcLibResp> = serde_json::from_str(&text).unwrap_or_default();
-
-    // grab the closest duration, really preferring entries that actually have
-    // synced lyrics
-    let mut best: Option<(f64, LrcLibResp)> = None;
-    for r in results {
-        if r.synced_lyrics.is_none() && r.plain_lyrics.is_none() && !r.instrumental {
-            continue;
-        }
-        let dur_gap = (r.duration.unwrap_or(0.0) - dur_sec as f64).abs();
-        let score   = if r.synced_lyrics.is_some() { dur_gap } else { dur_gap + 600.0 };
-        if best.as_ref().map(|(b, _)| score < *b).unwrap_or(true) {
-            best = Some((score, r));
-        }
-    }
-    Ok(best.map(|(_, r)| r))
-}
-
-// cache stuff
-
-type CacheRow = (Option<String>, Option<String>, String, i64, i64, i64);
-
-async fn read_cache(pool: &SqlitePool, track_id: &str) -> Option<CacheRow> {
-    sqlx::query_as::<_, CacheRow>(
-        "SELECT synced_lrc, plain, source, instrumental, found, fetched_at
-         FROM lyrics WHERE track_id = ?",
-    )
-    .bind(track_id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn write_cache(
-    pool: &SqlitePool, track_id: &str,
-    synced: Option<&str>, plain: Option<&str>,
-    source: &str, instrumental: bool, found: bool,
-) -> Result<(), AppError> {
-    sqlx::query(
-        "INSERT INTO lyrics (track_id, synced_lrc, plain, source, instrumental, found, fetched_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(track_id) DO UPDATE SET
-            synced_lrc   = excluded.synced_lrc,
-            plain        = excluded.plain,
-            source       = excluded.source,
-            instrumental = excluded.instrumental,
-            found        = excluded.found,
-            fetched_at   = excluded.fetched_at",
-    )
-    .bind(track_id)
-    .bind(synced)
-    .bind(plain)
-    .bind(source)
-    .bind(instrumental as i64)
-    .bind(found as i64)
-    .bind(now())
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-fn build(track_id: &str, synced: Option<String>, plain: Option<String>, instrumental: bool, found: bool, source: &str) -> Lyrics {
-    // each word level source stores its own body format, lrclib stores lrc
-    let lines = match (source, synced.as_deref()) {
-        ("musixmatch", Some(s)) => parse_richsync(s),
-        ("netease",    Some(s)) => parse_yrc(s),
-        (_,            Some(s)) => parse_lrc(s),
-        (_,            None)    => Vec::new(),
-    };
-    let word_level = lines.iter().any(|l| !l.words.is_empty());
     Lyrics {
-        track_id:     track_id.to_string(),
-        synced:       !lines.is_empty(),
+        track_id: track_id.to_string(),
+        synced: !cand.lines.is_empty(),
         word_level,
-        lines,
-        plain,
-        instrumental,
-        source:       source.to_string(),
+        lines: cand.lines.clone(),
+        plain: cand.plain.clone(),
+        instrumental: cand.instrumental,
+        source: cand.source.to_string(),
         found,
+        offset_ms,
+        alternates: Vec::new(), // filled in by the caller from the cache
+        upgrading,
+        has_translation,
+        has_roman,
     }
 }
 
-// entry point, this is the main one
+/// a word-level result is only an upgrade over what we're already showing if it
+/// actually adds word timings (or provider translation/romanisation we lacked)
+fn is_upgrade(new: &Lyrics, old: &Lyrics) -> bool {
+    if new.word_level && !old.word_level {
+        return true;
+    }
+    if new.word_level == old.word_level {
+        return (new.has_translation && !old.has_translation)
+            || (new.has_roman && !old.has_roman);
+    }
+    false
+}
 
-#[allow(clippy::too_many_arguments)]
+// provider fan-out
+
+/// run one provider under the lyrics semaphore, honouring its per-source
+/// negative cache. a source that missed recently is skipped entirely - that's
+/// the point of caching per (track, source) rather than per track: one
+/// provider's miss must never suppress the others
+macro_rules! try_provider {
+    ($pool:expr, $track:expr, $source:literal, $fut:expr) => {{
+        if cache::source_missed($pool, &$track.id, $source).await {
+            None
+        } else {
+            let _permit = sem().acquire().await.ok();
+            let mut got = $fut.await;
+            // fold backing vocals onto their lead BEFORE anything downstream sees
+            // the candidate: align.rs then compares lead-to-lead, and the
+            // renderer gets rows whose ends are set by lead lines only
+            if let Some(c) = got.as_mut() {
+                voices::structure(c);
+            }
+            if got.is_none() {
+                let _ = cache::mark_source_miss($pool, &$track.id, $source).await;
+            }
+            got
+        }
+    }};
+}
+
+/// does the track look CJK? decides whether NetEase (huge CJK catalogue, ships
+/// translation + romanisation for free) or Musixmatch (largest western
+/// catalogue) is worth trying first. purely an ordering hint - both still run
+fn looks_cjk(track: &TrackRef) -> bool {
+    track.name.chars().chain(track.artist.chars()).any(|c| {
+        matches!(c as u32,
+            0x3040..=0x30ff |   // hiragana + katakana
+            0x4e00..=0x9fff |   // cjk unified
+            0xac00..=0xd7af |   // hangul
+            0x3400..=0x4dbf)    // cjk ext a
+    })
+}
+
+/// stage 1: the Apple-Music-format word sources, keyed to the exact recording.
+///
+/// These are the best documents in the system and they're also the cheapest to
+/// verify, so they go first and usually end the race.
+///
+/// `applemusic` looks the track up by **ISRC** - the identifier for the exact
+/// *recording*, not the song - and hands back Apple's own TTML: real syllable
+/// timings, background vocals marked `x-bg`, duet voices separated by agent.
+/// There is no search and no version ambiguity in that path at all, which is
+/// precisely what makes word-by-word trustworthy rather than decorative.
+///
+/// `amll` is the same format keyed by Spotify track id, hand-corrected to
+/// ~100ms - the community answer for whatever Apple doesn't cover.
+async fn stage_exact(pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
+    let (apple, amll) = tokio::join!(
+        async { try_provider!(pool, track, "applemusic", providers::applemusic::fetch(track)) },
+        async { try_provider!(pool, track, "amll", providers::amll::fetch(track)) },
+    );
+    apple.into_iter().chain(amll).collect()
+}
+
+/// stage 2: Apple Music TTML again, but found by fuzzy search rather than by
+/// ISRC - the fallback for recordings the exact lookup doesn't index. Same rich
+/// format, so it still carries word timings and background vocals; it just has
+/// to prove itself against the sync reference first.
+async fn stage_betterlyrics(pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
+    try_provider!(pool, track, "betterlyrics", providers::betterlyrics::fetch(track))
+        .into_iter()
+        .collect()
+}
+
+/// stage 3: the two big catalogues, raced together
+async fn stage_major(pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
+    let (mxm, ne) = tokio::join!(
+        async { try_provider!(pool, track, "musixmatch", providers::musixmatch::fetch(track)) },
+        async { try_provider!(pool, track, "netease", providers::netease::fetch(track)) },
+    );
+    // put the likelier-correct one first so ties break sensibly downstream
+    let mut out: Vec<Candidate> = Vec::new();
+    if looks_cjk(track) {
+        out.extend(ne);
+        out.extend(mxm);
+    } else {
+        out.extend(mxm);
+        out.extend(ne);
+    }
+    out
+}
+
+/// stage 4: the encrypted-body chinese sources. lower hit rate for most
+/// libraries and the most expensive to decode, so they only run when the
+/// cheaper stages produced nothing trustworthy
+async fn stage_cjk(pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
+    let (qq, kg) = tokio::join!(
+        async { try_provider!(pool, track, "qq", providers::qq::fetch(track)) },
+        async { try_provider!(pool, track, "kugou", providers::kugou::fetch(track)) },
+    );
+    qq.into_iter().chain(kg).collect()
+}
+
+/// the line-level safety net, only worth reaching for when nothing else landed
+async fn stage_lrclib(pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
+    try_provider!(pool, track, "lrclib", providers::lrclib::fetch(track))
+        .into_iter()
+        .collect()
+}
+
+// entry point
+
+/// Fetch (or read from cache) the lyrics for a track.
+///
+/// Returns as soon as there's something correctly synced to show - normally
+/// after a single request to Spotify. Any word-by-word upgrade happens in a
+/// background task and arrives later over [`UPGRADE_EVENT`].
 pub async fn get_or_fetch(
+    app: &AppHandle,
     pool: &SqlitePool,
-    track_id: &str,
-    name: &str,
-    artist: &str,
-    album: &str,
-    duration_ms: i64,
+    track: TrackRef,
     force: bool,
 ) -> Result<Lyrics, AppError> {
     if !force {
-        if let Some((synced, plain, source, instrumental, found, fetched_at)) = read_cache(pool, track_id).await {
-            let fresh = found == 1 || (now() - fetched_at) < NEG_TTL_SECS;
-            if fresh {
-                return Ok(build(track_id, synced, plain, instrumental == 1, found == 1, &source));
+        if let Some(mut hit) = cache::read(pool, &track.id).await {
+            hit.alternates = cache::list_alts(pool, &track.id).await;
+            // only resume an upgrade that never settled (e.g. the app closed
+            // mid-race). a finished race writes upgrading=false, and so does a
+            // manual source pick - re-racing those would repeat every provider
+            // round trip on each open and could overwrite the user's choice
+            if !hit.word_level && hit.found && hit.upgrading {
+                spawn_upgrade(app, pool, track.clone(), hit.clone());
+                hit.upgrading = true;
             }
+            return Ok(hit);
         }
     }
 
-    if name.trim().is_empty() || artist.trim().is_empty() {
-        return Ok(build(track_id, None, None, false, false, "none"));
+    if track.name.trim().is_empty() || track.artist.trim().is_empty() {
+        return Ok(Lyrics::none(&track.id));
     }
 
-    // cookie store on so musixmatchs token cookies carry over to its macro call
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(9))
-        .cookie_store(true)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-    let dur_sec = (duration_ms as f64 / 1000.0).round() as i64;
-
-    // provider chain, best word-by-word coverage first:
-    //   1. musixmatch richsync - biggest karaoke db (word level)
-    //   2. netease yrc         - word level fallback
-    //   3. lrclib              - line level only (NO guessing, line by line ui)
-    let mut synced: Option<String> = None;
-    let mut plain:  Option<String> = None;
-    let mut instrumental = false;
-    let mut found  = false;
-    let mut source = "none";
-
-    // 1. musixmatch (word level)
-    if let Some(rich) = fetch_musixmatch(&client, name, artist, dur_sec).await {
-        synced = Some(rich);
-        found  = true;
-        source = "musixmatch";
-    }
-
-    // 2. netease yrc (word level)
-    if synced.is_none() {
-        if let Some(yrc) = fetch_netease_yrc(&client, name, artist, duration_ms).await {
-            if !parse_yrc(&yrc).is_empty() {
-                synced = Some(yrc);
-                found  = true;
-                source = "netease";
-            }
+    // single-flight: whoever gets here second waits, then reads the cache the
+    // winner just wrote instead of repeating every provider round trip
+    let lock = track_lock(&track.id).await;
+    let _guard = lock.lock().await;
+    if !force {
+        if let Some(mut hit) = cache::read(pool, &track.id).await {
+            hit.alternates = cache::list_alts(pool, &track.id).await;
+            return Ok(hit);
         }
     }
 
-    // 3. lrclib line level fallback
-    if synced.is_none() {
-        let resp = match fetch_get(&client, name, artist, album, dur_sec).await? {
-            Some(r) => Some(r),
-            None    => fetch_search(&client, name, artist, dur_sec).await?,
+    // HOT PATH - one request, the exact track, no ambiguity
+    let mut reference = providers::spotify::fetch(app, &track).await;
+    // the reference defines the rows the user actually reads, so it gets the
+    // same voice structuring as every other source - Spotify lists backing
+    // vocals as ordinary lines too
+    if let Some(r) = reference.as_mut() {
+        voices::structure(r);
+    }
+
+    if let Some(reference) = reference {
+        let mut out = finalize(&track.id, &reference, 0, true);
+        out.alternates = cache::list_alts(pool, &track.id).await;
+        cache::write(pool, &out).await.ok();
+        cache::write_alt(pool, &track.id, &out).await.ok();
+
+        // everything richer is earned in the background, against this reference
+        spawn_upgrade(app, pool, track.clone(), out.clone());
+        return Ok(out);
+    }
+
+    // NO REFERENCE - Spotify has nothing for this track. We can't validate
+    // against the exact recording any more, so fall back to cross-source
+    // consensus: two independent providers agreeing on the timing is decent
+    // evidence they're both describing the same master.
+    let mut candidates = stage_exact(pool, &track).await;
+    if candidates.is_empty() {
+        candidates.extend(stage_betterlyrics(pool, &track).await);
+    }
+    candidates.extend(stage_major(pool, &track).await);
+    if candidates.len() < 2 {
+        candidates.extend(stage_cjk(pool, &track).await);
+    }
+    if candidates.is_empty() {
+        candidates.extend(stage_lrclib(pool, &track).await);
+    }
+
+    // stash every source we saw, so the ui's switcher works offline later
+    for c in &candidates {
+        let alt = finalize(&track.id, c, 0, false);
+        cache::write_alt(pool, &track.id, &alt).await.ok();
+    }
+
+    let Some((chosen, alignment)) = align::choose(None, candidates) else {
+        cache::write_miss(pool, &track.id).await.ok();
+        return Ok(Lyrics::none(&track.id));
+    };
+
+    let mut out = finalize(&track.id, &chosen, alignment.offset_ms, false);
+    out.alternates = cache::list_alts(pool, &track.id).await;
+    cache::write(pool, &out).await.ok();
+    Ok(out)
+}
+
+/// Kick off the background word-by-word hunt. Never blocks the caller, and
+/// every stage is gated on the alignment check so a drifting candidate can't
+/// replace correctly-synced lines.
+fn spawn_upgrade(app: &AppHandle, pool: &SqlitePool, track: TrackRef, current: Lyrics) {
+    let app = app.clone();
+    let pool = pool.clone();
+
+    tauri::async_runtime::spawn(async move {
+        // one upgrade race per track per session
+        {
+            let mut set = upgrading_set().lock().await;
+            if !set.insert(track.id.clone()) {
+                return;
+            }
+        }
+        let result = run_upgrade(&app, &pool, &track, &current).await;
+        upgrading_set().lock().await.remove(&track.id);
+
+        if let Some(upgraded) = result {
+            let _ = app.emit(UPGRADE_EVENT, &upgraded);
+        }
+    });
+}
+
+async fn run_upgrade(
+    app: &AppHandle,
+    pool: &SqlitePool,
+    track: &TrackRef,
+    current: &Lyrics,
+) -> Option<Lyrics> {
+    // rebuild the reference candidate from what we're currently showing, so the
+    // alignment check compares against the exact timings on screen
+    let reference = Candidate {
+        source:       "spotify",
+        lines:        current.lines.clone(),
+        plain:        current.plain.clone(),
+        instrumental: current.instrumental,
+        exact:        true, // it came from the by-track-id fetch
+    };
+    let reference = (current.source == "spotify" && !reference.lines.is_empty())
+        .then_some(reference);
+
+    let mut seen: Vec<Candidate> = Vec::new();
+
+    // staged by expected yield, cheapest and most trustworthy first. we stop
+    // the moment something passes the check - that's the early exit that keeps
+    // this from costing six round trips per track
+    for stage in 0..4 {
+        let batch = match stage {
+            0 => stage_exact(pool, track).await,
+            1 => stage_betterlyrics(pool, track).await,
+            2 => stage_major(pool, track).await,
+            _ => stage_cjk(pool, track).await,
         };
-        if let Some(r) = resp {
-            let s = r.synced_lyrics.filter(|s| !s.trim().is_empty());
-            let p = r.plain_lyrics.filter(|s| !s.trim().is_empty());
-            let f = r.instrumental || s.is_some() || p.is_some();
-            synced       = s;
-            plain        = p;
-            instrumental = r.instrumental;
-            found        = f;
-            source       = if f { "lrclib" } else { "none" };
+        if batch.is_empty() {
+            continue;
+        }
+
+        for c in &batch {
+            let alt = finalize(&track.id, c, 0, false);
+            cache::write_alt(pool, &track.id, &alt).await.ok();
+        }
+        seen.extend(batch);
+
+        // only word-level candidates can upgrade us; a line-level one is at
+        // best a sideways move and at worst a worse-synced one
+        let word_level: Vec<Candidate> = seen.iter().filter(|c| c.word_level()).cloned().collect();
+        if word_level.is_empty() {
+            continue;
+        }
+
+        if let Some((chosen, alignment)) = align::choose(reference.as_ref(), word_level) {
+            if !alignment.aligned {
+                continue;
+            }
+            let mut upgraded = finalize(&track.id, &chosen, alignment.offset_ms, false);
+            if !is_upgrade(&upgraded, current) {
+                continue;
+            }
+            upgraded.alternates = cache::list_alts(pool, &track.id).await;
+            cache::write(pool, &upgraded).await.ok();
+
+            eprintln!(
+                "[lyrics] {} upgraded to word-level via {} (offset {}ms, residual {}ms)",
+                track.id, upgraded.source, alignment.offset_ms, alignment.residual_ms
+            );
+            return Some(upgraded);
         }
     }
 
-    write_cache(pool, track_id, synced.as_deref(), plain.as_deref(), source, instrumental, found).await?;
-    Ok(build(track_id, synced, plain, instrumental, found, source))
+    // nothing aligned. we keep the correctly-synced line-level lyrics - that is
+    // the right outcome, not a failure. still clear the flag on the frontend so
+    // it stops expecting an upgrade.
+    let _ = app;
+    if current.upgrading {
+        let mut settled = current.clone();
+        settled.upgrading = false;
+        settled.alternates = cache::list_alts(pool, &track.id).await;
+        cache::write(pool, &settled).await.ok();
+        return Some(settled);
+    }
+    None
+}
+
+/// Switch the displayed lyrics to another source we already hold cached.
+/// Offline-instant: this never touches the network.
+pub async fn switch_source(
+    pool: &SqlitePool,
+    track_id: &str,
+    source: &str,
+) -> Result<Lyrics, AppError> {
+    let Some(mut alt) = cache::read_alt(pool, track_id, source).await else {
+        return Err(AppError::NotFound(format!("no cached {source} lyrics for {track_id}")));
+    };
+    alt.alternates = cache::list_alts(pool, track_id).await;
+    alt.upgrading = false;
+    // make the choice sticky, so reopening the panel keeps the user's pick
+    cache::write(pool, &alt).await.ok();
+    Ok(alt)
 }
 
 #[cfg(test)]
-mod yrc_tests {
+mod tests {
     use super::*;
 
-    #[test]
-    fn parses_word_timings() {
-        let raw = "{\"t\":0,\"c\":[{\"tx\":\"meta\"}]}\n[630,1950](630,180,0)I (810,360,0)do (1170,210,0)what (1380,90,0)it (1470,1110,0)takes";
-        let lines = parse_yrc(raw);
-        assert_eq!(lines.len(), 1);
-        let l = &lines[0];
-        assert_eq!(l.time_ms, 630);
-        assert_eq!(l.text, "I do what it takes");
-        assert_eq!(l.words.len(), 5);
-        assert_eq!(l.words[0].text, "I ");
-        assert_eq!(l.words[0].time_ms, 630);
-        assert_eq!(l.words[0].end_ms, 810);
-        assert_eq!(l.words[4].text, "takes");
-        assert_eq!(l.words[4].end_ms, 2580);
+    fn cand(source: &'static str, lines: Vec<LyricLine>) -> Candidate {
+        Candidate::new(source, lines)
     }
 
     #[test]
-    fn handles_cjk_without_spaces() {
-        let raw = "[0,500](0,250,0)\u{4f60}(250,250,0)\u{597d}";
-        let lines = parse_yrc(raw);
-        assert_eq!(lines[0].text, "\u{4f60}\u{597d}");
-        assert_eq!(lines[0].words.len(), 2);
+    fn cjk_detection_drives_provider_order() {
+        let mut t = TrackRef { name: "Lemon".into(), artist: "米津玄師".into(), ..Default::default() };
+        assert!(looks_cjk(&t));
+        t.artist = "Kenshi Yonezu".into();
+        assert!(!looks_cjk(&t));
     }
 
     #[test]
-    fn parses_richsync_words() {
-        let raw = r#"[{"ts":9.71,"te":11.0,"l":[{"c":"I'm ","o":0.0},{"c":"in ","o":0.4},{"c":"love","o":0.8}],"x":"I'm in love"}]"#;
-        let lines = parse_richsync(raw);
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].text, "I'm in love");
-        assert_eq!(lines[0].words.len(), 3);
-        assert_eq!(lines[0].words[0].time_ms, 9710);
-        assert_eq!(lines[0].words[0].end_ms, 10110); // 9.71 + 0.4 lol
-        assert_eq!(lines[0].words[2].time_ms, 10510);
-        assert_eq!(lines[0].words[2].end_ms, 11000); // last one just uses te
+    fn word_level_counts_as_an_upgrade() {
+        let mut old = finalize("t", &cand("spotify", vec![LyricLine::line(0, "hi")]), 0, true);
+        let new = finalize(
+            "t",
+            &cand("amll", vec![LyricLine::worded(0, None, vec![LyricWord { time_ms: 0, end_ms: 100, text: "hi".into() }])]),
+            0,
+            false,
+        );
+        assert!(is_upgrade(&new, &old));
+        // and the same thing twice is not an upgrade
+        old = new.clone();
+        assert!(!is_upgrade(&new, &old));
+    }
+
+    #[test]
+    fn translation_alone_upgrades_a_word_level_result() {
+        let w = || vec![LyricLine::worded(0, None, vec![LyricWord { time_ms: 0, end_ms: 100, text: "hi".into() }])];
+        let old = finalize("t", &cand("qq", w()), 0, false);
+
+        let mut lines = w();
+        lines[0].translation = Some("bonjour".into());
+        let new = finalize("t", &cand("netease", lines), 0, false);
+
+        assert!(is_upgrade(&new, &old));
     }
 }

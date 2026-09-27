@@ -53,8 +53,9 @@ export const unfollowArtist = (id: string): Promise<void> =>
 export const isArtistFollowed = (id: string): Promise<boolean> =>
   invoke("is_artist_followed", { id });
 
-export const addTrackToPlaylist = (playlistId: string, trackId: string): Promise<void> =>
-  invoke("add_track_to_playlist", { playlistId, trackId });
+// position: zero-based insert index; omitted appends
+export const addTrackToPlaylist = (playlistId: string, trackId: string, position?: number): Promise<void> =>
+  invoke("add_track_to_playlist", { playlistId, trackId, position: position ?? null });
 
 export const removeTrackFromPlaylist = (playlistId: string, trackId: string): Promise<void> =>
   invoke("remove_track_from_playlist", { playlistId, trackId });

@@ -1,25 +1,32 @@
-import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
-import { Shuffle, Pin, Share2, Link2, Globe } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Shuffle, Pin, Link2, Globe, Share2 } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { usePinsStore, type PinnedItem } from "../../store/pins.store";
 import { useSpeedDialStore } from "../../store/speedDial.store";
+import { usePrefsStore } from "../../store/prefs.store";
 import { playTrack, pausePlayback, resumeOrPlay } from "../../api/playback";
 import type { TrackItem } from "../../types/spotify";
-import { gpuLayer, zTransform } from "../../lib/motion";
+import { EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING, zTransform } from "../../lib/motion";
+import "../../styles/ui.css";
 import { useContextMenu } from "./ContextMenu";
 import { shareSpotifyLink, shareUniversalLink, type ShareKind } from "../../lib/share";
 import { Tooltip } from "./Tooltip";
 import { AnimatedPlayPause } from "../playground/AnimatedIcons";
 
+// the page this row plays. Artists can't be pinned to the sidebar, so an
+// artist page passes its own right-hand control (Follow) as `accessory`.
+type ContextItem = PinnedItem | (Omit<PinnedItem, "type"> & { type: "artist" });
+
 interface Props {
-  tracks:    TrackItem[];
-  contextId: string;
-  pinItem:   PinnedItem;
+  tracks:     TrackItem[];
+  contextId:  string;
+  pinItem:    ContextItem;
+  accessory?: ReactNode;
 }
 
-export function PlayActions({ tracks, contextId, pinItem }: Props) {
+export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
   const setCurrentTrack     = usePlayerStore((s) => s.setCurrentTrack);
   const currentTrack        = usePlayerStore((s) => s.currentTrack);
   const isPlaying           = usePlayerStore((s) => s.isPlaying);
@@ -32,6 +39,7 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
   const shuffle             = useQueueStore((s) => s.shuffle);
   const pins                = usePinsStore((s) => s.pins);
   const togglePin           = usePinsStore((s) => s.togglePin);
+  const sidebarMode         = usePrefsStore((s) => s.sidebarMode);
   const { open: openMenu, element: menuEl } = useContextMenu();
 
   // when the button row gets narrow or when lyrics/queue rail opens,
@@ -61,6 +69,9 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
   const isActive = activeContext === contextId;          // this context is the loaded one
   const playing  = isActive && isPlaying;
   const pinned   = pins.some((p) => p.id === pinItem.id);
+  // with the sidebar listing every playlist instead of pins, a pin has
+  // nowhere to show up, so the button goes and Share takes its slot
+  const pinnable = pinItem.type !== "artist" && sidebarMode !== "playlists";
 
   function onPlay() {
     if (playing) { pausePlayback().catch(() => {}); return; }
@@ -100,148 +111,119 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
 
   const shuffleActive = isActive && shuffle;
 
+  // no pin button to sit beside: Share becomes a labelled pill of the same
+  // size. an artist page has Follow there instead, so it keeps the icon
+  const shareLabelled = !pinnable && pinItem.type !== "artist";
+
   return (
-    <div ref={rootRef} className="flex items-center mt-3" style={{ gap: 10, flexWrap: "nowrap" }}>
+    <div ref={rootRef} className="flex items-center mt-2" style={{ gap: 10, width: "100%" }}>
       <Tooltip label={playing ? "Pause" : "Play"} side="top">
+        {/* The condense morph runs as a layout (transform) animation: the width
+            flips once and framer tweens the difference as a scale, with the
+            icon and label counter-scaled so they never stretch. Nothing
+            relayouts per frame, and the label simply fades - no blur or scale
+            on text, which read as a smear. */}
         <motion.button
+          layout
           initial={false}
           onClick={onPlay}
           disabled={empty}
-          whileHover={empty ? {} : { scale: 1.04 }}
-          whileTap={empty ? {} : { scale: 0.96 }}
-          animate={{
-            width: isCondensed ? 44 : 114,
-            paddingLeft: isCondensed ? 0 : 20,
-            paddingRight: isCondensed ? 0 : 20,
-          }}
-          transition={{ type: "spring", stiffness: 320, damping: 30 }}
-          transformTemplate={zTransform}
+          whileTap={empty ? undefined : PRESS}
+          transition={{ layout: REFLOW_SPRING, default: PRESS_TRANSITION }}
+          className="focus-ring"
           style={{
-            ...gpuLayer,
-            width: isCondensed ? 44 : 114,
-            paddingLeft: isCondensed ? 0 : 20,
-            paddingRight: isCondensed ? 0 : 20,
+            width: isCondensed ? 36 : 102,
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            height: 44,
-            minWidth: 44,
+            height: 36,
+            minWidth: 36,
+            padding: 0,
             borderRadius: 99,
             border: "none",
-            background: "var(--color-accent)",
-            color: "var(--color-accent-text, #ffffff)",
-            fontSize: 14,
+            background: "#ffffff",
+            color: "#000000",
+            fontSize: 13.5,
             fontWeight: 700,
             letterSpacing: "-0.01em",
             cursor: empty ? "default" : "pointer",
             opacity: empty ? 0.5 : 1,
             boxShadow: playing
-              ? "0 0 0 4px var(--color-accent-dim), 0 4px 18px var(--color-accent-dim)"
-              : "0 4px 18px -2px var(--color-accent-dim)",
-            transition: "box-shadow 0.2s, background 0.15s",
+              ? "0 0 0 4px rgba(255, 255, 255, 0.25), 0 4px 16px rgba(0, 0, 0, 0.35)"
+              : "0 2px 10px rgba(255, 255, 255, 0.20)",
             overflow: "hidden",
             whiteSpace: "nowrap",
           }}
         >
-          <AnimatedPlayPause
-            isPlaying={playing}
-            size={16}
-            strokeWidth={0}
-            fill="currentColor"
-          />
-          <motion.span
-            initial={false}
-            animate={{
-              maxWidth: isCondensed ? 0 : 54,
-              opacity: isCondensed ? 0 : 1,
-              filter: isCondensed ? "blur(6px)" : "blur(0px)",
-              scale: isCondensed ? 0.75 : 1,
-              marginLeft: isCondensed ? 0 : 8,
-            }}
-            transition={{
-              maxWidth: { type: "spring", stiffness: 320, damping: 30 },
-              marginLeft: { type: "spring", stiffness: 320, damping: 30 },
-              opacity: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
-              filter: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
-              scale: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
-            }}
-            style={{
-              maxWidth: isCondensed ? 0 : 54,
-              opacity: isCondensed ? 0 : 1,
-              marginLeft: isCondensed ? 0 : 8,
-              display: "inline-block",
-              overflow: "hidden",
-              whiteSpace: "nowrap",
-              willChange: "transform, filter, opacity, max-width",
-            }}
-          >
-            {playing ? "Pause" : "Play"}
+          <motion.span layout="position" transition={{ layout: REFLOW_SPRING }} style={{ display: "flex" }}>
+            <AnimatedPlayPause
+              isPlaying={playing}
+              size={15}
+              strokeWidth={0}
+              fill="currentColor"
+            />
           </motion.span>
+          <AnimatePresence initial={false} mode="popLayout">
+            {!isCondensed && (
+              <motion.span
+                key="label"
+                layout="position"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ opacity: { duration: 0.15, ease: EASE_OUT }, layout: REFLOW_SPRING }}
+                style={{ marginLeft: 7, display: "inline-block", whiteSpace: "nowrap" }}
+              >
+                {playing ? "Pause" : "Play"}
+              </motion.span>
+            )}
+          </AnimatePresence>
         </motion.button>
       </Tooltip>
 
       <Tooltip label={shuffleActive ? "Shuffle active" : "Shuffle play"} side="top">
         <motion.button
+          layout
           initial={false}
           onClick={onShuffle}
           disabled={empty}
-          whileHover={empty ? {} : { scale: 1.04 }}
-          whileTap={empty ? {} : { scale: 0.96 }}
-          animate={{
-            width: isCondensed ? 44 : 114,
-            paddingLeft: isCondensed ? 0 : 18,
-            paddingRight: isCondensed ? 0 : 18,
-          }}
-          transition={{ type: "spring", stiffness: 320, damping: 30 }}
-          transformTemplate={zTransform}
+          whileTap={empty ? undefined : PRESS}
+          transition={{ layout: REFLOW_SPRING, default: PRESS_TRANSITION }}
+          className="focus-ring"
           style={{
-            ...gpuLayer,
-            width: isCondensed ? 44 : 114,
-            paddingLeft: isCondensed ? 0 : 18,
-            paddingRight: isCondensed ? 0 : 18,
+            width: isCondensed ? 36 : 108,
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            height: 44,
-            minWidth: 44,
+            height: 36,
+            minWidth: 36,
+            padding: 0,
             borderRadius: 99,
             border: shuffleActive
               ? "1.5px solid var(--color-accent)"
-              : "1px solid rgba(255, 255, 255, 0.16)",
+              : "1px solid rgba(255, 255, 255, 0.14)",
             background: shuffleActive
               ? "var(--color-accent-dim)"
               : "rgba(255, 255, 255, 0.08)",
             color: "#ffffff",
-            fontSize: 14,
+            fontSize: 13.5,
             fontWeight: 600,
             letterSpacing: "-0.01em",
             cursor: empty ? "default" : "pointer",
             opacity: empty ? 0.5 : 1,
             overflow: "hidden",
             whiteSpace: "nowrap",
-            boxShadow: shuffleActive ? "0 0 12px -2px var(--color-accent-dim)" : "none",
-            transition: "border 0.2s, background 0.2s, box-shadow 0.2s",
+            transition: "border-color 0.2s, background-color 0.2s",
           }}
         >
           <motion.span
+            layout="position"
             animate={{
               rotate: shuffleActive ? [0, -15, 15, 0] : 0,
             }}
-            transition={{ duration: 0.35, ease: "easeOut" }}
+            transition={{ rotate: { duration: 0.35, ease: EASE_OUT }, layout: REFLOW_SPRING }}
             style={{
               display: "flex",
               alignItems: "center",
@@ -250,87 +232,97 @@ export function PlayActions({ tracks, contextId, pinItem }: Props) {
               color: shuffleActive ? "var(--color-accent-hover, #819af1)" : "#ffffff",
             }}
           >
-            <Shuffle size={16} strokeWidth={2.2} />
+            <Shuffle size={15} strokeWidth={2.2} />
           </motion.span>
-          <motion.span
-            initial={false}
-            animate={{
-              maxWidth: isCondensed ? 0 : 56,
-              opacity: isCondensed ? 0 : 1,
-              filter: isCondensed ? "blur(6px)" : "blur(0px)",
-              scale: isCondensed ? 0.75 : 1,
-              marginLeft: isCondensed ? 0 : 8,
-            }}
-            transition={{
-              maxWidth: { type: "spring", stiffness: 320, damping: 30 },
-              marginLeft: { type: "spring", stiffness: 320, damping: 30 },
-              opacity: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
-              filter: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
-              scale: {
-                duration: isCondensed ? 0.15 : 0.24,
-                delay: isCondensed ? 0 : 0.06,
-                ease: [0.23, 1, 0.32, 1],
-              },
-            }}
-            style={{
-              maxWidth: isCondensed ? 0 : 56,
-              opacity: isCondensed ? 0 : 1,
-              marginLeft: isCondensed ? 0 : 8,
-              display: "inline-block",
-              overflow: "hidden",
-              whiteSpace: "nowrap",
-              willChange: "transform, filter, opacity, max-width",
-            }}
-          >
-            Shuffle
-          </motion.span>
+          <AnimatePresence initial={false} mode="popLayout">
+            {!isCondensed && (
+              <motion.span
+                key="label"
+                layout="position"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ opacity: { duration: 0.15, ease: EASE_OUT }, layout: REFLOW_SPRING }}
+                style={{ marginLeft: 7, display: "inline-block", whiteSpace: "nowrap" }}
+              >
+                Shuffle
+              </motion.span>
+            )}
+          </AnimatePresence>
         </motion.button>
       </Tooltip>
 
-      <Tooltip label={pinned ? "Unpin from sidebar" : "Pin to sidebar"} side="top">
+      <div style={{ flex: 1 }} />
+
+      {/* Right actions: Pin and Share. The button pins to the sidebar, so it
+          says Pin - it used to say Add with a plus, which read as adding to
+          the library. */}
+      {accessory}
+
+      {pinnable && <Tooltip label={pinned ? "Unpin from sidebar" : "Pin to sidebar"} side="top">
         <motion.button
-          onClick={() => togglePin(pinItem)}
-          whileHover={{ scale: 1.06 }}
-          whileTap={{ scale: 0.94 }}
-          transformTemplate={zTransform}
+          onClick={() => togglePin(pinItem as PinnedItem)}
+          aria-pressed={pinned}
+          className="ghost-pill focus-ring"
+          data-on={pinned}
+          whileTap={PRESS}
+          transition={PRESS_TRANSITION}
           style={{
-            ...gpuLayer,
+            height: 36,
+            padding: "0 16px",
+            borderRadius: 99,
+            color: "#ffffff",
+            fontSize: 13,
+            fontWeight: 600,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            cursor: "pointer",
             flexShrink: 0,
-            display: "flex", alignItems: "center", justifyContent: "center", width: 44, height: 44,
-            borderRadius: "50%",
-            border: pinned ? "none" : "1px solid var(--color-border)",
-            background: pinned ? "var(--color-accent)" : "transparent",
-            color: pinned ? "#fff" : "var(--color-text)", cursor: "pointer",
           }}
         >
-          <Pin size={17} fill={pinned ? "currentColor" : "none"} />
+          <Pin size={14} strokeWidth={2.2} active={pinned} />
+          <span>{pinned ? "Pinned" : "Pin"}</span>
         </motion.button>
-      </Tooltip>
+      </Tooltip>}
 
-      <Tooltip label="Share options" side="top">
+      <Tooltip label="Share" side="top">
         <motion.button
+          // a click anchors the menu under this button (see useContextMenu)
           onClick={(e) => openMenu(shareEntries)(e)}
           onContextMenu={openMenu(shareEntries)}
-          whileHover={{ scale: 1.06 }}
-          whileTap={{ scale: 0.94 }}
+          aria-label="Share"
+          aria-haspopup="menu"
+          className="ghost-pill focus-ring"
+          whileTap={PRESS}
+          transition={PRESS_TRANSITION}
           transformTemplate={zTransform}
-          style={{
-            ...gpuLayer,
+          style={shareLabelled ? {
+            height: 36,
+            padding: "0 16px",
+            borderRadius: 99,
+            color: "#ffffff",
+            fontSize: 13,
+            fontWeight: 600,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            cursor: "pointer",
             flexShrink: 0,
-            display: "flex", alignItems: "center", justifyContent: "center", width: 44, height: 44,
-            borderRadius: "50%", border: "1px solid var(--color-border)",
-            background: "transparent", color: "var(--color-text)", cursor: "pointer",
+          } : {
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 36,
+            height: 36,
+            borderRadius: "50%",
+            color: "var(--color-text-hi)",
+            cursor: "pointer",
           }}
         >
-          <Share2 size={17} />
+          <Share2 size={shareLabelled ? 14 : 15} strokeWidth={2.2} />
+          {shareLabelled && <span>Share</span>}
         </motion.button>
       </Tooltip>
 

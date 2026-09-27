@@ -30,9 +30,13 @@ pub async fn sync_library(app: AppHandle) -> Result<SyncResult, AppError> {
     let s = app.state::<AppState>();
     let pool = s.db.clone();
     let auth = s.auth.clone();
+    let gate = s.sync_gate.clone();
     drop(s);
 
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
+    // held for the whole sync so a sign-out waits for it instead of purging
+    // underneath it - see `AppState::sync_gate`
+    let _syncing = gate.read().await;
     sync_all(&pool, &token).await
 }
 
@@ -348,6 +352,9 @@ pub async fn add_track_to_playlist(
     app: AppHandle,
     playlist_id: String,
     track_id: String,
+    // zero-based insert index. None appends. Used by "Undo" after a remove so
+    // the track goes back where it was rather than to the bottom.
+    position: Option<u32>,
 ) -> Result<(), AppError> {
     let s = app.state::<AppState>();
     let pool = s.db.clone();
@@ -355,11 +362,15 @@ pub async fn add_track_to_playlist(
     drop(s);
 
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
+    let mut body = serde_json::json!({ "uris": [format!("spotify:track:{track_id}")] });
+    if let Some(pos) = position {
+        body["position"] = serde_json::json!(pos);
+    }
     crate::spotify::spotify_write_json(
         &token,
         reqwest::Method::POST,
         &format!("{BASE}/playlists/{playlist_id}/tracks"),
-        serde_json::json!({ "uris": [format!("spotify:track:{track_id}")] }),
+        body,
     )
     .await?;
     Ok(())
@@ -798,37 +809,41 @@ pub async fn get_new_releases(app: AppHandle) -> Result<Vec<AlbumItem>, AppError
     .fetch_all(&pool)
     .await?;
 
-    let mut out = Vec::with_capacity(rows.len());
-    for r in rows {
-        let artist_rows = sqlx::query_as::<_, ArtistRow>(
-            "SELECT a.id, a.name, a.image_url, a.popularity
-             FROM album_artists aa
-             JOIN artists a ON a.id = aa.artist_id
-             WHERE aa.album_id = ?
-             ORDER BY aa.position",
-        )
-        .bind(&r.id)
-        .fetch_all(&pool)
-        .await?;
+    let artist_rows: Vec<(String, String, String, Option<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT aa.album_id, a.id, a.name, a.image_url, a.popularity
+         FROM album_artists aa
+         JOIN artists a ON a.id = aa.artist_id
+         WHERE aa.album_id IN (SELECT nr.album_id FROM new_releases nr)
+         ORDER BY aa.position",
+    )
+    .fetch_all(&pool)
+    .await?;
 
-        out.push(AlbumItem {
-            id: r.id,
-            name: r.name,
-            album_type: r.album_type,
-            image_url: r.image_url,
-            release_date: r.release_date,
-            artists: artist_rows
-                .into_iter()
-                .map(|a| ArtistItem {
-                    id: a.id,
-                    name: a.name,
-                    image_url: a.image_url,
-                    popularity: a.popularity,
-                })
-                .collect(),
-            popularity: r.popularity,
+    let mut artists_by_album: std::collections::HashMap<String, Vec<ArtistItem>> = std::collections::HashMap::new();
+    for (album_id, aid, aname, aimage, apop) in artist_rows {
+        artists_by_album.entry(album_id).or_default().push(ArtistItem {
+            id: aid,
+            name: aname,
+            image_url: aimage,
+            popularity: apop,
         });
     }
+
+    let out = rows
+        .into_iter()
+        .map(|r| {
+            let artists = artists_by_album.remove(&r.id).unwrap_or_default();
+            AlbumItem {
+                id: r.id,
+                name: r.name,
+                album_type: r.album_type,
+                image_url: r.image_url,
+                release_date: r.release_date,
+                artists,
+                popularity: r.popularity,
+            }
+        })
+        .collect();
     Ok(out)
 }
 

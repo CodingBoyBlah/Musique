@@ -1,5 +1,7 @@
-use std::sync::{Arc, Mutex, OnceLock};
-use std::sync::atomic::{AtomicBool, Ordering};
+pub mod youtube;
+
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, Spirc};
 use librespot_core::{
@@ -200,8 +202,19 @@ fn running_under_hypervisor() -> bool {
 // device is unsafe -> the main app uses the (real-time-paced) NullSink and NEVER
 // touches CoreAudio, staying alive and usable. On a healthy machine the child
 // exits 0 and we use the real backend like normal.
+//
+// macOS ONLY. On Windows and Linux there is nothing to probe for: our own
+// `RodioSink` opens the device lazily and a failure comes back as a clean
+// `SinkError::ConnectionRefused` (see sink.rs), never a panic and never a
+// native fault. Running the probe there just bolted a full process spawn -
+// loading the whole app binary again, opening and closing the audio device,
+// waiting for it to exit - onto the front of the FIRST PLAY, for a verdict that
+// was always `true`. The uncatchable-SIGSEGV problem this guards against is
+// specific to cpal + CoreAudio's HAL proxy, so the probe now runs only where
+// that fault can actually happen.
+#[cfg(target_os = "macos")]
 fn audio_device_safe() -> bool {
-    static SAFE: OnceLock<bool> = OnceLock::new();
+    static SAFE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SAFE.get_or_init(|| {
         let exe = match std::env::current_exe() {
             Ok(e) => e,
@@ -225,6 +238,7 @@ pub struct PlaybackInner {
     pub is_ended:          Arc<AtomicBool>,
     pub is_playing_atomic: Arc<AtomicBool>,
     pub needs_rebuild:     Arc<AtomicBool>,
+    pub output_latency:    Arc<AtomicI64>,
     spirc:                 Spirc,
     session:               Session,
     _event_task:           tauri::async_runtime::JoinHandle<()>,
@@ -237,8 +251,33 @@ fn spirc_err(e: LibrespotError) -> AppError {
 }
 
 impl PlaybackInner {
+    /// Audio output latency in milliseconds (queued frames in sink + device buffer).
+    /// Returns 0 for the null/silent fallback sink or if playback has not started.
+    pub fn output_latency_ms(&self) -> i64 {
+        self.output_latency.load(Ordering::Relaxed)
+    }
+
     pub fn is_playing(&self) -> bool {
         self.is_playing_atomic.load(Ordering::Relaxed)
+    }
+
+    /// Tear the librespot session down for real.
+    ///
+    /// Dropping `PlaybackInner` is not enough. Both background tasks were
+    /// spawned onto the runtime and dropping a `JoinHandle` only *detaches* the
+    /// task, so after a logout the previous account's Connect device stayed
+    /// registered, kept answering remote commands, and kept rewriting its
+    /// credentials cache - which then got picked up as "cached credentials" on
+    /// the next sign-in and put the old account straight back.
+    pub async fn shutdown(&self) {
+        if let Err(e) = self.spirc.shutdown() {
+            eprintln!("[playback] spirc shutdown request failed: {e}");
+        }
+        self.player.stop();
+        // give spirc a moment to send its goodbye and unregister the device
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        self._spirc_task.abort();
+        self._event_task.abort();
     }
 
     pub fn is_ended(&self) -> bool {
@@ -254,6 +293,14 @@ impl PlaybackInner {
     // true (see ensure_inner)
     pub fn session_invalid(&self) -> bool {
         self.session.is_invalid()
+    }
+
+    // hand out the live librespot session so other subsystems (lyrics) can call
+    // spclient endpoints with our real first-party identity. `Session` is an
+    // Arc handle, so this clone is cheap and lets callers drop the state mutex
+    // before doing network i/o.
+    pub fn session(&self) -> Session {
+        self.session.clone()
     }
 
     pub fn play_uri(&self, uri: String, position_ms: u32) -> Result<(), AppError> {
@@ -343,6 +390,10 @@ pub async fn create_inner(
     initial_volume: f64,
     initial_muted:  bool,
     media_tx:       std::sync::mpsc::SyncSender<crate::media_controls::MediaMsg>,
+    // false for background callers (the startup warm-up): they must never open
+    // a browser authorization tab the user didn't ask for. When no silent
+    // credential works they fail instead and the next real play recovers.
+    interactive:    bool,
 ) -> Result<PlaybackInner, AppError> {
     let _ = auth::get_valid_token(&pool, &auth_state).await
         .map_err(|e| { eprintln!("[playback] auth token error: {e}"); e })?;
@@ -381,6 +432,7 @@ pub async fn create_inner(
 
     let cache = open_cache();
     let cached_creds = cache.as_ref().and_then(|c| c.credentials());
+    let used_cached_creds = cached_creds.is_some();
     let credentials = match cached_creds {
         Some(c) => {
             eprintln!("[playback] using cached librespot credentials from disk");
@@ -389,6 +441,11 @@ pub async fn create_inner(
         None => {
             let playback_token = match auth::get_setting_value(&pool, "spotify_playback_token").await? {
                 Some(t) if !t.trim().is_empty() => t,
+                _ if !interactive => {
+                    return Err(AppError::Auth(
+                        "no playback credentials; skipping non-interactive session build".into(),
+                    ));
+                }
                 _ => crate::commands::auth::authorize_playback_token(&app).await?,
             };
             Credentials::with_access_token(&playback_token)
@@ -413,10 +470,13 @@ pub async fn create_inner(
     let volume    = SharedVolume::new(initial_volume, initial_muted);
     let vol_clone = volume.clone();
 
+    let output_latency = Arc::new(AtomicI64::new(0));
+    let latency_sink = Arc::clone(&output_latency);
+
     #[cfg(target_os = "macos")]
     let force_null_sink = running_under_hypervisor() || !audio_device_safe();
     #[cfg(not(target_os = "macos"))]
-    let force_null_sink = !audio_device_safe();
+    let force_null_sink = false;
     if force_null_sink {
         eprintln!("[playback] audio device unavailable/unsafe - using silent sink");
     }
@@ -434,7 +494,7 @@ pub async fn create_inner(
             on_err,
             Box::new(vol_clone),
             crate::sink::DEFAULT_BUFFER_MS,
-        )) as Box<dyn Sink>
+        ).with_latency_tracker(Arc::clone(&latency_sink))) as Box<dyn Sink>
     };
 
     let bitrate_setting: Option<(String,)> = sqlx::query_as(
@@ -489,20 +549,73 @@ pub async fn create_inner(
             eprintln!("[playback] cached credentials rejected; deleting bad credentials file");
             let _ = std::fs::remove_file(&creds_file);
 
-            eprintln!("[playback] initiating playback authorization flow");
-            if let Ok(fresh_token) = crate::commands::auth::authorize_playback_token(&app).await {
+            // Recover in order of how much it costs the user. A credentials
+            // file left behind by a previous account is the common case, and
+            // the playback token we already hold usually fixes it silently -
+            // going straight to the browser opened a surprise authorization tab
+            // (and, when a sign-in was already in flight, one that could not
+            // even bind its port).
+            let stored_token = if used_cached_creds {
+                auth::get_setting_value(&pool, "spotify_playback_token")
+                    .await
+                    .ok()
+                    .flatten()
+                    .filter(|t| !t.trim().is_empty())
+            } else {
+                None
+            };
+
+            enum Recovery {
+                Stored(String),
+                Interactive,
+            }
+
+            let mut attempts = Vec::new();
+            if let Some(token) = stored_token {
+                attempts.push(Recovery::Stored(token));
+            }
+            if interactive {
+                attempts.push(Recovery::Interactive);
+            }
+
+            for attempt in attempts {
+                let (label, token) = match attempt {
+                    Recovery::Stored(token) => ("stored playback token", token),
+                    Recovery::Interactive => {
+                        eprintln!("[playback] initiating playback authorization flow");
+                        match crate::commands::auth::authorize_playback_token(&app).await {
+                            Ok(token) => ("browser authorization", token),
+                            Err(e) => {
+                                eprintln!("[playback] playback authorization failed: {e}");
+                                break;
+                            }
+                        }
+                    }
+                };
+
+                eprintln!("[playback] retrying spirc with {label}");
                 let fresh_cache = open_cache();
                 let fresh_session = Session::new(session_config.clone(), fresh_cache);
                 spirc_attempt = Spirc::new(
                     connect_config.clone(),
                     fresh_session.clone(),
-                    Credentials::with_access_token(&fresh_token),
+                    Credentials::with_access_token(&token),
                     player.clone(),
                     mixer.clone(),
                 )
                 .await;
                 if spirc_attempt.is_ok() {
                     session = fresh_session;
+                    break;
+                }
+
+                if label == "stored playback token" {
+                    // It is spent; stop offering it to every later attempt.
+                    eprintln!("[playback] stored playback token rejected; discarding it");
+                    let _ = sqlx::query("DELETE FROM settings WHERE key = 'spotify_playback_token'")
+                        .execute(&pool)
+                        .await;
+                    let _ = std::fs::remove_file(&creds_file);
                 }
             }
         }
@@ -522,11 +635,15 @@ pub async fn create_inner(
     // empty EVERY track gets rejected as NotWhitelisted -> PlayerEvent::Unavailable
     // ("content may not be available in your region"). a play fired right after a
     // fresh connect races those packets, so wait a sec for the country to land.
-    for _ in 0..50 {
+    // Poll finely. The country packet usually lands within a few ms of the
+    // connect, but at 100ms granularity we slept out the rest of the tick every
+    // time and added up to ~100ms of dead wait to every session build (and so to
+    // the first play). Same 5s ceiling, 20x finer resolution.
+    for _ in 0..1000 {
         if !session.country().is_empty() {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     eprintln!("[playback] STEP country = {:?}", session.country());
 
@@ -627,6 +744,7 @@ pub async fn create_inner(
         is_ended,
         is_playing_atomic,
         needs_rebuild:     Arc::new(AtomicBool::new(false)),
+        output_latency,
         spirc,
         session,
         _event_task:       event_task,

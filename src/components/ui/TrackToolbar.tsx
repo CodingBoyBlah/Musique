@@ -1,7 +1,8 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Search, X } from "lucide-react";
+import { Search, X } from "@/lib/icons";
 import type { TrackItem } from "../../types/spotify";
 import { Dropdown, type DropdownOption } from "./Dropdown";
+import { SortDirectionToggle } from "./SortDirectionToggle";
 import { Tooltip } from "./Tooltip";
 
 type OrderKey = "default" | "name" | "artist" | "album" | "duration";
@@ -68,19 +69,17 @@ export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
     { value: "album",    label: "Album" },
     { value: "duration", label: "Duration" },
   ];
-  const dirOptions: DropdownOption<Dir>[] = [
-    { value: "asc",  label: "Ascending" },
-    { value: "desc", label: "Descending" },
-  ];
 
   const toolbar = (
     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, width: "100%", boxSizing: "border-box", padding: "0 2px 12px" }}>
       {/* filter box */}
       <div
+        className="focus-within-ring"
         style={{
           display: "flex", alignItems: "center", gap: 8, height: 32,
           flex: "0 1 280px", minWidth: 0, padding: "0 11px", borderRadius: 8,
           background: "var(--color-glass)", border: "1px solid var(--color-glass-border)",
+          transition: "border-color 0.14s ease, box-shadow 0.14s ease",
         }}
       >
         <Search size={14} strokeWidth={2.2} style={{ color: "var(--color-text-dim)", flexShrink: 0 }} />
@@ -88,6 +87,7 @@ export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Find in tracks"
+          aria-label="Find in tracks"
           spellCheck={false}
           style={{
             flex: 1, minWidth: 0, height: "100%", border: "none", outline: "none",
@@ -99,7 +99,9 @@ export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
           <Tooltip label="Clear filter" side="top">
             <button
               onClick={() => setQuery("")}
-              style={{ display: "flex", border: "none", background: "transparent", color: "var(--color-text-dim)", cursor: "pointer", padding: 0, flexShrink: 0 }}
+              aria-label="Clear filter"
+              className="btn-icon"
+              style={{ width: 20, height: 20, borderRadius: 6, padding: 0 }}
             >
               <X size={13} strokeWidth={2.4} />
             </button>
@@ -109,7 +111,7 @@ export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
 
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginLeft: "auto" }}>
         <Dropdown value={order} options={orderOptions} onChange={setOrder} align="right" minWidth={150} title="Sort by" />
-        <Dropdown value={dir}   options={dirOptions}   onChange={setDir}   align="right" minWidth={140} title="Direction" />
+        <SortDirectionToggle dir={dir} onChange={setDir} />
       </div>
     </div>
   );

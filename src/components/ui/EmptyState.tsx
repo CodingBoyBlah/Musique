@@ -79,6 +79,7 @@ export function EmptyState({
       {action && <div style={{ marginTop: 4 }}>{action}</div>}
       {hint && (
         <p
+          className="t-caption"
           style={{
             margin: 0,
             fontSize: 12,

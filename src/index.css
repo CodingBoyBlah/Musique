@@ -1,20 +1,21 @@
 @import "tailwindcss";
+@import "./fonts.css";
 
 
 @theme {
    
     --color-window: transparent;
     --color-content: transparent;
-    --color-sidebar: rgba(0, 0, 0, 0.06);
+    --color-sidebar: rgba(0, 0, 0, 0.20);
     
-    --color-base: #0b0b0f;
+    --color-base: #131313;
 
     
     --color-glass: rgba(255, 255, 255, 0.05);
-    --color-glass-border: rgba(255, 255, 255, 0.09);
-    --color-surface: rgba(255, 255, 255, 0.035);
-    --color-surface-2: rgba(255, 255, 255, 0.06);
-    --color-surface-elevated: rgba(255, 255, 255, 0.06);
+    --color-glass-border: rgba(255, 255, 255, 0.08);
+    --color-surface: rgba(255, 255, 255, 0.04);
+    --color-surface-2: rgba(255, 255, 255, 0.07);
+    --color-surface-elevated: rgba(255, 255, 255, 0.07);
 
    
     --color-hover: rgba(255, 255, 255, 0.06);
@@ -22,14 +23,14 @@
     --color-active: rgba(255, 255, 255, 0.11);
 
    
-    --color-border: rgba(255, 255, 255, 0.08);
-    --color-divider: rgba(255, 255, 255, 0.06);
+    --color-border: rgba(255, 255, 255, 0.07);
+    --color-divider: rgba(255, 255, 255, 0.05);
 
    
-    --color-text: rgba(255, 255, 255, 0.82);
-    --color-text-hi: rgba(255, 255, 255, 0.97);
-    --color-text-dim: rgba(255, 255, 255, 0.46);
-    --color-text-muted: rgba(255, 255, 255, 0.46);
+    --color-text: rgba(255, 255, 255, 0.84);
+    --color-text-hi: rgba(255, 255, 255, 0.98);
+    --color-text-dim: rgba(255, 255, 255, 0.48);
+    --color-text-muted: rgba(255, 255, 255, 0.48);
 
    
     --color-accent: #5873D8;
@@ -38,9 +39,46 @@
     --color-accent-text: #ffffff;
 
     
-    --color-player: rgba(16, 16, 18, 0.07);
+    --color-player: var(--color-sidebar);
+    /* translucent enough that the blur behind it actually reads as glass;
+       at 0.94 it was a flat grey slab and the blur did nothing */
+    --color-dock-bg: rgba(20, 20, 22, 0.90);
+
+    /* every floating popup (menus, search results, tooltips, toasts, modals,
+       the volume and devices popovers): one neutral near-black. Several had
+       drifted to blue-tinted greys like rgb(24, 24, 28). */
+    --color-popover: rgba(19, 19, 22, 0.96);
+    --color-popover-solid: rgb(19, 19, 22);
+    --color-dock-border: rgba(255, 255, 255, 0.1);
+    --color-dock-highlight: rgba(255, 255, 255, 0.12);
 
     --color-danger: #ff453a;
+    --color-warning: #ffb340;
+}
+
+/* ── motion + type tokens ─────────────────────────────────────────────────
+   One vocabulary for the whole app (mirrored in lib/motion.ts for framer).
+   The same kind of motion always uses the same curve. */
+:root {
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+    --press-scale: 0.96;
+
+    /* type scale. tracking is set per size, never one value for all of them:
+       large type tightens, small type opens up a touch to stay legible. rem,
+       so the whole scale follows the root size. */
+    --type-display-size: 2.285rem;   /* 32px */
+    --type-display-track: -0.032em;
+    --type-display-lead: 1.08;
+    --type-title-size: 1.857rem;     /* 26px */
+    --type-title-track: -0.026em;
+    --type-title-lead: 1.12;
+    --type-section-size: 1.571rem;   /* 22px */
+    --type-section-track: -0.022em;
+    --type-section-lead: 1.2;
+    --type-body-track: -0.011em;
+    --type-caption-track: 0.004em;
 }
 
 
@@ -70,15 +108,28 @@ body,
     letter-spacing: -0.011em;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    user-select: none;
     overflow: hidden;
 }
 
-main,
+/* no text selection anywhere in the app - it's an app, not a document.
+   WebKit (macOS, Linux) still needs the prefixed property. Only the places
+   you type keep it, so you can still select and edit what you entered. Images
+   and links don't drag out as ghost copies either. */
+*,
+*::before,
+*::after {
+    -webkit-user-select: none;
+    user-select: none;
+}
 input,
 textarea,
-[data-selectable] {
+[contenteditable="true"] {
+    -webkit-user-select: text;
     user-select: text;
+}
+img,
+a {
+    -webkit-user-drag: none;
 }
 
 
@@ -136,12 +187,18 @@ input[type="range"]:hover::-webkit-slider-thumb {
 }
 
 
+/* volume: a notch under the title's white, and 3px - at full volume the
+   fill was the brightest, heaviest thing on the dock */
 input[type="range"].vol::-webkit-slider-runnable-track {
+    height: 3px;
     background: linear-gradient(
         to right,
-        rgba(242, 238, 233, 0.85) var(--vol, 0%),
+        rgba(255, 255, 255, 0.7) var(--vol, 0%),
         rgba(255, 255, 255, 0.16) var(--vol, 0%)
     );
+}
+input[type="range"].vol::-webkit-slider-thumb {
+    margin-top: -4.5px;
 }
 input[type="range"].vol::-webkit-slider-thumb {
     transform: scale(0.85);
@@ -176,6 +233,21 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
     opacity: 1;
 }
 
+/* Sidebar nav icons. drawn solid white and dimmed with opacity so the glyph
+   composites as one layer; an rgba stroke colour would double up (read
+   lighter) wherever two strokes cross. */
+.nav-icon {
+    color: #ffffff;
+    opacity: 0.55;
+    transition: opacity 0.15s ease;
+}
+.nav-item:hover .nav-icon {
+    opacity: 0.85;
+}
+.nav-icon[data-active] {
+    opacity: 1;
+}
+
 /* Card hover play button (Home recommendations) */
 .group:hover .rec-play {
     opacity: 1 !important;
@@ -183,11 +255,888 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
 }
 
 /* ─── Keyframes ───────────────────────────────────────────────────── */
+/* Now-playing equaliser bars.
+ *
+ * These were Framer Motion `repeat: Infinity` animations. Framer drives those
+ * from a requestAnimationFrame loop on the JS main thread, so every visible
+ * equaliser was doing main-thread work on every frame for as long as music was
+ * playing - and several are mounted at once (the playing TrackRow in whatever
+ * list is open, the Home speed-dial card, the Home track tile, the queue
+ * now-playing card), three bars each. The TrackRow variant was the worst: it
+ * animated `height`, which forces a layout + paint pass every frame rather
+ * than just a composite.
+ *
+ * As plain CSS transform keyframes they run entirely on the compositor thread:
+ * no JS, no style recalc, no layout, and they keep moving smoothly even when
+ * the main thread is busy. Keyframe values, durations, easing (Framer's
+ * "easeInOut" is cubic-bezier(.42,0,.58,1), i.e. CSS ease-in-out) and per-bar
+ * stagger are matched to the originals, so the motion is unchanged.
+ */
+@keyframes eq-bar-pulse {
+    0% {
+        transform: scaleY(0.2);
+    }
+    50% {
+        transform: scaleY(1);
+    }
+    100% {
+        transform: scaleY(0.2);
+    }
+}
+
+@keyframes eq-bar-pulse-q {
+    0% {
+        transform: scaleY(0.3);
+    }
+    25% {
+        transform: scaleY(1);
+    }
+    50% {
+        transform: scaleY(0.45);
+    }
+    75% {
+        transform: scaleY(0.8);
+    }
+    100% {
+        transform: scaleY(0.3);
+    }
+}
+
+.eq-bar {
+    transform-origin: bottom;
+    animation: eq-bar-pulse var(--eq-dur, 0.55s) ease-in-out infinite;
+}
+
+.eq-bar-q {
+    transform-origin: bottom;
+    animation: eq-bar-pulse-q 0.9s ease-in-out infinite;
+    animation-delay: var(--eq-delay, 0s);
+}
+
 @keyframes spin {
     from {
         transform: rotate(0deg);
     }
     to {
         transform: rotate(360deg);
+    }
+}
+
+/* ── immersive ambient ────────────────────────────────────────────────────
+ *
+ * A pre-blurred copy of the cover drifting slowly behind the view, which is
+ * what makes the colour flow rather than sit there.
+ *
+ * The motion is the same idea the first version of this view had. What was
+ * wrong with it was never the look, it was that each layer carried a live
+ * `filter: blur(60px)` while it animated, so WebView2 re-ran a gaussian over a
+ * layer one and a half times the size of the window on every frame - with a
+ * `backdrop-filter: blur(48px)` panel on top re-blurring half the window again,
+ * because a backdrop-filter's input is whatever is behind it and that was
+ * moving, so it could never be cached.
+ *
+ * lib/ambient now blurs the artwork once into a bitmap. Rotating and
+ * translating a plain image is compositor work, so all three layers together
+ * cost nothing per frame, and the motion can be as generous as it likes.
+ */
+
+.amb-layer {
+    position: absolute;
+    /* 124% of the window, down from 144%.
+     *
+     * This is the size of the texture Chromium has to hold and re-blend on
+     * every frame, and it is not the box that matters but the box times the
+     * largest scale the keyframes reach: at -22% and scale 1.24 the layer
+     * rastered at about 1.79x the window in each direction, which is 3.2x the
+     * window's pixels. The drift now peaks at scale 1.06 with no rotation, so
+     * -8% is enough to keep the corners covered at 3% travel. */
+    inset: -8%;
+    background-size: cover;
+    background-position: center;
+    will-change: transform;
+    backface-visibility: hidden;
+    pointer-events: none;
+}
+
+/* Fast enough to be caught moving. Speed is free here - the frame is
+   recomposited at 60fps for as long as any animation runs at all, so a 17s
+   cycle costs exactly what a 90s one did. */
+.amb-1 { animation: amb-drift-1 17s ease-in-out infinite; }
+
+/* Nobody is looking: stop damaging the frame. See hooks/useWindowActive - an
+   unfocused window is not a hidden one, and Chromium keeps its animations
+   running at full rate. */
+.amb-parked { animation-play-state: paused; }
+
+/* Gentle on purpose. This layer fills the whole window, and a full-viewport
+   field that swells and turns is exactly the kind of motion that unsettles
+   people - so no rotation, a small scale range and a few percent of travel.
+   The colour still flows; it just no longer lurches. The drift can be turned
+   off in Settings (prefs.ambientMotion) and stops for reduced motion or
+   reduced transparency. */
+@keyframes amb-drift-1 {
+    0%, 100% { transform: scale(1.02) translate3d(0, 0, 0); }
+    33%      { transform: scale(1.06) translate3d(3%, -2.5%, 0); }
+    66%      { transform: scale(1.04) translate3d(-2.5%, 2%, 0); }
+}
+
+/* ── lyrics ───────────────────────────────────────────────────────────────
+ *
+ * The active line's light travels with the voice: lib/lyrics writes one
+ * quantised `--g` per word on the frame it advances the sweep, so the bloom
+ * rises as a word is sung and decays behind it rather than the whole line
+ * switching on at once. `--glow` is the cover's most saturated colour, so the
+ * lyric reads as lit by the record it belongs to.
+ */
+
+/* Every lyric line is built from these spans, lit or not - see LyricRowText.
+   Keeping the box identical in both states is what stops a line re-wrapping at
+   the moment it lights up: inline-blocks do not break where plain text does, so
+   swapping between the two re-flowed the line underneath the enlarge. */
+.lyr-word {
+    display: inline-block;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+/* Only the lit line carries the sweep gradient and its travelling bloom.
+   The radius is short on purpose: this repaints on every frame of the sweep, it
+   is the only per-frame blur left on the page, and a text shadow costs roughly
+   its radius. --glow is sampled from the cover, so on a warm sleeve a wide one
+   is an orange bloom over an orange field - the two compound into haze rather
+   than reading as light. */
+.lyr-word-lit {
+    color: transparent;
+    -webkit-background-clip: text;
+    background-clip: text;
+    text-shadow: 0 0 calc(2px + var(--g, 0) * 9px) rgba(var(--glow, 255, 255, 255), calc(var(--g, 0) * 0.38));
+}
+
+/* A line arrives rather than switches on: it lifts the last few pixels into
+   place as the sweep starts crossing it. Keyed to the element mounting, which
+   happens exactly when a row becomes active and its plain paragraph is replaced
+   by the sweep's spans - so it never fires across the rest of the list. */
+.lyr-line {
+    /* balance, not pretty: when a line does wrap, split it into two even halves
+       rather than pushing a single orphaned word onto the second row */
+    text-wrap: balance;
+}
+
+/* There was a lift-and-fade keyed to this element mounting. It is gone: the row
+   it sits in now scales and fades on its own transition, and the column tweens
+   underneath it on the same curve, so a second animation on the paragraph was
+   one motion too many - it read as the line arriving twice. */
+
+/* The mask fades the ends of the list, which leaves a scrollbar reading as a
+   stray bright edge inside the fade. Wheel and drag still work. */
+.lyr-scroll {
+    scrollbar-width: none;
+    overscroll-behavior: contain;
+}
+
+/* Lyrics / Queue.
+ *
+ * Quieter than it was: the group used to be a heavy 8% fill with a pure #fff
+ * pill inside it, which put the brightest thing in the whole view on a control
+ * nobody needs to look at while a song is playing. The shell is now barely
+ * there, the selected tab is an off-white that matches the lyric ink rather
+ * than out-glowing it, and the type is set a notch smaller so the icons sit
+ * level with the caps instead of towering over them. */
+.lyr-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.lyr-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 29px;
+    padding: 0 13px;
+    border: none;
+    border-radius: 99px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.58);
+    transition: background 0.16s ease, color 0.16s ease;
+}
+
+.lyr-tab:hover {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.lyr-tab-on,
+.lyr-tab-on:hover {
+    background: rgba(255, 255, 255, 0.94);
+    color: #16131c;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+}
+
+.lyr-tab:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.7);
+    outline-offset: 2px;
+}
+
+
+/* Collapse back to the dock. Sits opposite the Lyrics/Queue tabs in the card
+   header, and is quiet until pointed at - it is an exit, not an action anyone
+   is looking for. Hover lives here rather than in an onMouseEnter handler
+   because those write straight to node.style, and any unrelated re-render while
+   the cursor is still on the button wipes the fill. */
+.imm-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    transition: background 0.16s ease, color 0.16s ease;
+}
+
+.imm-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+.imm-close:active {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+.imm-close:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.7);
+    outline-offset: 2px;
+}
+
+.lyr-scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .amb-layer { animation: none !important; }
+}
+
+
+/* ── top bar controls ─────────────────────────────────────────────────────
+   the button groups either side of the search field, and the field itself.
+   they follow the rest of the app's shape language rather than being pills:
+   10px on the group (a notch under the 12px card), 7px on the buttons inside
+   so the corners stay concentric (10 - 1px border - 2px padding), and the
+   same faint glass fill + hairline the cards and sidebar pills use. 30px
+   tall in the 40px bar leaves 5px above and 5px down to the card.
+
+   hover / press / focus are CSS-only: the old inline onMouseEnter handlers
+   wrote straight to node.style, so any unrelated re-render while the cursor
+   was still on a button wiped the hover fill.
+
+   no backdrop-filter: the top bar sits straight on the OS material, so there
+   is nothing painted behind these to blur, and a filter layer over a
+   transparent window only buys a compositing surface. */
+
+/* a bare row of controls: no box around the group, the buttons carry their
+   own hover / on states */
+.tb-capsule {
+    display: flex;
+    align-items: center;
+    height: 30px;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+/* group divider. only between groups, never between every control */
+.tb-sep {
+    width: 1px;
+    height: 16px;
+    flex-shrink: 0;
+    margin: 0 3px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.tb-btn {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.62);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition:
+        background 0.12s ease,
+        color 0.12s ease,
+        box-shadow 0.12s ease,
+        transform 0.12s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.tb-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+}
+
+.tb-btn:active {
+    transform: scale(0.94);
+}
+
+.tb-btn:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+/* toggled on -> the same accent pill the sidebar uses for the active nav
+   item, so "this panel is open" reads at a glance */
+.tb-btn[data-on="true"] {
+    background: var(--color-accent);
+    color: #ffffff;
+    box-shadow:
+        0 2px 10px color-mix(in srgb, var(--color-accent) 35%, transparent),
+        inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.tb-btn[data-on="true"]:hover {
+    background: var(--color-accent-hover);
+}
+
+/* playing on another device: a different fact, so a different colour */
+.tb-btn[data-tone="remote"] {
+    background: rgba(30, 215, 96, 0.16);
+    color: var(--color-primary, #1ed760);
+}
+
+.tb-btn[data-tone="remote"]:hover {
+    background: rgba(30, 215, 96, 0.24);
+    color: var(--color-primary, #1ed760);
+}
+
+/* nothing to act on. still hoverable, so the tooltip can say why */
+.tb-btn[aria-disabled="true"],
+.tb-btn[aria-disabled="true"]:hover {
+    color: rgba(255, 255, 255, 0.22);
+    background: transparent;
+    cursor: default;
+}
+
+.tb-btn[aria-disabled="true"]:active {
+    transform: none;
+}
+
+/* the search field. the one boxed thing in the top bar, since it is an
+   input rather than a button; focus borrows the accent the way the rest of
+   the app marks "this is where your input goes" */
+.tb-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 5px 0 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    color: var(--color-text-dim);
+    cursor: text;
+    transition:
+        background 0.15s ease,
+        border-color 0.15s ease,
+        box-shadow 0.15s ease,
+        color 0.15s ease;
+}
+
+.tb-search:hover {
+    background: rgba(255, 255, 255, 0.065);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.tb-search[data-focused="true"] {
+    background: rgba(255, 255, 255, 0.075);
+    border-color: color-mix(in srgb, var(--color-accent) 75%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
+    color: #ffffff;
+}
+
+.tb-search input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--color-text-hi);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.006em;
+}
+
+.tb-search input::placeholder {
+    color: rgba(255, 255, 255, 0.42);
+    font-weight: 450;
+}
+
+.tb-search-kbd {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 5px;
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.45);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    user-select: none;
+}
+
+.tb-search-clear {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+
+.tb-search-clear:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tb-btn,
+    .tb-search {
+        transition: none;
+    }
+    .tb-btn:active {
+        transform: none;
+    }
+}
+
+
+/* ═══ shared interaction primitives ══════════════════════════════════════
+   Every pressable thing in the app follows the pattern .tb-btn established:
+   hover is CSS (never onMouseEnter writing node.style - any re-render while
+   the pointer is still there wipes it), hover only where a real hover pointer
+   exists, feedback on press rather than on release, and a visible
+   focus-visible ring.
+
+   .pressable     press feedback only. drop on anything clickable.
+   .btn-icon      square icon button, transparent at rest
+   .btn-text      text link / text button (dim -> bright)
+   .btn-pill      small filled secondary pill
+   .btn-primary   accent pill
+   .btn-danger    destructive pill
+   .row-btn       full-width list/menu row
+   .focus-ring    focus-visible ring for custom controls */
+
+.pressable,
+.btn-icon,
+.btn-text,
+.btn-pill,
+.btn-primary,
+.btn-danger,
+.row-btn {
+    transition:
+        background-color 0.14s ease,
+        color 0.14s ease,
+        border-color 0.14s ease,
+        box-shadow 0.14s ease,
+        opacity 0.14s ease,
+        transform 0.12s var(--ease-out);
+}
+
+.pressable:active:not([aria-disabled="true"]):not(:disabled),
+.btn-icon:active:not([aria-disabled="true"]):not(:disabled),
+.btn-pill:active:not([aria-disabled="true"]):not(:disabled),
+.btn-primary:active:not([aria-disabled="true"]):not(:disabled),
+.btn-danger:active:not([aria-disabled="true"]):not(:disabled) {
+    transform: scale(var(--press-scale));
+}
+/* rows are wide; a 4% scale would move their far edge a long way */
+.row-btn:active:not([aria-disabled="true"]):not(:disabled) {
+    transform: scale(0.985);
+}
+.btn-text:active:not([aria-disabled="true"]):not(:disabled) {
+    opacity: 0.7;
+}
+
+.btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--color-text-dim);
+    cursor: pointer;
+    font: inherit;
+}
+.btn-icon[data-on="true"] {
+    color: var(--color-accent-hover);
+}
+
+.btn-text {
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--color-text-dim);
+    cursor: pointer;
+    font: inherit;
+}
+
+.btn-pill,
+.btn-primary,
+.btn-danger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 99px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.006em;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.btn-pill {
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--color-text-hi);
+}
+.btn-primary {
+    background: var(--color-accent);
+    border-color: transparent;
+    color: var(--color-accent-text);
+}
+.btn-danger {
+    background: rgba(255, 69, 58, 0.14);
+    border-color: rgba(255, 69, 58, 0.3);
+    color: #ff6961;
+}
+
+.row-btn {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--color-text);
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+}
+.row-btn[data-active="true"] {
+    background: var(--color-active);
+    color: var(--color-text-hi);
+}
+
+.btn-icon:disabled,
+.btn-icon[aria-disabled="true"],
+.btn-pill:disabled,
+.btn-pill[aria-disabled="true"],
+.btn-primary:disabled,
+.btn-primary[aria-disabled="true"],
+.btn-text:disabled,
+.btn-text[aria-disabled="true"] {
+    opacity: 0.4;
+    cursor: default;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .btn-icon:hover:not(:disabled):not([aria-disabled="true"]) {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--color-text-hi);
+    }
+    .btn-icon[data-on="true"]:hover:not(:disabled) {
+        color: color-mix(in srgb, var(--color-accent-hover) 65%, #ffffff);
+    }
+    .btn-text:hover:not(:disabled):not([aria-disabled="true"]) {
+        color: var(--color-text-hi);
+    }
+    .btn-pill:hover:not(:disabled):not([aria-disabled="true"]) {
+        background: rgba(255, 255, 255, 0.12);
+    }
+    .btn-primary:hover:not(:disabled):not([aria-disabled="true"]) {
+        background: var(--color-accent-hover);
+    }
+    .btn-danger:hover:not(:disabled):not([aria-disabled="true"]) {
+        background: rgba(255, 69, 58, 0.22);
+    }
+    .row-btn:hover:not(:disabled):not([aria-disabled="true"]):not([data-active="true"]) {
+        background: var(--color-hover);
+        color: var(--color-text-hi);
+    }
+}
+
+/* one focus ring for every custom control. keyboard only - :focus-visible
+   never fires for a mouse click. */
+.pressable:focus-visible,
+.btn-icon:focus-visible,
+.btn-text:focus-visible,
+.btn-pill:focus-visible,
+.btn-primary:focus-visible,
+.btn-danger:focus-visible,
+.row-btn:focus-visible,
+.focus-ring:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+.row-btn:focus-visible {
+    outline-offset: -2px;
+}
+/* text fields: ring the wrapper, since the input itself is borderless */
+.focus-within-ring:focus-within {
+    border-color: color-mix(in srgb, var(--color-accent) 75%, transparent) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+/* keyboard users land on hover-revealed controls too */
+.group:focus-within .queue-btn,
+.group:focus-within .row-play,
+.group:focus-within .rec-play {
+    opacity: 1 !important;
+}
+.group:focus-within .row-idx {
+    opacity: 0;
+}
+.group:focus-within .rec-play {
+    transform: translateY(0) !important;
+}
+input[type="range"]:focus-visible {
+    outline: none;
+}
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+    opacity: 1;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 55%, transparent), 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* ── type roles ────────────────────────────────────────────────────────── */
+.t-display {
+    font-size: var(--type-display-size);
+    font-weight: 800;
+    line-height: var(--type-display-lead);
+    letter-spacing: var(--type-display-track);
+}
+.t-title {
+    font-size: var(--type-title-size);
+    font-weight: 800;
+    line-height: var(--type-title-lead);
+    letter-spacing: var(--type-title-track);
+}
+.t-section {
+    font-size: var(--type-section-size);
+    font-weight: 700;
+    line-height: var(--type-section-lead);
+    letter-spacing: var(--type-section-track);
+}
+/* 10.5-12.5px secondary text: open the tracking back up. the body's
+   -0.011em is right at 14px and cramped below 13. */
+.t-caption {
+    letter-spacing: var(--type-caption-track);
+}
+.tnum {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── loader ────────────────────────────────────────────────────────────── */
+.loader {
+    opacity: 0;
+    animation: loader-in 0.25s var(--ease-out) 0.3s forwards;
+}
+.loader-arc {
+    animation: spin 0.8s linear infinite;
+}
+@keyframes loader-in {
+    to { opacity: 1; }
+}
+
+/* ── carousels: scroll-edge fade instead of a hard clip ────────────────── */
+.edge-fade-x[data-fade-start="true"][data-fade-end="true"] {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 36px, #000 calc(100% - 36px), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 36px, #000 calc(100% - 36px), transparent 100%);
+}
+.edge-fade-x[data-fade-start="true"]:not([data-fade-end="true"]) {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 36px);
+    mask-image: linear-gradient(to right, transparent 0, #000 36px);
+}
+.edge-fade-x[data-fade-end="true"]:not([data-fade-start="true"]) {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent 100%);
+    mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent 100%);
+}
+
+/* ── lyrics tabs / immersive close: press feedback ─────────────────────── */
+.lyr-tab {
+    transition: background 0.16s ease, color 0.16s ease, transform 0.12s var(--ease-out);
+}
+.lyr-tab:active {
+    transform: scale(var(--press-scale));
+}
+.imm-close {
+    transition: background 0.16s ease, color 0.16s ease, transform 0.12s var(--ease-out);
+}
+.imm-close:active {
+    transform: scale(var(--press-scale));
+}
+
+/* ═══ accessibility preferences ══════════════════════════════════════════ */
+
+/* Reduced motion: gentler, not none. Movement goes, opacity and colour stay. */
+@media (prefers-reduced-motion: reduce) {
+    .eq-bar,
+    .eq-bar-q {
+        animation: none;
+        transform: scaleY(0.6);
+    }
+    .pressable,
+    .btn-icon,
+    .btn-pill,
+    .btn-primary,
+    .btn-danger,
+    .row-btn,
+    .lyr-tab,
+    .imm-close {
+        transition-property: background-color, color, border-color, box-shadow, opacity;
+    }
+    .pressable:active,
+    .btn-icon:active,
+    .btn-pill:active,
+    .btn-primary:active,
+    .btn-danger:active,
+    .row-btn:active,
+    .lyr-tab:active,
+    .imm-close:active {
+        transform: none !important;
+    }
+    .loader-arc {
+        animation-duration: 2.4s;
+    }
+    .group:hover .rec-play {
+        transform: none !important;
+    }
+}
+
+/* Reduced transparency: glass becomes solid. Anything that opts in with
+   .glass-solid-fallback (popovers, menus, tooltips, toasts, the dock, the
+   lyrics card) drops its blur and goes near-opaque. */
+@media (prefers-reduced-transparency: reduce) {
+    .glass-solid-fallback {
+        background: var(--color-popover-solid) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+    }
+    .amb-layer {
+        animation: none !important;
+    }
+}
+
+/* Increased contrast: near-solid surfaces with a defined edge, dim text
+   brought up. */
+@media (prefers-contrast: more) {
+    :root {
+        --color-text: rgba(255, 255, 255, 0.95);
+        --color-text-dim: rgba(255, 255, 255, 0.78);
+        --color-text-muted: rgba(255, 255, 255, 0.78);
+        --color-border: rgba(255, 255, 255, 0.28);
+        --color-glass-border: rgba(255, 255, 255, 0.3);
+        --color-dock-border: rgba(255, 255, 255, 0.3);
+    }
+    .glass-solid-fallback {
+        background: var(--color-popover-solid) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        border-color: rgba(255, 255, 255, 0.4) !important;
+    }
+    .btn-pill,
+    .btn-primary,
+    .btn-danger,
+    .tb-search {
+        border-color: rgba(255, 255, 255, 0.4);
+    }
+}
+
+/* ── overlay scrollbar (components/ui/OverlayScrollbar) ─────────────────── */
+.ovs-hide {
+    scrollbar-width: none;
+}
+.ovs-hide::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+.ovs-host {
+    position: relative;
+}
+/* a 10px hit strip on the right edge; only live when there is something to scroll */
+.ovs-track {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    right: 0;
+    width: 10px;
+    z-index: 5;
+    pointer-events: none;
+}
+.ovs-track[data-on="true"] {
+    pointer-events: auto;
+}
+/* 3px at rest, anchored to the right so it widens inward when grabbed */
+.ovs-thumb {
+    position: absolute;
+    top: 0;
+    right: 2px;
+    width: 3px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.26);
+    opacity: 0;
+    cursor: default;
+    transition: opacity 0.3s ease, width 0.15s var(--ease-out, ease-out), background-color 0.15s ease;
+}
+.ovs-track[data-visible="true"] .ovs-thumb {
+    opacity: 1;
+    transition-duration: 0.1s, 0.15s, 0.15s;
+}
+@media (hover: hover) and (pointer: fine) {
+    .ovs-host:hover .ovs-thumb {
+        opacity: 1;
+    }
+    .ovs-track:hover .ovs-thumb {
+        width: 6px;
+        background: rgba(255, 255, 255, 0.42);
+    }
+}
+.ovs-track[data-dragging="true"] .ovs-thumb {
+    width: 6px;
+    background: rgba(255, 255, 255, 0.5);
+}
+@media (prefers-contrast: more) {
+    .ovs-thumb {
+        background: rgba(255, 255, 255, 0.6);
     }
 }

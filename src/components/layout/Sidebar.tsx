@@ -1,50 +1,54 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { coverUrl } from "../../lib/coverUrl";
 import { useNavigate, useLocation } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, animate, useMotionValue, useTransform, useReducedMotion, type MotionValue } from "framer-motion";
 import {
   Home, ListMusic,
-  Music, Disc3, Users,
+  Music, Disc3, User,
   Pin, PinOff,
-  Search, ChevronDown, X,
-  PanelLeftClose, PanelLeft,
-} from "lucide-react";
-import { usePinsStore } from "../../store/pins.store";
+  ChevronDown,
+  type LucideIcon,
+} from "@/lib/icons";
+import { usePinsStore, type PinnedItem } from "../../store/pins.store";
+import { useMyPlaylists } from "../../hooks/useLibrary";
 import { useUIStore } from "../../store/ui.store";
 import { useContextMenu } from "../ui/ContextMenu";
-import { gpuLayer, zTransform } from "../../lib/motion";
-import { isMac } from "../../lib/platform";
+import { gpuLayer, zTransform, EASE_OUT, SPRING, PRESS_TRANSITION } from "../../lib/motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchPlaylist, prefetchAlbum } from "../../lib/prefetch";
 import { Tooltip } from "../ui/Tooltip";
+import { OverlayScrollbar } from "../ui/OverlayScrollbar";
+import { isMac } from "../../lib/platform";
+import { usePrefsStore } from "../../store/prefs.store";
+import { chromePx } from "../../lib/zoom";
 
-// frosted glass pill -- (search bar / account bar)
-
-const glassPill: React.CSSProperties = {
-  width:        "100%",
-  height:       36,
-  borderRadius: 8,
-  background:   "var(--color-glass)",
-  border:       "1px solid var(--color-glass-border)",
-  display:      "flex",
-  alignItems:   "center",
-  gap:          9,
-  padding:      "0 11px",
-  flexShrink:   0,
-};
+/* collapsed rail geometry: one 40px square target per row, centred in the
+rail, 10px corners. Every icon and pinned cover sits on this same grid, so the
+rail reads as one column rather than a stack of odd-sized pieces. */
+const RAIL_ITEM = 40;
+const RAIL_RADIUS = 10;
+// a pinned cover inset in its target, so the selected pill shows as an even
+// 4px ring around it; its corners follow the pill's (10 - 4 = 6)
+const RAIL_COVER = 32;
 
 // nav item. active state passed in explicitly so we don't get multi highlight
 
 function NavItem({
-  icon, label, active, onClick, collapsed,
+  icon: Icon, label, active, onClick, collapsed,
 }: {
-  icon: React.ReactNode; label: string; active: boolean; onClick: () => void; collapsed?: boolean;
+  icon: LucideIcon; label: string; active: boolean; onClick: () => void; collapsed?: boolean;
 }) {
   const btn = (
     <motion.button
+      // hover fill is CSS (.sb-item, hover-capable pointers only); framer's
+      // whileHover also fired on touch taps and stuck there
+      className="nav-item sb-item focus-ring"
+      data-active={active || undefined}
+      aria-current={active ? "page" : undefined}
+      aria-label={collapsed ? label : undefined}
       onClick={onClick}
       whileTap={{ scale: 0.98 }}
-      whileHover={active ? {} : { backgroundColor: "var(--color-hover)" }}
-      transition={{ type: "spring", stiffness: 400, damping: 26 }}
+      transition={PRESS_TRANSITION}
       transformTemplate={zTransform}
       style={{
         ...gpuLayer,
@@ -53,43 +57,46 @@ function NavItem({
         alignItems:    "center",
         justifyContent: collapsed ? "center" : "flex-start",
         gap:           collapsed ? 0 : 11,
-        height:        34,
-        width:         "100%",
+        height:        collapsed ? RAIL_ITEM : 34,
+        /* collapsed: a fixed square, centred in the column, so the active
+         pill (inset: 0) is a perfect square */
+        width:         collapsed ? RAIL_ITEM : "100%",
+        margin:        collapsed ? "0 auto" : undefined,
         padding:       collapsed ? 0 : "0 10px",
-        borderRadius:  8,
+        borderRadius:  collapsed ? RAIL_RADIUS : 8,
         border:        "none",
-        fontSize:      14,
+        fontSize:      13.5,
         fontWeight:    active ? 600 : 500,
-        color:         active ? "var(--color-text-hi)" : "var(--color-text)",
+        color:         active ? "#ffffff" : "var(--color-text)",
         background:    "transparent",
         cursor:        "pointer",
         textAlign:     collapsed ? "center" : "left",
       }}
     >
-      {active && (
+      {active && !collapsed && (
         <motion.div
           layoutId="activeNavPill"
-          transition={{ type: "spring", stiffness: 500, damping: 36 }}
+          transition={SPRING}
           style={{
             position: "absolute",
             inset: 0,
-            borderRadius: 8,
-            background: "var(--color-active)",
+            borderRadius: collapsed ? RAIL_RADIUS : 8,
+            background: "var(--color-accent)",
+            boxShadow: "0 2px 10px var(--color-accent-dim, rgba(88, 115, 216, 0.35))",
             zIndex: 0,
           }}
         />
       )}
-      <span style={{
+      <span className="nav-icon" data-active={active || undefined} style={{
         position: "relative",
         zIndex: 1,
         width: 20, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-        color: active ? "var(--color-accent)" : "inherit",
-        transition: "color 0.15s ease",
       }}>
-        {icon}
+        {/* a touch larger alone in the rail, where the icon is the only label */}
+        <Icon size={collapsed ? 19 : 18} strokeWidth={1.7} active={active} />
       </span>
       {!collapsed && (
-        <span style={{ position: "relative", zIndex: 1, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        <span style={{ position: "relative", zIndex: 1, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: active ? "#ffffff" : "inherit" }}>{label}</span>
       )}
     </motion.button>
   );
@@ -100,38 +107,155 @@ function NavItem({
   return btn;
 }
 
+/* The collapsed rail's selection highlight: one element for the whole rail
+rather than a pill inside each item handed over by layoutId, which slid as a
+rigid tile over every icon in between.
+
+Its two edges ride separate critically damped springs. The leading edge (the
+one on the side of the item you picked) is quick, the trailing edge follows a
+beat later, so the highlight stretches toward your choice and draws itself in
+behind - the motion points at where it's going. No overshoot: this answers a
+click, and nothing that was merely clicked should bounce. */
+const EDGE_LEAD  = { type: "spring" as const, stiffness: 620, damping: 50 };  // ~critical (2*sqrt(620) = 49.8)
+const EDGE_TRAIL = { type: "spring" as const, stiffness: 260, damping: 33 };  // ~critical (2*sqrt(260) = 32.2)
+
+function useRailIndicator(containerRef: React.RefObject<HTMLDivElement | null>, enabled: boolean, deps: unknown[]) {
+  const reduceMotion = useReducedMotion();
+  const top = useMotionValue(0);
+  const bottom = useMotionValue(0);
+  const height = useTransform([top, bottom], ([t, b]: number[]) => Math.max(0, b - t));
+  const [visible, setVisible] = useState(false);
+  const shown = useRef(false);
+
+  const measure = useCallback(() => {
+    const c = containerRef.current;
+    const el = enabled ? c?.querySelector<HTMLElement>('.sb-item[data-active="true"]') : null;
+    if (!c || !el) {
+      shown.current = false;
+      setVisible(false);
+      return;
+    }
+    // measure from the item's centre and untransformed height, so a press
+    // scale still running on the clicked item doesn't skew the target
+    const cr = c.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const mid = r.top + r.height / 2 - cr.top + c.scrollTop;
+    const t = mid - el.offsetHeight / 2;
+    const b = mid + el.offsetHeight / 2;
+
+    // first appearance (rail just collapsed, or arriving from a page with no
+    // rail item) lands in place and fades in; only item-to-item moves travel
+    if (!shown.current || reduceMotion) {
+      top.jump(t);
+      bottom.jump(b);
+      shown.current = true;
+      setVisible(true);
+      return;
+    }
+    if (t === top.get() && b === bottom.get()) return;
+    const down = t > top.get();
+    animate(top, t, down ? EDGE_TRAIL : EDGE_LEAD);
+    animate(bottom, b, down ? EDGE_LEAD : EDGE_TRAIL);
+  }, [containerRef, enabled, reduceMotion, top, bottom]);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(measure, deps);
+
+  // zoom or window changes move the items without a route change
+  useEffect(() => {
+    const c = containerRef.current;
+    if (!c || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(c);
+    return () => ro.disconnect();
+  }, [containerRef, measure]);
+
+  return { top, height, visible };
+}
+
+function RailIndicator({ top, height, visible }: { top: MotionValue<number>; height: MotionValue<number>; visible: boolean }) {
+  return (
+    <motion.div
+      aria-hidden
+      initial={false}
+      animate={{ opacity: visible ? 1 : 0 }}
+      transition={{ duration: 0.15, ease: EASE_OUT }}
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        margin: "0 auto",
+        width: RAIL_ITEM,
+        y: top,
+        height,
+        borderRadius: RAIL_RADIUS,
+        background: "var(--color-accent)",
+        boxShadow: "0 2px 10px var(--color-accent-dim, rgba(88, 115, 216, 0.35))",
+        pointerEvents: "none",
+        zIndex: 0,
+      }}
+    />
+  );
+}
+
 // collapsible section
 
 function Section({
-  label, expanded, onToggle, children, collapsed,
+  label, expanded, onToggle, children, collapsed, first,
 }: {
   label: string; expanded: boolean; onToggle: () => void; children: React.ReactNode; collapsed?: boolean;
+  // the top group: nothing above it to separate from, so no divider
+  first?: boolean;
 }) {
   if (collapsed) {
+    /* groups are split by a short centred hairline, not a rule across the
+       whole rail: it separates without boxing the column into strips. an
+       empty group (no pins yet) draws nothing, divider included. */
+    const hasItems = Array.isArray(children) ? children.some(Boolean) : Boolean(children);
+    if (!hasItems) return null;
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 8 }}>
-        <div style={{ height: 1, background: "var(--color-border)", margin: "4px 6px 6px" }} />
+      <div role="group" aria-label={label} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {!first && (
+          <div
+            aria-hidden
+            style={{ width: 20, height: 1, borderRadius: 1, background: "rgba(255, 255, 255, 0.12)", margin: "8px auto" }}
+          />
+        )}
         {children}
       </div>
     );
   }
 
+  /* section headers read as quiet labels: small capitals, a lighter weight
+     than the old 700, set a step dimmer than the rows so the rows lead. The
+     chevron only shows when it has something to say - on hover or keyboard
+     focus, or while the section is folded so a hidden group is never lost.
+     Groups after the first get air above them instead of a rule. */
   return (
-    <div>
+    <div style={{ marginTop: first ? 0 : 10 }}>
       <button
         onClick={onToggle}
+        aria-expanded={expanded}
+        className="sb-section-head focus-ring"
         style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          width: "100%", height: 30, padding: "0 10px", border: "none", background: "transparent",
-          color: "var(--color-text-dim)", fontSize: 11, fontWeight: 700,
+          width: "100%", height: 28, padding: "0 10px", border: "none", background: "transparent",
+          borderRadius: 6,
+          font: "inherit",
+          // capitals at 11px want open tracking or they clump into a block
+          color: "rgba(255, 255, 255, 0.5)", fontSize: 11, fontWeight: 600,
           letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer",
         }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text)"; }}
-        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-dim)"; }}
       >
         <span>{label}</span>
-        <motion.span animate={{ rotate: expanded ? 0 : -90 }} transition={{ duration: 0.18 }} style={{ display: "flex" }}>
-          <ChevronDown size={13} strokeWidth={2.5} />
+        <motion.span
+          className="sb-chev"
+          animate={{ rotate: expanded ? 0 : -90 }}
+          transition={{ duration: 0.18, ease: EASE_OUT }}
+          style={{ display: "flex" }}
+        >
+          <ChevronDown size={12} strokeWidth={2.4} />
         </motion.span>
       </button>
       <AnimatePresence initial={false}>
@@ -140,7 +264,7 @@ function Section({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+            transition={{ duration: 0.2, ease: EASE_OUT }}
             style={{ overflow: "hidden" }}
           >
             <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: "2px 0 6px" }}>
@@ -160,6 +284,8 @@ export default function Sidebar() {
   const location    = useLocation();
   const pins        = usePinsStore((s) => s.pins);
   const removePin   = usePinsStore((s) => s.removePin);
+  const sidebarMode = usePrefsStore((s) => s.sidebarMode);
+  const { data: myPlaylists = [], isLoading: playlistsLoading } = useMyPlaylists();
   const qc          = useQueryClient();
   const { open: openMenu, element: menuEl } = useContextMenu();
 
@@ -167,18 +293,25 @@ export default function Sidebar() {
   const tab  = new URLSearchParams(location.search).get("tab") ?? "songs";
   const onLibrary = path === "/library";
 
-  /* which library item (if any) is open + is it pinned. lets the sidebar light
-   up the specific pinned playlist when its open, and only fall back to
-   lighting the "Playlists" button for unpinned ones */
+  /* the last section lists either your pins or every playlist you have
+   (Settings -> Sidebar). both are the same kind of row, so one list drives it */
+  const showAllPlaylists = sidebarMode === "playlists";
+  const entries: PinnedItem[] = showAllPlaylists
+    ? myPlaylists.map((pl) => ({ id: pl.id, name: pl.name, image_url: pl.image_url, type: "playlist" as const }))
+    : pins;
+
+  /* which library item (if any) is open + is it in that list. lets the
+   sidebar light up the specific row when it's open, and only fall back to
+   lighting the "Playlists" button for playlists that have no row */
 
   const openMatch      = path.match(/^\/(playlist|album)\/(.+)$/);
   const openType       = openMatch?.[1] ?? null;   // "playlist" | "album"
   const openId         = openMatch?.[2] ?? null;
-  const openIsPinned   = openId != null && pins.some((p) => p.id === openId);
-  const onUnpinnedPlaylist = openType === "playlist" && !openIsPinned;
+  const openInSidebar  = openId != null && entries.some((p) => p.id === openId && p.type === openType);
+  const onPlaylistWithoutRow = openType === "playlist" && !openInSidebar;
 
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
-  const toggleSidebar    = useUIStore((s) => s.toggleSidebar);
+  const macSimulated     = useUIStore((s) => s.macSimulated);
   const [isNarrow, setIsNarrow] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth < 768 : false
   );
@@ -193,135 +326,101 @@ export default function Sidebar() {
   }, []);
 
   const isCollapsed = sidebarCollapsed || isNarrow;
+  /* mac keeps its native decorations, so the traffic lights land in this
+     column at fixed OS coordinates: 12px dots on a 20px pitch, first centre
+     at x=20, last edge at x=66. the collapsed rail widens to 72 so all three
+     still fit instead of being cropped down to the red one. */
+  const macChrome = isMac || macSimulated;
+  // the lights don't scale with the app's zoom, so their room is sized in
+  // physical pixels (chromePx), but never below the normal 64 CSS px rail
+  // that the nav icons need when zoomed in
+  const zoom = usePrefsStore((s) => s.uiZoom);
+  const px = (n: number) => chromePx(n, zoom);
+  const railWidth = isCollapsed ? (macChrome ? Math.max(64, px(72)) : 64) : 232;
+
+  const railRef = useRef<HTMLDivElement>(null);
+  const rail = useRailIndicator(railRef, isCollapsed, [isCollapsed, path, location.search, entries.length, sidebarMode]);
 
   const [spotifyOpen, setSpotifyOpen] = useState(true);
   const [libraryOpen, setLibraryOpen] = useState(true);
   const [pinsOpen,    setPinsOpen]    = useState(true);
-  const [query,       setQuery]       = useState(
-    () => new URLSearchParams(location.search).get("q") ?? "",
-  );
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const q = new URLSearchParams(location.search).get("q") ?? "";
-    setQuery(q);
-  }, [location.search]);
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && query.trim()) {
-      navigate(`/search?q=${encodeURIComponent(query.trim())}`);
-    }
-  }
 
   return (
-    <nav
+    /* The width tween stays: the rail's labels clip rather than reflow as it
+       narrows, and a 220ms ease-out is short enough that the per-frame layout
+       it costs never lands on anything the user is reading. Replacing it with
+       a transform would mean the page card no longer tracks the rail edge. */
+    <motion.nav
+      aria-label="Sidebar"
+      animate={{ width: railWidth }}
+      transition={{ duration: 0.22, ease: EASE_OUT }}
       style={{
-        width:         isCollapsed ? 64 : 232,
+        width:         railWidth,
         flexShrink:    0,
         display:       "flex",
         flexDirection: "column",
         overflow:      "hidden",
-        background:    "var(--color-sidebar)",
-        transition:    "width 0.22s cubic-bezier(0.23, 1, 0.32, 1)",
+        background:    "transparent",
+        borderRight:   "none",
+        /* the rail runs to the top of the window. on windows the first
+           section header is pushed down just enough to sit on the top bar's
+           centre line (40px bar: 2px strip + 4px nav padding + 28px header),
+           so the two read as one row */
+        paddingTop:    macChrome ? 4 : 0,
       }}
     >
-      {/* Notes - macos/cider/vibrancy */}
-      {isMac && <div data-tauri-drag-region style={{ height: 30, flexShrink: 0 }} />}
-
-      {/* header row: search or toggle */}
-      <div style={{ height: 48, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: isCollapsed ? "center" : "space-between", padding: "0 8px" }}>
-        {isCollapsed ? (
-          <Tooltip label={isNarrow ? "Search" : "Expand sidebar"} side="right">
-            <button
-              onClick={() => {
-                if (!isNarrow) toggleSidebar();
-                else navigate("/search");
-              }}
-              style={{
-                width: 36, height: 34, borderRadius: 8, border: "none",
-                background: "var(--color-glass)", color: "var(--color-text-dim)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                cursor: "pointer",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-hi)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-dim)"; }}
-            >
-              {isNarrow ? <Search size={15} strokeWidth={2.2} /> : <PanelLeft size={16} strokeWidth={2} />}
-            </button>
-          </Tooltip>
-        ) : (
-          <>
+      {macChrome ? (
+        /* macOS traffic lights (native Mac OR Ctrl+Shift+M simulated on
+           Windows). the padding and gap mirror the native geometry exactly,
+           in both the expanded and the collapsed rail, so these sit under the
+           real buttons rather than beside them. */
+        <div
+          data-tauri-drag-region
+          style={{ height: px(32), display: "flex", alignItems: "center", gap: px(8), padding: `0 ${px(14)}px`, flexShrink: 0 }}
+          title={!isMac ? "Mac traffic lights preview (Ctrl+Shift+M to toggle)" : undefined}
+        >
+          {["#ff5f57", "#febc2e", "#28c840"].map((c) => (
             <div
-              onClick={() => inputRef.current?.focus()}
-              style={{ ...glassPill, height: 32, cursor: "text", flex: 1, marginRight: 6 }}
-            >
-              <Search size={14} strokeWidth={2.2} style={{ color: "var(--color-text-dim)", flexShrink: 0 }} />
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Search"
-                spellCheck={false}
-                style={{
-                  flex: 1, minWidth: 0, height: "100%", border: "none", outline: "none",
-                  background: "transparent", color: "var(--color-text-hi)",
-                  fontSize: 13.5, fontWeight: 400, fontFamily: "inherit",
-                }}
-              />
-              {query && (
-                <Tooltip label="Clear search" side="top">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setQuery("");
-                      inputRef.current?.focus();
-                      if (path === "/search") navigate("/");
-                    }}
-                    style={{ display: "flex", border: "none", background: "transparent", color: "var(--color-text-dim)", cursor: "pointer", padding: 0, flexShrink: 0 }}
-                  >
-                    <X size={13} strokeWidth={2.4} />
-                  </button>
-                </Tooltip>
-              )}
-            </div>
-            <Tooltip label="Collapse sidebar" side="bottom">
-              <button
-                onClick={toggleSidebar}
-                style={{
-                  width: 30, height: 30, borderRadius: 8, border: "none",
-                  background: "transparent", color: "var(--color-text-dim)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: "pointer", flexShrink: 0,
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-hi)"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-dim)"; }}
-              >
-                <PanelLeftClose size={16} strokeWidth={2} />
-              </button>
-            </Tooltip>
-          </>
-        )}
-      </div>
+              key={c}
+              style={{
+                width: px(12), height: px(12), flexShrink: 0, borderRadius: "50%",
+                background: c, boxShadow: "inset 0 0 0 1px rgba(0, 0, 0, 0.18)",
+              }}
+            />
+          ))}
+        </div>
+      ) : (
+        // a strip of window-drag above the first header
+        <div data-tauri-drag-region style={{ height: 2, flexShrink: 0 }} />
+      )}
 
       {/* nav */}
-      <div style={{ flex: 1, overflowY: "auto", padding: isCollapsed ? "4px 6px" : "4px 8px" }}>
-        <Section label="Spotify" expanded={spotifyOpen} onToggle={() => setSpotifyOpen(v => !v)} collapsed={isCollapsed}>
-          <NavItem icon={<Home      size={17} strokeWidth={2} />} label="Home"      active={path === "/"}                                          onClick={() => navigate("/")} collapsed={isCollapsed} />
-          <NavItem icon={<ListMusic size={16} strokeWidth={2} />} label="Playlists" active={path === "/playlists" || onUnpinnedPlaylist}           onClick={() => navigate("/playlists")} collapsed={isCollapsed} />
+      {/* the list scrolls under a floating overlay scrollbar rather than a
+          native one: a long playlist list no longer gives up a 10px strip
+          of the rail's width to a gutter. the right inset is 4px, not 8:
+          the page card's own 4px margin makes up the rest, so rows reach
+          the same distance from the card as from the window's left edge */}
+      <div className="ovs-host" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <div ref={railRef} className="ovs-hide" style={{ position: "relative", flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", padding: isCollapsed ? "6px 6px 12px" : "4px 4px 4px 8px" }}>
+        {isCollapsed && <RailIndicator top={rail.top} height={rail.height} visible={rail.visible} />}
+        <Section label="Discover" first expanded={spotifyOpen} onToggle={() => setSpotifyOpen(v => !v)} collapsed={isCollapsed}>
+          <NavItem icon={Home} label="Home"      active={path === "/"}                                          onClick={() => navigate("/")} collapsed={isCollapsed} />
+          <NavItem icon={ListMusic} label="Playlists" active={path === "/playlists" || onPlaylistWithoutRow}           onClick={() => navigate("/playlists")} collapsed={isCollapsed} />
         </Section>
 
         <Section label="Library" expanded={libraryOpen} onToggle={() => setLibraryOpen(v => !v)} collapsed={isCollapsed}>
-          <NavItem icon={<Music size={16} strokeWidth={2} />} label="Songs"   active={onLibrary && tab === "songs"}   onClick={() => navigate("/library?tab=songs")} collapsed={isCollapsed} />
-          <NavItem icon={<Disc3 size={16} strokeWidth={2} />} label="Albums"  active={onLibrary && tab === "albums"}  onClick={() => navigate("/library?tab=albums")} collapsed={isCollapsed} />
-          <NavItem icon={<Users size={16} strokeWidth={2} />} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} collapsed={isCollapsed} />
+          <NavItem icon={Music} label="Songs"   active={onLibrary && tab === "songs"}   onClick={() => navigate("/library?tab=songs")} collapsed={isCollapsed} />
+          <NavItem icon={Disc3} label="Albums"  active={onLibrary && tab === "albums"}  onClick={() => navigate("/library?tab=albums")} collapsed={isCollapsed} />
+          <NavItem icon={User} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} collapsed={isCollapsed} />
         </Section>
 
-        <Section label="Pins" expanded={pinsOpen} onToggle={() => setPinsOpen(v => !v)} collapsed={isCollapsed}>
-          {pins.length === 0 ? (
-            !isCollapsed ? (
+        <Section label={showAllPlaylists ? "Your playlists" : "Pins"} expanded={pinsOpen} onToggle={() => setPinsOpen(v => !v)} collapsed={isCollapsed}>
+          {entries.length === 0 ? (
+            // nothing to say while the library is still loading
+            !isCollapsed && !(showAllPlaylists && playlistsLoading) ? (
               <div style={{ padding: "0 2px" }}>
                 <div
+                  className="t-caption"
                   style={{
                     borderRadius: 8,
                     border:       "1.5px dashed var(--color-glass-border)",
@@ -335,49 +434,94 @@ export default function Sidebar() {
                     gap:          8,
                   }}
                 >
-                  <Pin size={13} strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
-                  <span>No pins yet. Right-click a playlist to pin it.</span>
+                  {showAllPlaylists ? (
+                    <>
+                      <ListMusic size={13} strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
+                      <span>No playlists yet. Ones you make or follow show up here.</span>
+                    </>
+                  ) : (
+                    <>
+                      <Pin size={13} strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
+                      <span>No pins yet. Right-click a playlist to pin it.</span>
+                    </>
+                  )}
                 </div>
               </div>
             ) : null
           ) : (
-            pins.map((p) => {
+            entries.map((p) => {
               const active = openId === p.id && openType === p.type;
+              const coverSize = isCollapsed ? RAIL_COVER : 26;
+              const coverRadius = isCollapsed ? RAIL_RADIUS - (RAIL_ITEM - RAIL_COVER) / 2 : 5;
               const btn = (
-                <button
+                <motion.button
                   key={p.id}
                   onClick={() => navigate(`/${p.type}/${p.id}`)}
-                  onContextMenu={openMenu([
+                  // pinning means nothing while the sidebar lists every playlist,
+                  // so those rows have no menu; a pin row can be unpinned
+                  onContextMenu={showAllPlaylists ? undefined : openMenu([
                     { label: "Unpin", icon: <PinOff size={14} />, onSelect: () => removePin(p.id) },
                   ])}
                   title={isCollapsed ? undefined : p.name}
+                  aria-label={isCollapsed ? p.name : undefined}
+                  aria-current={active ? "page" : undefined}
+                  className="sb-item focus-ring"
+                  data-active={active || undefined}
+                  whileTap={{ scale: 0.98 }}
+                  transition={PRESS_TRANSITION}
+                  transformTemplate={zTransform}
                   style={{
-                    display: "flex", alignItems: "center", justifyContent: isCollapsed ? "center" : "flex-start",
-                    gap: isCollapsed ? 0 : 10, height: 38, width: "100%",
-                    padding: isCollapsed ? 0 : "0 8px", borderRadius: 8, border: "none",
-                    background: active ? "var(--color-active)" : "transparent",
-                    color: active ? "var(--color-text-hi)" : "var(--color-text)",
-                    cursor: "pointer", textAlign: isCollapsed ? "center" : "left",
-                    transition: "background 0.12s, color 0.12s",
+                    ...gpuLayer,
+                    position:      "relative",
+                    display:       "flex",
+                    alignItems:    "center",
+                    justifyContent: isCollapsed ? "center" : "flex-start",
+                    gap:           isCollapsed ? 0 : 10,
+                    height:        isCollapsed ? RAIL_ITEM : 34,
+                    width:         isCollapsed ? RAIL_ITEM : "100%",
+                    margin:        isCollapsed ? "0 auto" : undefined,
+                    padding:       isCollapsed ? 0 : "0 8px",
+                    borderRadius:  isCollapsed ? RAIL_RADIUS : 8,
+                    border:        "none",
+                    background:    "transparent",
+                    color:         active ? "#ffffff" : "var(--color-text)",
+                    cursor:        "pointer",
+                    textAlign:     isCollapsed ? "center" : "left",
                   }}
-                  onMouseEnter={(e) => {
-                    if (!active) (e.currentTarget as HTMLButtonElement).style.background = "var(--color-hover)";
+                  onPointerEnter={() => {
                     if (p.type === "album") prefetchAlbum(qc, p.id);
                     else prefetchPlaylist(qc, p.id);
                   }}
-                  onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
                 >
-                  {p.image_url ? (
-                    <img src={p.image_url} alt="" style={{ width: 28, height: 28, borderRadius: 5, objectFit: "cover", flexShrink: 0 }} />
-                  ) : (
-                    <div style={{ width: 28, height: 28, borderRadius: 5, background: "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <ListMusic size={14} style={{ color: active ? "var(--color-accent)" : "var(--color-text-dim)" }} />
-                    </div>
+                  {active && !isCollapsed && (
+                    <motion.div
+                      layoutId="activeNavPill"
+                      transition={SPRING}
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        borderRadius: isCollapsed ? RAIL_RADIUS : 8,
+                        background: "var(--color-accent)",
+                        boxShadow: "0 2px 10px var(--color-accent-dim, rgba(88, 115, 216, 0.35))",
+                        zIndex: 0,
+                      }}
+                    />
                   )}
+                  <span style={{ position: "relative", zIndex: 1, display: "flex", flexShrink: 0 }}>
+                    {p.image_url ? (
+                      <img src={coverUrl(p.image_url, coverSize) ?? p.image_url} alt="" style={{ width: coverSize, height: coverSize, borderRadius: coverRadius, objectFit: "cover", boxShadow: isCollapsed ? "0 2px 6px rgba(0, 0, 0, 0.35)" : undefined }} />
+                    ) : (
+                      <div style={{ width: coverSize, height: coverSize, borderRadius: coverRadius, background: active ? "rgba(255,255,255,0.2)" : "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <ListMusic size={14} style={{ color: active ? "#ffffff" : "var(--color-text-dim)" }} />
+                      </div>
+                    )}
+                  </span>
                   {!isCollapsed && (
-                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, fontWeight: active ? 600 : 500 }}>{p.name}</span>
+                    <span style={{ position: "relative", zIndex: 1, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, fontWeight: active ? 600 : 500 }}>
+                      {p.name}
+                    </span>
                   )}
-                </button>
+                </motion.button>
               );
 
               if (isCollapsed) {
@@ -388,7 +532,9 @@ export default function Sidebar() {
           )}
         </Section>
       </div>
+      <OverlayScrollbar target={railRef} />
+      </div>
       {menuEl}
-    </nav>
+    </motion.nav>
   );
 }

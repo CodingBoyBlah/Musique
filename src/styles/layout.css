@@ -1,0 +1,274 @@
+/* ── layout chrome: queue, devices, player bar, sidebar, top search ────────
+   Hover lives here, not in onMouseEnter handlers writing node.style: any
+   unrelated re-render while the pointer is still on a row wiped those. Every
+   hover is gated to devices with a real hover pointer, so a tap on a touch
+   screen never leaves a fill stuck behind. */
+
+/* queue rows */
+.q-row {
+    position: relative;
+    z-index: 1;
+    border-radius: 9px;
+    transition: background-color 0.12s ease, opacity 0.12s ease;
+}
+.q-row[data-clickable="true"] {
+    cursor: pointer;
+}
+.q-row[data-drag="true"] {
+    cursor: grab;
+    touch-action: none;
+}
+.q-row[data-drag="true"]:active {
+    cursor: grabbing;
+}
+.q-grip {
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+.q-row:focus-within .q-grip {
+    opacity: 1;
+}
+.q-row:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+}
+.q-row[data-clickable="true"]:active {
+    transform: scale(0.985);
+    transition: transform 0.12s var(--ease-out), background-color 0.12s ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .q-row:hover {
+        background: var(--color-surface-hover);
+        z-index: 20;
+    }
+    .q-row:hover .q-grip {
+        opacity: 1;
+    }
+}
+
+/* the small x inside a queue row */
+.q-remove {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.35);
+}
+
+/* devices popover rows */
+.dev-row {
+    border-radius: 10px;
+    transition: background-color 0.14s ease, transform 0.12s var(--ease-out);
+}
+.dev-row:active:not([aria-disabled="true"]):not([data-active="true"]) {
+    transform: scale(0.985);
+}
+.dev-row:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+}
+@media (hover: hover) and (pointer: fine) {
+    .dev-row:hover:not([data-active="true"]):not([aria-disabled="true"]) {
+        background: rgba(255, 255, 255, 0.06);
+    }
+}
+
+/* player-bar transport buttons: colour-only hover (no growth - these are
+   pressed dozens of times a day), press scale comes from framer's whileTap */
+.pb-btn {
+    color: rgba(255, 255, 255, 0.72);
+    background-color: transparent;
+    transition: color 0.15s ease, background-color 0.15s ease;
+}
+/* shuffle / repeat while off: a mode you set once, so it sits back */
+.pb-btn[aria-pressed="false"] {
+    color: rgba(255, 255, 255, 0.5);
+}
+.pb-play {
+    background-color: transparent;
+    transition: background-color 0.15s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+    .pb-btn:hover:not(:disabled):not([data-on="true"]):not([data-large="true"]) {
+        color: #ffffff;
+    }
+    /* a faint plate behind the glyph shows what the press will hit */
+    .pb-btn:hover:not(:disabled):not([data-large="true"]),
+    .pb-play:hover {
+        background-color: rgba(255, 255, 255, 0.08);
+    }
+}
+
+/* the "on" mark under shuffle / repeat. grows in from a visible 0.4, never
+   from nothing */
+.pb-on-dot {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    width: 4px;
+    height: 4px;
+    margin-left: -2px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    opacity: 0;
+    transform: scale(0.4);
+    transition: opacity 0.16s var(--ease-out), transform 0.16s var(--ease-out);
+    pointer-events: none;
+}
+.pb-on-dot[data-on="true"] {
+    opacity: 1;
+    transform: scale(1);
+}
+
+/* dock titles: scroll a name too long to fit, on hover (PlayerBar Marquee).
+   the ends fade while it moves so the text slides out rather than being cut */
+.pb-marquee {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+}
+.pb-marquee-run {
+    display: inline-block;
+    animation: pb-marquee var(--dur, 6s) linear 0.35s infinite alternate;
+}
+@keyframes pb-marquee {
+    0%, 14% { transform: translateX(0); }
+    86%, 100% { transform: translateX(var(--shift, 0)); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .pb-on-dot { transform: none; }
+    .pb-marquee-run { animation: none; }
+}
+
+/* track / artist links in the dock. not the browser's underline (thick,
+   glued to the baseline, cutting through descenders): a 1px line in the
+   text's own colour, dimmed, that draws in from the left on hover and runs
+   off to the right on leave - the anchor flips sides, so it never retracts
+   back the way it came. it's a background, so it rides along when a long
+   title scrolls. */
+.pb-link {
+    text-decoration: none;
+    background-image: linear-gradient(
+        color-mix(in srgb, currentColor 55%, transparent),
+        color-mix(in srgb, currentColor 55%, transparent)
+    );
+    background-repeat: no-repeat;
+    background-position: 100% 100%;
+    background-size: 0% 1px;
+    transition: background-size 0.28s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.pb-link:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+    border-radius: 3px;
+}
+@media (hover: hover) and (pointer: fine) {
+    .pb-link:hover {
+        background-position: 0% 100%;
+        background-size: 100% 1px;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .pb-link {
+        transition: none;
+    }
+}
+
+/* player-bar scrubber: keyboard focus rings the line itself */
+.scrub:focus-visible {
+    outline: none;
+}
+.scrub:focus-visible .scrub-track {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+
+/* top-search result rows: arrow-key selection is instant - it is a keyboard
+   action, repeated fast, and a fade behind it reads as lag. only the pointer
+   hover gets a (very short) transition. */
+.ts-row {
+    transition: none;
+}
+@media (hover: hover) and (pointer: fine) {
+    .ts-row:hover:not([data-active="true"]) {
+        background: rgba(255, 255, 255, 0.05);
+    }
+}
+
+/* windows caption buttons (min / max / close) */
+.cap-btn {
+    background: transparent;
+    color: rgba(255, 255, 255, 0.72);
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+.cap-btn:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+}
+@media (hover: hover) and (pointer: fine) {
+    .cap-btn:hover {
+        background: rgba(255, 255, 255, 0.09);
+        color: #ffffff;
+    }
+    .cap-btn[data-danger="true"]:hover {
+        background: #e81123;
+        color: #ffffff;
+    }
+}
+.cap-btn:active {
+    background: rgba(255, 255, 255, 0.05);
+}
+.cap-btn[data-danger="true"]:active {
+    background: #c50f1f;
+    color: #ffffff;
+}
+
+/* account menu: the destructive row tints red rather than grey */
+@media (hover: hover) and (pointer: fine) {
+    .acct-item[data-danger="true"]:hover {
+        background: rgba(255, 69, 58, 0.14) !important;
+        color: var(--color-danger) !important;
+    }
+}
+
+/* sidebar nav + pin rows. the active one carries the accent pill instead */
+.sb-item {
+    transition: background-color 0.14s ease, color 0.14s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+    .sb-item:hover:not([data-active="true"]) {
+        background-color: var(--color-hover) !important;
+    }
+}
+
+/* sidebar section header */
+.sb-section-head {
+    transition: color 0.14s ease;
+}
+.sb-section-head .sb-chev {
+    opacity: 0;
+    transition: opacity 0.14s ease;
+}
+.sb-section-head:focus-visible .sb-chev,
+.sb-section-head[aria-expanded="false"] .sb-chev {
+    opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+    .sb-section-head:hover {
+        color: var(--color-text-hi) !important;
+    }
+    .sb-section-head:hover .sb-chev {
+        opacity: 1;
+    }
+}
+/* no hover on touch: keep the chevron visible so folding is discoverable */
+@media not all and (hover: hover) {
+    .sb-section-head .sb-chev {
+        opacity: 1;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .q-row[data-clickable="true"]:active,
+    .dev-row:active {
+        transform: none !important;
+    }
+}

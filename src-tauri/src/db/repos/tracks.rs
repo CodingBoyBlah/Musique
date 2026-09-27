@@ -15,14 +15,18 @@ pub struct Track {
     pub preview_url:  Option<String>,
     pub is_local:     bool,
     pub updated_at:   i64,
+    // see migrations/0010_track_isrc.sql - the exact-recording key the lyrics
+    // pipeline leans on so providers can't match the wrong master
+    #[serde(default)]
+    pub isrc:         Option<String>,
 }
 
 pub async fn upsert(pool: &SqlitePool, t: &Track) -> Result<(), AppError> {
     sqlx::query(
         "INSERT INTO tracks
              (id, name, album_id, duration_ms, track_number, disc_number,
-              explicit, popularity, preview_url, is_local, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              explicit, popularity, preview_url, is_local, updated_at, isrc)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
              name         = excluded.name,
              album_id     = excluded.album_id,
@@ -33,7 +37,12 @@ pub async fn upsert(pool: &SqlitePool, t: &Track) -> Result<(), AppError> {
              popularity   = excluded.popularity,
              preview_url  = excluded.preview_url,
              is_local     = excluded.is_local,
-             updated_at   = excluded.updated_at",
+             updated_at   = excluded.updated_at,
+             -- COALESCE rather than plain assignment: album and playlist track
+             -- objects carry no external_ids, so an upsert from one of those
+             -- would otherwise wipe an ISRC we already learned from a full
+             -- track fetch
+             isrc         = COALESCE(excluded.isrc, tracks.isrc)",
     )
     .bind(&t.id)
     .bind(&t.name)
@@ -46,6 +55,7 @@ pub async fn upsert(pool: &SqlitePool, t: &Track) -> Result<(), AppError> {
     .bind(&t.preview_url)
     .bind(t.is_local)
     .bind(super::now_ms())
+    .bind(&t.isrc)
     .execute(pool)
     .await?;
     Ok(())
@@ -80,24 +90,6 @@ pub async fn list_by_album(pool: &SqlitePool, album_id: &str) -> Result<Vec<Trac
     )
 }
 
-/// hook an artist up to a track. just ignores dupes quietly
-pub async fn add_artist(
-    pool:      &SqlitePool,
-    track_id:  &str,
-    artist_id: &str,
-    position:  i64,
-) -> Result<(), AppError> {
-    sqlx::query(
-        "INSERT OR IGNORE INTO track_artists (track_id, artist_id, position) VALUES (?, ?, ?)",
-    )
-    .bind(track_id)
-    .bind(artist_id)
-    .bind(position)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +105,7 @@ mod tests {
             explicit:     false,
             popularity:   Some(80),
             preview_url:  None,
+            isrc:         Some("GBAYE6900484".to_string()),
             is_local:     false,
             updated_at:   0,
         }

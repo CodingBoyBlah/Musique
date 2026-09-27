@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import path from "path";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -8,17 +9,21 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
   clearScreen: false,
-  
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "src"),
+    },
+  },
   optimizeDeps: { include: ["wanakana", "pinyin-pro"] },
   build: {
+    target: "es2022",
+    cssMinify: true,
     rollupOptions: {
       output: {
-        
         manualChunks: {
           "vendor-react":  ["react", "react-dom", "react-router-dom"],
           "vendor-motion": ["framer-motion"],
           "vendor-query":  ["@tanstack/react-query"],
-          "vendor-icons":  ["lucide-react"],
           romanize:        ["wanakana", "pinyin-pro"],
         },
       },

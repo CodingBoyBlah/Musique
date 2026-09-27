@@ -3,13 +3,14 @@ use crate::errors::AppError;
 use crate::spotify::{self, types::*};
 use crate::state::AppState;
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use tauri::{AppHandle, Manager};
 
-const BASE: &str = "https://api.spotify.com/v1";
+pub(crate) const BASE: &str = "https://api.spotify.com/v1";
 
 // token helper thing
 
-async fn tok(app: &AppHandle) -> Result<String, AppError> {
+pub(crate) async fn tok(app: &AppHandle) -> Result<String, AppError> {
     let s    = app.state::<AppState>();
     let db   = s.db.clone();
     let auth = s.auth.clone();
@@ -38,7 +39,7 @@ fn item_from_artist(a: &SpArtist) -> ArtistItem {
     }
 }
 
-fn item_from_album_simple(al: &SpAlbumSimple) -> AlbumItem {
+pub(crate) fn item_from_album_simple(al: &SpAlbumSimple) -> AlbumItem {
     AlbumItem {
         id:           al.id.clone(),
         name:         al.name.clone(),
@@ -52,7 +53,7 @@ fn item_from_album_simple(al: &SpAlbumSimple) -> AlbumItem {
     }
 }
 
-fn item_from_track(t: &SpTrack) -> TrackItem {
+pub(crate) fn item_from_track(t: &SpTrack) -> TrackItem {
     TrackItem {
         id:          t.id.clone(),
         name:        t.name.clone(),
@@ -64,7 +65,7 @@ fn item_from_track(t: &SpTrack) -> TrackItem {
     }
 }
 
-fn item_from_album_track(t: &SpAlbumTrack) -> TrackItem {
+pub(crate) fn item_from_album_track(t: &SpAlbumTrack) -> TrackItem {
     TrackItem {
         id:          t.id.clone(),
         name:        t.name.clone(),
@@ -148,6 +149,9 @@ async fn upsert_album_full(pool: &SqlitePool, al: &SpAlbum) -> Result<(), AppErr
                 preview_url:  t.preview_url.clone(),
                 is_local:     t.is_local.unwrap_or(false),
                 updated_at:   0,
+                // album track objects carry no external_ids; the upsert
+                // COALESCEs so this never clears an isrc we already know
+                isrc:         None,
             })
             .await;
         }
@@ -156,7 +160,7 @@ async fn upsert_album_full(pool: &SqlitePool, al: &SpAlbum) -> Result<(), AppErr
     Ok(())
 }
 
-async fn upsert_track(pool: &SqlitePool, t: &SpTrack) -> Result<(), AppError> {
+pub(crate) async fn upsert_track(pool: &SqlitePool, t: &SpTrack) -> Result<(), AppError> {
     tracks::upsert(pool, &tracks::Track {
         id:           t.id.clone(),
         name:         t.name.clone(),
@@ -169,6 +173,7 @@ async fn upsert_track(pool: &SqlitePool, t: &SpTrack) -> Result<(), AppError> {
         preview_url:  t.preview_url.clone(),
         is_local:     t.is_local.unwrap_or(false),
         updated_at:   0,
+        isrc:         t.external_ids.as_ref().and_then(|e| e.isrc.clone()),
     })
     .await
 }
@@ -334,61 +339,39 @@ pub async fn get_track(app: AppHandle, id: String) -> Result<TrackDetail, AppErr
     })
 }
 
-use std::collections::HashMap;
-use std::sync::RwLock;
-use std::time::{Duration, Instant};
-
-static DEFAULT_RECS_CACHE: RwLock<Option<(Instant, Vec<TrackItem>)>> = RwLock::new(None);
-static ARTIST_TOP_TRACKS_CACHE: RwLock<Option<HashMap<String, (Instant, Vec<SpTrack>)>>> = RwLock::new(None);
-
 pub fn clear_spotify_memory_caches() {
-    if let Ok(mut guard) = DEFAULT_RECS_CACHE.write() {
-        *guard = None;
-    }
-    if let Ok(mut guard) = ARTIST_TOP_TRACKS_CACHE.write() {
-        *guard = None;
-    }
+    crate::recommend::clear_caches();
 }
 
-async fn get_cached_or_fetch_top_tracks(token: &str, aid: &str) -> Option<Vec<SpTrack>> {
-    if let Ok(guard) = ARTIST_TOP_TRACKS_CACHE.read() {
-        if let Some(map) = &*guard {
-            if let Some((ts, tracks)) = map.get(aid) {
-                if ts.elapsed() < Duration::from_secs(60 * 60) {
-                    return Some(tracks.clone());
-                }
-            }
-        }
-    }
-
-    let url = format!("{BASE}/artists/{aid}/top-tracks?market=from_token");
-    if let Ok(tt) = spotify::spotify_get::<SpTopTracks>(token, &url).await {
-        let tracks = tt.tracks;
-        if let Ok(mut guard) = ARTIST_TOP_TRACKS_CACHE.write() {
-            let map = guard.get_or_insert_with(HashMap::new);
-            if map.len() > 300 {
-                map.clear();
-            }
-            map.insert(aid.to_string(), (Instant::now(), tracks.clone()));
-        }
-        return Some(tracks);
-    }
-    None
+// persist one listening signal for the self-improving taste engine. the
+// frontend fires this on play / full-listen / skip; the engine memoizes nothing
+// that survives a signal, so the next rec request already reflects it.
+#[tauri::command]
+pub async fn record_listen_event(
+    app:          AppHandle,
+    track_id:     String,
+    event_type:   String,
+    ms_played:    Option<i64>,
+    duration_ms:  Option<i64>,
+    context_type: Option<String>,
+    context_id:   Option<String>,
+) -> Result<(), AppError> {
+    let pool = app.state::<AppState>().db.clone();
+    crate::recommend::record_event(
+        &pool,
+        &track_id,
+        &event_type,
+        ms_played.unwrap_or(0),
+        duration_ms.unwrap_or(0),
+        context_type.as_deref(),
+        context_id.as_deref(),
+    )
+    .await
 }
 
-// personalized "made for you" radio, stays inside the users taste
-//
-// the old engine expanded into global genre search which dragged in random
-// foreign language / unknown / explicit artists. this version only pulls from
-// the users artist universe (top + followed + liked song artists), uses
-// market=from_token so tracks match the users region/language, and respects the
-// accounts explicit content filter. familiar, not random
-//
-//   1. seeds = explicit ids if given, else the users known artists
-//   2. shuffle + sample the artist pool
-//   3. pull each artists top tracks (market filtered), cap per artist, drop
-//      explicit (if filtered), drop excluded/dupes
-//   4. shuffle + truncate
+// personalized recommendations. the heavy lifting lives in the `recommend`
+// module (behavioural taste profile + freshness-first MMR ranking); this just
+// validates inputs and hands it the auth token + db pool.
 #[tauri::command]
 pub async fn get_recommendations(
     app:               AppHandle,
@@ -396,157 +379,16 @@ pub async fn get_recommendations(
     exclude_track_ids: Option<Vec<String>>,
     limit:             Option<i64>,
 ) -> Result<Vec<TrackItem>, AppError> {
-    use rand::seq::SliceRandom;
-    use std::collections::HashSet;
-
     let limit = limit.unwrap_or(30).clamp(1, 100) as usize;
-    let is_default_home = seed_artist_ids.as_ref().map_or(true, |v| v.is_empty())
-        && exclude_track_ids.as_ref().map_or(true, |v| v.is_empty());
-
-    // 0. Instant in-memory cache hit for default Home recommendations (5 min TTL)
-    if is_default_home {
-        if let Ok(guard) = DEFAULT_RECS_CACHE.read() {
-            if let Some((ts, ref recs)) = *guard {
-                if ts.elapsed() < Duration::from_secs(5 * 60) && recs.len() >= limit.min(10) {
-                    let mut cached = recs.clone();
-                    cached.truncate(limit);
-                    return Ok(cached);
-                }
-            }
-        }
-    }
+    let seeds: Vec<String> = seed_artist_ids.unwrap_or_default();
+    let excludes: HashSet<String> =
+        exclude_track_ids.unwrap_or_default().into_iter().collect();
+    let is_default_home = seeds.is_empty() && excludes.is_empty();
 
     let token = tok(&app).await?;
     let pool  = app.state::<AppState>().db.clone();
 
-    // respect the accounts explicit content filter (saved by get_profile)
-    let filter_explicit = crate::auth::get_setting_value(&pool, "spotify_explicit_filter")
-        .await
-        .ok()
-        .flatten()
-        .as_deref()
-        == Some("1");
-
-    // 1. build the seed/known artist pool
-    let mut seeds: Vec<String> = seed_artist_ids.unwrap_or_default();
-    seeds.retain(|s| !s.is_empty());
-
-    let known = crate::library::gather_known_artists(&pool, &token).await;
-    if seeds.is_empty() {
-        seeds = known;
-    } else {
-        // explicit seeds first (e.g "go to this artists radio") then widen
-        // with the rest of the users universe for some variety
-        let mut set: HashSet<String> = seeds.iter().cloned().collect();
-        for a in known { if set.insert(a.clone()) { seeds.push(a); } }
-    }
-    if seeds.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // 2. sample the pool
-    // 8-12 artists give 80-120 candidate tracks, which is more than enough to fill the requested limit
-    let sample_count = if limit <= 16 { 8 } else { 12 };
-    seeds.shuffle(&mut rand::thread_rng());
-    seeds.truncate(sample_count);
-
-    // 3. fetch all sampled artists concurrently in a single batch (no slow sequential chunks)
-    let exclude: HashSet<String> =
-        exclude_track_ids.unwrap_or_default().into_iter().collect();
-    let mut out:        Vec<TrackItem>          = Vec::new();
-    let mut seen:       HashSet<String>         = HashSet::new();
-    let mut per_artist: HashMap<String, usize>  = HashMap::new();
-
-    let mut tasks = Vec::with_capacity(seeds.len());
-    for aid in &seeds {
-        let token_clone = token.clone();
-        let aid_clone = aid.clone();
-        tasks.push(tokio::spawn(async move {
-            get_cached_or_fetch_top_tracks(&token_clone, &aid_clone).await
-        }));
-    }
-
-    for task in tasks {
-        if let Ok(Some(mut tracks)) = task.await {
-            tracks.shuffle(&mut rand::thread_rng());
-            let mut added_here = 0;
-            for t in tracks {
-                if added_here >= 2 { break; }
-                if t.is_local.unwrap_or(false) { continue; }
-                if filter_explicit && t.explicit { continue; }
-                if exclude.contains(&t.id) || !seen.insert(t.id.clone()) { continue; }
-                let primary = t.artists.first().map(|a| a.id.clone()).unwrap_or_default();
-                let count   = per_artist.entry(primary).or_insert(0);
-                if *count >= 2 { continue; }
-                *count += 1;
-                out.push(item_from_track(&t));
-                added_here += 1;
-            }
-        }
-        if out.len() >= limit * 2 { break; }
-    }
-
-    // If exclude filtered out all tracks, relax exclusion
-    if out.is_empty() && !seeds.is_empty() {
-        for aid in seeds.iter().take(5) {
-            if let Some(tracks) = get_cached_or_fetch_top_tracks(&token, aid).await {
-                for t in tracks {
-                    if seen.insert(t.id.clone()) {
-                        out.push(item_from_track(&t));
-                    }
-                    if out.len() >= limit { break; }
-                }
-            }
-            if out.len() >= limit { break; }
-        }
-    }
-
-    // Local library fallback if network/API returned nothing
-    if out.is_empty() {
-        let local_tracks: Vec<(String, String, i64, i64, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT t.id, t.name, t.duration_ms, t.explicit, al.name, al.image_url
-             FROM tracks t
-             LEFT JOIN albums al ON al.id = t.album_id
-             ORDER BY RANDOM() LIMIT ?",
-        )
-        .bind(limit as i64)
-        .fetch_all(&pool)
-        .await
-        .unwrap_or_default();
-
-        for (tid, tname, dur, exp, al_name, al_img) in local_tracks {
-            if seen.insert(tid.clone()) {
-                out.push(TrackItem {
-                    id: tid,
-                    name: tname,
-                    duration_ms: dur,
-                    explicit: exp == 1,
-                    artists: Vec::new(),
-                    album: Some(AlbumItem {
-                        id: String::new(),
-                        name: al_name.unwrap_or_default(),
-                        album_type: "album".to_string(),
-                        image_url: al_img,
-                        release_date: None,
-                        artists: Vec::new(),
-                        popularity: None,
-                    }),
-                    popularity: None,
-                });
-            }
-        }
-    }
-
-    out.shuffle(&mut rand::thread_rng());
-    out.truncate(limit);
-
-    if is_default_home && !out.is_empty() {
-        if let Ok(mut guard) = DEFAULT_RECS_CACHE.write() {
-            *guard = Some((Instant::now(), out.clone()));
-        }
-    }
-
-    Ok(out)
+    crate::recommend::recommend(&token, &pool, seeds, excludes, limit, is_default_home).await
 }
 
 // cache first playlist load.
@@ -701,6 +543,7 @@ fn clone_track(t: &SpTrack) -> SpTrack {
         popularity:   t.popularity,
         preview_url:  t.preview_url.clone(),
         artists:      t.artists.iter().map(|a| SpArtistSimple { id: a.id.clone(), name: a.name.clone() }).collect(),
+        external_ids: t.external_ids.clone(),
         album:        t.album.as_ref().map(|al| SpAlbumSimple {
             id:           al.id.clone(),
             name:         al.name.clone(),

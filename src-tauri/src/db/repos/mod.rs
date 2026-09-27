@@ -6,6 +6,7 @@ pub mod saved_tracks;
 pub mod search_history;
 pub mod tracks;
 pub mod users;
+pub mod yt_match;
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()

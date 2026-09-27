@@ -5,7 +5,8 @@ use crate::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::RngCore;
-use tauri::{AppHandle, Manager, State};
+use std::path::PathBuf;
+use tauri::{AppHandle, Manager};
 use url::Url;
 
 const SCOPES: &str = "user-read-private user-read-email streaming \
@@ -110,7 +111,14 @@ pub(crate) fn open_url_linux(url: &str) -> Result<(), String> {
     Err("Could not open a browser. Install xdg-utils or a web browser, then try again.".into())
 }
 
-fn build_auth_url(client_id: &str, challenge: &str, state: &str, redirect: &str) -> String {
+fn build_auth_url(
+    client_id: &str,
+    challenge: &str,
+    state: &str,
+    redirect: &str,
+    scopes: &str,
+    show_dialog: bool,
+) -> String {
     let mut url = Url::parse("https://accounts.spotify.com/authorize").unwrap();
     url.query_pairs_mut()
         .append_pair("client_id", client_id)
@@ -119,44 +127,88 @@ fn build_auth_url(client_id: &str, challenge: &str, state: &str, redirect: &str)
         .append_pair("code_challenge_method", "S256")
         .append_pair("code_challenge", challenge)
         .append_pair("state", state)
-        .append_pair("scope", SCOPES);
+        .append_pair("scope", scopes);
+    if show_dialog {
+        // Without this Spotify silently reuses whichever account the browser is
+        // already signed in as. That is exactly what made "log out, log back in
+        // as someone else" impossible: the approval screen never appeared, so
+        // there was never anywhere to pick a different account.
+        url.query_pairs_mut().append_pair("show_dialog", "true");
+    }
     url.to_string()
+}
+
+fn open_browser(app: &AppHandle, auth_url: &str) -> Result<(), AppError> {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        open_url_linux(auth_url).map_err(AppError::Auth)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener()
+            .open_url(auth_url, None::<&str>)
+            .map_err(|e| AppError::Auth(format!("Cannot open browser: {e}")))
+    }
 }
 
 #[tauri::command]
 pub async fn start_login(app: AppHandle) -> Result<auth::AuthStatus, AppError> {
-    let db = app.state::<AppState>().db.clone();
-    let auth = app.state::<AppState>().auth.clone();
+    let (db, auth) = {
+        let s = app.state::<AppState>();
+        (s.db.clone(), s.auth.clone())
+    };
 
     let client_id = auth::get_active_client_id(&db).await;
     let port = http::CALLBACK_PORT;
+
+    // Whose data is currently cached, so we can tell a re-login from a switch.
+    let previous_user = auth::get_setting_value(&db, "spotify_user_id")
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty());
 
     let verifier = pkce::generate_verifier();
     let challenge = pkce::derive_challenge(&verifier);
     let state_token = gen_state();
     let redirect = format!("http://127.0.0.1:{port}/login");
 
-    let auth_url = build_auth_url(&client_id, &challenge, &state_token, &redirect);
+    // Bind the redirect port BEFORE opening the browser: if the port is taken
+    // (another copy of the app, an abandoned sign-in) the user finds out now
+    // instead of after filling in their password.
+    let listener = http::open_redirect(port).await?;
+
+    let auth_url = build_auth_url(&client_id, &challenge, &state_token, &redirect, SCOPES, true);
     eprintln!("[auth] starting login with client_id={client_id} port={port}");
+    open_browser(&app, &auth_url)?;
 
-    #[cfg(target_os = "linux")]
-    open_url_linux(&auth_url).map_err(AppError::Auth)?;
+    let code = listener.wait(&state_token).await?;
+    let status = auth::complete_login(&client_id, &code, &verifier, &redirect, &db, &auth).await?;
 
-    #[cfg(not(target_os = "linux"))]
-    {
-        use tauri_plugin_opener::OpenerExt;
-        app.opener()
-            .open_url(&auth_url, None::<&str>)
-            .map_err(|e| AppError::Auth(format!("Cannot open browser: {e}")))?;
+    // A different account (or one we could not identify) signed in: everything
+    // cached for the previous one has to go, even if the last logout only got
+    // half way - or never happened at all.
+    let switched = match (&previous_user, &status.user_id) {
+        (Some(prev), Some(now)) => prev != now,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    if switched {
+        eprintln!("[auth] account changed ({previous_user:?} -> {:?}); clearing previous account data", status.user_id);
+        purge_account_data(&app, Purge::PreviousAccount).await;
     }
 
-    let code = http::wait_for_callback_port(port, &state_token).await?;
-    let status = auth::complete_login(&client_id, &code, &verifier, &redirect, &db, &auth).await?;
     Ok(status)
 }
 
 pub async fn authorize_playback_token(app: &AppHandle) -> Result<String, AppError> {
-    let db = app.state::<AppState>().db.clone();
+    let db = {
+        let s = app.state::<AppState>();
+        s.db.clone()
+    };
     let port = http::PLAYBACK_PORT;
     let client_id = auth::PLAYBACK_CLIENT_ID;
 
@@ -165,31 +217,23 @@ pub async fn authorize_playback_token(app: &AppHandle) -> Result<String, AppErro
     let state_token = gen_state();
     let redirect = format!("http://127.0.0.1:{port}/login");
 
-    let mut url = Url::parse("https://accounts.spotify.com/authorize").unwrap();
-    url.query_pairs_mut()
-        .append_pair("client_id", client_id)
-        .append_pair("response_type", "code")
-        .append_pair("redirect_uri", &redirect)
-        .append_pair("code_challenge_method", "S256")
-        .append_pair("code_challenge", &challenge)
-        .append_pair("state", &state_token)
-        .append_pair("scope", auth::PLAYBACK_SCOPES);
-    let auth_url = url.to_string();
+    let listener = http::open_redirect(port).await?;
+
+    // No approval dialog here: this grant has to land on the same account the
+    // Web API login just picked, and by now that is the browser's session.
+    let auth_url = build_auth_url(
+        client_id,
+        &challenge,
+        &state_token,
+        &redirect,
+        auth::PLAYBACK_SCOPES,
+        false,
+    );
 
     eprintln!("[playback auth] starting playback authorization on port {port}");
+    open_browser(app, &auth_url)?;
 
-    #[cfg(target_os = "linux")]
-    open_url_linux(&auth_url).map_err(AppError::Auth)?;
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        use tauri_plugin_opener::OpenerExt;
-        app.opener()
-            .open_url(&auth_url, None::<&str>)
-            .map_err(|e| AppError::Auth(format!("Cannot open browser: {e}")))?;
-    }
-
-    let code = http::wait_for_callback_port(port, &state_token).await?;
+    let code = listener.wait(&state_token).await?;
     let resp = auth::call_token_endpoint(&[
         ("grant_type", "authorization_code"),
         ("code", &code),
@@ -207,68 +251,241 @@ pub async fn authorize_playback_token(app: &AppHandle) -> Result<String, AppErro
 #[tauri::command]
 pub async fn authorize_playback(app: AppHandle) -> Result<(), AppError> {
     let _ = authorize_playback_token(&app).await?;
-    let playback = app.state::<AppState>().playback.clone();
-    let mut guard = playback.lock().await;
-    *guard = None;
+    // Drop the old session so the next play rebuilds it against the new grant.
+    // A plain `*guard = None` left the spirc task running and the old Connect
+    // device registered.
+    tear_down_playback(&app).await;
     Ok(())
 }
 
-#[tauri::command]
-pub async fn logout(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
-    // 1. Stop playback & teardown librespot session
+// ─── signing out / switching accounts ────────────────────────────────────────
+
+/// How much account state to clear.
+#[derive(Clone, Copy, PartialEq)]
+enum Purge {
+    /// Signing out: nothing about the account survives.
+    Everything,
+    /// A different account just signed in: clear the old one's data, but keep
+    /// the session rows the new login has already written.
+    PreviousAccount,
+}
+
+/// Stop every audio backend and tear the librespot session down for real.
+///
+/// Both halves matter. The YouTube backend (used for free accounts) was never
+/// touched by logout at all, so the music simply kept playing; and the librespot
+/// session was only dropped, which detaches its tasks instead of ending them.
+async fn tear_down_playback(app: &AppHandle) {
+    // Any browser authorization still waiting for a redirect belongs to the
+    // account we are getting rid of.
+    http::cancel_pending_flows();
+
+    let (playback, yt, media_tx) = {
+        let s = app.state::<AppState>();
+        (s.playback.clone(), s.yt.clone(), s.media_tx.clone())
+    };
+
+    // Bounded, because `create_inner` can be holding this lock while it waits
+    // on an interactive playback grant. `cancel_pending_flows` above unblocks
+    // that, but a sign-out must not be able to hang on it either way.
+    let inner = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        playback.lock(),
+    )
+    .await
     {
-        let playback = state.playback.clone();
-        let mut guard = playback.lock().await;
-        if let Some(inner) = guard.as_ref() {
-            let _ = inner.pause();
+        Ok(mut guard) => guard.take(),
+        Err(_) => {
+            eprintln!("[logout] playback session busy; leaving it to rebuild itself");
+            None
         }
-        *guard = None;
+    };
+    if let Some(inner) = inner {
+        let _ = inner.pause();
+        inner.shutdown().await;
     }
-    let _ = state.media_tx.try_send(crate::media_controls::MediaMsg::Stopped);
 
-    // 2. Clear token keyring
-    token::clear_tokens()?;
+    let yt_inner = match tokio::time::timeout(std::time::Duration::from_secs(5), yt.lock()).await {
+        Ok(mut guard) => guard.take(),
+        Err(_) => {
+            eprintln!("[logout] youtube backend busy; could not stop it");
+            None
+        }
+    };
+    if let Some(yt) = yt_inner {
+        yt.stop();
+    }
 
-    // 3. Clear in-memory caches
+    let _ = media_tx.try_send(crate::media_controls::MediaMsg::Stopped);
+}
+
+/// Delete a cache directory, retrying while something still holds a file open.
+/// On Windows a handle released moments ago can still fail the first attempt.
+async fn wipe_dir(path: PathBuf) {
+    for attempt in 1..=5 {
+        if !path.exists() {
+            return;
+        }
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => return,
+            Err(e) => {
+                eprintln!("[logout] could not remove {} (attempt {attempt}): {e}", path.display());
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+    }
+}
+
+/// Empty every table except `settings` and the migration bookkeeping.
+///
+/// Reads the table list out of the schema rather than hard-coding it: the old
+/// hard-coded list silently missed every table added since it was written, and
+/// one `DELETE` against a table that did not exist yet aborted the whole logout
+/// with the account still on screen.
+async fn purge_tables(db: &sqlx::SqlitePool) {
+    let tables: Vec<(String,)> = sqlx::query_as(
+        "SELECT name FROM sqlite_master
+          WHERE type = 'table'
+            AND name NOT LIKE 'sqlite_%'
+            AND name NOT IN ('settings', '_sqlx_migrations')",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_else(|e| {
+        eprintln!("[logout] could not list tables: {e}");
+        Vec::new()
+    });
+
+    // Foreign keys are enforced on this pool, so delete order would otherwise
+    // matter. Deferring them until commit lets the tables be emptied in any
+    // order - and means a table added by a future migration needs no thought.
+    match db.begin().await {
+        Ok(mut tx) => {
+            let _ = sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await;
+            clear_tables(&mut tx, &tables).await;
+            if let Err(e) = tx.commit().await {
+                eprintln!("[logout] purge transaction failed ({e}); clearing table by table");
+                if let Ok(mut conn) = db.acquire().await {
+                    clear_tables(&mut conn, &tables).await;
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("[logout] could not open purge transaction: {e}");
+            if let Ok(mut conn) = db.acquire().await {
+                clear_tables(&mut conn, &tables).await;
+            }
+        }
+    }
+}
+
+/// `DELETE FROM` each table, logging and carrying on past any that fails.
+async fn clear_tables(conn: &mut sqlx::SqliteConnection, tables: &[(String,)]) {
+    for (table,) in tables {
+        // the names come from sqlite_master, never from user input
+        if let Err(e) = sqlx::query(&format!("DELETE FROM \"{table}\""))
+            .execute(&mut *conn)
+            .await
+        {
+            eprintln!("[logout] could not clear {table}: {e}");
+        }
+    }
+}
+
+/// Clear everything tied to the signed-in account. Best-effort throughout: a
+/// step that fails is logged and the rest still runs, because a half-finished
+/// logout that reports an error is what left stale playlists on screen.
+async fn purge_account_data(app: &AppHandle, scope: Purge) {
+    let (db, sync_gate) = {
+        let s = app.state::<AppState>();
+        (s.db.clone(), s.sync_gate.clone())
+    };
+
+    // 1. stop anything that is still playing - or still writing
+    tear_down_playback(app).await;
+
+    // 2. let an in-flight library sync unwind before emptying the tables. The
+    //    auth epoch has already moved by the time we get here, so the sync's
+    //    remaining steps are no-ops and this returns as soon as the step it is
+    //    on finishes. The timeout is a backstop: a stuck sync must not be able
+    //    to block signing out.
+    let _sync_barrier = match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        sync_gate.write(),
+    )
+    .await
+    {
+        Ok(guard) => Some(guard),
+        Err(_) => {
+            eprintln!("[logout] library sync did not finish in time; clearing anyway");
+            None
+        }
+    };
+
+    // 3. in-memory caches
     crate::commands::spotify::clear_spotify_memory_caches();
     crate::library::clear_known_artists_cache();
 
-    // 4. Delete credentials directory and audio cache directory from disk
+    // 4. on-disk caches, after the teardown above so librespot cannot write its
+    //    credentials back out from under us
     if let Ok(app_data) = app.path().app_data_dir() {
-        let creds_dir = app_data.join("credentials");
-        let _ = std::fs::remove_dir_all(&creds_dir);
-        let audio_cache = app_data.join("audio_cache");
-        let _ = std::fs::remove_dir_all(&audio_cache);
+        wipe_dir(app_data.join("credentials")).await;
+        wipe_dir(app_data.join("audio_cache")).await;
     }
 
-    // 5. Purge all SQLite database tables
-    let mut tx = state.db.begin().await?;
-    sqlx::query("DELETE FROM playlist_tracks").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM playlists").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM track_artists").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM album_artists").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM saved_tracks").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM saved_albums").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM followed_artists").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM search_history").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM playback_history").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM play_history").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM top_tracks").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM top_artists").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM recently_played").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM new_releases").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM lyrics").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM tracks").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM albums").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM artists").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM users").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM settings WHERE key NOT IN ('player_volume', 'player_muted')").execute(&mut *tx).await?;
-    tx.commit().await?;
+    // 5. cached catalogue, library and history rows
+    purge_tables(&db).await;
 
-    let _ = sqlx::query("VACUUM").execute(&state.db).await;
+    // 6. account-scoped settings
+    for key in auth::ACCOUNT_SETTING_KEYS {
+        if scope == Purge::PreviousAccount && auth::SESSION_SETTING_KEYS.contains(key) {
+            continue;
+        }
+        if let Err(e) = sqlx::query("DELETE FROM settings WHERE key = ?")
+            .bind(key)
+            .execute(&db)
+            .await
+        {
+            eprintln!("[logout] could not clear setting {key}: {e}");
+        }
+    }
 
-    // 6. Reset in-memory auth state
-    *state.auth.write().await = crate::state::AuthState::default();
+    if scope == Purge::Everything {
+        let _ = sqlx::query("VACUUM").execute(&db).await;
+    }
+}
+
+#[tauri::command]
+pub async fn logout(app: AppHandle) -> Result<(), AppError> {
+    // Invalidate the identity FIRST. Everything else in the app checks either
+    // the auth epoch or the (now empty) auth state, so background work - a
+    // library sync in particular - stops before the purge instead of writing
+    // the old account's playlists back in behind it.
+    auth::bump_auth_epoch();
+    {
+        let auth_state = {
+            let s = app.state::<AppState>();
+            s.auth.clone()
+        };
+        *auth_state.write().await = crate::state::AuthState::default();
+    }
+
+    if let Err(e) = token::clear_tokens() {
+        // A keyring that refuses to delete must not abort the sign-out; the
+        // tokens are already unusable because the in-memory state is gone.
+        eprintln!("[logout] could not clear stored tokens: {e}");
+    }
+
+    purge_account_data(&app, Purge::Everything).await;
+
+    // The session had a moment to shut down while the tables were cleared, so
+    // make sure it did not flush a credentials file on its way out - that file
+    // is what used to sign the previous account straight back in.
+    if let Ok(app_data) = app.path().app_data_dir() {
+        wipe_dir(app_data.join("credentials")).await;
+    }
+
+    eprintln!("[logout] signed out and cleared local account data");
     Ok(())
 }
 
@@ -353,7 +570,7 @@ pub async fn get_profile(app: AppHandle) -> Result<Profile, AppError> {
 
     let token = auth::get_valid_token(&db, &auth_state).await?;
 
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .get("https://api.spotify.com/v1/me")
         .bearer_auth(&token)
         .send()

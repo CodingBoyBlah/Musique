@@ -33,7 +33,8 @@ async function copy(text: string): Promise<boolean> {
 // copy the spotify link for an entity (instant, no network)
 export async function shareSpotifyLink(kind: ShareKind, id: string) {
   const ok = await copy(spotifyUrl(kind, id));
-  toast(ok ? "Spotify link copied" : "Couldn't copy link");
+  if (ok) toast("Spotify link copied");
+  else toast.error("Couldn't copy link");
 }
 
 
@@ -47,5 +48,6 @@ export async function shareUniversalLink(kind: ShareKind, id: string) {
     /* keep the fallback link */
   }
   const ok = await copy(link);
-  toast(ok ? "Universal link copied" : "Couldn't copy link");
+  if (ok) toast("Universal link copied");
+  else toast.error("Couldn't copy link");
 }

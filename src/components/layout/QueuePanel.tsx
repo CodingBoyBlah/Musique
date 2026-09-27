@@ -1,23 +1,40 @@
-import { useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { X, GripVertical, ListMusic } from "lucide-react";
+import { memo } from "react";
+import { coverUrl } from "../../lib/coverUrl";
+import { motion, AnimatePresence, Reorder } from "framer-motion";
+import { X, GripVertical, Queue } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { playTrack } from "../../api/playback";
 import { fmtMs } from "../../utils/fmt";
 import { meshGradient } from "../../lib/mesh";
 import type { TrackItem } from "../../types/spotify";
-import { isMac } from "../../lib/platform";
 import { Tooltip } from "../ui/Tooltip";
+import { EASE_DRAWER, EASE_OUT, SPRING_PANEL } from "../../lib/motion";
 
 const WIDTH = 272;
+
+/* Stable identity for queue entries. The store gives every queued entry its
+   own object (see queue.store enqueue/playNext), so the object itself is the
+   identity: removing row 3 animates row 3 out, and a reorder moves rows rather
+   than re-mounting them. The index was the key before, which renamed every row
+   after a removal and animated the *last* one out instead. */
+const uidOf = new WeakMap<object, number>();
+let uidSeq = 0;
+function entryUid(t: TrackItem): number {
+  let id = uidOf.get(t);
+  if (id === undefined) {
+    id = ++uidSeq;
+    uidOf.set(t, id);
+  }
+  return id;
+}
 
 // small square cover, falls back to a seeded mesh gradient (no more grey box)
 function Cover({ track, size }: { track: TrackItem; size: number }) {
   const art = track.album?.image_url;
   return art ? (
     <img
-      src={art}
+      src={coverUrl(art, size) ?? art}
       alt=""
       loading="lazy"
       decoding="async"
@@ -28,102 +45,93 @@ function Cover({ track, size }: { track: TrackItem; size: number }) {
   );
 }
 
-function QueueTrackRow({
-  track, onRemove, draggable, onDragStart, onDragOver, onDrop, dim,
+const QueueTrackRow = memo(function QueueTrackRow({
+  track, onRemove, onPlay, reorderable, dim,
 }: {
   track:        TrackItem;
   onRemove?:    () => void;
-  draggable?:   boolean;
-  onDragStart?: () => void;
-  onDragOver?:  (e: React.DragEvent) => void;
-  onDrop?:      () => void;
+  onPlay?:      () => void;
+  reorderable?: boolean;
   dim?:         boolean;
 }) {
   return (
     <div
-      draggable={draggable}
-      onDragStart={onDragStart}
-      onDragOver={(e) => { e.preventDefault(); onDragOver?.(e); }}
-      onDrop={onDrop}
-      className="group"
+      className="group q-row"
+      data-drag={reorderable || undefined}
+      data-clickable={onPlay ? true : undefined}
+      role={onPlay ? "button" : undefined}
+      tabIndex={onPlay ? 0 : undefined}
+      onClick={onPlay}
+      onKeyDown={onPlay ? (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPlay(); }
+      } : undefined}
       style={{
-        position: "relative",
-        zIndex: 1,
         display: "flex", alignItems: "center", gap: 9,
-        padding: "6px 8px", borderRadius: 9,
+        padding: "6px 8px",
         opacity: dim ? 0.5 : 1,
-        cursor: draggable ? "grab" : "default",
-        transition: "background 0.12s, opacity 0.12s",
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLDivElement).style.background = "var(--color-surface-hover)";
-        (e.currentTarget as HTMLDivElement).style.zIndex = "20";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLDivElement).style.background = "transparent";
-        (e.currentTarget as HTMLDivElement).style.zIndex = "1";
       }}
     >
-      {draggable && (
+      {reorderable && (
         <span
-          className="group-hover-visible"
-          style={{ color: "rgba(255,255,255,0.22)", flexShrink: 0, display: "flex", alignItems: "center", marginLeft: -2 }}
+          className="q-grip"
+          aria-hidden
+          style={{ color: "rgba(255,255,255,0.3)", flexShrink: 0, display: "flex", alignItems: "center", marginLeft: -2 }}
         >
           <GripVertical size={13} strokeWidth={2} />
         </span>
       )}
       <Cover track={track} size={36} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ margin: 0, fontSize: 12.5, fontWeight: 500, color: "rgba(255,255,255,0.9)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <p className="t-caption" style={{ margin: 0, fontSize: 12.5, fontWeight: 500, color: "rgba(255,255,255,0.9)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {track.name}
         </p>
-        <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.45)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <p className="t-caption" style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.5)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {track.artists.map((a) => a.name).join(", ")}
         </p>
       </div>
       {onRemove ? (
         <Tooltip label="Remove from queue" side="top" align="end">
           <button
+            aria-label={`Remove ${track.name} from queue`}
+            // a press on the x must not start a row drag
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onRemove(); }}
-            className="queue-btn"
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: 22, height: 22, borderRadius: 6, border: "none",
-              background: "transparent", color: "rgba(255,255,255,0.35)",
-              cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#fff"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.1)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.35)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+            className="queue-btn btn-icon q-remove"
           >
             <X size={12} strokeWidth={2.5} />
           </button>
         </Tooltip>
       ) : (
-        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+        <span className="tnum t-caption" style={{ fontSize: 11, color: "rgba(255,255,255,0.36)", flexShrink: 0 }}>
           {fmtMs(track.duration_ms)}
         </span>
       )}
     </div>
   );
-}
+});
 
 // animated 3-bar equaliser for the now-playing card
 function Equaliser() {
   return (
     <span style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 13 }}>
       {[0, 1, 2].map((i) => (
-        <motion.span
+        <span
           key={i}
-          animate={{ scaleY: [0.3, 1, 0.45, 0.8, 0.3] }}
-          transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: i * 0.18 }}
-          style={{ width: 3, borderRadius: 2, background: "var(--color-accent)", height: "100%", transformOrigin: "bottom" }}
+          className="eq-bar-q"
+          style={{
+            width: 3,
+            borderRadius: 2,
+            background: "var(--color-accent)",
+            height: "100%",
+            ["--eq-delay" as string]: `${i * 0.18}s`,
+          }}
         />
       ))}
     </span>
   );
 }
 
-function NowPlayingCard({ track, isPlaying }: { track: TrackItem; isPlaying: boolean }) {
+const NowPlayingCard = memo(function NowPlayingCard({ track, isPlaying }: { track: TrackItem; isPlaying: boolean }) {
   return (
     <div
       style={{
@@ -138,14 +146,14 @@ function NowPlayingCard({ track, isPlaying }: { track: TrackItem; isPlaying: boo
         <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {track.name}
         </p>
-        <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <p className="t-caption" style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {track.artists.map((a) => a.name).join(", ")}
         </p>
       </div>
       {isPlaying && <Equaliser />}
     </div>
   );
-}
+});
 
 function SectionHead({ label, onClear }: { label: string; onClear?: () => void }) {
   return (
@@ -157,9 +165,8 @@ function SectionHead({ label, onClear }: { label: string; onClear?: () => void }
         <Tooltip label={`Clear ${label.toLowerCase()}`} side="top" align="end">
           <button
             onClick={onClear}
-            style={{ background: "none", border: "none", fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", cursor: "pointer", padding: "0 2px" }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-hi)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.4)"; }}
+            className="btn-text t-caption"
+            style={{ fontSize: 11, fontWeight: 600, padding: "0 2px" }}
           >
             Clear
           </button>
@@ -171,7 +178,7 @@ function SectionHead({ label, onClear }: { label: string; onClear?: () => void }
 
 function EmptyRow({ children }: { children: React.ReactNode }) {
   return (
-    <p style={{ margin: 0, padding: "4px 12px 8px", fontSize: 12, color: "rgba(255,255,255,0.32)" }}>{children}</p>
+    <p className="t-caption" style={{ margin: 0, padding: "4px 12px 8px", fontSize: 12, color: "rgba(255,255,255,0.45)" }}>{children}</p>
   );
 }
 
@@ -181,8 +188,30 @@ export function QueuePanel() {
   const currentTrack    = usePlayerStore((s) => s.currentTrack);
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
 
-  const { queue, history, removeAt, reorder, clearQueue, clearHistory } = useQueueStore();
-  const dragIdx = useRef<number | null>(null);
+  const queue        = useQueueStore((s) => s.queue);
+  const history      = useQueueStore((s) => s.history);
+  const removeAt     = useQueueStore((s) => s.removeAt);
+  const setQueue     = useQueueStore((s) => s.setQueue);
+  const clearQueue   = useQueueStore((s) => s.clearQueue);
+  const clearHistory = useQueueStore((s) => s.clearHistory);
+
+  // the same object can legitimately appear twice (older persisted queues,
+  // previous() pushing the current track back). give the repeat its own key
+  // rather than letting two rows collide.
+  const seen = new Map<number, number>();
+  const keyed = queue.map((track) => {
+    const uid = entryUid(track);
+    const n = seen.get(uid) ?? 0;
+    seen.set(uid, n + 1);
+    return { track, key: n === 0 ? `q${uid}` : `q${uid}-${n}` };
+  });
+  // Reorder finds the dragged row by value identity, so it gets the per-row
+  // keys (unique even when a track repeats), not the track objects.
+  const keys = keyed.map((k) => k.key);
+  const onReorder = (order: string[]) => {
+    const byKey = new Map(keyed.map((k) => [k.key, k.track]));
+    setQueue(order.map((k) => byKey.get(k)!).filter(Boolean));
+  };
 
   function playItem(track: TrackItem) {
     setCurrentTrack(track);
@@ -195,33 +224,31 @@ export function QueuePanel() {
     <motion.div
       // in-flow rail below the title bar; slides via transform. width is reserved
       // by the spacer in Layout.tsx so the grid reflows once, both ways.
+      // in from the right, out to the right, on the sheet curve both ways.
+      // (the exit used to be an ease-in, which starts slow at the exact moment
+      // the user is watching for the panel to respond.)
       initial={{ x: WIDTH }}
       animate={{ x: 0 }}
-      exit={{ x: WIDTH, transition: { duration: 0.18, ease: [0.32, 0, 0.67, 0] } }}
-      transition={{ type: "spring", stiffness: 340, damping: 38 }}
+      exit={{ x: WIDTH, transition: { duration: 0.22, ease: EASE_DRAWER } }}
+      transition={SPRING_PANEL}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH, maxWidth: "100vw", display: "flex", flexDirection: "column", overflow: "hidden",
-        background: "var(--color-sidebar)", borderLeft: "1px solid var(--color-border)",
-        boxShadow: "-8px 0 32px rgba(0,0,0,0.36)",
+        background: "transparent", borderLeft: "none",
+        boxShadow: "none",
         willChange: "transform",
       }}
     >
       <div style={{ width: WIDTH, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {/* header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMac ? "0 12px" : "0 146px 0 14px", height: 48, flexShrink: 0, borderBottom: "1px solid var(--color-border)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 12px 0 14px", height: 40, flexShrink: 0, borderBottom: "none" }}>
           <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>Queue</span>
           <Tooltip label="Close queue" side="bottom" align="end">
             <button
               onClick={toggleQueue}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                width: 26, height: 26, borderRadius: 7, border: "none",
-                background: "transparent", color: "rgba(255,255,255,0.45)", cursor: "pointer",
-                transition: "color 0.12s, background 0.12s",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#fff"; (e.currentTarget as HTMLButtonElement).style.background = "var(--color-surface-hover)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "rgba(255,255,255,0.45)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+              aria-label="Close queue"
+              className="btn-icon"
+              style={{ width: 26, height: 26, borderRadius: 7 }}
             >
               <X size={14} strokeWidth={2.2} />
             </button>
@@ -238,38 +265,50 @@ export function QueuePanel() {
           {/* next up */}
           <SectionHead label="Next up" onClear={queue.length > 0 ? clearQueue : undefined} />
           {queue.length === 0 ? (
-            <div style={{ margin: "0 12px", padding: "16px 14px", borderRadius: 10, border: "1.5px dashed var(--color-glass-border)", background: "var(--color-glass)", display: "flex", alignItems: "center", gap: 9, fontSize: 12, color: "var(--color-text-dim)" }}>
-              <ListMusic size={14} strokeWidth={2} style={{ flexShrink: 0 }} />
+            <div className="t-caption" style={{ margin: "0 12px", padding: "16px 14px", borderRadius: 10, border: "1.5px dashed var(--color-glass-border)", background: "var(--color-glass)", display: "flex", alignItems: "center", gap: 9, fontSize: 12, color: "var(--color-text-dim)" }}>
+              <Queue size={14} strokeWidth={2} style={{ flexShrink: 0 }} />
               <span>Nothing queued. Add a song with the ＋ on any track.</span>
             </div>
           ) : (
-            <div style={{ padding: "0 4px" }}>
+            /* Drag to reorder: the row stays glued to the pointer (from where
+               it was grabbed) and its neighbours part live as it passes them,
+               instead of the old HTML5 drag ghost that showed nothing until the
+               drop. Reorder.Item captures the pointer, so the drag keeps
+               tracking when it leaves the row. */
+            <Reorder.Group
+              as="div"
+              axis="y"
+              values={keys}
+              onReorder={onReorder}
+              style={{ padding: "0 4px" }}
+            >
               <AnimatePresence initial={false}>
-                {queue.map((track, i) => (
-                  <motion.div
-                    key={`${track.id}-${i}`}
-                    layout
+                {keyed.map(({ track, key }, i) => (
+                  <Reorder.Item
+                    as="div"
+                    key={key}
+                    value={key}
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
-                    style={{ overflow: "hidden" }}
+                    exit={{ opacity: 0, height: 0, transition: { duration: 0.18, ease: EASE_DRAWER } }}
+                    transition={{ duration: 0.2, ease: EASE_OUT }}
+                    whileDrag={{
+                      scale: 1.02,
+                      boxShadow: "0 10px 26px rgba(0,0,0,0.45)",
+                      backgroundColor: "rgba(40,40,46,0.96)",
+                      zIndex: 30,
+                    }}
+                    style={{ position: "relative", borderRadius: 9 }}
                   >
                     <QueueTrackRow
                       track={track}
-                      draggable
-                      onDragStart={() => { dragIdx.current = i; }}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={() => {
-                        if (dragIdx.current !== null && dragIdx.current !== i) reorder(dragIdx.current, i);
-                        dragIdx.current = null;
-                      }}
+                      reorderable
                       onRemove={() => removeAt(i)}
                     />
-                  </motion.div>
+                  </Reorder.Item>
                 ))}
               </AnimatePresence>
-            </div>
+            </Reorder.Group>
           )}
 
           {/* history */}
@@ -278,9 +317,7 @@ export function QueuePanel() {
               <SectionHead label="Recently played" onClear={clearHistory} />
               <div style={{ padding: "0 4px" }}>
                 {[...history].reverse().slice(0, 10).map((track, i) => (
-                  <div key={track.id + i} onClick={() => playItem(track)} style={{ cursor: "pointer" }}>
-                    <QueueTrackRow track={track} dim />
-                  </div>
+                  <QueueTrackRow key={track.id + i} track={track} dim onPlay={() => playItem(track)} />
                 ))}
               </div>
             </>

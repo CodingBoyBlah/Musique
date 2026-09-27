@@ -9,6 +9,10 @@ import {
 } from "../api/playback";
 import { requestNotificationPermission } from "../api/media";
 
+// what the sidebar's last section lists: only what you pinned, or every
+// playlist in your library
+export type SidebarMode = "pins" | "playlists";
+
 interface PrefsStore {
   // audio streaming bitrate (96: Normal, 160: High, 320: Very high)
   audioQuality: AudioQuality;
@@ -29,6 +33,17 @@ interface PrefsStore {
   // push the now-playing track to discord as rich presence
   discordPresence: boolean;
   setDiscordPresence: (v: boolean) => void;
+
+  // let the immersive view's blurred-cover background drift. off = still.
+  ambientMotion: boolean;
+  setAmbientMotion: (v: boolean) => void;
+
+  // whole-app zoom factor (1 = 100%). applied to the webview by lib/zoom.ts
+  uiZoom: number;
+  setUiZoom: (v: number) => void;
+
+  sidebarMode: SidebarMode;
+  setSidebarMode: (v: SidebarMode) => void;
 }
 
 export const usePrefsStore = create<PrefsStore>()(
@@ -67,6 +82,15 @@ export const usePrefsStore = create<PrefsStore>()(
 
       discordPresence: true,
       setDiscordPresence: (v) => set({ discordPresence: v }),
+
+      ambientMotion: true,
+      setAmbientMotion: (v) => set({ ambientMotion: v }),
+
+      uiZoom: 1,
+      setUiZoom: (v) => set({ uiZoom: v }),
+
+      sidebarMode: "pins",
+      setSidebarMode: (v) => set({ sidebarMode: v }),
     }),
     { name: "spotify-prefs" },
   ),

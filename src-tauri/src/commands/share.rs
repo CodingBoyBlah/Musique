@@ -12,7 +12,7 @@ struct OdesliResp {
 /// routed thru rust not the webview so we dodge cors and keep it offline safe
 #[tauri::command]
 pub async fn resolve_odesli(url: String) -> Result<String, AppError> {
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .get("https://api.song.link/v1-alpha.1/links")
         .query(&[("url", url.as_str())])
         .send()

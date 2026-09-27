@@ -8,8 +8,8 @@ import {
   remotePlay, remotePause, remoteNext, remotePrevious, remoteSeek, getPlaybackState,
 } from "../api/connect";
 import { replenishQueue } from "../utils/radio";
+import { trackSkipped } from "../utils/listenTracker";
 import { toast } from "../store/toast.store";
-import { errMsg } from "../lib/err";
 
 let transportInFlight = false;
 let pendingTarget: "play" | "pause" | null = null;
@@ -46,7 +46,7 @@ async function executeTransport() {
           console.error("[transport] play error:", e);
           usePlayerStore.getState().setPlaying(false);
           usePlayerStore.getState().clearTargetState();
-          toast(errMsg(e));
+          // failPlayback (api/playback.ts) already toasted this error
         });
       }
     }
@@ -79,7 +79,7 @@ export function transportTogglePlay(): void {
             resumeOrPlay(store.currentTrack.id, store.positionMs).catch(() => {});
           } else {
             store.setPlaying(false);
-            toast("Remote device unavailable");
+            toast.error("Remote device unavailable");
           }
         });
     } else {
@@ -93,7 +93,7 @@ export function transportTogglePlay(): void {
         .catch((e) => {
           console.error("[transport] remote pause error:", e);
           usePlayerStore.getState().setPlaying(true);
-          toast("Unable to control remote device");
+          toast.error("Unable to control remote device");
         });
     }
     return;
@@ -127,7 +127,7 @@ export function transportPlay(): void {
           resumeOrPlay(store.currentTrack.id, store.positionMs).catch(() => {});
         } else {
           store.setPlaying(false);
-          toast("Remote device unavailable");
+          toast.error("Remote device unavailable");
         }
       });
     return;
@@ -153,7 +153,7 @@ export function transportPause(): void {
       .catch((e) => {
         console.error("[transport] remote pause error:", e);
         usePlayerStore.getState().setPlaying(true);
-        toast("Unable to pause remote device");
+        toast.error("Unable to pause remote device");
       });
     return;
   }
@@ -175,11 +175,13 @@ export function transportNext(): void {
       })
       .catch((e) => {
         console.error("[transport] remote next error:", e);
-        toast("Unable to skip on remote device");
+        toast.error("Unable to skip on remote device");
       });
     return;
   }
-  const { currentTrack, setCurrentTrack } = s;
+  const { currentTrack, positionMs, setCurrentTrack } = s;
+  const ctx = useQueueStore.getState().contextId;
+  trackSkipped(currentTrack, positionMs, "player", ctx);
   const n = useQueueStore.getState().advance(currentTrack);
   if (n) {
     setCurrentTrack(n);
@@ -209,7 +211,7 @@ export function transportPrev(): void {
         })
         .catch((e) => {
           console.error("[transport] remote prev error:", e);
-          toast("Unable to skip on remote device");
+          toast.error("Unable to skip on remote device");
         });
     }
     return;
@@ -245,7 +247,7 @@ export function transportSeek(ms: number): void {
       })
       .catch((e) => {
         console.error("[transport] remote seek error:", e);
-        toast("Unable to seek on remote device");
+        toast.error("Unable to seek on remote device");
       });
   } else {
     seekPlayback(ms).catch(() => {});

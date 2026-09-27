@@ -8,7 +8,8 @@ import type {
   TrackItem,
 } from "../types/spotify";
 
-export const search      = (query: string, types = "track,artist,album"): Promise<SearchResults> =>
+// "playlist" has to be asked for: without it the Playlists tab was always empty
+export const search      = (query: string, types = "track,artist,album,playlist"): Promise<SearchResults> =>
   invoke("search", { query, types });
 
 export const getArtist   = (id: string): Promise<ArtistDetail>   => invoke("get_artist",   { id });
@@ -26,4 +27,23 @@ export const getRecommendations = (
     seedArtistIds:   seedArtistIds   ?? null,
     excludeTrackIds: excludeTrackIds ?? null,
     limit:           limit           ?? null,
+  });
+
+// feed the self-improving taste engine. fire-and-forget: a dropped signal must
+// never affect playback.
+export const recordListenEvent = (
+  trackId: string,
+  eventType: "play" | "complete" | "skip",
+  msPlayed = 0,
+  durationMs = 0,
+  contextType?: string | null,
+  contextId?: string | null,
+): Promise<void> =>
+  invoke("record_listen_event", {
+    trackId,
+    eventType,
+    msPlayed,
+    durationMs,
+    contextType: contextType ?? null,
+    contextId:   contextId   ?? null,
   });

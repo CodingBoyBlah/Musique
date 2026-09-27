@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { MotionConfig } from "framer-motion";
 import Layout from "./components/layout/Layout";
 import { Loader } from "./components/ui/Loader";
 import { ThemeEngine } from "./components/ThemeEngine";
@@ -48,6 +49,7 @@ import { usePrefsStore } from "./store/prefs.store";
 import { toast } from "./store/toast.store";
 import { useInvalidateLibrary } from "./hooks/useLibrary";
 import { startRadio, replenishQueue } from "./utils/radio";
+import { trackStarted, trackCompleted } from "./utils/listenTracker";
 import {
   transportPlay,
   transportPause,
@@ -154,7 +156,7 @@ Home recs so they're cached before the user gets there
         .prefetchQuery({
           queryKey: ["recommendations", "home"],
           queryFn: () => getRecommendations(undefined, 16),
-          staleTime: 30 * 60_000,
+          staleTime: 10 * 60_000,
         })
         .catch(() => {});
     }
@@ -221,6 +223,8 @@ Home recs so they're cached before the user gets there
           // Update dynamic speed dial
           const activeContextId = useQueueStore.getState().contextId;
           useSpeedDialStore.getState().recordTrack(currentTrack, activeContextId);
+          // behavioural signal for the taste engine
+          trackStarted(currentTrack, "player", activeContextId);
           if (usePrefsStore.getState().notifyOnTrack)
             showTrackNotification(currentTrack).catch(() => {});
 
@@ -260,10 +264,10 @@ Home recs so they're cached before the user gets there
         if (isCurrent && tid && !retriedUnavailable.current.has(tid)) {
           retriedUnavailable.current.add(tid);
           retryPlayTrack(tid).catch(() => {
-            toast("Can't play this track. Try another.");
+            toast.error("Can't play this track. Try another.");
           });
         } else if (isCurrent) {
-          toast("Can't play this track. Skipping to next.");
+          toast.error("Can't play this track. Skipping to next.");
           const next = useQueueStore.getState().advance(currentTrack);
           if (next) {
             usePlayerStore.getState().setCurrentTrack(next);
@@ -291,6 +295,7 @@ Home recs so they're cached before the user gets there
       if (msg.type === "end_of_track") {
         maybeScrobble();
         const { currentTrack, setCurrentTrack } = usePlayerStore.getState();
+        trackCompleted(currentTrack);
         const next = useQueueStore.getState().advance(currentTrack);
         if (next) {
           setCurrentTrack(next);
@@ -348,6 +353,9 @@ Home recs so they're cached before the user gets there
 
 export default function App() {
   return (
+    // reducedMotion="user": every framer transform animation in the app honours
+    // the OS "reduce motion" setting, keeping only opacity/colour changes.
+    <MotionConfig reducedMotion="user">
     <BrowserRouter>
       <AppInit />
       <ThemeEngine />
@@ -426,5 +434,6 @@ export default function App() {
         </Route>
       </Routes>
     </BrowserRouter>
+    </MotionConfig>
   );
 }

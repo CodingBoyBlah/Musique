@@ -1,21 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
-  X,
+  Globe,
   Languages,
   Music2,
   RefreshCw,
-  Minus,
-  Plus,
-  Clock,
-} from "lucide-react";
+} from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useLyrics } from "../../hooks/useLyrics";
+import { sourceLabel } from "../../lib/lyricsSource";
+import { useAmbient } from "../../hooks/useAmbient";
 import { seekPlayback } from "../../api/playback";
 import { Loader } from "../ui/Loader";
 import { Tooltip } from "../ui/Tooltip";
-import { isMac } from "../../lib/platform";
-import { zTransform } from "../../lib/motion";
+import { zTransform, EASE_OUT, PRESS, SPRING_PANEL } from "../../lib/motion";
+import { useLyricFollow } from "../../hooks/useLyricFollow";
+import { ReturnPill } from "./LyricReturnPill";
+import "../../styles/lyrics.css";
 import {
   detectLyricScript,
   canRomanize,
@@ -23,98 +24,38 @@ import {
   romanizeLines,
 } from "../../utils/romanize";
 import {
-  ActiveLine,
+  LyricRowText,
   buildRows,
-  mapWords,
+  voiceLayout,
+  lyricTone,
+  lyricWords,
   useActiveRow,
   useLyricClock,
+  useMoreContrast,
   type Row,
 } from "../../lib/lyrics";
 
 const WIDTH = 366;
 
-// living background: the actual cover art, blurred + drifting TODO - reuse in immersive - DONEN
-
-function CoverBg({ url }: { url: string | null | undefined }) {
-  const reduceMotion = useReducedMotion();
-  if (!url) {
-    return (
-      <div
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: "#0a0a12",
-          zIndex: 0,
-        }}
-      />
-    );
-  }
-  /* perf: two translucent blurred copies of the cover, drifting so this song's
-  colours churn like a slow living gradient (APLE MUSIC MOBILE). only translate/rotate animated
-   (NEVER scale or filter) so the heavy blur rasterizes once and just
-   composites after - animating scale re-blurs every frame and was a real jank
-   source stays translucent so the os Mica/acrylic reads through.
-   no transform here, framer owns it scale goes through framer (constant) so
-   the blur rasterizes once and only translate/rotate composite per frame */
-
-/* UPDATE REUSED IN IMMERSIVE LYRICS PANEL TOO, TODO DONE */
-  const layer = (opacity: number): React.CSSProperties => ({
-    position: "absolute",
-    inset: "-35%",
-    backgroundImage: `url(${url})`,
-    backgroundSize: "cover",
-    backgroundPosition: "center",
-    filter: "blur(52px) saturate(1.9)",
-    opacity,
-    willChange: "transform",
-    backfaceVisibility: "hidden",
-  });
-  return (
-    <div
-      aria-hidden
-      style={{ position: "absolute", inset: 0, overflow: "hidden", zIndex: 0, pointerEvents: "none" }}
-    >
-      <motion.div
-        initial={false}
-        transformTemplate={zTransform}
-        animate={reduceMotion ? { scale: 1.45 } : { scale: 1.45, x: [0, 54, -38, 0], y: [0, -42, 32, 0], rotate: [0, 6, -5, 0] }}
-        transition={{ duration: 26, repeat: Infinity, ease: "easeInOut" }}
-        style={layer(0.5)}
-      />
-      <motion.div
-        initial={false}
-        transformTemplate={zTransform}
-        animate={reduceMotion ? { scale: 1.7 } : { scale: 1.7, x: [0, -48, 40, 0], y: [0, 36, -30, 0], rotate: [0, -7, 5, 0] }}
-        transition={{ duration: 38, repeat: Infinity, ease: "easeInOut" }}
-        style={layer(0.34)}
-      />
-      {/* legibility scrim = darken header + bottom for text contrast; middle
-          stays light so the moving colour appears through clearly */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background:
-            "linear-gradient(180deg, rgba(6,6,10,0.42) 0%, rgba(6,6,10,0.10) 18%, rgba(6,6,10,0.08) 78%, rgba(6,6,10,0.48) 100%)",
-        }}
-      />
-    </div>
-  );
-}
-
 // panel
 
 export function LyricsPanel() {
-  const setLyricsOpen = usePlayerStore((s) => s.setLyricsOpen);
   const track = usePlayerStore((s) => s.currentTrack);
   const setPosition = usePlayerStore((s) => s.setPosition);
-  const offset = usePlayerStore((s) => s.lyricsOffsetMs);
-  const adjustOffset = usePlayerStore((s) => s.adjustLyricsOffset);
-  const setOffset = usePlayerStore((s) => s.setLyricsOffset);
   const reduceMotion = useReducedMotion();
 
   const { data, isLoading, isError, isFetching, refetch } = useLyrics(track);
+  const { glow, ink } = useAmbient(track?.album?.image_url);
+
+  /* provider-supplied translation / romanization. persisted, and only ever
+     offered when the source actually carries them for this track. */
+  const showTranslation = usePlayerStore((s) => s.lyricsShowTranslation);
+  const setShowTranslation = usePlayerStore((s) => s.setLyricsShowTranslation);
+  const showRoman = usePlayerStore((s) => s.lyricsShowRoman);
+  const setShowRoman = usePlayerStore((s) => s.setLyricsShowRoman);
+
+  const hasTranslation = !!data?.has_translation;
+  const hasRoman = !!data?.has_roman;
 
   const synced = !!data?.lines.length;
 
@@ -138,7 +79,9 @@ export function LyricsPanel() {
   }, [rows]);
 
   const script = useMemo(() => detectLyricScript(flatTexts), [flatTexts]);
-  const canPron = canRomanize(script);
+  /* our own transliteration is a fallback. when the source ships a real
+     romanization there is no reason to offer a guess beside it. */
+  const canPron = canRomanize(script) && !hasRoman;
 
   // pronunciation (romaijin/pinyin) - has secondary toggle
   const [pron, setPron] = useState(false);
@@ -171,19 +114,22 @@ export function LyricsPanel() {
   const { getClock, resync } = useLyricClock();
   const active = useActiveRow(rowStarts, getClock, synced);
 
-  // auto-scroll the active row to about 40%
+  /* keep the active row at about 40%. the same follower the immersive view
+     uses: a jump for the first placement, one velocity-keeping spring line to
+     line (native smooth scroll picked its own curve and length), and it lets
+     go the moment the reader scrolls */
+  const followTrackId = usePlayerStore((s) => s.currentTrack?.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
-  useEffect(() => {
-    if (active < 0) return;
-    const el = rowRefs.current[active];
-    const cont = scrollRef.current;
-    if (!el || !cont) return;
-    cont.scrollTo({
-      top: el.offsetTop - cont.clientHeight * 0.4 + el.clientHeight / 2,
-      behavior: reduceMotion ? "auto" : "smooth",
-    });
-  }, [active, reduceMotion]);
+  const moreContrast = useMoreContrast();
+  const targetFor = useCallback(
+    (el: HTMLDivElement, cont: HTMLDivElement) =>
+      el.offsetTop - cont.clientHeight * 0.4 + el.clientHeight / 2,
+    [],
+  );
+  const { detached, recenter } = useLyricFollow({
+    scrollRef, rowRefs, active, resetKey: rows, trackKey: followTrackId, targetFor, reduceMotion,
+  });
 
   function seekTo(i: number) {
     if (!synced) return;
@@ -195,12 +141,6 @@ export function LyricsPanel() {
 
   const hasLyrics = rows.length > 0;
 
-  // TODO sync controls live in a popover off the clock icon (not always on screen) (DONE)
-  const [syncOpen, setSyncOpen] = useState(false);
-  useEffect(() => {
-    setSyncOpen(false);
-  }, [track?.id]);
-
   return (
     <motion.div
       // Absolute OVERLAY that slides in/out via a transform (x). The layout space
@@ -208,19 +148,24 @@ export function LyricsPanel() {
       // open AND close), so the grid reflows in one step and the cards glide via
       // framer `layout` both ways. This panel just slides over that region; its
       // width never animates, so nothing reflows per-frame.
-      initial={{ x: WIDTH }}
-      animate={{ x: 0 }}
-      exit={{ x: WIDTH }}
+      //
+      // Slides along the edge it is docked to and nothing else: the scale it
+      // used to carry pulled it off that edge, and the old spring (zeta ~0.89)
+      // overshot on a toggle that had no momentum behind it. Critically damped,
+      // and out along the same path it came in on.
+      initial={{ opacity: 0, x: 60 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 60 }}
       transformTemplate={zTransform}
-      transition={{ type: "spring", stiffness: 340, damping: 38 }}
+      transition={SPRING_PANEL}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH,
         maxWidth: "100vw",
         overflow: "hidden",
-        borderLeft: "1px solid var(--color-border)",
-        background: "var(--color-sidebar, #0a0a12)",
-        boxShadow: "-8px 0 32px rgba(0,0,0,0.36)",
+        borderLeft: "none",
+        background: "transparent",
+        boxShadow: "none",
         contain: "paint",
         willChange: "transform",
       }}
@@ -235,37 +180,49 @@ export function LyricsPanel() {
           overflow: "hidden",
         }}
       >
-        <CoverBg url={track?.album?.image_url} />
-
-        {/* header */}
-        <div
-          style={{
-            position: "relative",
-            zIndex: 2,
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: isMac ? "0 12px" : "0 146px 0 14px",
-            height: 48,
-            borderBottom: "1px solid rgba(255,255,255,0.08)",
-          }}
-        >
-          <span
+        {/* header - every control here is conditional on the track actually
+            having something to offer, so a plain LRCLIB track shows none of
+            them and the panel looks exactly as it always did */}
+        {(canPron || hasRoman || hasTranslation) && (
+          <div
             style={{
-              fontSize: 16,
-              fontWeight: 700,
-              letterSpacing: "-0.02em",
-              color: "#ffffff",
-              userSelect: "none",
+              position: "relative",
+              zIndex: 2,
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              gap: 6,
+              padding: "4px 12px 0 14px",
+              height: 36,
             }}
           >
-            Lyrics
-          </span>
 
-          <div style={{ flex: 1 }} />
+            {hasRoman && (
+              <Tooltip
+                label={showRoman ? "Hide romanization" : "Show romanization"}
+                side="bottom"
+              >
+                <Pill on={showRoman} onClick={() => setShowRoman(!showRoman)}>
+                  <Languages size={13} strokeWidth={2.4} />
+                </Pill>
+              </Tooltip>
+            )}
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {hasTranslation && (
+              <Tooltip
+                label={showTranslation ? "Hide translation" : "Show translation"}
+                side="bottom"
+              >
+                <Pill
+                  on={showTranslation}
+                  onClick={() => setShowTranslation(!showTranslation)}
+                >
+                  <Globe size={13} strokeWidth={2.4} active={showTranslation} />
+                </Pill>
+              </Tooltip>
+            )}
+
             {canPron && (
               <Tooltip
                 label={
@@ -273,163 +230,18 @@ export function LyricsPanel() {
                 }
                 side="bottom"
               >
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  transition={{ type: "spring", stiffness: 450, damping: 25 }}
-                  onClick={() => setPron((v) => !v)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                    height: 28,
-                    padding: "0 10px",
-                    borderRadius: 99,
-                    cursor: "pointer",
-                    border: "none",
-                    background: pron
-                      ? "var(--color-accent)"
-                      : "rgba(255, 255, 255, 0.14)",
-                    color: pron ? "var(--color-accent-text, #ffffff)" : "#ffffff",
-                    fontSize: 11.5,
-                    fontWeight: 650,
-                    outline: "none",
-                    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.25)",
-                  }}
-                >
+                <Pill on={pron} onClick={() => setPron((v) => !v)}>
                   <Languages size={13} strokeWidth={2.4} />
                   <span>{scriptLabel(script)}</span>
-                </motion.button>
+                </Pill>
               </Tooltip>
             )}
-
-            {synced && (
-              <Tooltip
-                label={syncOpen ? "Close sync timing" : "Adjust sync timing"}
-                side="bottom"
-              >
-                <motion.button
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.92 }}
-                  transition={{ type: "spring", stiffness: 450, damping: 25 }}
-                  onClick={() => setSyncOpen((v) => !v)}
-                  style={{
-                    position: "relative",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 28,
-                    height: 28,
-                    borderRadius: 6,
-                    border: "none",
-                    background: "transparent",
-                    color: syncOpen ? "var(--color-accent)" : "rgba(255, 255, 255, 0.75)",
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    outline: "none",
-                    boxShadow: "none",
-                    padding: 0,
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!syncOpen) (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!syncOpen) (e.currentTarget as HTMLButtonElement).style.color = "rgba(255, 255, 255, 0.75)";
-                  }}
-                >
-                  <Clock size={16} strokeWidth={2.2} />
-                  {offset !== 0 && !syncOpen && (
-                    <span
-                      style={{
-                        position: "absolute",
-                        top: 2,
-                        right: 2,
-                        width: 5,
-                        height: 5,
-                        borderRadius: "50%",
-                        background: "var(--color-accent)",
-                        boxShadow: "0 0 5px var(--color-accent)",
-                      }}
-                    />
-                  )}
-                </motion.button>
-              </Tooltip>
-            )}
-
-            <Tooltip label="Close lyrics" side="bottom" align="end">
-              <motion.button
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.92 }}
-                transition={{ type: "spring", stiffness: 450, damping: 25 }}
-                onClick={() => setLyricsOpen(false)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 28,
-                  height: 28,
-                  borderRadius: 6,
-                  border: "none",
-                  background: "transparent",
-                  color: "rgba(255, 255, 255, 0.75)",
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  outline: "none",
-                  boxShadow: "none",
-                  padding: 0,
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.color = "#ffffff";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.color = "rgba(255, 255, 255, 0.75)";
-                }}
-              >
-                <X size={16} strokeWidth={2.2} />
-              </motion.button>
-            </Tooltip>
           </div>
-        </div>
-
-        {/* sync calibration popover (off the clock icon) */}
-        {synced && syncOpen && (
-          <>
-            <div
-              onClick={() => setSyncOpen(false)}
-              style={{ position: "absolute", inset: 0, zIndex: 5 }}
-            />
-            <motion.div
-              initial={{ opacity: 0, y: -6, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ duration: 0.16, ease: [0.23, 1, 0.32, 1] }}
-              style={{
-                position: "absolute",
-                top: 52,
-                left: 12,
-                right: 12,
-                zIndex: 6,
-                padding: "11px 13px 12px",
-                borderRadius: 12,
-                background: "rgba(18,18,24,0.94)",
-                backdropFilter: "blur(24px) saturate(1.4)",
-                WebkitBackdropFilter: "blur(24px) saturate(1.4)",
-                border: "1px solid rgba(255,255,255,0.12)",
-                boxShadow: "0 14px 44px rgba(0,0,0,0.5)",
-              }}
-            >
-              <SyncBar
-                offset={offset}
-                adjust={adjustOffset}
-                setOffset={setOffset}
-              />
-            </motion.div>
-          </>
         )}
 
         {/* lyrics body */}
         <div
           ref={scrollRef}
-          data-selectable
           className="scroll-y"
           style={{
             position: "relative",
@@ -438,6 +250,7 @@ export function LyricsPanel() {
             overflowY: "auto",
             overflowX: "hidden",
             padding: "26px 18px 40vh",
+            scrollbarWidth: "none",
             WebkitMaskImage:
               "linear-gradient(to bottom, transparent 0, #000 7%, #000 88%, transparent 100%)",
             maskImage:
@@ -463,14 +276,18 @@ export function LyricsPanel() {
               style={{
                 display: "flex",
                 flexDirection: "column",
-                gap: 9,
+                gap: 14,
                 width: "100%",
                 minWidth: 0,
               }}
             >
               {rows.map((row, ri) => {
                 const isActive = synced && ri === active;
+                const tone = synced
+                  ? lyricTone(Math.abs(ri - active), ri < active, moreContrast)
+                  : { blur: 0, alpha: 0.92 };
                 const multi = row.voices.length > 1;
+                const layout = voiceLayout(row);
                 return (
                   <div
                     key={ri}
@@ -478,21 +295,25 @@ export function LyricsPanel() {
                       rowRefs.current[ri] = el;
                     }}
                     onClick={() => seekTo(ri)}
+                    // hover + press live in styles/lyrics.css
+                    className="lyr-prow"
+                    data-seekable={synced}
+                    data-active={isActive}
                     style={{
-                      padding: "5px 8px",
-                      borderRadius: 9,
+                      /* Constant box. Growing the active row's padding reflowed
+                         the whole list on every line, and scaling it from
+                         `left center` grew it rightward without the layout
+                         knowing - which is what ran long lines off the edge of
+                         this panel. Emphasis is light only now, the same as the
+                         immersive view. */
+                      padding: "6px 10px",
                       cursor: synced ? "pointer" : "default",
-                      transition:
-                        "opacity 0.32s ease, transform 0.4s cubic-bezier(0.23,1,0.32,1)",
-                      transform: isActive ? "scale(1.015)" : "scale(1)",
-                      transformOrigin: "left center",
-                      opacity: !synced
-                        ? 0.9
-                        : isActive
-                          ? 1
-                          : ri < active
-                            ? 0.32
-                            : 0.5,
+                      transition: reduceMotion
+                        ? "opacity 0.2s ease, background-color 0.16s ease"
+                        : "opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.16s ease, scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)",
+                      opacity: synced ? tone.alpha : 0.92,
+                      contentVisibility: "auto",
+                      containIntrinsicSize: "0 40px",
                       display: "flex",
                       flexDirection: "column",
                       gap: multi ? 3 : 0,
@@ -500,95 +321,61 @@ export function LyricsPanel() {
                       minWidth: 0,
                       boxSizing: "border-box",
                     }}
-                    onMouseEnter={(e) => {
-                      if (synced && !isActive)
-                        (e.currentTarget as HTMLDivElement).style.background =
-                          "rgba(255,255,255,0.05)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLDivElement).style.background =
-                        "transparent";
-                    }}
                   >
                     {row.voices.map((voice, vi) => {
-                      // secondary voices (backing vocals) read smaller + indented
-                      const size = vi === 0 ? 21 : 17;
-                      const weight = vi === 0 ? (synced ? 800 : 600) : 700;
-                      const indent = vi === 0 ? 0 : 16;
+                      const isDuet = voice.role === "duet";
+                      // lead left, duet right, a backing vocal on the side of
+                      // the singer it's under (lib/lyricsRows voiceLayout)
+                      const { side: align, secondary: isSecondary } = layout[vi];
+
+                      // Lead voice is primary; bg voice is visually subordinate (smaller, lower opacity, indented)
+                      // rem (19 / 22 / 25px at the default size), so the user's text size carries through
+                      const size = isSecondary ? "1.357rem" : isDuet && vi > 0 ? "1.571rem" : "1.786rem";
+                      const weight = isSecondary ? 700 : 800;
                       const romIdx = rowOffsets[ri] + vi;
+                      const words = lyricWords(voice, row.startMs, row.endMs);
                       return (
                         <div
                           key={vi}
                           style={{
-                            marginLeft: indent,
-                            borderLeft:
-                              vi === 0
-                                ? "none"
-                                : "2px solid rgba(255,255,255,0.18)",
-                            paddingLeft: vi === 0 ? 0 : 8,
-                            width: "100%",
+                            // a backing vocal hangs off its singer's side:
+                            // indented from that edge, with the rule on it.
+                            // no width: 100% - with the indent as a margin
+                            // that ran the box past the panel's edge
+                            ...(isSecondary
+                              ? align === "right"
+                                ? { marginRight: 16, borderRight: "2px solid rgba(255,255,255,0.18)", paddingRight: 8 }
+                                : { marginLeft: 16, borderLeft: "2px solid rgba(255,255,255,0.18)", paddingLeft: 8 }
+                              : null),
+                            opacity: isSecondary ? 0.78 : 1,
                             minWidth: 0,
                             boxSizing: "border-box",
+                            textAlign: align,
                           }}
                         >
-                          {isActive && voice.words.length ? (
-                            // word-by-word (musixmatch ANDOR netease real timings)
-                            <ActiveLine
-                              words={mapWords(voice)}
-                              getClock={getClock}
-                              size={size}
-                              weight={weight}
-                            />
-                          ) : isActive ? (
-                            // line level source (LRCLIB) = whole line lit, no word sweep, no estimation
-
-                            <p
-                              style={{
-                                margin: 0,
-                                fontSize: size,
-                                lineHeight: 1.3,
-                                letterSpacing: "-0.01em",
-                                fontWeight: weight,
-                                color: "var(--color-text-hi)",
-                                textShadow: "0 0 18px rgba(255,255,255,0.14)",
-                                whiteSpace: "pre-wrap",
-                                wordBreak: "break-word",
-                                overflowWrap: "break-word",
-                              }}
-                            >
-                              {voice.text || "♪"}
-                            </p>
-                          ) : (
-                            <p
-                              style={{
-                                margin: 0,
-                                fontSize: size,
-                                lineHeight: 1.3,
-                                letterSpacing: "-0.01em",
-                                fontWeight: weight,
-                                color: "rgba(255,255,255,0.82)",
-                                whiteSpace: "pre-wrap",
-                                wordBreak: "break-word",
-                                overflowWrap: "break-word",
-                              }}
-                            >
-                              {voice.text || "♪"}
-                            </p>
+                          <LyricRowText
+                            words={words}
+                            active={isActive}
+                            getClock={getClock}
+                            tone={tone}
+                            size={size}
+                            weight={weight}
+                            glowRgb={glow}
+                            inkRgb={ink}
+                            align={align}
+                            tracking={isSecondary ? "-0.01em" : undefined}
+                          />
+                          {/* what the source itself shipped, in the same
+                              quiet key as the pronunciation line that was
+                              already here - they stack rather than compete */}
+                          {showRoman && voice.roman && (
+                            <p style={subText(isActive, align)}>{voice.roman}</p>
+                          )}
+                          {showTranslation && voice.translation && (
+                            <p style={subText(isActive, align)}>{voice.translation}</p>
                           )}
                           {pron && (
-                            <p
-                              style={{
-                                margin: "2px 0 0",
-                                fontSize: 12.5,
-                                fontWeight: 600,
-                                color: isActive
-                                  ? "rgba(255,255,255,0.7)"
-                                  : "rgba(255,255,255,0.4)",
-                                whiteSpace: "pre-wrap",
-                                wordBreak: "break-word",
-                                overflowWrap: "break-word",
-                              }}
-                            >
+                            <p style={subText(isActive, align)}>
                               {romaji ? romaji[romIdx] : romanizing ? "…" : ""}
                             </p>
                           )}
@@ -605,7 +392,8 @@ export function LyricsPanel() {
                   fontWeight: 600,
                   letterSpacing: "0.04em",
                   textTransform: "uppercase",
-                  color: "rgba(255,255,255,0.28)",
+                  // was 0.28 - about 2:1, unreadable at 11px over artwork
+                  color: "rgba(255,255,255,0.48)",
                 }}
               >
                 {synced
@@ -614,189 +402,72 @@ export function LyricsPanel() {
                     : "Synced"
                   : "Lyrics"}{" "}
                 ·{" "}
-                {data?.source === "musixmatch"
-                  ? "Musixmatch"
-                  : data?.source === "netease"
-                    ? "NetEase"
-                    : "LRCLIB"}
+                {sourceLabel(data?.source)}
               </p>
             </div>
           )}
         </div>
+        <ReturnPill show={synced && hasLyrics && detached} onClick={recenter} />
       </div>
     </motion.div>
   );
 }
 
-// sync calibration
 
-const SYNC_RANGE = 3000; // +- 3s on the slider (store clamps at +-5s)
-
-function SyncBar({
-  offset,
-  adjust,
-  setOffset,
-}: {
-  offset: number;
-  adjust: (d: number) => void;
-  setOffset: (ms: number) => void;
-}) {
-  const label = `${offset >= 0 ? "+" : "−"}${(Math.abs(offset) / 1000).toFixed(2)}s`;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Clock
-          size={13}
-          strokeWidth={2}
-          style={{ color: "var(--color-text-dim)" }}
-        />
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            color: "var(--color-text-dim)",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
-          }}
-        >
-          Sync
-        </span>
-        <span
-          style={{
-            fontSize: 12,
-            fontWeight: 700,
-            fontVariantNumeric: "tabular-nums",
-            color:
-              offset === 0 ? "var(--color-text-dim)" : "var(--color-text-hi)",
-          }}
-        >
-          {label}
-        </span>
-        <div style={{ flex: 1 }} />
-        <Tooltip label="Reset offset to 0s" side="top">
-          <button
-            onClick={() => setOffset(0)}
-            disabled={offset === 0}
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color:
-                offset === 0 ? "rgba(255,255,255,0.25)" : "var(--color-text)",
-              background: "none",
-              border: "none",
-              cursor: offset === 0 ? "default" : "pointer",
-              padding: "0 2px",
-            }}
-          >
-            Reset
-          </button>
-        </Tooltip>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Tooltip label="Lyrics later (-50ms)" side="top">
-          <RepeatBtn onStep={() => adjust(-50)} title="">
-            <Minus size={13} strokeWidth={2.4} />
-          </RepeatBtn>
-        </Tooltip>
-        <input
-          type="range"
-          min={-SYNC_RANGE}
-          max={SYNC_RANGE}
-          step={10}
-          value={Math.max(-SYNC_RANGE, Math.min(SYNC_RANGE, offset))}
-          onChange={(e) => setOffset(Number(e.target.value))}
-          aria-label="Lyrics sync offset"
-          style={{
-            flex: 1,
-            accentColor: "#fff",
-            height: 18,
-            cursor: "pointer",
-          }}
-        />
-        <Tooltip label="Lyrics earlier (+50ms)" side="top">
-          <RepeatBtn onStep={() => adjust(50)} title="">
-            <Plus size={13} strokeWidth={2.4} />
-          </RepeatBtn>
-        </Tooltip>
-      </div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          fontSize: 9.5,
-          fontWeight: 600,
-          letterSpacing: "0.04em",
-          textTransform: "uppercase",
-          color: "rgba(255,255,255,0.26)",
-          padding: "0 30px",
-        }}
-      >
-        <span>Later</span>
-        <span>Earlier</span>
-      </div>
-    </div>
-  );
+/* the quiet line under a lyric. pronunciation, romanization and translation
+all read at the same weight, so stacking two of them never competes with the
+lead text above. */
+function subText(active: boolean, align: "left" | "right" = "left"): React.CSSProperties {
+  return {
+    margin: "2px 0 0",
+    fontSize: 12.5,
+    fontWeight: 600,
+    color: active ? "rgba(255,255,255,0.74)" : "rgba(255,255,255,0.52)",
+    letterSpacing: "0.004em",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    overflowWrap: "break-word",
+    textAlign: align,
+  };
 }
 
-// press and holdhold accelerating stepped so tap = one fine step, hold to ramp up.
-function RepeatBtn({
-  onStep,
+/* the panel's one button shape, shared by every header control */
+function Pill({
+  on,
+  onClick,
   children,
-  title,
 }: {
-  onStep: () => void;
+  on: boolean;
+  onClick: () => void;
   children: React.ReactNode;
-  title: string;
 }) {
-  const timer = useRef<number | undefined>(undefined);
-  const stop = useCallback(() => {
-    if (timer.current !== undefined) {
-      window.clearTimeout(timer.current);
-      timer.current = undefined;
-    }
-  }, []);
-  const start = useCallback(() => {
-    onStep();
-    let delay = 340;
-    const run = () => {
-      onStep();
-      delay = Math.max(55, delay * 0.8);
-      timer.current = window.setTimeout(run, delay);
-    };
-    timer.current = window.setTimeout(run, 340);
-  }, [onStep]);
-  useEffect(() => stop, [stop]);
   return (
-    <button
-      onPointerDown={start}
-      onPointerUp={stop}
-      onPointerLeave={stop}
-      onPointerCancel={stop}
-      title={title}
+    <motion.button
+      className="focus-ring"
+      aria-pressed={on}
+      whileHover={{ scale: 1.03 }}
+      whileTap={PRESS}
+      transition={{ duration: 0.12, ease: EASE_OUT }}
+      onClick={onClick}
       style={{
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
-        width: 26,
-        height: 24,
-        borderRadius: 6,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "transparent",
-        color: "var(--color-text-hi)",
+        gap: 5,
+        height: 28,
+        padding: "0 10px",
+        borderRadius: 99,
         cursor: "pointer",
-        flexShrink: 0,
-        touchAction: "none",
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background =
-          "rgba(255,255,255,0.08)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+        border: "none",
+        background: on ? "var(--color-accent)" : "rgba(255, 255, 255, 0.14)",
+        color: on ? "var(--color-accent-text, #ffffff)" : "#ffffff",
+        fontSize: 11.5,
+        fontWeight: 650,
+        letterSpacing: "0.004em",
+        boxShadow: "0 2px 8px rgba(0, 0, 0, 0.25)",
       }}
     >
       {children}
-    </button>
+    </motion.button>
   );
 }
 
@@ -844,6 +515,7 @@ function CenterNote({
 function RetryBtn({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return (
     <button
+      className="pressable"
       onClick={onClick}
       disabled={busy}
       style={{
