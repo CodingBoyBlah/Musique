@@ -86,7 +86,7 @@ export const getExtractedColors = (imageUrls: string[]): Promise<(ExtractedColor
   invoke("get_extracted_colors", { imageUrls });
 
 export interface HomeItem {
-  kind: "playlist" | "album" | "artist" | "show" | "audiobook" | "episode" | "track";
+  kind: "playlist" | "album" | "artist" | "show" | "episode" | "track";
   id: string;
   name: string;
   subtitle: string | null;

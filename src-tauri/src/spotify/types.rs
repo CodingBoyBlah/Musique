@@ -320,8 +320,6 @@ pub struct SearchResults {
     pub shows:     Vec<crate::commands::podcasts::ShowItem>,
     #[serde(default)]
     pub episodes:  Vec<crate::commands::podcasts::EpisodeItem>,
-    #[serde(default)]
-    pub audiobooks: Vec<crate::commands::audiobooks::AudiobookItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

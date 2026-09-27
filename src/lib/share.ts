@@ -1,7 +1,7 @@
 import { resolveOdesli } from "../api/share";
 import { toast } from "../store/toast.store";
 
-export type ShareKind = "track" | "album" | "artist" | "playlist" | "user" | "show" | "episode" | "audiobook";
+export type ShareKind = "track" | "album" | "artist" | "playlist" | "user" | "show" | "episode";
 
 // canonical open.spotify.com URL for any entity
 export function spotifyUrl(kind: ShareKind, id: string): string {

@@ -1,5 +1,4 @@
 pub mod artist_extras;
-pub mod audiobooks;
 pub mod auth;
 pub mod credentials;
 pub mod home_feed;

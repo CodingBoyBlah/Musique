@@ -22,7 +22,7 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HomeItem {
-    /// playlist | album | artist | show | audiobook | episode | track
+    /// playlist | album | artist | show | episode | track
     pub kind:      String,
     pub id:        String,
     pub name:      String,
@@ -90,7 +90,7 @@ pub(crate) fn item_from(v: &Value) -> Option<HomeItem> {
     let mut parts = uri.split(':');
     let (_, kind, id) = (parts.next()?, parts.next()?, parts.next()?);
     let kind = match kind {
-        "playlist" | "album" | "artist" | "show" | "episode" | "track" | "audiobook" => kind,
+        "playlist" | "album" | "artist" | "show" | "episode" | "track" => kind,
         _ => return None,
     };
     let name = get_str(d, &["name"]).or_else(|| get_str(d, &["profile", "name"]))?.to_string();
@@ -102,7 +102,7 @@ pub(crate) fn item_from(v: &Value) -> Option<HomeItem> {
         "album" => artists_line(d),
         "track" => artists_line(d),
         "artist" => Some("Artist".into()),
-        "show" | "audiobook" => get_str(d, &["publisher", "name"]).map(str::to_string),
+        "show" => get_str(d, &["publisher", "name"]).map(str::to_string),
         "episode" => get_str(d, &["podcastV2", "data", "name"]).map(str::to_string),
         _ => None,
     };

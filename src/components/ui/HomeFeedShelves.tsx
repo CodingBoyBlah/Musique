@@ -8,7 +8,6 @@ const ROUTE: Partial<Record<HomeItem["kind"], string>> = {
   album: "album",
   artist: "artist",
   show: "show",
-  audiobook: "audiobook",
 };
 
 /* spotify's own home shelves - daily mixes, daylist, discover weekly, release
