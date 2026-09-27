@@ -1159,3 +1159,15 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
         color: var(--color-text-hi) !important;
     }
 }
+
+/* credits: the chevron on a linked person only shows it's a link on hover */
+.credit-chev {
+    opacity: 0.35;
+    transition: opacity 0.14s ease, transform 0.14s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+    .credit-link:hover .credit-chev {
+        opacity: 1;
+        transform: translateX(2px);
+    }
+}
