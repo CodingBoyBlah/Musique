@@ -83,7 +83,7 @@ export default function ArtistPage() {
   // a row plays from itself onward through the whole top list, not just the
   // five on screen - the queue keeps going the way the header's Play would
   function startTop(index: number) {
-    const start = playContext(topTracks, index, contextId);
+    const start = playContext(topTracks, index, contextId, `spotify:artist:${data!.id}`);
     if (start) {
       setCurrentTrack(start);
       playTrack(start.id).catch(console.error);

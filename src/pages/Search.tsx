@@ -538,7 +538,7 @@ export default function Search() {
         toast.info(`Nothing to play from ${topResult.item.name}`);
         return;
       }
-      const start = playContext(tracks, 0, topResult.item.id);
+      const start = playContext(tracks, 0, topResult.item.id, `spotify:${topResult.type}:${topResult.item.id}`);
       if (start) {
         setCurrentTrack(start);
         playTrack(start.id).then(() => usePlayerStore.getState().setPlaying(true)).catch(console.error);

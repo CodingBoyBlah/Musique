@@ -112,6 +112,47 @@ pub struct TransferRequest {
 }
 
 impl SpClient {
+    /// POST a gzipped `PublishEventsRequest` to Spotify's event service (gabo).
+    ///
+    /// Added for the app (not upstream): this is how official clients report a
+    /// listen, and the only thing that puts plays into recently played / Recents.
+    /// Pinned to spclient.wg because that is the host desktop sends events to; the
+    /// resolved access point does not always serve this endpoint.
+    pub async fn publish_events(&self, gzipped_body: &[u8]) -> SpClientResult {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-protobuf"),
+        );
+        headers.insert("content-encoding", HeaderValue::from_static("gzip"));
+        headers.insert(
+            "app-platform",
+            HeaderValue::from_static(match OS {
+                "windows" => "Win32",
+                "macos" => "OSX",
+                _ => "Linux",
+            }),
+        );
+        headers.insert("spotify-app-version", HeaderValue::from_static("129600518"));
+        self.request_with_options(
+            &Method::POST,
+            "/gabo-receiver-service/v3/events/",
+            Some(headers),
+            Some(gzipped_body),
+            &RequestOptions {
+                base_url: Some("https://spclient.wg.spotify.com"),
+                ..NO_METRICS_AND_SALT
+            },
+        )
+        .await
+    }
+
+    /// Raw `AudioFilesExtensionResponse` bytes for a track (added for the app;
+    /// callers outside core cannot name `ExtensionKind`).
+    pub async fn get_audio_files_metadata(&self, uri: &SpotifyUri) -> SpClientResult {
+        self.get_metadata(ExtensionKind::AUDIO_FILES, uri).await
+    }
+
     pub fn set_strategy(&self, strategy: RequestStrategy) {
         self.lock(|inner| inner.strategy = strategy)
     }

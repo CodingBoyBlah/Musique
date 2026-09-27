@@ -109,7 +109,7 @@ export default function PlaylistPage() {
 
   // play within whatever order's on screen right now (filtered/sorted view)
   function startAt(index: number) {
-    const start = playContext(view, index, data!.id);
+    const start = playContext(view, index, data!.id, `spotify:playlist:${data!.id}`);
     if (start) {
       setCurrentTrack(start);
       playTrack(start.id).catch(console.error);

@@ -1,7 +1,8 @@
+pub mod listening;
 pub mod youtube;
 
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, Spirc};
 use librespot_core::{
@@ -239,6 +240,7 @@ pub struct PlaybackInner {
     pub is_playing_atomic: Arc<AtomicBool>,
     pub needs_rebuild:     Arc<AtomicBool>,
     pub output_latency:    Arc<AtomicI64>,
+    listens:               Arc<listening::ListenTracker>,
     spirc:                 Spirc,
     session:               Session,
     _event_task:           tauri::async_runtime::JoinHandle<()>,
@@ -270,6 +272,8 @@ impl PlaybackInner {
     /// credentials cache - which then got picked up as "cached credentials" on
     /// the next sign-in and put the old account straight back.
     pub async fn shutdown(&self) {
+        // report the track that was playing before the session goes away
+        self.listens.close_and_flush(std::time::Duration::from_secs(3)).await;
         if let Err(e) = self.spirc.shutdown() {
             eprintln!("[playback] spirc shutdown request failed: {e}");
         }
@@ -301,6 +305,13 @@ impl PlaybackInner {
     // before doing network i/o.
     pub fn session(&self) -> Session {
         self.session.clone()
+    }
+
+    // which spotify context (playlist / album / artist / liked songs uri) the
+    // app is about to play `track_uri` from, so the listen is reported against
+    // it in spotify's recents. call before play_uri.
+    pub fn set_play_context(&self, track_uri: &str, context_uri: Option<String>) {
+        self.listens.set_requested(track_uri, context_uri);
     }
 
     pub fn play_uri(&self, uri: String, position_ms: u32) -> Result<(), AppError> {
@@ -347,6 +358,14 @@ impl PlaybackInner {
     pub fn report_volume(&self, level: f64) {
         let v = (level.clamp(0.0, 1.0) * u16::MAX as f64).round() as u16;
         let _ = self.spirc.set_volume(v);
+    }
+}
+
+// a rebuild (ensure_inner) replaces the inner without calling shutdown, so the
+// listen in progress gets closed out here too. harmless after shutdown.
+impl Drop for PlaybackInner {
+    fn drop(&mut self) {
+        self.listens.close();
     }
 }
 
@@ -472,6 +491,9 @@ pub async fn create_inner(
 
     let output_latency = Arc::new(AtomicI64::new(0));
     let latency_sink = Arc::clone(&output_latency);
+    // frames the real output accepted, what listening history is measured from
+    let rendered_frames = Arc::new(AtomicU64::new(0));
+    let rendered_sink = Arc::clone(&rendered_frames);
 
     #[cfg(target_os = "macos")]
     let force_null_sink = running_under_hypervisor() || !audio_device_safe();
@@ -489,12 +511,14 @@ pub async fn create_inner(
         let on_err: crate::sink::ErrorHook = Arc::new(|msg| {
             eprintln!("[playback error] {msg}");
         });
-        Box::new(crate::sink::RodioSink::new(
+        let rodio = crate::sink::RodioSink::new(
             None,
             on_err,
             Box::new(vol_clone),
             crate::sink::DEFAULT_BUFFER_MS,
-        ).with_latency_tracker(Arc::clone(&latency_sink))) as Box<dyn Sink>
+        ).with_latency_tracker(Arc::clone(&latency_sink));
+        // the silent fallback above is deliberately NOT counted: nobody heard it
+        Box::new(listening::CountingSink::new(Box::new(rodio), Arc::clone(&rendered_sink))) as Box<dyn Sink>
     };
 
     let bitrate_setting: Option<(String,)> = sqlx::query_as(
@@ -647,6 +671,11 @@ pub async fn create_inner(
     }
     eprintln!("[playback] STEP country = {:?}", session.country());
 
+    // built on the FINAL session: the credential recovery above may have
+    // swapped it for a fresh one
+    let listens       = listening::ListenTracker::new(session.clone(), bitrate, rendered_frames);
+    let listens_event = Arc::clone(&listens);
+
     let current_uri       = Arc::new(Mutex::new(None));
     let is_ended          = Arc::new(AtomicBool::new(false));
     let is_playing_atomic = Arc::new(AtomicBool::new(false));
@@ -667,6 +696,7 @@ pub async fn create_inner(
         let mut last_pos_ms: u32 = 0;
         while let Some(event) = event_rx.recv().await {
             log::trace!("[playback event] {event:?}");
+            listens_event.on_event(&event);
             // pass the playback state along to the os media controls
             match &event {
                 PlayerEvent::Playing { position_ms, .. } => {
@@ -745,6 +775,7 @@ pub async fn create_inner(
         is_playing_atomic,
         needs_rebuild:     Arc::new(AtomicBool::new(false)),
         output_latency,
+        listens,
         spirc,
         session,
         _event_task:       event_task,

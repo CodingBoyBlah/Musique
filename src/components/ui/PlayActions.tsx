@@ -66,6 +66,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
   ];
 
   const empty   = tracks.length === 0;
+  const contextUri = `spotify:${pinItem.type}:${pinItem.id}`;
   const isActive = activeContext === contextId;          // this context is the loaded one
   const playing  = isActive && isPlaying;
   const pinned   = pins.some((p) => p.id === pinItem.id);
@@ -80,7 +81,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
       resumeOrPlay(currentTrack.id, pos).catch(() => {});
       return;
     }
-    const start = playContext(tracks, 0, contextId);
+    const start = playContext(tracks, 0, contextId, contextUri);
     if (start) {
       setCurrentTrack(start);
       playTrack(start.id).catch(() => {});
@@ -95,7 +96,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
   }
 
   function onShuffle() {
-    const start = playContextShuffled(tracks, contextId);
+    const start = playContextShuffled(tracks, contextId, contextUri);
     if (start) {
       setCurrentTrack(start);
       playTrack(start.id).catch(() => {});

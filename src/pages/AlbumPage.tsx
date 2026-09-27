@@ -75,7 +75,7 @@ export default function AlbumPage() {
   const pinItem = { id: data.id, name: data.name, image_url: data.image_url, type: "album" as const };
 
   function startAt(index: number) {
-    const start = playContext(view, index, data!.id);
+    const start = playContext(view, index, data!.id, `spotify:album:${data!.id}`);
     if (start) {
       setCurrentTrack(start);
       playTrack(start.id).catch(console.error);
