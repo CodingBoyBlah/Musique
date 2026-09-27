@@ -5,7 +5,11 @@ import { motion, LayoutGroup } from "framer-motion";
 import { ListMusic, Pin, PinOff, Folder, ChevronRight } from "@/lib/icons";
 import { usePlaylistFolders } from "../hooks/usePlaylistFolders";
 import { findFolder, countPlaylists, type FolderItem } from "../lib/rootlist";
-import { useQueryClient } from "@tanstack/react-query";
+import { getHomeFeed, type HomeItem, type RootItem } from "../api/internal";
+import { Shelf } from "../components/ui/Shelf";
+import { MediaTile } from "../components/ui/MediaTile";
+import { SectionTitle } from "../components/ui/SectionTitle";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getPlaylist } from "../api/spotify";
 import { useAuth } from "../hooks/useAuth";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -156,10 +160,28 @@ const PlaylistCard = memo(function PlaylistCard({
   );
 });
 
-// a folder from your library, opens in place (?folder=<id>)
+// covers of the first playlists anywhere inside a folder, for its mosaic
+function folderCovers(items: RootItem[], out: string[] = []): string[] {
+  for (const it of items) {
+    if (out.length >= 4) break;
+    if (it.kind === "playlist") {
+      if (it.image_url) out.push(it.image_url);
+    } else folderCovers(it.children, out);
+  }
+  return out;
+}
+
+/* a folder from your library, opens in place (?folder=<id>). drawn as a
+little stack: a mosaic of what's inside on top of two sheets peeking out
+behind, so it reads as "a collection" next to single playlists. */
 const FolderCard = memo(function FolderCard({ folder, index = 0 }: { folder: FolderItem; index?: number }) {
   const [hover, setHover] = useState(false);
   const n = countPlaylists(folder.children);
+  const covers = folderCovers(folder.children);
+  const sheet = (inset: number, top: number, alpha: number): React.CSSProperties => ({
+    position: "absolute", left: inset, right: inset, top, height: 12, borderRadius: 8,
+    background: `rgba(255,255,255,${alpha})`,
+  });
   return (
     <MotionLink
       to={`/playlists?folder=${encodeURIComponent(folder.id)}`}
@@ -175,8 +197,37 @@ const FolderCard = memo(function FolderCard({ folder, index = 0 }: { folder: Fol
         background: hover ? "var(--color-surface-hover)" : "transparent", transition: "background 0.18s ease", minWidth: 0,
       }}
     >
-      <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 8, background: "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", outline: "1px solid rgba(255,255,255,0.08)", outlineOffset: -1 }}>
-        <Folder size={44} strokeWidth={1.4} style={{ color: "var(--color-text-dim)" }} />
+      <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+        <div aria-hidden style={sheet(14, -8, 0.06)} />
+        <div aria-hidden style={sheet(7, -4, 0.1)} />
+        <div
+          style={{
+            position: "absolute", inset: 0, borderRadius: 8, overflow: "hidden",
+            display: "grid", gridTemplateColumns: covers.length >= 4 ? "1fr 1fr" : "1fr", gridTemplateRows: covers.length >= 4 ? "1fr 1fr" : "1fr",
+            background: "var(--color-surface-2)", outline: "1px solid rgba(255,255,255,0.08)", outlineOffset: -1,
+            boxShadow: hover ? "0 12px 28px rgba(0,0,0,0.5)" : "0 4px 14px rgba(0,0,0,0.3)", transition: "box-shadow 0.25s ease",
+          }}
+        >
+          {covers.length === 0 ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Folder size={44} strokeWidth={1.4} style={{ color: "var(--color-text-dim)" }} />
+            </div>
+          ) : (
+            (covers.length >= 4 ? covers.slice(0, 4) : covers.slice(0, 1)).map((c, i) => (
+              <img key={i} src={coverUrl(c, covers.length >= 4 ? 100 : 200) ?? c} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            ))
+          )}
+          <span
+            aria-hidden
+            style={{
+              position: "absolute", left: 8, bottom: 8, height: 26, padding: "0 9px 0 7px", borderRadius: 99,
+              display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: "#fff",
+              background: "rgba(10,10,14,0.66)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
+            }}
+          >
+            <Folder size={13} strokeWidth={2} /> {n}
+          </span>
+        </div>
       </div>
       <p style={{ margin: 0, fontSize: "clamp(13px, 0.9vw, 14px)", fontWeight: 600, color: "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: "18px" }}>
         {folder.name}
@@ -194,6 +245,21 @@ export default function Playlists() {
   const { loggedIn } = useAuth();
   const { data: synced = [], isLoading } = useMyPlaylists();
   const { data: tree } = usePlaylistFolders();
+  /* spotify-made playlists (daily mixes, discover weekly, daylist, radars)
+  aren't in your library unless you save them, so they'd never show up here.
+  pull them from the home feed - same cache Home uses */
+  const { data: feed } = useQuery({
+    queryKey: ["library", "home-feed"],
+    queryFn: () => getHomeFeed(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"),
+    staleTime: 30 * 60_000,
+    retry: false,
+  });
+  const madeForYou: HomeItem[] = [];
+  for (const sec of feed?.sections ?? []) {
+    for (const it of sec.items) {
+      if (it.kind === "playlist" && it.id.startsWith("37i9dQZ") && !madeForYou.some((m) => m.id === it.id)) madeForYou.push(it);
+    }
+  }
   const [params] = useSearchParams();
   const folderId = params.get("folder");
 
@@ -291,6 +357,20 @@ export default function Playlists() {
 
       {openFolder && playlists.length === 0 && folders.length === 0 && (
         <p className="t-caption" style={{ color: "var(--color-text-dim)" }}>This folder is empty.</p>
+      )}
+
+      {!openFolder && madeForYou.length > 0 && (
+        <Shelf
+          id="playlists-made-for-you"
+          title="Made for you"
+          items={madeForYou}
+          getKey={(it) => it.id}
+          renderItem={(it, i) => <MediaTile to={`/playlist/${it.id}`} imageUrl={it.image_url} title={it.name} subtitle={it.subtitle ?? "Spotify"} index={i} />}
+        />
+      )}
+
+      {!openFolder && madeForYou.length > 0 && (playlists.length > 0 || folders.length > 0) && (
+        <SectionTitle id="playlists-yours">Your playlists</SectionTitle>
       )}
 
       {(playlists.length > 0 || folders.length > 0) && (

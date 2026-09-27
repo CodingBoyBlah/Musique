@@ -500,6 +500,7 @@ export default function Sidebar() {
               : entries
             ).map((row) => {
               if ("kind" in row && row.kind === "folder") {
+                const fIndent = row.depth * 14;
                 return (
                   <button
                     key={`folder-${row.id}`}
@@ -508,21 +509,26 @@ export default function Sidebar() {
                     onClick={() => toggleFolder(row.id)}
                     onDoubleClick={() => navigate(`/playlists?folder=${encodeURIComponent(row.id)}`)}
                     aria-expanded={row.open}
-                    title={`${row.name} · ${row.count} playlists`}
+                    title={`${row.name} · ${row.count} playlists (double-click to open)`}
                     style={{
-                      display: "flex", alignItems: "center", gap: 8, width: "100%", height: 30,
-                      padding: `0 8px 0 ${8 + row.depth * 12}px`, border: "none", background: "transparent",
-                      borderRadius: 8, cursor: "pointer", color: "var(--color-text-dim)", fontSize: 12.5, fontWeight: 600, textAlign: "left",
+                      position: "relative", display: "flex", alignItems: "center", gap: 10, height: 34,
+                      width: `calc(100% - ${fIndent}px)`, marginLeft: fIndent,
+                      padding: "0 8px", border: "none", background: "transparent",
+                      borderRadius: 8, cursor: "pointer", color: "var(--color-text)", fontSize: 13, fontWeight: 600, textAlign: "left",
                     }}
                   >
-                    <ChevronDown size={13} style={{ flexShrink: 0, transform: row.open ? "none" : "rotate(-90deg)", transition: "transform 0.18s ease" }} />
-                    <Folder size={14} style={{ flexShrink: 0 }} />
-                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name}</span>
+                    {row.depth > 0 && <span aria-hidden className="sb-guide" />}
+                    <span style={{ width: 26, height: 26, borderRadius: 5, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--color-surface-2)", color: "var(--color-text-dim)" }}>
+                      <Folder size={14} strokeWidth={1.9} />
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name}</span>
+                    <span className="tnum" style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-dim)" }}>{row.count}</span>
+                    <ChevronDown size={13} style={{ flexShrink: 0, color: "var(--color-text-dim)", transform: row.open ? "none" : "rotate(-90deg)", transition: "transform 0.18s ease" }} />
                   </button>
                 );
               }
               const p = row as PinnedItem;
-              const indent = isCollapsed ? 0 : (depthOf.get(p.id) ?? 0) * 12;
+              const indent = isCollapsed ? 0 : (depthOf.get(p.id) ?? 0) * 14;
               const active = openId === p.id && openType === p.type;
               const coverSize = isCollapsed ? RAIL_COVER : 26;
               const coverRadius = isCollapsed ? RAIL_RADIUS - (RAIL_ITEM - RAIL_COVER) / 2 : 5;
@@ -551,9 +557,9 @@ export default function Sidebar() {
                     justifyContent: isCollapsed ? "center" : "flex-start",
                     gap:           isCollapsed ? 0 : 10,
                     height:        isCollapsed ? RAIL_ITEM : 34,
-                    width:         isCollapsed ? RAIL_ITEM : "100%",
-                    margin:        isCollapsed ? "0 auto" : undefined,
-                    padding:       isCollapsed ? 0 : `0 8px 0 ${8 + indent}px`,
+                    width:         isCollapsed ? RAIL_ITEM : `calc(100% - ${indent}px)`,
+                    margin:        isCollapsed ? "0 auto" : `0 0 0 ${indent}px`,
+                    padding:       isCollapsed ? 0 : "0 8px",
                     borderRadius:  isCollapsed ? RAIL_RADIUS : 8,
                     border:        "none",
                     background:    "transparent",
@@ -566,6 +572,7 @@ export default function Sidebar() {
                     else prefetchPlaylist(qc, p.id);
                   }}
                 >
+                  {indent > 0 && <span aria-hidden className="sb-guide" />}
                   {active && !isCollapsed && (
                     <motion.div
                       layoutId="activeNavPill"

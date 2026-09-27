@@ -1171,3 +1171,14 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
         transform: translateX(2px);
     }
 }
+
+/* sidebar folders: a hairline down the left of everything inside a folder */
+.sb-guide {
+    position: absolute;
+    left: -8px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.1);
+    pointer-events: none;
+}
