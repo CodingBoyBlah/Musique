@@ -839,6 +839,7 @@ pub fn run() {
             commands::spotify::record_listen_event,
             commands::internal::get_tracks_metadata,
             commands::social::get_friend_activity,
+            commands::stats::get_listening_stats,
             commands::social::get_jam,
             commands::social::start_jam,
             commands::social::join_jam,

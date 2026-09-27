@@ -14,6 +14,7 @@ pub mod profile;
 pub mod settings;
 pub mod share;
 pub mod social;
+pub mod stats;
 pub mod spotify;
 pub mod window;
 pub mod theme; 
