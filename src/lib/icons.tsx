@@ -88,6 +88,7 @@ export const iconPaths = {
   Disc3: circle(12, 12, 9) + circle(12, 12, 2.5) + "M6.5 12A5.5 5.5 0 0 1 12 6.5",
   Eye: EYE + circle(12, 12, 3),
   EyeOff: EYE + "M3.5 3.5l17 17",
+  Folder: "M3.5 7.5a2 2 0 0 1 2-2h3.6a1.5 1.5 0 0 1 1.1.5l1.6 1.8h6.7a2 2 0 0 1 2 2v7.7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z",
   Globe:
     circle(12, 12, 9) + "M3 12h18" +
     "M12 3c-2.5 2.5-3.8 5.6-3.8 9s1.3 6.5 3.8 9c2.5-2.5 3.8-5.6 3.8-9S14.5 5.5 12 3z",
@@ -331,6 +332,7 @@ export const Devices = createIcon("Devices");
 export const Disc3 = createIcon("Disc3");
 export const Eye = createIcon("Eye");
 export const EyeOff = createIcon("EyeOff");
+export const Folder = createIcon("Folder");
 export const Globe = createIcon("Globe");
 export const GripVertical = createIcon("GripVertical");
 export const Heart = createIcon("Heart");
@@ -391,7 +393,7 @@ export const VolumeX = createVolumeIcon("VolumeX", "M16.5 9.5l5 5M21.5 9.5l-5 5"
 const ICONS: Record<string, LucideIcon> = {
   AlertTriangle, ArrowRight, ArrowUpRight, Book, Captions, Cast, Check,
   ChevronDown, ChevronLeft, ChevronRight, Clock, Devices, Disc3, Eye, EyeOff,
-  Globe, GripVertical, Heart, Home, Info, Languages, Laptop, Link, Link2,
+  Folder, Globe, GripVertical, Heart, Home, Info, Languages, Laptop, Link, Link2,
   ListMusic, ListPlus, Loader2, LogIn, LogOut, Maximize2, Mic, Minimize2, Minus,
   MonitorSpeaker, MoreHorizontal, Music, Music2, PanelLeft, PanelLeftClose,
   Pause, Pencil, Pin, PinOff, Play, Plus, Queue, RefreshCw, Repeat, Repeat1, RotateCcw,

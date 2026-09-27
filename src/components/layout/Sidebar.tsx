@@ -6,11 +6,14 @@ import {
   Home, ListMusic,
   Music, Disc3, User, Mic, Book,
   Pin, PinOff,
-  ChevronDown,
+  ChevronDown, Folder,
   type LucideIcon,
 } from "@/lib/icons";
 import { usePinsStore, type PinnedItem } from "../../store/pins.store";
 import { useMyPlaylists } from "../../hooks/useLibrary";
+import { usePlaylistFolders } from "../../hooks/usePlaylistFolders";
+import { flattenRows, type SidebarRow } from "../../lib/rootlist";
+import type { RootItem } from "../../api/internal";
 import { useUIStore } from "../../store/ui.store";
 import { useContextMenu } from "../ui/ContextMenu";
 import { gpuLayer, zTransform, EASE_OUT, SPRING, PRESS_TRANSITION } from "../../lib/motion";
@@ -296,9 +299,49 @@ export default function Sidebar() {
   /* the last section lists either your pins or every playlist you have
    (Settings -> Sidebar). both are the same kind of row, so one list drives it */
   const showAllPlaylists = sidebarMode === "playlists";
-  const entries: PinnedItem[] = showAllPlaylists
+  /* with the rootlist, "all playlists" follows spotify's own order and folder
+   nesting (folders collapse; the collapsed rail just keeps the order) */
+  const { data: rootTree } = usePlaylistFolders();
+  const [closedFolders, setClosedFolders] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem("sidebar-closed-folders") ?? "[]") as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  const toggleFolder = useCallback((id: string) => {
+    setClosedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try { localStorage.setItem("sidebar-closed-folders", JSON.stringify([...next])); } catch { /* private mode */ }
+      return next;
+    });
+  }, []);
+  const syncedById = new Map(myPlaylists.map((pl) => [pl.id, pl]));
+  const rootNames = new Map<string, { name: string | null; image_url: string | null }>();
+  (function walk(items: RootItem[]) {
+    for (const it of items) {
+      if (it.kind === "playlist") rootNames.set(it.id, { name: it.name, image_url: it.image_url });
+      else walk(it.children);
+    }
+  })(rootTree ?? []);
+  const useTree = showAllPlaylists && !!rootTree && rootTree.length > 0;
+  // every playlist (what "is the open page in the sidebar" checks against),
+  // and the rows actually shown with closed folders folded away
+  const allRows: SidebarRow[] = useTree ? flattenRows(rootTree!, new Set()) : [];
+  const openRows: SidebarRow[] = useTree ? flattenRows(rootTree!, closedFolders) : [];
+  const asEntry = (id: string): PinnedItem => {
+    const pl = syncedById.get(id);
+    const meta = rootNames.get(id);
+    return { id, name: pl?.name ?? meta?.name ?? "Playlist", image_url: pl?.image_url ?? meta?.image_url ?? null, type: "playlist" };
+  };
+  const entries: PinnedItem[] = useTree
+    ? allRows.filter((r) => r.kind === "playlist").map((r) => asEntry(r.id))
+    : showAllPlaylists
     ? myPlaylists.map((pl) => ({ id: pl.id, name: pl.name, image_url: pl.image_url, type: "playlist" as const }))
     : pins;
+  const depthOf = new Map(allRows.filter((r) => r.kind === "playlist").map((r) => [r.id, r.depth]));
 
   /* which library item (if any) is open + is it in that list. lets the
    sidebar light up the specific row when it's open, and only fall back to
@@ -451,7 +494,34 @@ export default function Sidebar() {
               </div>
             ) : null
           ) : (
-            entries.map((p) => {
+            (useTree
+              ? (isCollapsed ? allRows.filter((r) => r.kind === "playlist") : openRows).map((r) => (r.kind === "folder" ? r : asEntry(r.id)))
+              : entries
+            ).map((row) => {
+              if ("kind" in row && row.kind === "folder") {
+                return (
+                  <button
+                    key={`folder-${row.id}`}
+                    type="button"
+                    className="sb-item focus-ring"
+                    onClick={() => toggleFolder(row.id)}
+                    onDoubleClick={() => navigate(`/playlists?folder=${encodeURIComponent(row.id)}`)}
+                    aria-expanded={row.open}
+                    title={`${row.name} · ${row.count} playlists`}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8, width: "100%", height: 30,
+                      padding: `0 8px 0 ${8 + row.depth * 12}px`, border: "none", background: "transparent",
+                      borderRadius: 8, cursor: "pointer", color: "var(--color-text-dim)", fontSize: 12.5, fontWeight: 600, textAlign: "left",
+                    }}
+                  >
+                    <ChevronDown size={13} style={{ flexShrink: 0, transform: row.open ? "none" : "rotate(-90deg)", transition: "transform 0.18s ease" }} />
+                    <Folder size={14} style={{ flexShrink: 0 }} />
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name}</span>
+                  </button>
+                );
+              }
+              const p = row as PinnedItem;
+              const indent = isCollapsed ? 0 : (depthOf.get(p.id) ?? 0) * 12;
               const active = openId === p.id && openType === p.type;
               const coverSize = isCollapsed ? RAIL_COVER : 26;
               const coverRadius = isCollapsed ? RAIL_RADIUS - (RAIL_ITEM - RAIL_COVER) / 2 : 5;
@@ -482,7 +552,7 @@ export default function Sidebar() {
                     height:        isCollapsed ? RAIL_ITEM : 34,
                     width:         isCollapsed ? RAIL_ITEM : "100%",
                     margin:        isCollapsed ? "0 auto" : undefined,
-                    padding:       isCollapsed ? 0 : "0 8px",
+                    padding:       isCollapsed ? 0 : `0 8px 0 ${8 + indent}px`,
                     borderRadius:  isCollapsed ? RAIL_RADIUS : 8,
                     border:        "none",
                     background:    "transparent",

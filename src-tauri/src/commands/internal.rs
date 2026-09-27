@@ -218,3 +218,158 @@ mod tests {
         assert_eq!(c.sources, vec!["Label"]);
     }
 }
+
+// ── playlist folders (rootlist) ──────────────────────────────────────────────
+
+/// one entry in your library's playlist tree, in the order spotify shows it
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum RootItem {
+    Playlist {
+        id:        String,
+        name:      Option<String>,
+        image_url: Option<String>,
+        length:    Option<i64>,
+    },
+    Folder {
+        id:       String,
+        name:     String,
+        children: Vec<RootItem>,
+    },
+}
+
+/// `spotify:start-group:<id>:<url-encoded name>` -> (id, name)
+fn parse_group(uri: &str) -> Option<(String, String)> {
+    let rest = uri.strip_prefix("spotify:start-group:")?;
+    let (id, name) = rest.split_once(':').unwrap_or((rest, ""));
+    let name = url::form_urlencoded::parse(format!("n={name}").as_bytes())
+        .next()
+        .map(|(_, v)| v.into_owned())
+        .unwrap_or_default();
+    Some((id.to_string(), if name.is_empty() { "Folder".into() } else { name }))
+}
+
+/// flat rootlist rows (uri + optional meta) -> nested tree. start-group opens
+/// a folder, end-group closes the innermost one; an unbalanced list (seen when
+/// a page boundary cuts a folder) just closes whatever is still open.
+pub(crate) fn build_tree(rows: Vec<(String, Option<(Option<String>, Option<String>, Option<i64>)>)>) -> Vec<RootItem> {
+    let mut stack: Vec<(String, String, Vec<RootItem>)> = Vec::new();
+    let mut root: Vec<RootItem> = Vec::new();
+    for (uri, meta) in rows {
+        if let Some((id, name)) = parse_group(&uri) {
+            stack.push((id, name, Vec::new()));
+            continue;
+        }
+        if uri.starts_with("spotify:end-group:") {
+            if let Some((id, name, children)) = stack.pop() {
+                let folder = RootItem::Folder { id, name, children };
+                match stack.last_mut() {
+                    Some(parent) => parent.2.push(folder),
+                    None => root.push(folder),
+                }
+            }
+            continue;
+        }
+        let Some(id) = uri.strip_prefix("spotify:playlist:") else { continue };
+        let (name, image_url, length) = meta.unwrap_or((None, None, None));
+        let item = RootItem::Playlist { id: id.to_string(), name, image_url, length };
+        match stack.last_mut() {
+            Some(parent) => parent.2.push(item),
+            None => root.push(item),
+        }
+    }
+    while let Some((id, name, children)) = stack.pop() {
+        let folder = RootItem::Folder { id, name, children };
+        match stack.last_mut() {
+            Some(parent) => parent.2.push(folder),
+            None => root.push(folder),
+        }
+    }
+    root
+}
+
+async fn fetch_rootlist(app: &AppHandle) -> Result<Vec<RootItem>, AppError> {
+    use librespot_protocol::playlist4_external::SelectedListContent;
+    use protobuf::Message;
+
+    let session = crate::internal::spclient::session(app).await?;
+    let mut rows = Vec::new();
+    let mut from = 0usize;
+    loop {
+        let bytes = session
+            .spclient()
+            .get_rootlist(from, Some(500))
+            .await
+            .map_err(crate::internal::spclient::map_err)?;
+        let list = SelectedListContent::parse_from_bytes(&bytes)
+            .map_err(|e| AppError::Network(format!("rootlist: {e}")))?;
+        let Some(contents) = list.contents.as_ref() else { break };
+        for (i, item) in contents.items.iter().enumerate() {
+            let meta = contents.meta_items.get(i).map(|m| {
+                let attrs = m.attributes.as_ref();
+                (
+                    attrs.map(|a| a.name().to_string()).filter(|n| !n.is_empty()),
+                    attrs
+                        .filter(|a| a.has_picture())
+                        .and_then(|a| crate::internal::spclient::image_url(a.picture())),
+                    m.has_length().then(|| m.length() as i64),
+                )
+            });
+            rows.push((item.uri().to_string(), meta));
+        }
+        let n = contents.items.len();
+        if !contents.truncated() || n == 0 || from > 20_000 {
+            break;
+        }
+        from += n;
+    }
+    Ok(build_tree(rows))
+}
+
+/// your playlists as spotify's desktop client arranges them: folders, nesting
+/// and order included. the web api only has a flat list.
+#[tauri::command]
+pub async fn get_playlist_folders(app: AppHandle) -> Result<Vec<RootItem>, AppError> {
+    use tauri::Manager;
+    let pool = app.state::<crate::state::AppState>().db.clone();
+    crate::internal::cache::cached_json(&pool, "spotify:me", "rootlist", 10 * 60_000, || async {
+        fetch_rootlist(&app).await
+    })
+    .await
+}
+
+#[cfg(test)]
+mod rootlist_tests {
+    use super::*;
+
+    fn row(uri: &str) -> (String, Option<(Option<String>, Option<String>, Option<i64>)>) {
+        (uri.to_string(), None)
+    }
+
+    #[test]
+    fn nests_folders() {
+        let tree = build_tree(vec![
+            row("spotify:playlist:a"),
+            row("spotify:start-group:f1:Road+Trip"),
+            row("spotify:playlist:b"),
+            row("spotify:start-group:f2:Night%20Drives"),
+            row("spotify:playlist:c"),
+            row("spotify:end-group:f2"),
+            row("spotify:end-group:f1"),
+            row("spotify:playlist:d"),
+        ]);
+        assert_eq!(tree.len(), 3);
+        let RootItem::Folder { name, children, .. } = &tree[1] else { panic!() };
+        assert_eq!(name, "Road Trip");
+        assert_eq!(children.len(), 2);
+        let RootItem::Folder { name, .. } = &children[1] else { panic!() };
+        assert_eq!(name, "Night Drives");
+    }
+
+    #[test]
+    fn closes_unbalanced_groups() {
+        let tree = build_tree(vec![row("spotify:start-group:f1:X"), row("spotify:playlist:a")]);
+        assert_eq!(tree.len(), 1);
+        assert!(matches!(&tree[0], RootItem::Folder { children, .. } if children.len() == 1));
+    }
+}

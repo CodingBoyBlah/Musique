@@ -35,3 +35,10 @@ export interface TrackCredits {
 
 export const getTrackCredits = (trackId: string): Promise<TrackCredits> =>
   invoke("get_track_credits", { trackId });
+
+export type RootItem =
+  | { kind: "playlist"; id: string; name: string | null; image_url: string | null; length: number | null }
+  | { kind: "folder"; id: string; name: string; children: RootItem[] };
+
+// your playlists as spotify arranges them - folders, nesting, order
+export const getPlaylistFolders = (): Promise<RootItem[]> => invoke("get_playlist_folders");
