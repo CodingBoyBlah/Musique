@@ -461,8 +461,8 @@ function AppearanceCard() {
       />
       <Divider />
       <SettingRow
-        label="Canvas"
-        hint="Play the looping video some artists attach to their tracks in place of the cover in the full-screen player."
+        label="Animated artwork"
+        hint="Play the looping video (Spotify Canvas) some artists attach to their tracks in the full-screen player. The background takes its colours from the video."
         control={<Switch checked={showCanvas} onChange={setShowCanvas} />}
       />
     </Card>

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCanvas } from "../../hooks/useCanvas";
+import { useVideoAmbient } from "../../hooks/useVideoAmbient";
 import { CreditsList } from "../ui/CreditsList";
 import { isEpisodeId } from "../../utils/episode";
 import type { Canvas } from "../../api/internal";
@@ -48,8 +49,10 @@ import {
  * subtree onto a render surface that has to be re-blended on every frame the
  * ambient moves. Blurring once into a bitmap and then only transforming it
  * costs nothing per frame, and the artwork now supplies its own texture. */
-function AmbientBg({ url }: { url: string | null | undefined }) {
-  const ambient = useAmbient(url);
+function AmbientBg({ url, override }: { url: string | null | undefined; override?: Ambient | null }) {
+  const cover = useAmbient(url);
+  // a playing canvas lights the room from its own frames
+  const ambient = override ? { ...override, ready: true } : cover;
   const { base, glow, ready } = ambient;
   const awake = useWindowActive();
   // Settings > Animated background. still, not gone: the room keeps its colour
@@ -130,9 +133,22 @@ function roomFill(a: Ambient): React.CSSProperties {
  * right and softens all four corners, so the drifting blur underneath comes
  * through exactly where the lyrics are. One mask on a static image rasterises
  * once - it is not a filter and it costs nothing per frame. */
-function Sleeve({ url, alt, canvas }: { url: string | null | undefined; alt: string; canvas?: Canvas | null }) {
+function Sleeve({
+  url, alt, canvas, onVideo,
+}: {
+  url: string | null | undefined;
+  alt: string;
+  canvas?: Canvas | null;
+  onVideo?: (v: HTMLVideoElement | null) => void;
+}) {
   const src = coverUrl(url, 900) ?? url;
   const reduceMotion = useReducedMotion();
+  /* the canvas cdn sends CORS headers, so the video loads as anonymous and its
+     frames can be read for the room's colours. if one ever doesn't, the load
+     fails - retry without it (the video still plays, the colours stay the
+     cover's) */
+  const [cors, setCors] = useState(true);
+  useEffect(() => setCors(true), [canvas?.url]);
   if (!src && !canvas) return null;
   // a still canvas is just a better picture; a moving one respects reduced motion
   const video = canvas && canvas.kind !== "image" && !reduceMotion ? canvas.url : null;
@@ -167,8 +183,11 @@ const SLEEVE_MASK = [
       <AnimatePresence initial={false}>
         {video ? (
           <motion.video
-            key={video}
+            key={`${video}-${cors}`}
+            ref={onVideo}
             src={video}
+            crossOrigin={cors ? "anonymous" : undefined}
+            onError={() => { if (cors) setCors(false); }}
             autoPlay
             loop
             muted
@@ -461,9 +480,13 @@ export function Immersive() {
   const track    = usePlayerStore((s) => s.currentTrack);
   // the same cached read AmbientBg does: the lyric ink and glow come off the
   // cover, so the type is lit by the record it belongs to
-  const { glow, ink } = useAmbient(track?.album?.image_url);
+  const coverAmbient = useAmbient(track?.album?.image_url);
   // only fetch while the view is actually up
   const canvas = useCanvas(open ? track?.id : null);
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const videoAmbient = useVideoAmbient(canvas && canvas.kind !== "image" ? videoEl : null);
+  // lyric ink and glow follow the video too, so type and room stay one hue
+  const { glow, ink } = videoAmbient ?? coverAmbient;
 
   // esc closes
   useEffect(() => {
@@ -497,8 +520,8 @@ export function Immersive() {
           }}
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b" }}
         >
-          <AmbientBg url={track.album?.image_url} />
-          <Sleeve url={track.album?.image_url} alt={track.name} canvas={canvas} />
+          <AmbientBg url={track.album?.image_url} override={videoAmbient} />
+          <Sleeve url={track.album?.image_url} alt={track.name} canvas={canvas} onVideo={setVideoEl} />
 
           {/* window drag strip immersive covers the whole window (titlebar
               included) so without this you couldnt drag the window here. BUT this sits OVER
