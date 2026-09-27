@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import { coverUrl } from "../lib/coverUrl";
 import { useParams, Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Pin } from "@/lib/icons";
+import { Pin, Radio } from "@/lib/icons";
+import { playStation } from "../utils/radio";
 import { useAlbum } from "../hooks/useAlbum";
 import { useArtist } from "../hooks/useArtist";
 import { AlbumCard } from "../components/ui/AlbumCard";
@@ -91,6 +92,7 @@ export default function AlbumPage() {
       className="flex flex-col"
       onContextMenu={openMenu([
         { label: pinned ? "Unpin from sidebar" : "Pin to sidebar", icon: <Pin size={14} active={pinned} />, onSelect: () => togglePin(pinItem) },
+        { label: "Album radio", icon: <Radio size={14} />, onSelect: () => { playStation(`spotify:album:${data.id}`, data.name); } },
       ])}
     >
       <PageHeader imageUrl={data.image_url} eyebrow={data.album_type} title={data.name}>

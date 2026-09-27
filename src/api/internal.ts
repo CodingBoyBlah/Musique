@@ -42,3 +42,22 @@ export type RootItem =
 
 // your playlists as spotify arranges them - folders, nesting, order
 export const getPlaylistFolders = (): Promise<RootItem[]> => invoke("get_playlist_folders");
+
+export interface RadioResult {
+  title: string | null;
+  // backing playlist of a track radio, openable as a page
+  playlist_id: string | null;
+  tracks: TrackItem[];
+}
+
+// spotify's radio for a track ("inspired by" mix, apollo station fallback)
+export const getTrackRadio = (trackId: string): Promise<RadioResult> =>
+  invoke("get_track_radio", { trackId });
+
+// a station from any artist / album / playlist / track uri
+export const getStation = (seed: string): Promise<RadioResult> =>
+  invoke("get_station", { seed });
+
+// what spotify would autoplay next after this context
+export const getAutoplayTracks = (contextUri: string, recentTrackIds: string[]): Promise<TrackItem[]> =>
+  invoke("get_autoplay_tracks", { contextUri, recentTrackIds });

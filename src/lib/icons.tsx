@@ -131,6 +131,9 @@ export const iconPaths = {
   Play: "M7 5.4a1.2 1.2 0 0 1 1.8-1.04l10.4 6.6a1.2 1.2 0 0 1 0 2.08l-10.4 6.6A1.2 1.2 0 0 1 7 18.6z",
   Plus: "M12 5v14M5 12h14",
   Queue: QUEUE_PLAY + "M12 7.5h8.5M3.5 13.5h17M3.5 19h17",
+  Radio:
+    circle(12, 12, 2) +
+    "M8.46 8.46a5 5 0 0 0 0 7.08M15.54 8.46a5 5 0 0 1 0 7.08M5.64 5.64a9 9 0 0 0 0 12.72M18.36 5.64a9 9 0 0 1 0 12.72",
   RefreshCw:
     "M20 11A8 8 0 0 0 6.1 6.6L4 8.5M4 4v4.5h4.5M4 13a8 8 0 0 0 13.9 4.4L20 15.5M20 20v-4.5h-4.5",
   Repeat: REPEAT,
@@ -365,6 +368,7 @@ export const PinOff = createIcon("PinOff");
 export const Play = createIcon("Play");
 export const Plus = createIcon("Plus");
 export const Queue = createIcon("Queue");
+export const Radio = createIcon("Radio");
 export const RefreshCw = createIcon("RefreshCw");
 export const Repeat = createIcon("Repeat");
 export const Repeat1 = createIcon("Repeat1");
@@ -396,7 +400,7 @@ const ICONS: Record<string, LucideIcon> = {
   Folder, Globe, GripVertical, Heart, Home, Info, Languages, Laptop, Link, Link2,
   ListMusic, ListPlus, Loader2, LogIn, LogOut, Maximize2, Mic, Minimize2, Minus,
   MonitorSpeaker, MoreHorizontal, Music, Music2, PanelLeft, PanelLeftClose,
-  Pause, Pencil, Pin, PinOff, Play, Plus, Queue, RefreshCw, Repeat, Repeat1, RotateCcw,
+  Pause, Pencil, Pin, PinOff, Play, Plus, Queue, Radio, RefreshCw, Repeat, Repeat1, RotateCcw,
   RotateCw, Search, Settings, Share2, Shuffle, SkipBack, SkipForward,
   Smartphone, Sparkles, Speaker, Trash2, Tv, User, UserPlus, Users,
   Volume1, Volume2, VolumeX, X,

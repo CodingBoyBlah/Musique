@@ -1,8 +1,9 @@
 import { memo, useState } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2, Check, Info } from "@/lib/icons";
+import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2, Check, Info, Radio } from "@/lib/icons";
 import { useCreditsStore } from "../../store/credits.store";
+import { playTrackRadio } from "../../utils/radio";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TrackItem } from "../../types/spotify";
@@ -140,6 +141,7 @@ function TrackRowImpl({
     onSelect: () => onRemoveFromPlaylist(track),
   });
   if (!track.id.startsWith("spotify:")) {
+    menuEntries.push({ label: "Start radio", icon: <Radio size={14} />, onSelect: () => { playTrackRadio(track); } });
     menuEntries.push({ label: "Show credits", icon: <Info size={14} />, onSelect: () => useCreditsStore.getState().open(track) });
   }
   if (track.artists[0]) menuEntries.push({ label: "Go to artist", icon: <User size={14} />, onSelect: () => navigate(`/artist/${track.artists[0].id}`) });

@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Pin, Pencil, Trash2, Heart } from "@/lib/icons";
+import { Pin, Pencil, Trash2, Heart, Radio } from "@/lib/icons";
+import { playStation } from "../utils/radio";
 import { usePlaylist } from "../hooks/usePlaylist";
 import { TrackRow } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
@@ -178,6 +179,7 @@ export default function PlaylistPage() {
       className="flex flex-col"
       onContextMenu={openMenu([
         { label: pinned ? "Unpin from sidebar" : "Pin to sidebar", icon: <Pin size={14} active={pinned} />, onSelect: () => togglePin(pinItem) },
+        { label: "Playlist radio", icon: <Radio size={14} />, onSelect: () => { playStation(`spotify:playlist:${data.id}`, data.name); } },
         ...(isOwner
           ? [
               { label: "Edit details", icon: <Pencil size={14} />, onSelect: () => setEditOpen(true) },

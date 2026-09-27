@@ -373,3 +373,219 @@ mod rootlist_tests {
         assert!(matches!(&tree[0], RootItem::Folder { children, .. } if children.len() == 1));
     }
 }
+
+// ── radio / stations / autoplay ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RadioResult {
+    /// what spotify calls it ("<track> Radio"), when it said
+    pub title:       Option<String>,
+    /// the backing playlist for track radio (spotify:playlist:37i9...), so the
+    /// ui can open it as a page
+    pub playlist_id: Option<String>,
+    pub tracks:      Vec<TrackItem>,
+}
+
+/// track ids out of a resolved context, in order, skipping non-tracks
+pub(crate) fn context_track_ids(ctx: &librespot_protocol::context::Context) -> Vec<String> {
+    let mut ids = Vec::new();
+    for page in &ctx.pages {
+        for t in &page.tracks {
+            let id = if t.uri().starts_with("spotify:track:") {
+                Some(crate::internal::spclient::uri_id(t.uri()).to_string())
+            } else if t.uri().is_empty() && t.has_gid() {
+                crate::internal::metadata::gid_to_id(t.gid())
+            } else {
+                None
+            };
+            if let Some(id) = id.filter(|i| !i.is_empty()) {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+    }
+    ids
+}
+
+/// apollo answers `{"tracks": [{"uri": ...}], ...}`; some builds nest it
+/// under "mediaItems"
+pub(crate) fn apollo_track_ids(v: &serde_json::Value) -> Vec<String> {
+    let list = v
+        .get("tracks")
+        .or_else(|| v.get("mediaItems"))
+        .and_then(|x| x.as_array());
+    let mut ids = Vec::new();
+    for t in list.into_iter().flatten() {
+        if let Some(uri) = t.get("uri").and_then(|u| u.as_str()) {
+            if uri.starts_with("spotify:track:") {
+                let id = crate::internal::spclient::uri_id(uri).to_string();
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+    }
+    ids
+}
+
+pub(crate) async fn resolve_context_ids(app: &AppHandle, uri: &str) -> Result<(Option<String>, Vec<String>), AppError> {
+    let s = crate::internal::spclient::session(app).await?;
+    let ctx = s.spclient().get_context(uri).await.map_err(crate::internal::spclient::map_err)?;
+    let title = ctx
+        .metadata
+        .get("context_description")
+        .or_else(|| ctx.metadata.get("title"))
+        .cloned()
+        .filter(|t| !t.is_empty());
+    Ok((title, context_track_ids(&ctx)))
+}
+
+async fn apollo_ids(
+    app: &AppHandle,
+    scope: &str,
+    seed_uri: &str,
+    count: usize,
+    prev: &[String],
+    autoplay: bool,
+) -> Result<Vec<String>, AppError> {
+    let s = crate::internal::spclient::session(app).await?;
+    let prev: Vec<librespot_core::SpotifyId> = prev
+        .iter()
+        .filter_map(|p| librespot_core::SpotifyId::from_base62(crate::internal::spclient::uri_id(p)).ok())
+        .take(50)
+        .collect();
+    let bytes = s
+        .spclient()
+        .get_apollo_station(scope, seed_uri, Some(count), prev, autoplay)
+        .await
+        .map_err(crate::internal::spclient::map_err)?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| AppError::Network(format!("apollo: {e}")))?;
+    Ok(apollo_track_ids(&v))
+}
+
+fn seed_uri(seed: &str) -> String {
+    if seed.starts_with("spotify:") {
+        seed.to_string()
+    } else {
+        format!("spotify:track:{seed}")
+    }
+}
+
+/// spotify's own radio for a track: the "inspired by" mix first (a real,
+/// openable playlist), apollo's station as the fallback
+#[tauri::command]
+pub async fn get_track_radio(app: AppHandle, track_id: String) -> Result<RadioResult, AppError> {
+    use tauri::Manager;
+    let uri = seed_uri(&track_id);
+    let pool = app.state::<crate::state::AppState>().db.clone();
+    crate::internal::cache::cached_json(&pool, &uri, "radio", 6 * crate::internal::cache::HOUR, || async {
+        let s = crate::internal::spclient::session(&app).await?;
+        let spotify_uri = librespot_core::SpotifyUri::from_uri(&uri)
+            .map_err(|e| AppError::InvalidInput(e.to_string()))?;
+
+        let mut playlist_id = None;
+        let mut title = None;
+        let mut ids = Vec::new();
+        if let Ok(bytes) = s.spclient().get_radio_for_track(&spotify_uri).await {
+            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+            let pl_uri = v
+                .get("mediaItems")
+                .and_then(|m| m.as_array())
+                .and_then(|a| a.first())
+                .and_then(|i| i.get("uri"))
+                .and_then(|u| u.as_str())
+                .map(str::to_string);
+            if let Some(pl_uri) = pl_uri {
+                if let Ok((t, found)) = resolve_context_ids(&app, &pl_uri).await {
+                    playlist_id = Some(crate::internal::spclient::uri_id(&pl_uri).to_string());
+                    title = t;
+                    ids = found;
+                }
+            }
+        }
+        if ids.is_empty() {
+            ids = apollo_ids(&app, "stations", &uri, 50, &[], false).await?;
+        }
+        let tracks = crate::internal::metadata::tracks(&app, &ids).await?;
+        Ok(RadioResult { title, playlist_id, tracks })
+    })
+    .await
+}
+
+/// a station seeded from any artist / album / playlist / track uri
+#[tauri::command]
+pub async fn get_station(app: AppHandle, seed: String) -> Result<RadioResult, AppError> {
+    use tauri::Manager;
+    let uri = seed_uri(&seed);
+    let pool = app.state::<crate::state::AppState>().db.clone();
+    crate::internal::cache::cached_json(&pool, &uri, "station", 6 * crate::internal::cache::HOUR, || async {
+        let ids = apollo_ids(&app, "stations", &uri, 50, &[], false).await?;
+        let tracks = crate::internal::metadata::tracks(&app, &ids).await?;
+        Ok(RadioResult { title: None, playlist_id: None, tracks })
+    })
+    .await
+}
+
+/// what spotify would autoplay after `context_uri`, given what just played.
+/// this is the auto-DJ's first choice; the local taste engine is its fallback
+#[tauri::command]
+pub async fn get_autoplay_tracks(
+    app: AppHandle,
+    context_uri: String,
+    recent_track_ids: Vec<String>,
+) -> Result<Vec<TrackItem>, AppError> {
+    use librespot_protocol::autoplay_context_request::AutoplayContextRequest;
+    if context_uri.contains(":show:") || context_uri.contains(":episode:") {
+        return Ok(Vec::new());
+    }
+    let recent: Vec<String> = recent_track_ids.iter().rev().take(30).map(|i| seed_uri(i)).collect();
+    let s = crate::internal::spclient::session(&app).await?;
+    let req = AutoplayContextRequest {
+        context_uri: Some(seed_uri(&context_uri)),
+        recent_track_uri: recent,
+        ..Default::default()
+    };
+    let ids = match s.spclient().get_autoplay_context(&req).await {
+        Ok(ctx) => context_track_ids(&ctx),
+        Err(_) => Vec::new(),
+    };
+    let ids = if ids.is_empty() {
+        apollo_ids(&app, "tracks", &seed_uri(&context_uri), 30, &recent_track_ids, true).await?
+    } else {
+        ids
+    };
+    let recent: std::collections::HashSet<&str> =
+        recent_track_ids.iter().map(|i| crate::internal::spclient::uri_id(i)).collect();
+    let ids: Vec<String> = ids.into_iter().filter(|i| !recent.contains(i.as_str())).collect();
+    crate::internal::metadata::tracks(&app, &ids).await
+}
+
+#[cfg(test)]
+mod radio_tests {
+    use super::*;
+
+    #[test]
+    fn reads_apollo_tracks() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"tracks": [{"uri": "spotify:track:a"}, {"uri": "spotify:episode:x"}, {"uri": "spotify:track:a"}, {"uri": "spotify:track:b"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(apollo_track_ids(&v), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn reads_context_tracks() {
+        use librespot_protocol::{context::Context, context_page::ContextPage, context_track::ContextTrack};
+        let mut page = ContextPage::new();
+        for uri in ["spotify:track:one", "spotify:episode:nope", "spotify:track:two"] {
+            let mut t = ContextTrack::new();
+            t.set_uri(uri.into());
+            page.tracks.push(t);
+        }
+        let mut ctx = Context::new();
+        ctx.pages.push(page);
+        assert_eq!(context_track_ids(&ctx), vec!["one", "two"]);
+    }
+}

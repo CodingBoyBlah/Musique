@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Check, UserPlus, Link2, Globe } from "@/lib/icons";
+import { Check, UserPlus, Link2, Globe, Radio } from "@/lib/icons";
+import { playStation } from "../utils/radio";
 import { useArtist } from "../hooks/useArtist";
 import { AlbumCard } from "../components/ui/AlbumCard";
 import { ArtistCard } from "../components/ui/ArtistCard";
@@ -76,6 +77,7 @@ export default function ArtistPage() {
   const genres = data.genres.slice(0, 3);
 
   const shareEntries = [
+    { label: "Artist radio", icon: <Radio size={14} />, onSelect: () => { playStation(`spotify:artist:${data.id}`, data.name); } },
     { label: "Copy Spotify link", icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("artist", data.id) },
     { label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("artist", data.id) },
   ];
@@ -148,7 +150,29 @@ export default function ArtistPage() {
             ))}
           </div>
         )}
-        <PlayActions tracks={topTracks} contextId={contextId} pinItem={artistItem} accessory={followButton} />
+        <PlayActions
+          tracks={topTracks}
+          contextId={contextId}
+          pinItem={artistItem}
+          accessory={
+            <>
+              {followButton}
+              <Tooltip label="Artist radio" side="top">
+                <motion.button
+                  type="button"
+                  aria-label={`${data.name} radio`}
+                  className="ghost-pill focus-ring"
+                  onClick={() => playStation(`spotify:artist:${data.id}`, data.name)}
+                  whileTap={PRESS}
+                  transition={PRESS_TRANSITION}
+                  style={{ height: 36, width: 36, borderRadius: 99, color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <Radio size={15} strokeWidth={2.1} />
+                </motion.button>
+              </Tooltip>
+            </>
+          }
+        />
       </PageHeader>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "clamp(28px, 4vw, 44px)", paddingTop: 8 }}>
