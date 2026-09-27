@@ -239,11 +239,25 @@ pub(crate) struct SpPlaylist {
     pub tracks:      Option<SpPlaylistTrackPage>,
     #[serde(default)]
     pub snapshot_id: Option<String>,
+    #[serde(default)]
+    pub public:        Option<bool>,
+    #[serde(default)]
+    pub collaborative: Option<bool>,
+    #[serde(default)]
+    pub followers:     Option<SpFollowers>,
+}
+
+#[derive(Clone, Deserialize)]
+pub(crate) struct SpFollowers {
+    #[serde(default)]
+    pub total: Option<i64>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct SpOwner {
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub id:           Option<String>,
 }
 
 // ─── ipc output types, public, serialize + deserialize ──────────────────────
@@ -344,4 +358,14 @@ pub struct PlaylistDetail {
     pub owner_name:   Option<String>,
     pub total_tracks: i64,
     pub tracks:       Vec<TrackItem>,
+    // who owns it + how it's shared. absent on the offline/cached path, so the
+    // ui must treat None as "unknown", not "no"
+    #[serde(default)]
+    pub owner_id:      Option<String>,
+    #[serde(default)]
+    pub public:        Option<bool>,
+    #[serde(default)]
+    pub collaborative: Option<bool>,
+    #[serde(default)]
+    pub followers:     Option<i64>,
 }

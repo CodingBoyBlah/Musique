@@ -437,6 +437,133 @@ pub async fn get_saved_track_ids(
 
 // ─── playlist mutations, write through to spotify ────────────────────────────
 
+/// rename / redescribe / change sharing on a playlist you own. every field is
+/// optional so the caller only sends what changed
+#[tauri::command]
+pub async fn update_playlist_details(
+    app: AppHandle,
+    id: String,
+    name: Option<String>,
+    description: Option<String>,
+    public: Option<bool>,
+    collaborative: Option<bool>,
+) -> Result<(), AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    let auth = s.auth.clone();
+    drop(s);
+
+    let mut body = serde_json::Map::new();
+    if let Some(n) = name.as_ref().map(|n| n.trim()).filter(|n| !n.is_empty()) {
+        body.insert("name".into(), n.into());
+    }
+    if let Some(d) = &description {
+        body.insert("description".into(), d.trim().into());
+    }
+    // spotify rejects collaborative + public together, so a collaborative
+    // playlist is always sent private
+    let collab = collaborative.unwrap_or(false);
+    if let Some(p) = public {
+        body.insert("public".into(), (p && !collab).into());
+    }
+    if let Some(c) = collaborative {
+        body.insert("collaborative".into(), c.into());
+        if c {
+            body.insert("public".into(), false.into());
+        }
+    }
+    if body.is_empty() {
+        return Ok(());
+    }
+
+    let token = crate::auth::get_valid_token(&pool, &auth).await?;
+    crate::spotify::spotify_write_json(
+        &token,
+        reqwest::Method::PUT,
+        &format!("{BASE}/playlists/{id}"),
+        serde_json::Value::Object(body),
+    )
+    .await?;
+
+    let _ = sqlx::query(
+        "UPDATE playlists SET
+             name        = COALESCE(?, name),
+             description = COALESCE(?, description),
+             updated_at  = ?
+         WHERE id = ?",
+    )
+    .bind(name.as_ref().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()))
+    .bind(description.as_ref().map(|d| d.trim().to_string()))
+    .bind(now_ms())
+    .bind(&id)
+    .execute(&pool)
+    .await;
+
+    Ok(())
+}
+
+/// follow someone else's playlist (adds it to your library)
+#[tauri::command]
+pub async fn follow_playlist(app: AppHandle, id: String) -> Result<(), AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    let auth = s.auth.clone();
+    drop(s);
+
+    let token = crate::auth::get_valid_token(&pool, &auth).await?;
+    crate::spotify::spotify_write_json(
+        &token,
+        reqwest::Method::PUT,
+        &format!("{BASE}/playlists/{id}/followers"),
+        serde_json::json!({ "public": true }),
+    )
+    .await?;
+    Ok(())
+}
+
+/// unfollow a playlist. on one you own this IS delete - spotify has no hard
+/// delete, the owner unfollowing is what removes it from everywhere
+#[tauri::command]
+pub async fn unfollow_playlist(app: AppHandle, id: String) -> Result<(), AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    let auth = s.auth.clone();
+    drop(s);
+
+    let token = crate::auth::get_valid_token(&pool, &auth).await?;
+    crate::spotify::spotify_write(
+        &token,
+        reqwest::Method::DELETE,
+        &format!("{BASE}/playlists/{id}/followers"),
+    )
+    .await?;
+
+    // drop it from the local library so the sidebar/list forget it right away
+    let _ = sqlx::query("DELETE FROM playlist_tracks WHERE playlist_id = ?")
+        .bind(&id)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM playlists WHERE id = ?")
+        .bind(&id)
+        .execute(&pool)
+        .await;
+    Ok(())
+}
+
+/// does the signed-in user follow this playlist?
+#[tauri::command]
+pub async fn is_playlist_followed(app: AppHandle, id: String) -> Result<bool, AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    let auth = s.auth.clone();
+    drop(s);
+
+    let token = crate::auth::get_valid_token(&pool, &auth).await?;
+    let v: Vec<bool> =
+        crate::spotify::spotify_get(&token, &format!("{BASE}/playlists/{id}/followers/contains")).await?;
+    Ok(v.first().copied().unwrap_or(false))
+}
+
 /// add a track to a playlist on spotify. pass a bare track id, we build the uri
 #[tauri::command]
 pub async fn add_track_to_playlist(
@@ -707,6 +834,10 @@ pub(crate) async fn load_cached_playlist(
         owner_name: owner_id.filter(|s| !s.is_empty()),
         total_tracks,
         tracks,
+        owner_id: None,
+        public: None,
+        collaborative: None,
+        followers: None,
     }))
 }
 

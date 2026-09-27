@@ -1,7 +1,7 @@
-import { useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Pin } from "@/lib/icons";
+import { Pin, Pencil, Trash2, Heart } from "@/lib/icons";
 import { usePlaylist } from "../hooks/usePlaylist";
 import { TrackRow } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
@@ -18,8 +18,18 @@ import { useSpeedDialStore } from "../store/speedDial.store";
 import { useAuthStore } from "../store/auth.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
 import { useContextMenu } from "../components/ui/ContextMenu";
-import { useQueryClient } from "@tanstack/react-query";
-import { removeTrackFromPlaylist, addTrackToPlaylist } from "../api/library";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  removeTrackFromPlaylist,
+  addTrackToPlaylist,
+  followPlaylist,
+  unfollowPlaylist,
+  isPlaylistFollowed,
+} from "../api/library";
+import { EditPlaylistModal } from "../components/ui/EditPlaylistModal";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { Tooltip } from "../components/ui/Tooltip";
+import { PRESS, PRESS_TRANSITION } from "../lib/motion";
 import { toast } from "../store/toast.store";
 import type { TrackItem } from "../types/spotify";
 import { errMsg } from "../lib/err";
@@ -39,7 +49,51 @@ export default function PlaylistPage() {
   const togglePin = usePinsStore((s) => s.togglePin);
   const toggleLike = useToggleLike();
   const displayName = useAuthStore((s) => s.displayName);
+  const userId = useAuthStore((s) => s.userId);
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // owner id when we have it (live fetch), display name as the offline fallback
+  const isOwner = !!data && (data.owner_id
+    ? data.owner_id === userId
+    : !!displayName && data.owner_name === displayName);
+  const { data: following = false } = useQuery({
+    queryKey: ["library", "playlist-followed", id],
+    queryFn: () => isPlaylistFollowed(id!),
+    enabled: !!id && !!data && !isOwner,
+  });
+
+  async function toggleFollow() {
+    const pid = id!;
+    const key = ["library", "playlist-followed", pid];
+    qc.setQueryData(key, !following);
+    try {
+      await (following ? unfollowPlaylist(pid) : followPlaylist(pid));
+      qc.invalidateQueries({ queryKey: ["library", "playlists"] });
+      toast(following ? "Removed from your library" : "Added to your library");
+    } catch (e) {
+      qc.setQueryData(key, following);
+      toast.error(`Couldn't update your library: ${errMsg(e)}`);
+    }
+  }
+
+  async function deletePlaylist() {
+    setDeleting(true);
+    try {
+      await unfollowPlaylist(id!);
+      qc.invalidateQueries({ queryKey: ["library", "playlists"] });
+      toast(`Deleted ${data?.name ?? "playlist"}`);
+      setDeleteOpen(false);
+      navigate("/playlists");
+    } catch (e) {
+      toast.error(`Couldn't delete playlist: ${errMsg(e)}`);
+    } finally {
+      setDeleting(false);
+    }
+  }
   const { open: openMenu, element: menuEl } = useContextMenu();
 
   const tracks = data?.tracks ?? [];
@@ -69,8 +123,8 @@ export default function PlaylistPage() {
 
   const pinItem = { id: data.id, name: data.name, image_url: data.image_url, type: "playlist" as const };
 
-  // only the owner can remove tracks. owner_name is the only owner signal we get on the frontend, so compare it to the logged-in users display name.
-  const isOwner = !!displayName && data.owner_name === displayName;
+  // the owner - or anyone, on a collaborative playlist - can remove tracks
+  const canEdit = isOwner || !!data.collaborative;
   /* a slip here is easy (it sits in a row menu next to harmless actions), so
   the toast carries an Undo that puts the track back at its old position,
   rather than a confirm dialog in front of every removal. */
@@ -124,6 +178,18 @@ export default function PlaylistPage() {
       className="flex flex-col"
       onContextMenu={openMenu([
         { label: pinned ? "Unpin from sidebar" : "Pin to sidebar", icon: <Pin size={14} active={pinned} />, onSelect: () => togglePin(pinItem) },
+        ...(isOwner
+          ? [
+              { label: "Edit details", icon: <Pencil size={14} />, onSelect: () => setEditOpen(true) },
+              { label: "Delete playlist", icon: <Trash2 size={14} />, onSelect: () => setDeleteOpen(true) },
+            ]
+          : [
+              {
+                label: following ? "Remove from your library" : "Save to your library",
+                icon: <Heart size={14} active={following} />,
+                onSelect: toggleFollow,
+              },
+            ]),
       ])}
     >
       <PageHeader imageUrl={data.image_url} eyebrow="Playlist" title={data.name}>
@@ -132,12 +198,63 @@ export default function PlaylistPage() {
         )}
         <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
           {data.owner_name && <>{data.owner_name} · </>}
+          {data.collaborative && <>Collaborative · </>}
+          {data.public === false && !data.collaborative && isOwner && <>Private · </>}
+          {data.followers != null && data.followers > 0 && (
+            <span className="tnum">{data.followers.toLocaleString()} {data.followers === 1 ? "save" : "saves"} · </span>
+          )}
           <span className="tnum" style={{ textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>
             {data.total_tracks} {data.total_tracks === 1 ? "track" : "tracks"}
           </span>
         </p>
-        <PlayActions tracks={tracks} contextId={data.id} pinItem={pinItem} />
+        <PlayActions
+          tracks={tracks}
+          contextId={data.id}
+          pinItem={pinItem}
+          accessory={
+            <Tooltip
+              label={isOwner ? "Edit details" : following ? "Remove from your library" : "Save to your library"}
+              side="top"
+            >
+              <motion.button
+                type="button"
+                onClick={isOwner ? () => setEditOpen(true) : toggleFollow}
+                aria-pressed={isOwner ? undefined : following}
+                className="ghost-pill focus-ring"
+                data-on={!isOwner && following}
+                whileTap={PRESS}
+                transition={PRESS_TRANSITION}
+                style={{
+                  height: 36, padding: "0 16px", borderRadius: 99, color: "#ffffff", fontSize: 13,
+                  fontWeight: 600, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", flexShrink: 0,
+                }}
+              >
+                {isOwner ? <Pencil size={14} strokeWidth={2.2} /> : <Heart size={14} strokeWidth={2.2} active={following} />}
+                <span>{isOwner ? "Edit" : following ? "Saved" : "Save"}</span>
+              </motion.button>
+            </Tooltip>
+          }
+        />
       </PageHeader>
+      <EditPlaylistModal
+        playlist={data}
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => {
+          qc.invalidateQueries({ queryKey: ["playlist", data.id] });
+          qc.invalidateQueries({ queryKey: ["library", "playlists"] });
+        }}
+      />
+      <ConfirmDialog
+        open={deleteOpen}
+        title="Delete playlist?"
+        body={<>This removes <b>{data.name}</b> from your library. Anyone who saved it keeps a copy until they remove it.</>}
+        confirmLabel={deleting ? "Deleting..." : "Delete"}
+        danger
+        busy={deleting}
+        onConfirm={deletePlaylist}
+        onClose={() => setDeleteOpen(false)}
+      />
 
       <section>
         {toolbar}
@@ -156,7 +273,7 @@ export default function PlaylistPage() {
               onPlay={() => startAt(i)}
               onQueue={(track) => enqueue(track)}
               onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
-              onRemoveFromPlaylist={isOwner ? removeFromPlaylist : undefined}
+              onRemoveFromPlaylist={canEdit ? removeFromPlaylist : undefined}
             />
           ))}
           {view.length === 0 && (

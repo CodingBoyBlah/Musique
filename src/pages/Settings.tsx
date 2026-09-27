@@ -41,8 +41,9 @@ import {
 import { isWindows, isMac } from "../lib/platform";
 import { useThemeStore, type ThemeSource } from "../store/theme.store";
 import { useReflowPulse } from "../hooks/useReflowPulse";
-import { EASE_OUT, PRESS_TRANSITION, REFLOW_SPRING, SPRING } from "../lib/motion";
+import { EASE_OUT, PRESS_TRANSITION, REFLOW_SPRING } from "../lib/motion";
 import "../styles/ui.css";
+import { Switch } from "../components/ui/Switch";
 
 const REFLOW = REFLOW_SPRING;
 
@@ -271,51 +272,6 @@ function SettingRow({
         {control}
       </div>
     </div>
-  );
-}
-
-function Switch({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className="switch"
-      style={{
-        width: 44,
-        height: 24,
-        borderRadius: 99,
-        border: "none",
-        cursor: "pointer",
-        padding: 2,
-        display: "flex",
-        alignItems: "center",
-        flexShrink: 0,
-        justifyContent: checked ? "flex-end" : "flex-start",
-        background: checked ? "var(--color-accent)" : "rgba(255, 255, 255, 0.12)",
-        transition: "background 0.2s",
-      }}
-    >
-      {/* critically damped: a toggle flip has no momentum to overshoot with */}
-      <motion.div
-        layout
-        transition={{ ...SPRING, duration: 0.25 }}
-        style={{
-          width: 20,
-          height: 20,
-          borderRadius: 99,
-          background: "#ffffff",
-          boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
-        }}
-      />
-    </button>
   );
 }
 

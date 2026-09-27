@@ -430,7 +430,12 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
 
     // snapshot unchanged and already cached so serve cache, no extra requests
     if cached_count > 0 && pl.snapshot_id.is_some() && pl.snapshot_id == cached_snapshot {
-        if let Some(detail) = crate::commands::library::load_cached_playlist(&pool, &id).await? {
+        if let Some(mut detail) = crate::commands::library::load_cached_playlist(&pool, &id).await? {
+            // tracks from cache, but the sharing/ownership bits are live
+            detail.owner_id      = pl.owner.as_ref().and_then(|o| o.id.clone());
+            detail.public        = pl.public;
+            detail.collaborative = pl.collaborative;
+            detail.followers     = pl.followers.as_ref().and_then(|f| f.total);
             return Ok(detail);
         }
     }
@@ -471,6 +476,10 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
         owner_name:   pl.owner.as_ref().and_then(|o| o.display_name.clone()),
         total_tracks: total,
         tracks,
+        owner_id:      pl.owner.as_ref().and_then(|o| o.id.clone()),
+        public:        pl.public,
+        collaborative: pl.collaborative,
+        followers:     pl.followers.as_ref().and_then(|f| f.total),
     };
 
     // persist to SQLite asynchronously in the background so the UI doesn't block on 300+ disk writes

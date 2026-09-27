@@ -121,6 +121,7 @@ export const iconPaths = {
   PanelLeft: PANEL,
   PanelLeftClose: PANEL + "M16 9.5 13.5 12l2.5 2.5",
   Pause: rrect(6, 4.5, 4, 15, 1.2) + rrect(14, 4.5, 4, 15, 1.2),
+  Pencil: "M4.5 19.5v-3.8L15.3 4.9a2.2 2.2 0 0 1 3.1 0l.7.7a2.2 2.2 0 0 1 0 3.1L8.3 19.5zM13 7.2l3.8 3.8",
   Pin: "M12 16v5M8.5 3.5h7M9.5 3.5v5.2l-3 3.3V14.5h11V12l-3-3.3V3.5",
   PinOff: "M12 16v5M8.5 3.5h7M14.5 3.5v5.2l3 3.3v2.5h-3M9.5 6.5v2.2l-3 3.3v2.5h8M3.5 3.5l17 17",
   Play: "M7 5.4a1.2 1.2 0 0 1 1.8-1.04l10.4 6.6a1.2 1.2 0 0 1 0 2.08l-10.4 6.6A1.2 1.2 0 0 1 7 18.6z",
@@ -351,6 +352,7 @@ export const Music2 = createIcon("Music2");
 export const PanelLeft = createIcon("PanelLeft");
 export const PanelLeftClose = createIcon("PanelLeftClose");
 export const Pause = createIcon("Pause");
+export const Pencil = createIcon("Pencil");
 export const Pin = createIcon("Pin");
 export const PinOff = createIcon("PinOff");
 export const Play = createIcon("Play");
@@ -387,7 +389,7 @@ const ICONS: Record<string, LucideIcon> = {
   Globe, GripVertical, Heart, Home, Info, Languages, Laptop, Link, Link2,
   ListMusic, ListPlus, Loader2, LogIn, LogOut, Maximize2, Minimize2, Minus,
   MonitorSpeaker, MoreHorizontal, Music, Music2, PanelLeft, PanelLeftClose,
-  Pause, Pin, PinOff, Play, Plus, Queue, RefreshCw, Repeat, Repeat1, RotateCcw,
+  Pause, Pencil, Pin, PinOff, Play, Plus, Queue, RefreshCw, Repeat, Repeat1, RotateCcw,
   RotateCw, Search, Settings, Share2, Shuffle, SkipBack, SkipForward,
   Smartphone, Sparkles, Speaker, Trash2, Tv, User, UserPlus, Users,
   Volume1, Volume2, VolumeX, X,

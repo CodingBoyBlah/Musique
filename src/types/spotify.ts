@@ -100,4 +100,9 @@ export interface PlaylistDetail {
   owner_name:   string | null;
   total_tracks: number;
   tracks:       TrackItem[];
+  // null on the offline/cached path: "unknown", not "no"
+  owner_id?:      string | null;
+  public?:        boolean | null;
+  collaborative?: boolean | null;
+  followers?:     number | null;
 }
