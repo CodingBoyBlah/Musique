@@ -53,6 +53,8 @@ librespot-metadata = { version = "0.8", default-features = false }
 librespot-protocol = "0.8"
 protobuf = "3"
 bytes = "1"
+# StreamExt over the dealer subscriptions (internal/dealer.rs). already in the tree via librespot
+futures-util = "0.3"
 librespot-playback = { version = "0.8", default-features = false, features = ["rodio-backend"] }
 # Direct rodio dep so playback/mod.rs can build its OWN output sink (DeviceSink)
 # that opens the device at its NATIVE sample rate. librespot's built-in rodio

@@ -73,6 +73,23 @@ function AppInit() {
   const onEvent = usePlayerStore((s) => s.onEvent);
 
   const invalidateLibrary = useInvalidateLibrary();
+
+  // a playlist (or the folder tree) changed on another device
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let gone = false;
+    listen("library:playlist-changed", () => {
+      queryClient.invalidateQueries({ queryKey: ["library", "rootlist"] });
+      queryClient.invalidateQueries({ queryKey: ["playlist"] });
+    })
+      .then((u) => (gone ? u() : (off = u)))
+      .catch(() => {});
+    return () => {
+      gone = true;
+      off?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const queryClient = useQueryClient();
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const upcoming = useQueueStore((s) => s.queue);

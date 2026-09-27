@@ -5388,6 +5388,7 @@ dependencies = [
  "discord-rich-presence",
  "dotenvy",
  "flate2",
+ "futures-util",
  "keyring",
  "libc",
  "librespot-connect",

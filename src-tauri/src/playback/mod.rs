@@ -243,6 +243,7 @@ pub struct PlaybackInner {
     session:               Session,
     _event_task:           tauri::async_runtime::JoinHandle<()>,
     _spirc_task:           tauri::async_runtime::JoinHandle<()>,
+    _dealer_task:          tauri::async_runtime::JoinHandle<()>,
 }
 
 // map a librespot control error into our IPC error type
@@ -278,6 +279,7 @@ impl PlaybackInner {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         self._spirc_task.abort();
         self._event_task.abort();
+        self._dealer_task.abort();
     }
 
     pub fn is_ended(&self) -> bool {
@@ -627,6 +629,8 @@ pub async fn create_inner(
     })?;
     eprintln!("[playback] STEP spirc connected (Connect device 'Musique' registered)");
     let spirc_task = tauri::async_runtime::spawn(spirc_task);
+    // spirc has the dealer connected now; tap it for device/jam/playlist pushes
+    let dealer_task = crate::internal::dealer::spawn(app.clone(), session.clone());
 
     // the access point pushes CountryCode (and ProductInfo) as SEPARATE packets
     // that show up AFTER the session connects (Spirc::new above did the connect).
@@ -748,6 +752,7 @@ pub async fn create_inner(
         spirc,
         session,
         _event_task:       event_task,
+        _dealer_task:      dealer_task,
         _spirc_task:       spirc_task,
     })
 }

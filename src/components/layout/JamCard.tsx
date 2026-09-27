@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Users, Link2, X } from "@/lib/icons";
 import { getJam, joinJam, leaveJam, startJam, type JamSession } from "../../api/social";
@@ -22,9 +23,21 @@ export function JamCard() {
   const { data: jam } = useQuery({
     queryKey: ["jam"],
     queryFn: getJam,
-    refetchInterval: 15_000,
+    refetchInterval: 60_000,
     retry: false,
   });
+  // members joining/leaving arrive as dealer pushes
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let gone = false;
+    listen("social:jam-updated", () => qc.invalidateQueries({ queryKey: ["jam"] }))
+      .then((u) => (gone ? u() : (off = u)))
+      .catch(() => {});
+    return () => {
+      gone = true;
+      off?.();
+    };
+  }, [qc]);
   const [busy, setBusy] = useState(false);
   const [joining, setJoining] = useState(false);
   const [link, setLink] = useState("");
