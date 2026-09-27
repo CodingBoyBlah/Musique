@@ -10,7 +10,6 @@ import {
 import { replenishQueue } from "../utils/radio";
 import { trackSkipped } from "../utils/listenTracker";
 import { toast } from "../store/toast.store";
-import { errMsg } from "../lib/err";
 
 let transportInFlight = false;
 let pendingTarget: "play" | "pause" | null = null;
@@ -47,7 +46,7 @@ async function executeTransport() {
           console.error("[transport] play error:", e);
           usePlayerStore.getState().setPlaying(false);
           usePlayerStore.getState().clearTargetState();
-          toast.error(errMsg(e));
+          // failPlayback (api/playback.ts) already toasted this error
         });
       }
     }

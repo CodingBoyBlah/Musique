@@ -390,6 +390,10 @@ pub async fn create_inner(
     initial_volume: f64,
     initial_muted:  bool,
     media_tx:       std::sync::mpsc::SyncSender<crate::media_controls::MediaMsg>,
+    // false for background callers (the startup warm-up): they must never open
+    // a browser authorization tab the user didn't ask for. When no silent
+    // credential works they fail instead and the next real play recovers.
+    interactive:    bool,
 ) -> Result<PlaybackInner, AppError> {
     let _ = auth::get_valid_token(&pool, &auth_state).await
         .map_err(|e| { eprintln!("[playback] auth token error: {e}"); e })?;
@@ -437,6 +441,11 @@ pub async fn create_inner(
         None => {
             let playback_token = match auth::get_setting_value(&pool, "spotify_playback_token").await? {
                 Some(t) if !t.trim().is_empty() => t,
+                _ if !interactive => {
+                    return Err(AppError::Auth(
+                        "no playback credentials; skipping non-interactive session build".into(),
+                    ));
+                }
                 _ => crate::commands::auth::authorize_playback_token(&app).await?,
             };
             Credentials::with_access_token(&playback_token)
@@ -565,7 +574,9 @@ pub async fn create_inner(
             if let Some(token) = stored_token {
                 attempts.push(Recovery::Stored(token));
             }
-            attempts.push(Recovery::Interactive);
+            if interactive {
+                attempts.push(Recovery::Interactive);
+            }
 
             for attempt in attempts {
                 let (label, token) = match attempt {

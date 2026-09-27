@@ -71,7 +71,15 @@ pub struct YtPlayback {
     /// Per-track linear gain from YouTube's `loudnessDb`, folded into the sink
     /// volume so switching backends does not change perceived loudness.
     gain:         Arc<Mutex<f32>>,
-    _watch_task:  tauri::async_runtime::JoinHandle<()>,
+    /// Aborted on drop - a dropped JoinHandle only detaches, which would leave
+    /// the poll loop (and the sink/AppHandle it holds) running forever.
+    watch_task:   tauri::async_runtime::JoinHandle<()>,
+}
+
+impl Drop for YtPlayback {
+    fn drop(&mut self) {
+        self.watch_task.abort();
+    }
 }
 
 impl YtPlayback {
@@ -129,7 +137,7 @@ impl YtPlayback {
             duration_ms,
             generation,
             gain: Arc::new(Mutex::new(1.0)),
-            _watch_task: watch_task,
+            watch_task,
         })
     }
 

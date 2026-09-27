@@ -202,6 +202,30 @@ pub async fn take_prepared(track_id: &str) -> Option<std::sync::Arc<PreparedTrac
         .map(|(_, t)| std::sync::Arc::clone(t))
 }
 
+/// Per-track lock so a preload and a play of the same track share one download
+/// instead of racing two. Entries are removed once nobody holds them.
+static INFLIGHT: std::sync::Mutex<
+    Vec<(String, std::sync::Arc<tokio::sync::Mutex<()>>)>,
+> = std::sync::Mutex::new(Vec::new());
+
+fn inflight_lock(track_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    let mut map = INFLIGHT.lock().unwrap();
+    if let Some((_, l)) = map.iter().find(|(id, _)| id == track_id) {
+        return std::sync::Arc::clone(l);
+    }
+    let l = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+    map.push((track_id.to_string(), std::sync::Arc::clone(&l)));
+    l
+}
+
+fn release_inflight(track_id: &str, lock: std::sync::Arc<tokio::sync::Mutex<()>>) {
+    let mut map = INFLIGHT.lock().unwrap();
+    // map + this handle; anyone else still waiting keeps the entry alive
+    if std::sync::Arc::strong_count(&lock) <= 2 {
+        map.retain(|(id, _)| id != track_id);
+    }
+}
+
 /// Resolve, extract and download a track, caching the result.
 ///
 /// This is the whole cost of starting playback - measured at roughly 1 second,
@@ -220,21 +244,47 @@ pub async fn prepare(
         return Ok(hit);
     }
 
+    let lock = inflight_lock(track_id);
+    let result = {
+        let _guard = lock.lock().await;
+        prepare_locked(pool, track_id, query).await
+    };
+    release_inflight(track_id, lock);
+    result
+}
+
+async fn prepare_locked(
+    pool: &SqlitePool,
+    track_id: &str,
+    query: &TrackQuery,
+) -> Result<std::sync::Arc<PreparedTrack>, AppError> {
+    // Whoever held the lock before us may have just finished this track.
+    if let Some(hit) = take_prepared(track_id).await {
+        return Ok(hit);
+    }
+
     let stream = resolve_stream(pool, track_id, query).await?;
     let audio: std::sync::Arc<[u8]> = fetch_audio(&stream).await?.into();
     let prepared = std::sync::Arc::new(PreparedTrack { stream, audio });
 
     let mut cache = PREPARED.write().await;
-    // Another task may have prepared the same track while this one was
-    // downloading; prefer the existing entry so both callers share one buffer.
-    if let Some((_, existing)) = cache.iter().find(|(id, _)| id == track_id) {
-        return Ok(std::sync::Arc::clone(existing));
-    }
     cache.push((track_id.to_string(), std::sync::Arc::clone(&prepared)));
     while cache.len() > PREPARED_CAPACITY {
         cache.remove(0);
     }
     Ok(prepared)
+}
+
+/// Drop one track's prepared audio, e.g. after its match was pinned or
+/// forgotten. Waits out an in-flight prepare of the same track first, so a
+/// download that started before the change can't re-insert the old upload.
+pub async fn evict_prepared(track_id: &str) {
+    let lock = inflight_lock(track_id);
+    {
+        let _guard = lock.lock().await;
+        PREPARED.write().await.retain(|(id, _)| id != track_id);
+    }
+    release_inflight(track_id, lock);
 }
 
 /// Drop every prepared track. Used when leaving the YouTube backend so its

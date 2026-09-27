@@ -90,24 +90,6 @@ pub async fn list_by_album(pool: &SqlitePool, album_id: &str) -> Result<Vec<Trac
     )
 }
 
-/// hook an artist up to a track. just ignores dupes quietly
-pub async fn add_artist(
-    pool:      &SqlitePool,
-    track_id:  &str,
-    artist_id: &str,
-    position:  i64,
-) -> Result<(), AppError> {
-    sqlx::query(
-        "INSERT OR IGNORE INTO track_artists (track_id, artist_id, position) VALUES (?, ?, ?)",
-    )
-    .bind(track_id)
-    .bind(artist_id)
-    .bind(position)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

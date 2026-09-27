@@ -248,9 +248,11 @@ pub async fn get_or_fetch(
     if !force {
         if let Some(mut hit) = cache::read(pool, &track.id).await {
             hit.alternates = cache::list_alts(pool, &track.id).await;
-            // a cached line-level hit is still worth trying to upgrade, but only
-            // once - the set guard keeps repeat panel opens from re-racing
-            if !hit.word_level && hit.found {
+            // only resume an upgrade that never settled (e.g. the app closed
+            // mid-race). a finished race writes upgrading=false, and so does a
+            // manual source pick - re-racing those would repeat every provider
+            // round trip on each open and could overwrite the user's choice
+            if !hit.word_level && hit.found && hit.upgrading {
                 spawn_upgrade(app, pool, track.clone(), hit.clone());
                 hit.upgrading = true;
             }

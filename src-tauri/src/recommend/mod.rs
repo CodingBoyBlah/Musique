@@ -67,6 +67,19 @@ pub fn clear_caches() {
     if let Ok(mut g) = ALBUM_TRACKS_CACHE.write() { *g = None; }
 }
 
+/// Drop only what a listening event changes: the taste profile and the feed
+/// built from it. The artist/album caches are Spotify catalog data a play or
+/// skip says nothing about, and refilling them costs dozens of API calls.
+fn clear_taste_caches() {
+    if let Ok(mut g) = DEFAULT_RECS_CACHE.write() { *g = None; }
+    if let Ok(mut g) = PROFILE_CACHE.write()      { *g = None; }
+}
+
+/// Events since the log was last trimmed. The trim scans the whole log, so it
+/// runs every `TRIM_EVERY` events instead of on each one.
+static EVENTS_SINCE_TRIM: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+const TRIM_EVERY: u32 = 50;
+
 // ─── event capture ───────────────────────────────────────────────────────────
 
 /// Record one listening signal and roll it into the per-track aggregate.
@@ -142,21 +155,25 @@ pub async fn record_event(
     .execute(pool)
     .await?;
 
-    // keep the log bounded: age it out and cap the row count
-    let cutoff = now - EVENT_WINDOW_DAYS * 86_400_000;
-    let _ = sqlx::query("DELETE FROM listen_events WHERE occurred_at < ?")
-        .bind(cutoff)
+    // keep the log bounded: age it out and cap the row count. counter starts
+    // at 0, so the first event of each session also trims
+    use std::sync::atomic::Ordering;
+    if EVENTS_SINCE_TRIM.fetch_add(1, Ordering::Relaxed) % TRIM_EVERY == 0 {
+        let cutoff = now - EVENT_WINDOW_DAYS * 86_400_000;
+        let _ = sqlx::query("DELETE FROM listen_events WHERE occurred_at < ?")
+            .bind(cutoff)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query(
+            "DELETE FROM listen_events
+             WHERE id NOT IN (SELECT id FROM listen_events ORDER BY occurred_at DESC LIMIT 12000)",
+        )
         .execute(pool)
         .await;
-    let _ = sqlx::query(
-        "DELETE FROM listen_events
-         WHERE id NOT IN (SELECT id FROM listen_events ORDER BY occurred_at DESC LIMIT 12000)",
-    )
-    .execute(pool)
-    .await;
+    }
 
     // the user just told us something — don't serve a stale profile/feed
-    clear_caches();
+    clear_taste_caches();
 
     Ok(())
 }

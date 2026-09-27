@@ -52,6 +52,11 @@ async fn save_setting(pool: &sqlx::SqlitePool, key: &str, value: &str) -> Result
 }
 
 async fn ensure_inner(app: &AppHandle) -> Result<(), AppError> {
+    ensure_inner_with(app, true).await
+}
+
+/// `interactive = false` never opens a browser authorization; see `create_inner`.
+async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), AppError> {
     let s        = app.state::<AppState>();
     let db       = s.db.clone();
     let auth     = s.auth.clone();
@@ -71,7 +76,7 @@ async fn ensure_inner(app: &AppHandle) -> Result<(), AppError> {
         let vol   = read_vol(&db).await;
         let muted = read_muted(&db).await;
         *guard = Some(
-            crate::playback::create_inner(app.clone(), db, auth, vol, muted, media_tx).await?
+            crate::playback::create_inner(app.clone(), db, auth, vol, muted, media_tx, interactive).await?
         );
     }
     Ok(())
@@ -221,29 +226,26 @@ async fn match_query(
     Ok(query)
 }
 
-/// Write a fetched track into the local catalog: the track row, its artists,
-/// and the join rows `query_for_track` reads back.
+/// Write a fetched track into the local catalog: album, artists, track and the
+/// join rows `query_for_track` reads back. The album has to go first -
+/// `tracks.album_id` is a foreign key, so upserting the track alone fails for
+/// exactly the not-yet-cached tracks this fallback exists for.
 async fn cache_track(
     pool: &sqlx::SqlitePool,
     track: &crate::spotify::types::SpTrack,
 ) -> Result<(), AppError> {
-    crate::commands::spotify::upsert_track(pool, track).await?;
+    crate::library::upsert_track_with_deps(pool, track).await
+}
 
-    for (i, a) in track.artists.iter().enumerate() {
-        // The artist row has to exist for the name JOIN to return anything -
-        // the join row alone is not enough.
-        let _ = crate::db::repos::artists::upsert(pool, &crate::db::repos::artists::Artist {
-            id:         a.id.clone(),
-            name:       a.name.clone(),
-            image_url:  None,
-            genres:     None,
-            popularity: None,
-            updated_at: 0,
-        })
-        .await;
-        let _ = crate::db::repos::tracks::add_artist(pool, &track.id, &a.id, i as i64).await;
-    }
-    Ok(())
+/// Latest YouTube transport request. `yt_play` downloads before it takes the
+/// player lock, so a slow load can finish after the user has already moved on
+/// (clicked another track, paused). Every transport command claims a new
+/// ticket; a load whose ticket is no longer current when its download finishes
+/// is dropped instead of replacing what the user asked for last.
+static YT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn yt_claim() -> u64 {
+    YT_REQUEST.fetch_add(1, Ordering::SeqCst) + 1
 }
 
 /// Resolve, fetch and play a Spotify track through YouTube Music.
@@ -252,6 +254,7 @@ async fn cache_track(
 /// taken. The download is ~1s of network work; holding the playback mutex
 /// across it would block every transport command for its duration.
 async fn yt_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppError> {
+    let ticket = yt_claim();
     ensure_yt(app).await?;
     let pool = app.state::<AppState>().db.clone();
 
@@ -262,6 +265,12 @@ async fn yt_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppE
 
     let yt    = app.state::<AppState>().yt.clone();
     let guard = yt.lock().await;
+    // Checked under the lock: a newer yt_play also plays under it, so this
+    // cannot interleave with the load that superseded us.
+    if YT_REQUEST.load(Ordering::SeqCst) != ticket {
+        eprintln!("[youtube] dropping superseded load of {id}");
+        return Ok(());
+    }
     if let Some(player) = guard.as_ref() {
         player.play_track(
             id,
@@ -359,6 +368,7 @@ pub async fn set_playback_backend(app: AppHandle, mode: String) -> Result<(), Ap
     let next = backend(&pool).await;
 
     if previous != next {
+        yt_claim();
         // Silence whichever backend was playing. Each owns its own audio
         // device and neither knows about the other, so without this the old
         // one keeps playing underneath the new one and you hear both tracks
@@ -460,14 +470,19 @@ pub async fn pin_yt_match(
     video_id: String,
 ) -> Result<(), AppError> {
     let pool = app.state::<AppState>().db.clone();
-    crate::db::repos::yt_match::pin(&pool, &track_id, &video_id).await
+    crate::db::repos::yt_match::pin(&pool, &track_id, &video_id).await?;
+    // Otherwise the next play reuses the already-downloaded wrong upload.
+    crate::youtube::evict_prepared(&track_id).await;
+    Ok(())
 }
 
 /// Forget a cached mapping so the next play re-resolves it.
 #[tauri::command]
 pub async fn forget_yt_match(app: AppHandle, track_id: String) -> Result<(), AppError> {
     let pool = app.state::<AppState>().db.clone();
-    crate::db::repos::yt_match::forget(&pool, &track_id).await
+    crate::db::repos::yt_match::forget(&pool, &track_id).await?;
+    crate::youtube::evict_prepared(&track_id).await;
+    Ok(())
 }
 
 // commands
@@ -502,9 +517,11 @@ pub async fn warmup_playback(app: AppHandle) -> Result<(), AppError> {
 /// click, the session is usually already up.
 ///
 /// Deliberately conservative: this returns early unless everything needed is
-/// already on disk. `create_inner` will launch an interactive browser
-/// authorization if it has neither cached librespot credentials nor a stored
-/// playback token, and a background task must never do that unprompted.
+/// already on disk, and builds the session non-interactively. A stored playback
+/// token is usually expired by the next launch, so the on-disk check alone does
+/// not stop `create_inner` from falling back to a browser authorization - the
+/// `interactive = false` flag does. A background task must never do that
+/// unprompted; if no silent credential works, the user's first play recovers.
 pub async fn warm_session_if_possible(app: AppHandle) {
     use tauri::Manager;
 
@@ -536,7 +553,7 @@ pub async fn warm_session_if_possible(app: AppHandle) {
         }
     }
 
-    if let Err(e) = ensure_inner(&app).await {
+    if let Err(e) = ensure_inner_with(&app, false).await {
         eprintln!("[playback] startup warm-up skipped: {e}");
     }
 }
@@ -608,6 +625,8 @@ pub async fn retry_play_track(app: AppHandle, id: String) -> Result<(), AppError
 #[tauri::command]
 pub async fn pause_playback(app: AppHandle) -> Result<(), AppError> {
     if uses_youtube(&app).await {
+        // cancels a load still downloading, so it can't start audio after this
+        yt_claim();
         let yt = app.state::<AppState>().yt.clone();
         let guard = yt.lock().await;
         if let Some(player) = guard.as_ref() {
@@ -641,6 +660,7 @@ pub async fn resume_playback(app: AppHandle) -> Result<(), AppError> {
         match (ended, track) {
             (true, Some(id)) => yt_play(&app, &id, 0).await?,
             _ => {
+                yt_claim();
                 let yt = app.state::<AppState>().yt.clone();
                 let guard = yt.lock().await;
                 if let Some(player) = guard.as_ref() {
@@ -675,22 +695,28 @@ pub async fn resume_or_play(app: AppHandle, id: String, position_ms: u32) -> Res
     eprintln!("[playback cmd] resume_or_play id={id} pos={position_ms}");
 
     if uses_youtube(&app).await {
-        // Un-pause only when the very same track is still loaded and live;
-        // anything else is a fresh load.
+        // Un-pause when the very same track is still loaded and live; anything
+        // else is a fresh load. The frontend passes the current position on
+        // every resume, so a non-zero position must not force a reload - the
+        // whole track is in memory, so seek in place when it has drifted.
         let resumable = {
             let yt = app.state::<AppState>().yt.clone();
             let guard = yt.lock().await;
             guard.as_ref().is_some_and(|p| {
-                p.current_track().as_deref() == Some(id.as_str())
-                    && !p.is_ended()
-                    && position_ms == 0
+                p.current_track().as_deref() == Some(id.as_str()) && !p.is_ended()
             })
         };
 
         if resumable {
+            yt_claim();
             let yt = app.state::<AppState>().yt.clone();
             let guard = yt.lock().await;
             if let Some(player) = guard.as_ref() {
+                if position_ms > 0 && player.position_ms().abs_diff(position_ms) > 2000 {
+                    if let Err(e) = player.seek(position_ms) {
+                        eprintln!("[youtube] seek on resume failed: {e}");
+                    }
+                }
                 player.resume()?;
             }
         } else {
@@ -724,6 +750,7 @@ pub async fn resume_or_play(app: AppHandle, id: String, position_ms: u32) -> Res
 #[tauri::command]
 pub async fn stop_playback(app: AppHandle) -> Result<(), AppError> {
     if uses_youtube(&app).await {
+        yt_claim();
         // Unlike the Spirc path there is no connect-state to keep consistent,
         // so pausing is the right analogue: it keeps the decoded track loaded
         // so pressing play again is instant instead of a re-download.

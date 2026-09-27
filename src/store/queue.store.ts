@@ -4,6 +4,8 @@ import { dedupedStorage } from "../lib/persistStorage";
 import type { TrackItem } from "../types/spotify";
 import { usePlayerStore } from "./player.store";
 
+const PERSIST_CAP = 1000;
+
 type Repeat = "none" | "one" | "all";
 
 function shuffled<T>(arr: T[]): T[] {
@@ -220,10 +222,14 @@ export const useQueueStore = create<QueueStore>()(
     {
       name: "spotify-queue",
       storage: dedupedStorage(),
+      // Capped so a huge context can't blow the localStorage quota, but high
+      // enough that real playlists survive a restart whole - repeat-all loops
+      // over whatever was restored, so a low cap silently drops the tail.
+      // This store only persists on queue changes, not on the position tick.
       partialize: (s) => ({
-        queue:         s.queue.slice(0, 150),
+        queue:         s.queue.slice(0, PERSIST_CAP),
         history:       s.history.slice(-30),
-        contextTracks: s.contextTracks.slice(0, 150),
+        contextTracks: s.contextTracks.slice(0, PERSIST_CAP),
         contextId:     s.contextId,
         shuffle:       s.shuffle,
         repeat:        s.repeat,
