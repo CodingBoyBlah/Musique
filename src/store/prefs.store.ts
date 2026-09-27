@@ -38,6 +38,10 @@ interface PrefsStore {
   ambientMotion: boolean;
   setAmbientMotion: (v: boolean) => void;
 
+  // play the artist's canvas (looping video) in place of the cover
+  showCanvas: boolean;
+  setShowCanvas: (v: boolean) => void;
+
   // whole-app zoom factor (1 = 100%). applied to the webview by lib/zoom.ts
   uiZoom: number;
   setUiZoom: (v: number) => void;
@@ -85,6 +89,9 @@ export const usePrefsStore = create<PrefsStore>()(
 
       ambientMotion: true,
       setAmbientMotion: (v) => set({ ambientMotion: v }),
+
+      showCanvas: true,
+      setShowCanvas: (v) => set({ showCanvas: v }),
 
       uiZoom: 1,
       setUiZoom: (v) => set({ uiZoom: v }),

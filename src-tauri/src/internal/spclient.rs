@@ -110,6 +110,18 @@ where
         .map_err(map_err)
 }
 
+/// POST pre-encoded protobuf bytes (for messages we hand-encode via `wire`)
+pub async fn post_raw_protobuf(app: &AppHandle, endpoint: &str, body: &[u8]) -> Result<bytes::Bytes, AppError> {
+    let s = session(app).await?;
+    let mut headers = HeaderMap::new();
+    headers.insert(reqwest::header::CONTENT_TYPE, "application/x-protobuf".parse().unwrap());
+    headers.insert(reqwest::header::ACCEPT, "application/x-protobuf".parse().unwrap());
+    s.spclient()
+        .request(&Method::POST, endpoint, Some(headers), Some(body))
+        .await
+        .map_err(map_err)
+}
+
 /// the signed-in user's canonical spotify username (what spclient paths want)
 pub async fn username(app: &AppHandle) -> Result<String, AppError> {
     Ok(session(app).await?.username())

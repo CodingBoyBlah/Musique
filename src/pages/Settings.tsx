@@ -406,6 +406,8 @@ function AppearanceCard() {
   const sidebarMode = usePrefsStore((s) => s.sidebarMode);
   const setSidebarMode = usePrefsStore((s) => s.setSidebarMode);
   const setAmbientMotion = usePrefsStore((s) => s.setAmbientMotion);
+  const showCanvas = usePrefsStore((s) => s.showCanvas);
+  const setShowCanvas = usePrefsStore((s) => s.setShowCanvas);
 
   return (
     <Card title="Appearance">
@@ -455,6 +457,12 @@ function AppearanceCard() {
         label="Animated background"
         hint="Let the blurred cover art drift slowly behind the full-screen player. Turn off for a still background."
         control={<Switch checked={ambientMotion} onChange={setAmbientMotion} />}
+      />
+      <Divider />
+      <SettingRow
+        label="Canvas"
+        hint="Play the looping video some artists attach to their tracks in place of the cover in the full-screen player."
+        control={<Switch checked={showCanvas} onChange={setShowCanvas} />}
       />
     </Card>
   );

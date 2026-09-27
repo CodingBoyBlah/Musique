@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCanvas } from "../../hooks/useCanvas";
+import type { Canvas } from "../../api/internal";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Minimize2, Captions, Queue, Music } from "@/lib/icons";
@@ -126,9 +128,13 @@ function roomFill(a: Ambient): React.CSSProperties {
  * right and softens all four corners, so the drifting blur underneath comes
  * through exactly where the lyrics are. One mask on a static image rasterises
  * once - it is not a filter and it costs nothing per frame. */
-function Sleeve({ url, alt }: { url: string | null | undefined; alt: string }) {
+function Sleeve({ url, alt, canvas }: { url: string | null | undefined; alt: string; canvas?: Canvas | null }) {
   const src = coverUrl(url, 900) ?? url;
-  if (!src) return null;
+  const reduceMotion = useReducedMotion();
+  if (!src && !canvas) return null;
+  // a still canvas is just a better picture; a moving one respects reduced motion
+  const video = canvas && canvas.kind !== "image" && !reduceMotion ? canvas.url : null;
+  const still = canvas?.kind === "image" ? canvas.url : src;
 
 /* Three masks, multiplied together.
  *
@@ -157,9 +163,31 @@ const SLEEVE_MASK = [
   return (
     <div aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "62%", overflow: "hidden", pointerEvents: "none" }}>
       <AnimatePresence initial={false}>
+        {video ? (
+          <motion.video
+            key={video}
+            src={video}
+            autoPlay
+            loop
+            muted
+            playsInline
+            poster={src ?? undefined}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+            style={{
+              position: "absolute", inset: 0,
+              width: "100%", height: "100%", objectFit: "cover", objectPosition: "center",
+              WebkitMaskImage: SLEEVE_MASK,
+              maskImage: SLEEVE_MASK,
+              maskComposite: "intersect",
+            }}
+          />
+        ) : (
         <motion.img
-          key={src}
-          src={src}
+          key={still ?? undefined}
+          src={still ?? undefined}
           alt={alt}
           referrerPolicy="no-referrer"
           decoding="async"
@@ -175,6 +203,7 @@ const SLEEVE_MASK = [
             maskComposite: "intersect",
           }}
         />
+        )}
       </AnimatePresence>
     </div>
   );
@@ -431,6 +460,8 @@ export function Immersive() {
   // the same cached read AmbientBg does: the lyric ink and glow come off the
   // cover, so the type is lit by the record it belongs to
   const { glow, ink } = useAmbient(track?.album?.image_url);
+  // only fetch while the view is actually up
+  const canvas = useCanvas(open ? track?.id : null);
 
   // esc closes
   useEffect(() => {
@@ -465,7 +496,7 @@ export function Immersive() {
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b" }}
         >
           <AmbientBg url={track.album?.image_url} />
-          <Sleeve url={track.album?.image_url} alt={track.name} />
+          <Sleeve url={track.album?.image_url} alt={track.name} canvas={canvas} />
 
           {/* window drag strip immersive covers the whole window (titlebar
               included) so without this you couldnt drag the window here. BUT this sits OVER
