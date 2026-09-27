@@ -33,6 +33,7 @@ import { gpuLayer, zTransform, EASE_OUT, PRESS } from "../lib/motion";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
+import { HomeFeedShelves } from "../components/ui/HomeFeedShelves";
 
 // grid reflow spring for smooth panel gliding (critically damped)
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
@@ -1119,6 +1120,7 @@ export default function Home() {
       {/* top 6 quick action shelf */}
       <QuickActionsShelf />
 
+      <HomeFeedShelves />
       <MadeForYou />
       <RecentlyPlayed />
       <TopTracks />

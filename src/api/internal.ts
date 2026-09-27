@@ -84,3 +84,20 @@ export interface ExtractedColor {
 // spotify's own palette for artwork (pathfinder fetchExtractedColors)
 export const getExtractedColors = (imageUrls: string[]): Promise<(ExtractedColor | null)[]> =>
   invoke("get_extracted_colors", { imageUrls });
+
+export interface HomeItem {
+  kind: "playlist" | "album" | "artist" | "show" | "audiobook" | "episode" | "track";
+  id: string;
+  name: string;
+  subtitle: string | null;
+  image_url: string | null;
+}
+
+export interface HomeFeed {
+  greeting: string | null;
+  sections: { id: string; title: string; items: HomeItem[] }[];
+}
+
+// spotify's personalised home (daily mixes, daylist, made for you...)
+export const getHomeFeed = (timeZone: string): Promise<HomeFeed> =>
+  invoke("get_home_feed", { timeZone });
