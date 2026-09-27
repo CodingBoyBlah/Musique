@@ -155,6 +155,22 @@ pub async fn tracks(app: &AppHandle, ids: &[String]) -> Result<Vec<TrackItem>, A
         .collect())
 }
 
+/// batch-hydrate album ids into cards, order kept
+pub async fn albums(app: &AppHandle, ids: &[String]) -> Result<Vec<AlbumItem>, AppError> {
+    let uris: Vec<String> = ids.iter().map(|id| to_uri("album", spclient::uri_id(id))).collect();
+    let raw = fetch_batch(app, ExtensionKind::ALBUM_V4, &uris, TTL).await?;
+    let protos: HashMap<String, metadata::Album> = decode_all(raw);
+    Ok(uris.iter().filter_map(|u| protos.get(u).and_then(album_item)).collect())
+}
+
+/// batch-hydrate artist ids into cards (with portraits), order kept
+pub async fn artists(app: &AppHandle, ids: &[String]) -> Result<Vec<ArtistItem>, AppError> {
+    let uris: Vec<String> = ids.iter().map(|id| to_uri("artist", spclient::uri_id(id))).collect();
+    let raw = fetch_batch(app, ExtensionKind::ARTIST_V4, &uris, TTL).await?;
+    let protos: HashMap<String, metadata::Artist> = decode_all(raw);
+    Ok(uris.iter().filter_map(|u| protos.get(u).and_then(artist_item)).collect())
+}
+
 // conversions
 
 pub fn to_uri(kind: &str, id: &str) -> String {

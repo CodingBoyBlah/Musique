@@ -4,6 +4,9 @@ import { motion } from "framer-motion";
 import { Check, UserPlus, Link2, Globe, Radio } from "@/lib/icons";
 import { playStation } from "../utils/radio";
 import { useArtist } from "../hooks/useArtist";
+import { useQuery } from "@tanstack/react-query";
+import { getArtistExtras } from "../api/internal";
+import { ArtistAbout } from "../components/ui/ArtistAbout";
 import { AlbumCard } from "../components/ui/AlbumCard";
 import { ArtistCard } from "../components/ui/ArtistCard";
 import { TrackRow } from "../components/ui/TrackRow";
@@ -37,6 +40,15 @@ export default function ArtistPage() {
   const { id } = useParams<{ id: string }>();
   const { data, isLoading, error, refetch } = useArtist(id);
   const { data: following = false } = useIsArtistFollowed(id);
+  // bio / fans also like / appears on come from spotify's internal metadata,
+  // separately, so the page never waits on them
+  const { data: extras } = useQuery({
+    queryKey: ["artist-extras", id],
+    queryFn: () => getArtistExtras(id!),
+    enabled: !!id,
+    staleTime: 30 * 60_000,
+    retry: false,
+  });
   const toggleFollow = useToggleFollow();
 
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
@@ -239,11 +251,26 @@ export default function ArtistPage() {
           renderItem={(al, i) => <AlbumCard album={al} index={i} />}
         />
         <Shelf
+          id="artist-appears-on"
+          title="Appears on"
+          items={extras?.appears_on ?? []}
+          getKey={(al) => al.id}
+          renderItem={(al, i) => <AlbumCard album={al} index={i} />}
+        />
+        <Shelf
           id="artist-related"
           title="Fans also like"
-          items={data.related_artists ?? []}
+          items={data.related_artists?.length ? data.related_artists : extras?.related ?? []}
           getKey={(ar) => ar.id}
           renderItem={(ar, i) => <ArtistCard artist={ar} index={i} />}
+        />
+        <ArtistAbout
+          name={data.name}
+          biography={extras?.biography ?? null}
+          image={extras?.gallery[0] ?? data.image_url}
+          stats={[
+            extras?.active_years ? `Active ${extras.active_years}` : null,
+          ].filter((s): s is string => !!s)}
         />
       </div>
       {menuEl}

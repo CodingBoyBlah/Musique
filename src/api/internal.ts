@@ -61,3 +61,16 @@ export const getStation = (seed: string): Promise<RadioResult> =>
 // what spotify would autoplay next after this context
 export const getAutoplayTracks = (contextUri: string, recentTrackIds: string[]): Promise<TrackItem[]> =>
   invoke("get_autoplay_tracks", { contextUri, recentTrackIds });
+
+export interface ArtistExtras {
+  biography: string | null;
+  gallery: string[];
+  active_years: string | null;
+  related: import("../types/spotify").ArtistItem[];
+  appears_on: import("../types/spotify").AlbumItem[];
+  compilations: import("../types/spotify").AlbumItem[];
+}
+
+// bio, related artists, gallery, appears-on (ARTIST_V4)
+export const getArtistExtras = (id: string): Promise<ArtistExtras> =>
+  invoke("get_artist_extras", { id });

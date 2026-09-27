@@ -1,3 +1,4 @@
+pub mod artist_extras;
 pub mod audiobooks;
 pub mod auth;
 pub mod credentials;
