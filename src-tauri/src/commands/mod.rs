@@ -1,6 +1,7 @@
 pub mod artist_extras;
 pub mod auth;
 pub mod credentials;
+pub mod episode_extras;
 pub mod home_feed;
 pub mod internal;
 pub mod lastfm;

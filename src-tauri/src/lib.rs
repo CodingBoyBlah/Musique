@@ -857,6 +857,8 @@ pub fn run() {
             commands::internal::get_extracted_colors,
             commands::profile::get_user_profile,
             commands::podcasts::get_show,
+            commands::episode_extras::get_episode_transcript,
+            commands::episode_extras::get_episode_media,
             commands::podcasts::get_show_episodes,
             commands::podcasts::get_episode,
             commands::podcasts::get_saved_shows,

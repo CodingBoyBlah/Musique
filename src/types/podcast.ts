@@ -37,3 +37,22 @@ export interface EpisodePage {
   next_offset: number | null;
 }
 
+
+export interface TranscriptLine {
+  start_ms: number;
+  text: string;
+  speaker: string | null;
+  heading: boolean;
+}
+
+export interface Transcript {
+  language: string | null;
+  synced: boolean;
+  lines: TranscriptLine[];
+}
+
+export interface EpisodeMedia {
+  is_video: boolean;
+  video_preview_url: string | null;
+  thumbnail_url: string | null;
+}

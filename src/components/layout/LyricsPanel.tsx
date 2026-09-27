@@ -34,6 +34,8 @@ import {
   useMoreContrast,
   type Row,
 } from "../../lib/lyrics";
+import { TranscriptView } from "../podcast/TranscriptView";
+import { isEpisodeId } from "../../utils/episode";
 
 const WIDTH = 366;
 
@@ -140,6 +142,31 @@ export function LyricsPanel() {
   }
 
   const hasLyrics = rows.length > 0;
+
+  // podcasts have no lyrics - their transcript takes the same place
+  if (track && isEpisodeId(track.id)) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, x: 60 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: 60 }}
+        transformTemplate={zTransform}
+        transition={SPRING_PANEL}
+        style={{ position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5, width: WIDTH, maxWidth: "100vw", overflow: "hidden", contain: "paint", willChange: "transform", display: "flex", flexDirection: "column" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", padding: "4px 14px 0", height: 40, flexShrink: 0, fontSize: 14, fontWeight: 700, color: "var(--color-text-hi)" }}>
+          Transcript
+        </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <TranscriptView
+            episodeId={track.id}
+            ink={ink}
+            empty={<CenterNote title="No transcript" subtitle="Spotify has no transcript for this episode." />}
+          />
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCanvas } from "../../hooks/useCanvas";
 import { useVideoAmbient } from "../../hooks/useVideoAmbient";
 import { CreditsList } from "../ui/CreditsList";
+import { PodcastStage, EpisodeAbout } from "../podcast/PodcastStage";
+import { TranscriptView } from "../podcast/TranscriptView";
 import { isEpisodeId } from "../../utils/episode";
 import type { Canvas } from "../../api/internal";
 import { coverUrl } from "../../lib/coverUrl";
@@ -484,7 +486,8 @@ export function Immersive() {
   // only fetch while the view is actually up
   const canvas = useCanvas(open ? track?.id : null);
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
-  const videoAmbient = useVideoAmbient(canvas && canvas.kind !== "image" ? videoEl : null);
+  const podcast = isEpisodeId(track?.id);
+  const videoAmbient = useVideoAmbient(podcast || (canvas && canvas.kind !== "image") ? videoEl : null);
   // lyric ink and glow follow the video too, so type and room stay one hue
   const { glow, ink } = videoAmbient ?? coverAmbient;
 
@@ -521,7 +524,11 @@ export function Immersive() {
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b" }}
         >
           <AmbientBg url={track.album?.image_url} override={videoAmbient} />
-          <Sleeve url={track.album?.image_url} alt={track.name} canvas={canvas} onVideo={setVideoEl} />
+          {podcast ? (
+            <PodcastStage track={track} onVideo={setVideoEl} />
+          ) : (
+            <Sleeve url={track.album?.image_url} alt={track.name} canvas={canvas} onVideo={setVideoEl} />
+          )}
 
           {/* window drag strip immersive covers the whole window (titlebar
               included) so without this you couldnt drag the window here. BUT this sits OVER
@@ -585,11 +592,9 @@ export function Immersive() {
               >
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
                   <div className="lyr-tabs">
-                    <PanelTab active={panel === "lyrics"} onClick={() => setPanel("lyrics")} icon={<Captions size={14} active={panel === "lyrics"} />} label="Lyrics" />
+                    <PanelTab active={panel === "lyrics"} onClick={() => setPanel("lyrics")} icon={<Captions size={14} active={panel === "lyrics"} />} label={podcast ? "Transcript" : "Lyrics"} />
                     <PanelTab active={panel === "queue"} onClick={() => setPanel("queue")} icon={<Queue size={14} active={panel === "queue"} />} label="Queue" />
-                    {!isEpisodeId(track.id) && (
-                      <PanelTab active={panel === "credits"} onClick={() => setPanel("credits")} icon={<Info size={14} active={panel === "credits"} />} label="Credits" />
-                    )}
+                    <PanelTab active={panel === "credits"} onClick={() => setPanel("credits")} icon={<Info size={14} active={panel === "credits"} />} label={podcast ? "About" : "Credits"} />
                   </div>
                   <button
                     className="imm-close"
@@ -616,9 +621,13 @@ export function Immersive() {
                       transition={{ duration: 0.15, ease: EASE_OUT }}
                       style={{ position: "absolute", inset: 0 }}
                     >
-                      {panel === "lyrics" ? (
+                      {panel === "lyrics" && podcast ? (
+                        <TranscriptView episodeId={track.id} size="stage" ink={ink} />
+                      ) : panel === "lyrics" ? (
                         <ImmersiveLyrics glow={glow} ink={ink} />
-                      ) : panel === "credits" && !isEpisodeId(track.id) ? (
+                      ) : panel === "credits" && podcast ? (
+                        <EpisodeAbout track={track} ink={ink} />
+                      ) : panel === "credits" ? (
                         <div className="scroll-y" style={{ position: "absolute", inset: 0, overflowY: "auto", paddingRight: 6 }}>
                           <CreditsList trackId={track.id} onNavigate={() => setOpen(false)} dark />
                         </div>
