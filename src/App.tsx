@@ -23,7 +23,6 @@ const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 const ShowPage = lazy(() => import("./pages/ShowPage"));
 const AudiobookPage = lazy(() => import("./pages/AudiobookPage"));
 const StatsPage = lazy(() => import("./pages/StatsPage"));
-const GenresPage = lazy(() => import("./pages/GenresPage"));
 import { getCredentials, validateCredentials } from "./api/credentials";
 import { getAuthStatus } from "./api/auth";
 import {
@@ -468,14 +467,6 @@ export default function App() {
             element={
               <Suspense fallback={<Loader />}>
                 <AudiobookPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="genres"
-            element={
-              <Suspense fallback={<Loader />}>
-                <GenresPage />
               </Suspense>
             }
           />
