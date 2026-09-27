@@ -8,6 +8,7 @@ import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { playTrack } from "../../api/playback";
 import { CoverArt } from "../ui/CoverArt";
+import { JamCard } from "./JamCard";
 import { Tooltip } from "../ui/Tooltip";
 import { errMsg } from "../../lib/err";
 import { EASE_DRAWER, SPRING_PANEL } from "../../lib/motion";
@@ -146,6 +147,7 @@ export function FriendsPanel() {
         </div>
       </div>
       <div className="scroll-y" style={{ flex: 1, overflowY: "auto", paddingBottom: 12 }}>
+        <JamCard />
         {isLoading ? (
           <p className="t-caption" style={{ padding: "12px 14px", color: "var(--color-text-dim)" }}>Loading...</p>
         ) : error ? (
