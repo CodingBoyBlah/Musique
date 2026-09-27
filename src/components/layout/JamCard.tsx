@@ -1,23 +1,62 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { AnimatePresence, motion } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Users, Link2, X } from "@/lib/icons";
+import { Users, Link2, ArrowRight } from "@/lib/icons";
 import { getJam, joinJam, leaveJam, startJam, type JamSession } from "../../api/social";
 import { CoverArt } from "../ui/CoverArt";
 import { toast } from "../../store/toast.store";
 import { errMsg } from "../../lib/err";
+import { EASE_OUT, PRESS, PRESS_TRANSITION } from "../../lib/motion";
 
 async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text);
-    toast("Jam link copied");
+    toast("Invite link copied");
   } catch {
     toast.error("Couldn't copy the link");
   }
 }
 
-/* a spotify jam: listen together with friends. start one here and share the
-link, join one from a link, see who's in, end or leave it. */
+// overlapping avatars, capped with a "+n"
+function Faces({ members }: { members: JamSession["members"] }) {
+  const shown = members.slice(0, 4);
+  return (
+    <div style={{ display: "flex", alignItems: "center" }}>
+      {shown.map((m, i) => (
+        <span
+          key={m.id}
+          title={m.name}
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: "50%",
+            marginLeft: i === 0 ? 0 : -8,
+            boxShadow: "0 0 0 2px var(--color-popover, #1c1c22)",
+            overflow: "hidden",
+            background: "var(--color-surface-2)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 11,
+            fontWeight: 700,
+            color: "var(--color-text)",
+            position: "relative",
+            zIndex: shown.length - i,
+          }}
+        >
+          {m.image_url ? <CoverArt url={m.image_url} alt="" size={28} rounded style={{ width: 28, height: 28 }} /> : m.name.slice(0, 1).toUpperCase()}
+        </span>
+      ))}
+      {members.length > shown.length && (
+        <span className="tnum" style={{ marginLeft: 6, fontSize: 11.5, color: "var(--color-text-dim)" }}>+{members.length - shown.length}</span>
+      )}
+    </div>
+  );
+}
+
+/* spotify jam: listen together. idle it's a quiet invitation; in a jam it
+shows who's there, the invite link and the way out. */
 export function JamCard() {
   const qc = useQueryClient();
   const { data: jam } = useQuery({
@@ -26,6 +65,7 @@ export function JamCard() {
     refetchInterval: 60_000,
     retry: false,
   });
+
   // members joining/leaving arrive as dealer pushes
   useEffect(() => {
     let off: (() => void) | null = null;
@@ -38,6 +78,7 @@ export function JamCard() {
       off?.();
     };
   }, [qc]);
+
   const [busy, setBusy] = useState(false);
   const [joining, setJoining] = useState(false);
   const [link, setLink] = useState("");
@@ -56,28 +97,79 @@ export function JamCard() {
     }
   }
 
-  const box: React.CSSProperties = {
-    margin: "4px 12px 10px",
-    padding: "12px 12px",
-    borderRadius: 12,
-    background: "var(--color-glass)",
-    border: "1px solid var(--color-glass-border)",
+  const card: React.CSSProperties = {
+    margin: "6px 10px 4px",
+    padding: 12,
+    borderRadius: 14,
     display: "flex",
     flexDirection: "column",
-    gap: 8,
+    gap: 10,
+    background: jam
+      ? "linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 26%, transparent), color-mix(in srgb, var(--color-accent) 8%, transparent))"
+      : "var(--color-glass)",
+    border: "1px solid",
+    borderColor: jam ? "color-mix(in srgb, var(--color-accent) 35%, transparent)" : "var(--color-glass-border)",
   };
 
-  if (!jam) {
+  if (jam) {
+    const others = jam.members.length - 1;
     return (
-      <div style={box}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "var(--color-text-hi)" }}>
-          <Users size={15} /> Jam
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Faces members={jam.members} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--color-text-hi)" }}>{jam.is_host ? "Your Jam" : "In a Jam"}</div>
+            <div className="t-caption" style={{ fontSize: 11.5, color: "var(--color-text)" }}>
+              {others <= 0 ? "Waiting for friends" : `You + ${others} ${others === 1 ? "friend" : "friends"}`}
+            </div>
+          </div>
         </div>
-        <span className="t-caption" style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
-          Listen together. Everyone in a Jam can add to the queue.
+        <div style={{ display: "flex", gap: 6 }}>
+          {jam.join_url && (
+            <motion.button
+              type="button"
+              className="btn-primary"
+              whileTap={PRESS}
+              transition={PRESS_TRANSITION}
+              onClick={() => copy(jam.join_url!)}
+              style={{ flex: 1, height: 30, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 12.5 }}
+            >
+              <Link2 size={13} /> Invite
+            </motion.button>
+          )}
+          <button
+            type="button"
+            className="btn-pill"
+            disabled={busy}
+            onClick={() => run(() => leaveJam(jam.session_id, jam.is_host).then(() => null), "Couldn't end the Jam")}
+            style={{ height: 30, fontSize: 12.5 }}
+          >
+            {jam.is_host ? "End" : "Leave"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={card}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ width: 32, height: 32, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "color-mix(in srgb, var(--color-accent) 22%, transparent)", color: "var(--color-accent)" }}>
+          <Users size={15} />
         </span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--color-text-hi)" }}>Start a Jam</div>
+          <div className="t-caption" style={{ fontSize: 11.5, color: "var(--color-text-dim)" }}>Listen together, everyone adds to the queue</div>
+        </div>
+      </div>
+      <AnimatePresence initial={false} mode="wait">
         {joining ? (
-          <form
+          <motion.form
+            key="join"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.16, ease: EASE_OUT }}
             onSubmit={(e) => {
               e.preventDefault();
               if (!link.trim()) return;
@@ -93,75 +185,47 @@ export function JamCard() {
             <input
               value={link}
               onChange={(e) => setLink(e.target.value)}
-              placeholder="Paste a Jam link"
-              aria-label="Jam link"
+              onKeyDown={(e) => e.key === "Escape" && setJoining(false)}
+              placeholder="Paste invite link"
+              aria-label="Jam invite link"
               autoFocus
               className="focus-ring"
-              style={{ flex: 1, minWidth: 0, height: 30, borderRadius: 8, border: "1px solid var(--color-border)", background: "rgba(0,0,0,0.25)", color: "var(--color-text-hi)", padding: "0 8px", fontSize: 12.5 }}
+              style={{ flex: 1, minWidth: 0, height: 30, borderRadius: 99, border: "1px solid var(--color-border)", background: "rgba(0,0,0,0.25)", color: "var(--color-text-hi)", padding: "0 12px", fontSize: 12.5 }}
             />
-            <button type="submit" className="btn-primary" disabled={busy} style={{ height: 30 }}>Join</button>
-          </form>
+            <button type="submit" className="btn-primary" aria-label="Join" disabled={busy || !link.trim()} style={{ height: 30, width: 30, padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <ArrowRight size={14} />
+            </button>
+          </motion.form>
         ) : (
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
+          <motion.div
+            key="actions"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.16, ease: EASE_OUT }}
+            style={{ display: "flex", gap: 6 }}
+          >
+            <motion.button
               type="button"
               className="btn-primary"
               disabled={busy}
+              whileTap={PRESS}
+              transition={PRESS_TRANSITION}
               onClick={() =>
                 run(startJam, "Couldn't start a Jam").then((j) => {
                   if (j && j.join_url) copy(j.join_url);
                 })
               }
+              style={{ flex: 1, height: 30, fontSize: 12.5 }}
             >
-              Start a Jam
+              {busy ? "Starting..." : "Start"}
+            </motion.button>
+            <button type="button" className="btn-pill" onClick={() => setJoining(true)} style={{ height: 30, fontSize: 12.5 }}>
+              Join with link
             </button>
-            <button type="button" className="btn-pill" onClick={() => setJoining(true)}>Join</button>
-          </div>
+          </motion.div>
         )}
-      </div>
-    );
-  }
-
-  return (
-    <div style={box}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "var(--color-text-hi)" }}>
-          <Users size={15} active /> {jam.is_host ? "Your Jam" : "In a Jam"}
-        </span>
-        <button
-          type="button"
-          className="btn-icon"
-          aria-label={jam.is_host ? "End Jam" : "Leave Jam"}
-          title={jam.is_host ? "End Jam" : "Leave Jam"}
-          disabled={busy}
-          onClick={() => run(() => leaveJam(jam.session_id, jam.is_host).then(() => null), "Couldn't end the Jam")}
-          style={{ width: 24, height: 24, borderRadius: 6 }}
-        >
-          <X size={13} />
-        </button>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {jam.members.map((m) => (
-          <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {m.image_url ? (
-              <CoverArt url={m.image_url} alt="" size={24} rounded style={{ width: 24, height: 24 }} />
-            ) : (
-              <span style={{ width: 24, height: 24, borderRadius: "50%", background: "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700 }}>
-                {m.name.slice(0, 1).toUpperCase()}
-              </span>
-            )}
-            <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--color-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {m.name}
-            </span>
-            {m.is_host && <span className="t-caption" style={{ fontSize: 11, color: "var(--color-accent)" }}>Host</span>}
-          </div>
-        ))}
-      </div>
-      {jam.join_url && (
-        <button type="button" className="btn-pill" onClick={() => copy(jam.join_url!)} style={{ display: "inline-flex", alignItems: "center", gap: 6, alignSelf: "flex-start" }}>
-          <Link2 size={13} /> Copy invite link
-        </button>
-      )}
+      </AnimatePresence>
     </div>
   );
 }
