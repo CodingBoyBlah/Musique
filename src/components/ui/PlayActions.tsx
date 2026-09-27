@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shuffle, Pin, Link2, Globe, MoreHorizontal } from "@/lib/icons";
+import { Shuffle, Pin, Link2, Globe, Share2 } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { usePinsStore, type PinnedItem } from "../../store/pins.store";
 import { useSpeedDialStore } from "../../store/speedDial.store";
+import { usePrefsStore } from "../../store/prefs.store";
 import { playTrack, pausePlayback, resumeOrPlay } from "../../api/playback";
 import type { TrackItem } from "../../types/spotify";
 import { EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING, zTransform } from "../../lib/motion";
@@ -38,6 +39,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
   const shuffle             = useQueueStore((s) => s.shuffle);
   const pins                = usePinsStore((s) => s.pins);
   const togglePin           = usePinsStore((s) => s.togglePin);
+  const sidebarMode         = usePrefsStore((s) => s.sidebarMode);
   const { open: openMenu, element: menuEl } = useContextMenu();
 
   // when the button row gets narrow or when lyrics/queue rail opens,
@@ -67,7 +69,9 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
   const isActive = activeContext === contextId;          // this context is the loaded one
   const playing  = isActive && isPlaying;
   const pinned   = pins.some((p) => p.id === pinItem.id);
-  const pinnable = pinItem.type !== "artist";
+  // with the sidebar listing every playlist instead of pins, a pin has
+  // nowhere to show up, so the button goes and Share takes its slot
+  const pinnable = pinItem.type !== "artist" && sidebarMode !== "playlists";
 
   function onPlay() {
     if (playing) { pausePlayback().catch(() => {}); return; }
@@ -107,12 +111,9 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
 
   const shuffleActive = isActive && shuffle;
 
-  const allEntries = pinItem.type === "artist"
-    ? shareEntries
-    : [
-        { label: pinned ? "Remove from sidebar" : "Pin to sidebar", icon: <Pin size={14} active={pinned} />, onSelect: () => togglePin(pinItem as PinnedItem) },
-        ...shareEntries,
-      ];
+  // no pin button to sit beside: Share becomes a labelled pill of the same
+  // size. an artist page has Follow there instead, so it keeps the icon
+  const shareLabelled = !pinnable && pinItem.type !== "artist";
 
   return (
     <div ref={rootRef} className="flex items-center mt-2" style={{ gap: 10, width: "100%" }}>
@@ -253,7 +254,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
 
       <div style={{ flex: 1 }} />
 
-      {/* Right actions: Pin and ... menu. The button pins to the sidebar, so it
+      {/* Right actions: Pin and Share. The button pins to the sidebar, so it
           says Pin - it used to say Add with a plus, which read as adding to
           the library. */}
       {accessory}
@@ -285,18 +286,30 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
         </motion.button>
       </Tooltip>}
 
-      <Tooltip label="More options" side="top">
+      <Tooltip label="Share" side="top">
         <motion.button
           // a click anchors the menu under this button (see useContextMenu)
-          onClick={(e) => openMenu(allEntries)(e)}
-          onContextMenu={openMenu(allEntries)}
-          aria-label="More options"
+          onClick={(e) => openMenu(shareEntries)(e)}
+          onContextMenu={openMenu(shareEntries)}
+          aria-label="Share"
           aria-haspopup="menu"
           className="ghost-pill focus-ring"
           whileTap={PRESS}
           transition={PRESS_TRANSITION}
           transformTemplate={zTransform}
-          style={{
+          style={shareLabelled ? {
+            height: 36,
+            padding: "0 16px",
+            borderRadius: 99,
+            color: "#ffffff",
+            fontSize: 13,
+            fontWeight: 600,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            cursor: "pointer",
+            flexShrink: 0,
+          } : {
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
@@ -308,7 +321,8 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
             cursor: "pointer",
           }}
         >
-          <MoreHorizontal size={16} strokeWidth={2} />
+          <Share2 size={shareLabelled ? 14 : 15} strokeWidth={2.2} />
+          {shareLabelled && <span>Share</span>}
         </motion.button>
       </Tooltip>
 

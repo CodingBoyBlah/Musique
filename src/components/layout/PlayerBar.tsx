@@ -915,15 +915,15 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
           background: immersive
             ? "linear-gradient(180deg, rgba(10, 8, 14, 0.30) 0%, rgba(10, 8, 14, 0.42) 100%)"
             : "var(--color-dock-bg, rgba(20, 20, 24, 0.88))",
-          backdropFilter: immersive ? undefined : "blur(24px) saturate(160%)",
-          WebkitBackdropFilter: immersive ? undefined : "blur(24px) saturate(160%)",
+          backdropFilter: immersive ? undefined : "blur(32px) saturate(160%)",
+          WebkitBackdropFilter: immersive ? undefined : "blur(32px) saturate(160%)",
           borderRadius: 18,
           border: immersive
             ? "1px solid rgba(255, 255, 255, 0.11)"
             : "1px solid var(--color-dock-border, rgba(255, 255, 255, 0.09))",
           boxShadow: immersive
             ? "inset 0 1px 0 0 rgba(255, 255, 255, 0.09), 0 20px 50px rgba(0, 0, 0, 0.30)"
-            : "inset 0 1px 0 0 rgba(255, 255, 255, 0.08), 0 12px 32px rgba(0, 0, 0, 0.45)",
+            : "inset 0 1px 0 0 rgba(255, 255, 255, 0.1), 0 12px 32px rgba(0, 0, 0, 0.45)",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",

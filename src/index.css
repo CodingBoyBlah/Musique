@@ -40,14 +40,16 @@
 
     
     --color-player: var(--color-sidebar);
-    --color-dock-bg: rgba(18, 18, 18, 0.94);
+    /* translucent enough that the blur behind it actually reads as glass;
+       at 0.94 it was a flat grey slab and the blur did nothing */
+    --color-dock-bg: rgba(20, 20, 22, 0.90);
 
     /* every floating popup (menus, search results, tooltips, toasts, modals,
        the volume and devices popovers): one neutral near-black. Several had
        drifted to blue-tinted greys like rgb(24, 24, 28). */
     --color-popover: rgba(19, 19, 22, 0.96);
     --color-popover-solid: rgb(19, 19, 22);
-    --color-dock-border: rgba(255, 255, 255, 0.09);
+    --color-dock-border: rgba(255, 255, 255, 0.1);
     --color-dock-highlight: rgba(255, 255, 255, 0.12);
 
     --color-danger: #ff453a;

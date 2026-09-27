@@ -134,9 +134,10 @@ export const iconPaths = {
   RotateCw: "M20.5 12a8.5 8.5 0 1 1-2.5-6l2.5 2.5M20.5 3.5v5h-5",
   Search: circle(10.75, 10.75, 6.75) + "M15.75 15.75l4.75 4.75",
   Settings: gear(8, 7, 9.4) + circle(12, 12, 3),
+  // three nodes, the links stopping at each ring's edge
   Share2:
-    "M12 14.5V3M8 7l4-4 4 4" +
-    "M8.5 10H7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1.5",
+    circle(18, 5, 3) + circle(6, 12, 3) + circle(18, 19, 3) +
+    "M8.59 10.49l6.82-3.98M8.59 13.51l6.82 3.98",
   Shuffle:
     "M16.5 3.5 20 7l-3.5 3.5M16.5 13.5 20 17l-3.5 3.5" +
     "M3.5 7h3.2a4 4 0 0 1 3.3 1.7l4 6.6a4 4 0 0 0 3.3 1.7H20" +
