@@ -760,6 +760,14 @@ pub fn parse_track_id(raw: &str) -> Result<SpotifyUri, AppError> {
         return Err(AppError::InvalidInput("Track id is required".into()));
     }
 
+    // podcast episodes ride the same load path as tracks - spirc and the
+    // player both take episode uris as-is
+    if let Some(v) = trimmed.strip_prefix("spotify:episode:") {
+        let spotify_id = SpotifyId::from_base62(v)
+            .map_err(|_| AppError::InvalidInput(format!("Invalid Spotify episode id: {trimmed}")))?;
+        return Ok(SpotifyUri::Episode { id: spotify_id });
+    }
+
     let id = if let Some(v) = trimmed.strip_prefix("spotify:track:") {
         v
     } else if let Some((_, rest)) = trimmed.split_once("open.spotify.com/track/") {

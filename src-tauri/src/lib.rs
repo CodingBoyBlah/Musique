@@ -426,6 +426,7 @@ mod db;
 mod discord;
 mod errors;
 mod http;
+mod internal;
 mod lastfm;
 mod library;
 mod lyrics;
@@ -836,6 +837,7 @@ pub fn run() {
             commands::spotify::get_playlist,
             commands::spotify::get_recommendations,
             commands::spotify::record_listen_event,
+            commands::internal::get_tracks_metadata,
             commands::playback::warmup_playback,
             commands::playback::play_track,
             commands::playback::retry_play_track,

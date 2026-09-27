@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod credentials;
+pub mod internal;
 pub mod lastfm;
 pub mod library;
 pub mod lyrics;

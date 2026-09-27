@@ -55,6 +55,12 @@ async fn ensure_inner(app: &AppHandle) -> Result<(), AppError> {
     ensure_inner_with(app, true).await
 }
 
+/// bring the librespot session up for the internal api layer (spclient calls)
+/// without ever popping a browser authorization at the user
+pub(crate) async fn warm_session(app: &AppHandle) -> Result<(), AppError> {
+    ensure_inner_with(app, false).await
+}
+
 /// `interactive = false` never opens a browser authorization; see `create_inner`.
 async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), AppError> {
     let s        = app.state::<AppState>();
