@@ -143,6 +143,14 @@ pub(crate) struct SpSearchResponse {
     pub artists:   Option<SpPage<SpArtist>>,
     pub albums:    Option<SpPage<SpAlbumSimple>>,
     pub playlists: Option<SpPlaylistSearchPage>,
+    // podcasts / audiobooks stay loosely typed: their pages carry `null`
+    // entries and optional fields the parsers in commands/ already tolerate
+    #[serde(default)]
+    pub shows:      Option<serde_json::Value>,
+    #[serde(default)]
+    pub episodes:   Option<serde_json::Value>,
+    #[serde(default)]
+    pub audiobooks: Option<serde_json::Value>,
 }
 
 // spotifys search returns `null` entries in the playlists array so just tolerate em
@@ -310,6 +318,10 @@ pub struct SearchResults {
     pub artists:   Vec<ArtistItem>,
     pub albums:    Vec<AlbumItem>,
     pub playlists: Vec<PlaylistCard>,
+    #[serde(default)]
+    pub shows:     Vec<crate::commands::podcasts::ShowItem>,
+    #[serde(default)]
+    pub episodes:  Vec<crate::commands::podcasts::EpisodeItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

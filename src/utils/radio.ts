@@ -1,3 +1,4 @@
+import { isEpisodeId } from "./episode";
 import { getRecommendations } from "../api/spotify";
 import { playTrack } from "../api/playback";
 import { usePlayerStore } from "../store/player.store";
@@ -10,6 +11,7 @@ let isReplenishing = false;
 
 export async function replenishQueue(seedTrack?: TrackItem | null): Promise<void> {
   if (isReplenishing) return;
+  if (seedTrack && isEpisodeId(seedTrack.id)) return;
   const q = useQueueStore.getState();
   if (q.queue.length > 3) return;
 

@@ -1,3 +1,5 @@
+import type { ShowItem, EpisodeItem } from "./podcast";
+
 export interface ArtistItem {
   id:          string;
   name:        string;
@@ -41,6 +43,8 @@ export interface SearchResults {
   artists:   ArtistItem[];
   albums:    AlbumItem[];
   playlists: PlaylistCard[];
+  shows?:    ShowItem[];
+  episodes?: EpisodeItem[];
 }
 
 export interface Profile {

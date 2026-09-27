@@ -9,7 +9,7 @@ import type {
 } from "../types/spotify";
 
 // "playlist" has to be asked for: without it the Playlists tab was always empty
-export const search      = (query: string, types = "track,artist,album,playlist"): Promise<SearchResults> =>
+export const search      = (query: string, types = "track,artist,album,playlist,show,episode"): Promise<SearchResults> =>
   invoke("search", { query, types });
 
 export const getArtist   = (id: string): Promise<ArtistDetail>   => invoke("get_artist",   { id });

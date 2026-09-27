@@ -216,6 +216,17 @@ pub async fn search(
                 owner_name:  pl.owner.as_ref().and_then(|o| o.display_name.clone()),
             }).collect())
             .unwrap_or_default(),
+        shows: raw.shows.as_ref()
+            .and_then(|p| p.get("items"))
+            .and_then(|i| i.as_array())
+            .map(|a| a.iter().filter_map(crate::commands::podcasts::show_from).collect())
+            .unwrap_or_default(),
+        episodes: raw.episodes.as_ref()
+            .and_then(|p| p.get("items"))
+            .and_then(|i| i.as_array())
+            .map(|a| a.iter().filter(|e| !e.is_null())
+                .filter_map(|e| crate::commands::podcasts::episode_from(e, None)).collect())
+            .unwrap_or_default(),
     };
 
     let pool = &app.state::<AppState>().db.clone();

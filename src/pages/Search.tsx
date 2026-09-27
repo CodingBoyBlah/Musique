@@ -12,6 +12,10 @@ import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
 import { Shelf } from "../components/ui/Shelf";
 import { CoverArt } from "../components/ui/CoverArt";
 import { MediaTile } from "../components/ui/MediaTile";
+import { EpisodeRow } from "../components/ui/EpisodeRow";
+import { usePlayEpisodes } from "../hooks/usePlayEpisodes";
+import { EPISODE_PREFIX } from "../utils/episode";
+import type { EpisodeItem } from "../types/podcast";
 import { TrackRow } from "../components/ui/TrackRow";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { AnimatedPlayPause } from "../components/playground/AnimatedIcons";
@@ -36,7 +40,7 @@ import type {
   SearchResults,
 } from "../types/spotify";
 
-const CATEGORIES = ["all", "songs", "artists", "albums", "playlists"] as const;
+const CATEGORIES = ["all", "songs", "artists", "albums", "playlists", "podcasts"] as const;
 type Category = (typeof CATEGORIES)[number];
 const CATEGORY_LABEL: Record<Category, string> = {
   all: "All",
@@ -44,6 +48,7 @@ const CATEGORY_LABEL: Record<Category, string> = {
   artists: "Artists",
   albums: "Albums",
   playlists: "Playlists",
+  podcasts: "Podcasts",
 };
 const LABEL_TO_CATEGORY = Object.fromEntries(
   CATEGORIES.map((c) => [CATEGORY_LABEL[c], c]),
@@ -354,6 +359,22 @@ const TopResultCard = memo(function TopResultCard({
     </motion.div>
   );
 });
+
+// ─── Episodes ───────────────────────────────────────────────────────────────
+
+function SearchEpisodes({ episodes }: { episodes: EpisodeItem[] }) {
+  const play = usePlayEpisodes(episodes, "search-episodes");
+  const currentId = usePlayerStore((s) => s.currentId);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  return (
+    <div>
+      {episodes.map((ep, i) => {
+        const active = currentId === `${EPISODE_PREFIX}${ep.id}`;
+        return <EpisodeRow key={ep.id} episode={ep} active={active} playing={active && isPlaying} onPlay={() => play(i)} showShow />;
+      })}
+    </div>
+  );
+}
 
 // ─── Playlist card ──────────────────────────────────────────────────────────
 
@@ -696,6 +717,14 @@ export default function Search() {
                 renderItem={(pl, i) => <PlaylistResultCard playlist={pl} index={i} />}
                 extra={showAll("playlists")}
               />
+              <Shelf
+                id="search-shows"
+                title="Podcasts"
+                items={data.shows ?? []}
+                getKey={(s) => s.id}
+                renderItem={(s, i) => <MediaTile to={`/show/${s.id}`} imageUrl={s.image_url} title={s.name} subtitle={s.publisher} index={i} />}
+                extra={showAll("podcasts")}
+              />
             </>
           )}
 
@@ -724,6 +753,28 @@ export default function Search() {
               </AlbumGrid>
             ) : (
               <EmptyState title="No albums match" description="Try All to see other kinds of results." />
+            )
+          )}
+
+          {cat === "podcasts" && (
+            (data.shows?.length ?? 0) + (data.episodes?.length ?? 0) > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+                {(data.shows?.length ?? 0) > 0 && (
+                  <AlbumGrid>
+                    {data.shows!.map((s, i) => (
+                      <MediaTile key={s.id} to={`/show/${s.id}`} imageUrl={s.image_url} title={s.name} subtitle={s.publisher} index={i} />
+                    ))}
+                  </AlbumGrid>
+                )}
+                {(data.episodes?.length ?? 0) > 0 && (
+                  <section aria-labelledby="search-episodes">
+                    <SectionTitle id="search-episodes">Episodes</SectionTitle>
+                    <SearchEpisodes episodes={data.episodes!} />
+                  </section>
+                )}
+              </div>
+            ) : (
+              <EmptyState title="No podcasts match" description="Try All to see other kinds of results." />
             )
           )}
 

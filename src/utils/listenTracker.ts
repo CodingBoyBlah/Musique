@@ -1,5 +1,6 @@
 import { recordListenEvent } from "../api/spotify";
 import type { TrackItem } from "../types/spotify";
+import { isEpisodeId } from "./episode";
 
 // Central place for feeding the recommendation engine's behavioural signals.
 // We only ever send play / complete / skip — never block playback on it.
@@ -12,7 +13,7 @@ export function trackStarted(
   contextType: string | null = null,
   contextId: string | null = null,
 ): void {
-  if (!track || lastPlayedId === track.id) return;
+  if (!track || lastPlayedId === track.id || isEpisodeId(track.id)) return;
   lastPlayedId = track.id;
   started = { id: track.id, at: Date.now(), durationMs: track.duration_ms };
   recordListenEvent(
@@ -26,7 +27,7 @@ export function trackStarted(
 }
 
 export function trackCompleted(track: TrackItem | null): void {
-  if (!track) return;
+  if (!track || isEpisodeId(track.id)) return;
   const duration = track.duration_ms || started?.durationMs || 0;
   recordListenEvent(track.id, "complete", duration, duration).catch(() => {});
   if (started?.id === track.id) started = null;
@@ -39,7 +40,7 @@ export function trackSkipped(
   contextType: string | null = null,
   contextId: string | null = null,
 ): void {
-  if (!track) return;
+  if (!track || isEpisodeId(track.id)) return;
   // if it was essentially over, treat it as a completion instead
   const duration = track.duration_ms || started?.durationMs || 0;
   const played =

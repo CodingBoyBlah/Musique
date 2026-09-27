@@ -6,6 +6,7 @@ pub mod library;
 pub mod lyrics;
 pub mod media;
 pub mod playback;
+pub mod podcasts;
 pub mod profile;
 pub mod settings;
 pub mod share;

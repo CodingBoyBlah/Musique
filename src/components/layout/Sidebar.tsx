@@ -4,7 +4,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, animate, useMotionValue, useTransform, useReducedMotion, type MotionValue } from "framer-motion";
 import {
   Home, ListMusic,
-  Music, Disc3, User,
+  Music, Disc3, User, Mic,
   Pin, PinOff,
   ChevronDown,
   type LucideIcon,
@@ -412,6 +412,7 @@ export default function Sidebar() {
           <NavItem icon={Music} label="Songs"   active={onLibrary && tab === "songs"}   onClick={() => navigate("/library?tab=songs")} collapsed={isCollapsed} />
           <NavItem icon={Disc3} label="Albums"  active={onLibrary && tab === "albums"}  onClick={() => navigate("/library?tab=albums")} collapsed={isCollapsed} />
           <NavItem icon={User} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} collapsed={isCollapsed} />
+          <NavItem icon={Mic} label="Podcasts" active={(onLibrary && tab === "podcasts") || path.startsWith("/show/")} onClick={() => navigate("/library?tab=podcasts")} collapsed={isCollapsed} />
         </Section>
 
         <Section label={showAllPlaylists ? "Your playlists" : "Pins"} expanded={pinsOpen} onToggle={() => setPinsOpen(v => !v)} collapsed={isCollapsed}>

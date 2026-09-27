@@ -20,6 +20,7 @@ const ArtistPage = lazy(() => import("./pages/ArtistPage"));
 const AlbumPage = lazy(() => import("./pages/AlbumPage"));
 const Playground = lazy(() => import("./pages/Playground"));
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
+const ShowPage = lazy(() => import("./pages/ShowPage"));
 import { getCredentials, validateCredentials } from "./api/credentials";
 import { getAuthStatus } from "./api/auth";
 import {
@@ -60,6 +61,7 @@ import {
 } from "./hooks/usePlayerControls";
 import { prefetchLyrics } from "./lib/prefetch";
 import { lastfmNowPlaying, lastfmScrobble } from "./api/lastfm";
+import { isEpisodeId } from "./utils/episode";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 function AppInit() {
@@ -232,14 +234,16 @@ Home recs so they're cached before the user gets there
           // last.fm: set nowplaying + scrobblekeeping for this track
           const artist = currentTrack.artists.map((a) => a.name).join(", ");
           const album = currentTrack.album?.name ?? "";
-          lastfmNowPlaying(artist, currentTrack.name, album);
+          const isEpisode = isEpisodeId(currentTrack.id);
+          if (!isEpisode) lastfmNowPlaying(artist, currentTrack.name, album);
             scrobbleRef.current = {
               artist,
               track: currentTrack.name,
               album,
               startedAt: Math.floor(Date.now() / 1000),
               durationMs: currentTrack.duration_ms,
-              scrobbled: false,
+              // podcasts aren't scrobbles
+              scrobbled: isEpisode,
             };
 
             // Proactively preload next track so skips and transitions are instant
@@ -428,6 +432,14 @@ export default function App() {
             element={
               <Suspense fallback={<Loader />}>
                 <ProfilePage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="show/:id"
+            element={
+              <Suspense fallback={<Loader />}>
+                <ShowPage />
               </Suspense>
             }
           />
