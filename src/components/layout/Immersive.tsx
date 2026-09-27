@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useCanvas } from "../../hooks/useCanvas";
+import { CreditsList } from "../ui/CreditsList";
+import { isEpisodeId } from "../../utils/episode";
 import type { Canvas } from "../../api/internal";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Minimize2, Captions, Queue, Music } from "@/lib/icons";
+import { Minimize2, Captions, Queue, Music, Info } from "@/lib/icons";
 import { useUIStore } from "../../store/ui.store";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
@@ -562,6 +564,9 @@ export function Immersive() {
                   <div className="lyr-tabs">
                     <PanelTab active={panel === "lyrics"} onClick={() => setPanel("lyrics")} icon={<Captions size={14} active={panel === "lyrics"} />} label="Lyrics" />
                     <PanelTab active={panel === "queue"} onClick={() => setPanel("queue")} icon={<Queue size={14} active={panel === "queue"} />} label="Queue" />
+                    {!isEpisodeId(track.id) && (
+                      <PanelTab active={panel === "credits"} onClick={() => setPanel("credits")} icon={<Info size={14} active={panel === "credits"} />} label="Credits" />
+                    )}
                   </div>
                   <button
                     className="imm-close"
@@ -577,10 +582,10 @@ export function Immersive() {
                     nothing. The drift is sideways, toward the tab picked,
                     because the tabs sit side by side. */}
                 <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-                  <AnimatePresence initial={false} custom={panel === "queue" ? 1 : -1}>
+                  <AnimatePresence initial={false} custom={panel === "lyrics" ? -1 : 1}>
                     <motion.div
                       key={panel}
-                      custom={panel === "queue" ? 1 : -1}
+                      custom={panel === "lyrics" ? -1 : 1}
                       variants={TAB_VARIANTS}
                       initial="enter"
                       animate="center"
@@ -588,7 +593,15 @@ export function Immersive() {
                       transition={{ duration: 0.15, ease: EASE_OUT }}
                       style={{ position: "absolute", inset: 0 }}
                     >
-                      {panel === "lyrics" ? <ImmersiveLyrics glow={glow} ink={ink} /> : <ImmersiveQueue />}
+                      {panel === "lyrics" ? (
+                        <ImmersiveLyrics glow={glow} ink={ink} />
+                      ) : panel === "credits" && !isEpisodeId(track.id) ? (
+                        <div className="scroll-y" style={{ position: "absolute", inset: 0, overflowY: "auto", paddingRight: 6 }}>
+                          <CreditsList trackId={track.id} onNavigate={() => setOpen(false)} dark />
+                        </div>
+                      ) : (
+                        <ImmersiveQueue />
+                      )}
                     </motion.div>
                   </AnimatePresence>
                 </div>

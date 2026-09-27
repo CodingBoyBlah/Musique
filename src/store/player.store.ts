@@ -41,8 +41,8 @@ interface PlayerStore {
   setImmersiveOpen: (open: boolean) => void;
   toggleImmersive: () => void;
   // which panel the immersive view shows on its right side
-  immersivePanel: "lyrics" | "queue";
-  setImmersivePanel: (p: "lyrics" | "queue") => void;
+  immersivePanel: "lyrics" | "queue" | "credits";
+  setImmersivePanel: (p: "lyrics" | "queue" | "credits") => void;
 
   // manual sync nudge for lyrics, in ms. purely a personal preference now:
   // the systematic error it used to paper over (reported position runs ahead of

@@ -89,3 +89,132 @@ pub async fn get_canvas(app: AppHandle, track_id: String) -> Result<Option<Canva
     })
     .await
 }
+
+// ── credits ──────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CreditPerson {
+    pub name:      String,
+    /// set when the person is also a spotify artist, so the row can link
+    pub artist_id: Option<String>,
+    pub image_url: Option<String>,
+    /// "Vocals", "Composer", "Producer", ...
+    pub roles:     Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CreditSection {
+    /// "Performers" / "Writers" / "Producers" / ...
+    pub title:  String,
+    pub people: Vec<CreditPerson>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TrackCredits {
+    pub track_name: Option<String>,
+    pub sections:   Vec<CreditSection>,
+    /// "Source: <label>" lines
+    pub sources:    Vec<String>,
+}
+
+pub(crate) fn credits_from(v: &serde_json::Value) -> TrackCredits {
+    use crate::internal::spclient::{image_uri_to_url, uri_id};
+    let str_of = |v: &serde_json::Value, k: &str| {
+        v.get(k).and_then(|x| x.as_str()).map(str::to_string).filter(|x| !x.is_empty())
+    };
+    let sections = v
+        .get("roleCredits")
+        .and_then(|x| x.as_array())
+        .map(|roles| {
+            roles
+                .iter()
+                .filter_map(|r| {
+                    let people: Vec<CreditPerson> = r
+                        .get("artists")
+                        .and_then(|x| x.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|p| {
+                                    let uri = str_of(p, "uri");
+                                    Some(CreditPerson {
+                                        name: str_of(p, "name")?,
+                                        artist_id: uri
+                                            .as_deref()
+                                            .filter(|u| u.starts_with("spotify:artist:"))
+                                            .map(|u| uri_id(u).to_string()),
+                                        image_url: str_of(p, "imageUri").and_then(|i| image_uri_to_url(&i)),
+                                        roles: p
+                                            .get("subroles")
+                                            .and_then(|x| x.as_array())
+                                            .map(|s| s.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                                            .unwrap_or_default(),
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if people.is_empty() {
+                        return None;
+                    }
+                    Some(CreditSection { title: str_of(r, "roleTitle").unwrap_or_else(|| "Credits".into()), people })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    TrackCredits {
+        track_name: str_of(v, "trackTitle"),
+        sections,
+        sources: v
+            .get("sourceNames")
+            .and_then(|x| x.as_array())
+            .map(|s| s.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default(),
+    }
+}
+
+/// who performed, wrote and produced a track (spclient track-credits-view)
+#[tauri::command]
+pub async fn get_track_credits(app: AppHandle, track_id: String) -> Result<TrackCredits, AppError> {
+    use tauri::Manager;
+    let id = crate::internal::spclient::uri_id(&track_id).to_string();
+    if id.is_empty() || track_id.starts_with("spotify:episode:") {
+        return Err(AppError::InvalidInput("credits are only available for tracks".into()));
+    }
+    let pool = app.state::<crate::state::AppState>().db.clone();
+    let uri = format!("spotify:track:{id}");
+    crate::internal::cache::cached_json(&pool, &uri, "credits", 7 * crate::internal::cache::DAY, || async {
+        let v = crate::internal::spclient::get_json_value(&app, &format!("/track-credits-view/v0/experimental/{id}/credits")).await?;
+        Ok(credits_from(&v))
+    })
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_credits() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{
+              "trackTitle": "Song",
+              "roleCredits": [
+                {"roleTitle": "Performers", "artists": [
+                  {"uri": "spotify:artist:a1", "name": "Singer", "imageUri": "spotify:image:ab", "subroles": ["Vocals"]}
+                ]},
+                {"roleTitle": "Writers", "artists": [{"uri": "", "name": "Writer", "subroles": ["Composer", "Lyricist"]}]},
+                {"roleTitle": "Producers", "artists": []}
+              ],
+              "sourceNames": ["Label"]
+            }"#,
+        )
+        .unwrap();
+        let c = credits_from(&v);
+        assert_eq!(c.sections.len(), 2, "empty sections are dropped");
+        assert_eq!(c.sections[0].people[0].artist_id.as_deref(), Some("a1"));
+        assert_eq!(c.sections[0].people[0].image_url.as_deref(), Some("https://i.scdn.co/image/ab"));
+        assert_eq!(c.sections[1].people[0].artist_id, None);
+        assert_eq!(c.sections[1].people[0].roles, vec!["Composer", "Lyricist"]);
+        assert_eq!(c.sources, vec!["Label"]);
+    }
+}

@@ -1,7 +1,8 @@
 import { memo, useState } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2, Check } from "@/lib/icons";
+import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2, Check, Info } from "@/lib/icons";
+import { useCreditsStore } from "../../store/credits.store";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TrackItem } from "../../types/spotify";
@@ -138,6 +139,9 @@ function TrackRowImpl({
     danger: true,
     onSelect: () => onRemoveFromPlaylist(track),
   });
+  if (!track.id.startsWith("spotify:")) {
+    menuEntries.push({ label: "Show credits", icon: <Info size={14} />, onSelect: () => useCreditsStore.getState().open(track) });
+  }
   if (track.artists[0]) menuEntries.push({ label: "Go to artist", icon: <User size={14} />, onSelect: () => navigate(`/artist/${track.artists[0].id}`) });
   if (track.album) menuEntries.push({ label: "Go to album", icon: <Disc3 size={14} />, onSelect: () => navigate(`/album/${track.album!.id}`) });
   // Only meaningful while audio actually comes from YouTube. This is the

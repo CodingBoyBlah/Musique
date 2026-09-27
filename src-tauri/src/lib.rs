@@ -839,6 +839,7 @@ pub fn run() {
             commands::spotify::record_listen_event,
             commands::internal::get_tracks_metadata,
             commands::internal::get_canvas,
+            commands::internal::get_track_credits,
             commands::profile::get_user_profile,
             commands::podcasts::get_show,
             commands::audiobooks::get_audiobook,

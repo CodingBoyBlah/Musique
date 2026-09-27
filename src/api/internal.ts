@@ -19,3 +19,19 @@ export interface Canvas {
 // the looping visual an artist attached to a track, or null (most tracks)
 export const getCanvas = (trackId: string): Promise<Canvas | null> =>
   invoke("get_canvas", { trackId });
+
+export interface CreditPerson {
+  name: string;
+  artist_id: string | null;
+  image_url: string | null;
+  roles: string[];
+}
+
+export interface TrackCredits {
+  track_name: string | null;
+  sections: { title: string; people: CreditPerson[] }[];
+  sources: string[];
+}
+
+export const getTrackCredits = (trackId: string): Promise<TrackCredits> =>
+  invoke("get_track_credits", { trackId });
