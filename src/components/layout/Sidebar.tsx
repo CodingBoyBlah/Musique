@@ -288,6 +288,7 @@ export default function Sidebar() {
   const pins        = usePinsStore((s) => s.pins);
   const removePin   = usePinsStore((s) => s.removePin);
   const sidebarMode = usePrefsStore((s) => s.sidebarMode);
+  const showStats   = usePrefsStore((s) => s.showStats);
   const { data: myPlaylists = [], isLoading: playlistsLoading } = useMyPlaylists();
   const qc          = useQueryClient();
   const { open: openMenu, element: menuEl } = useContextMenu();
@@ -449,7 +450,7 @@ export default function Sidebar() {
         <Section label="Discover" first expanded={spotifyOpen} onToggle={() => setSpotifyOpen(v => !v)} collapsed={isCollapsed}>
           <NavItem icon={Home} label="Home"      active={path === "/"}                                          onClick={() => navigate("/")} collapsed={isCollapsed} />
           <NavItem icon={ListMusic} label="Playlists" active={path === "/playlists" || onPlaylistWithoutRow}           onClick={() => navigate("/playlists")} collapsed={isCollapsed} />
-          <NavItem icon={BarChart} label="Stats" active={path === "/stats"} onClick={() => navigate("/stats")} collapsed={isCollapsed} />
+          {showStats && <NavItem icon={BarChart} label="Stats" active={path === "/stats"} onClick={() => navigate("/stats")} collapsed={isCollapsed} />}
         </Section>
 
         <Section label="Library" expanded={libraryOpen} onToggle={() => setLibraryOpen(v => !v)} collapsed={isCollapsed}>

@@ -46,6 +46,10 @@ interface PrefsStore {
   uiZoom: number;
   setUiZoom: (v: number) => void;
 
+  // optional pages / panels the user can switch off entirely
+  showStats: boolean;
+  setShowStats: (v: boolean) => void;
+
   sidebarMode: SidebarMode;
   setSidebarMode: (v: SidebarMode) => void;
 }
@@ -95,6 +99,9 @@ export const usePrefsStore = create<PrefsStore>()(
 
       uiZoom: 1,
       setUiZoom: (v) => set({ uiZoom: v }),
+
+      showStats: true,
+      setShowStats: (v) => set({ showStats: v }),
 
       sidebarMode: "pins",
       setSidebarMode: (v) => set({ sidebarMode: v }),

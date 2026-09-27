@@ -668,6 +668,20 @@ function GeneralCard() {
   );
 }
 
+function FeaturesCard() {
+  const showStats = usePrefsStore((s) => s.showStats);
+  const setShowStats = usePrefsStore((s) => s.setShowStats);
+  return (
+    <Card title="Features">
+      <SettingRow
+        label="Listening stats"
+        hint="The Stats page in the sidebar: time listened, streaks, top songs and when you listen. Worked out on this device."
+        control={<Switch checked={showStats} onChange={setShowStats} />}
+      />
+    </Card>
+  );
+}
+
 function VisualCard() {
   const windowEffect = useUIStore((s) => s.windowEffect);
   const setWindowEffect = useUIStore((s) => s.setWindowEffect);
@@ -1145,6 +1159,7 @@ export default function Settings() {
 
       <PlaybackCard />
       <GeneralCard />
+      <FeaturesCard />
       <AppearanceCard />
       <VisualCard />
       <LastfmCard />

@@ -1,5 +1,7 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useRef, useState } from "react";
+import { useEvenColumns } from "../hooks/useEvenColumns";
+import { Link, Navigate } from "react-router-dom";
+import { usePrefsStore } from "../store/prefs.store";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart } from "@/lib/icons";
 import { getListeningStats, type ListeningStats, type Ranked, type StatsRange } from "../api/stats";
@@ -26,6 +28,7 @@ const RANGES: { value: StatsRange; label: string }[] = [
   { value: "all", label: "All time" },
 ];
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const FULL_DAYS = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
 // monday-first rows read more naturally for a week
 const ROW_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
@@ -88,7 +91,7 @@ function Heatmap({ grid }: { grid: number[][] }) {
         {hover
           ? `${DAYS[hover.day]} ${hourLabel(hover.hour)}: ${grid[hover.day][hover.hour]} plays`
           : peak
-          ? `You listen most on ${DAYS[peak.day]}s around ${hourLabel(peak.hour)}.`
+          ? `You listen most on ${FULL_DAYS[peak.day]} around ${hourLabel(peak.hour)}.`
           : ""}
       </p>
     </section>
@@ -162,14 +165,43 @@ function RankedTracks({ id, title, rows, contextId, caption }: { id: string; tit
   );
 }
 
+const TILE_MIN = 150;
+const TILE_GAP = 10;
+
+/* always six tiles, laid out 6 / 3 / 2 / 1 across so the rows stay even at
+every width */
+function StatTiles({ data }: { data: ListeningStats }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const cols = useEvenColumns(ref, 6, TILE_MIN, TILE_GAP);
+  const days = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
+  const biggest = data.biggest_day
+    ? `Most in a day: ${listenTime(data.biggest_day[1])}`
+    : undefined;
+  return (
+    <div ref={ref} style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: TILE_GAP }}>
+      <Tile label="Time listened" value={listenTime(data.total_ms)} hint={biggest} />
+      <Tile label="Plays" value={data.plays.toLocaleString()} />
+      <Tile label="Songs" value={data.distinct_tracks.toLocaleString()} />
+      <Tile label="Artists" value={data.distinct_artists.toLocaleString()} />
+      <Tile label="Current streak" value={days(data.current_streak)} />
+      <Tile label="Longest streak" value={days(data.longest_streak)} />
+    </div>
+  );
+}
+
 export default function StatsPage() {
   useReflowPulse();
   const [range, setRange] = useState<StatsRange>("month");
+  const enabled = usePrefsStore((s) => s.showStats);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["stats", range],
     queryFn: () => getListeningStats(range),
     staleTime: 60_000,
+    enabled,
   });
+
+  // turned off in settings: the page doesn't exist
+  if (!enabled) return <Navigate to="/" replace />;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "clamp(26px, 3.4vw, 38px)" }}>
@@ -199,20 +231,7 @@ export default function StatsPage() {
         />
       ) : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
-            <Tile label="Time listened" value={listenTime(data.total_ms)} />
-            <Tile label="Plays" value={data.plays.toLocaleString()} />
-            <Tile label="Songs" value={data.distinct_tracks.toLocaleString()} />
-            <Tile label="Artists" value={data.distinct_artists.toLocaleString()} />
-            <Tile label="Current streak" value={`${data.current_streak} ${data.current_streak === 1 ? "day" : "days"}`} hint={`Longest: ${data.longest_streak} ${data.longest_streak === 1 ? "day" : "days"}`} />
-            {data.biggest_day && (
-              <Tile
-                label="Biggest day"
-                value={listenTime(data.biggest_day[1])}
-                hint={new Date(`${data.biggest_day[0]}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
-              />
-            )}
-          </div>
+          <StatTiles data={data} />
 
           <Heatmap grid={data.heatmap} />
           <RankedTracks id="stats-top-tracks" title="Top songs" rows={data.top_tracks} contextId={`stats-top-${range}`} />
