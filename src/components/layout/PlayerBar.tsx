@@ -22,6 +22,8 @@ import { Tooltip } from "../ui/Tooltip";
 import { fmtMs } from "../../utils/fmt";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
 import { gpuLayer, zTransform, EASE_OUT, PRESS } from "../../lib/motion";
+import { SpeedControl, SkipSeconds } from "../ui/SpeedControl";
+import { isEpisodeId } from "../../utils/episode";
 
 /* Transport buttons: they lift a little under the pointer and squash on the
    press, on an underdamped spring so they land with a small bounce - the feel
@@ -680,6 +682,7 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
   const setImmersiveOpen = usePlayerStore((s) => s.setImmersiveOpen);
 
   const { togglePlay, next: handleNext, prev: handlePrev, seek: doSeek } = usePlayerControls();
+  const isEpisode = usePlayerStore((s) => isEpisodeId(s.currentId));
   const { activeDevice, isRemotePlayback, toggleDevices } = useDevices();
 
   const { localShuffle, localRepeat, toggleShuffle, cycleRepeat } = useQueueStore(
@@ -941,13 +944,20 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
       >
         {/* Left: Playback Controls */}
         <div style={{ display: "flex", alignItems: "center", gap: "clamp(4px, 0.8vw, 8px)", flexShrink: 0 }}>
-          {showSecondaryControls && (
+          {/* podcasts swap shuffle/repeat for the skips people actually use */}
+          {showSecondaryControls && (isEpisode ? (
+            <Tooltip label="Back 15 seconds">
+              <IconBtn ariaLabel="Back 15 seconds" onClick={() => doSeek(Math.max(0, usePlayerStore.getState().positionMs - 15_000))}>
+                <SkipSeconds seconds={15} back />
+              </IconBtn>
+            </Tooltip>
+          ) : (
             <Tooltip label={shuffle ? "Shuffle on" : "Shuffle off"}>
               <IconBtn active={shuffle} pressed={shuffle} ariaLabel="Shuffle" onClick={toggleShuffle}>
                 <Shuffle size={15} strokeWidth={1.75} />
               </IconBtn>
             </Tooltip>
-          )}
+          ))}
 
           <Tooltip label="Previous">
             <IconBtn ariaLabel="Previous" onClick={handlePrev}>
@@ -968,13 +978,25 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
             </IconBtn>
           </Tooltip>
 
-          {showSecondaryControls && (
+          {showSecondaryControls && (isEpisode ? (
+            <Tooltip label="Forward 30 seconds">
+              <IconBtn
+                ariaLabel="Forward 30 seconds"
+                onClick={() => {
+                  const s = usePlayerStore.getState();
+                  doSeek(Math.min(s.durationMs || Infinity, s.positionMs + 30_000));
+                }}
+              >
+                <SkipSeconds seconds={30} />
+              </IconBtn>
+            </Tooltip>
+          ) : (
             <Tooltip label={repeatLabel}>
               <IconBtn active={repeat !== "none"} pressed={repeat !== "none"} ariaLabel={repeatLabel} onClick={cycleRepeat}>
                 <RepeatIcon size={15} strokeWidth={1.75} />
               </IconBtn>
             </Tooltip>
-          )}
+          ))}
         </div>
 
         {/* Center: Bigger Album Art + Bigger Titles + Progress Line Directly Underneath */}
@@ -1118,6 +1140,7 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
 
         {/* Right: Volume with responsive slider */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end", position: "relative", flexShrink: 0 }}>
+          {isEpisode && !isRemotePlayback && <SpeedControl compact />}
           <Tooltip label={showInlineVolume ? (muted ? "Unmute" : `Mute (${volume}%)`) : (volPopupOpen ? "Close volume" : `Volume (${volume}%)`)}>
             <span ref={volBtnRef}>
               <IconBtn

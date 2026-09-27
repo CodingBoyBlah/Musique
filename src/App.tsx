@@ -31,6 +31,7 @@ import {
   warmupPlayback,
   preloadTrack,
   retryPlayTrack,
+  setPlaybackSpeed,
 } from "./api/playback";
 import {
   updateNowPlaying,
@@ -73,6 +74,16 @@ function AppInit() {
   const onEvent = usePlayerStore((s) => s.onEvent);
 
   const invalidateLibrary = useInvalidateLibrary();
+
+  // podcasts play at the chosen speed, music always at 1x. re-applied on every
+  // track change so a song after an episode never comes out sped up
+  const currentIdForSpeed = usePlayerStore((s) => s.currentId);
+  const podcastSpeed = usePrefsStore((s) => s.podcastSpeed);
+  useEffect(() => {
+    const rate = isEpisodeId(currentIdForSpeed) ? podcastSpeed : 1;
+    usePlayerStore.getState().setPlaybackRate(rate);
+    setPlaybackSpeed(rate).catch(() => {});
+  }, [currentIdForSpeed, podcastSpeed]);
 
   // a playlist (or the folder tree) changed on another device
   useEffect(() => {

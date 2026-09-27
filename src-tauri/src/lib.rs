@@ -436,6 +436,7 @@ mod recommend;
 mod resample;
 mod sink;
 mod spotify;
+mod stretch;
 mod youtube;
 mod state;
 mod mem_trim;
@@ -882,6 +883,7 @@ pub fn run() {
             commands::playback::pin_yt_match,
             commands::playback::forget_yt_match,
             commands::playback::set_volume,
+            commands::playback::set_playback_speed,
             commands::playback::set_muted,
             commands::playback::get_volume,
             commands::playback::get_audio_quality,

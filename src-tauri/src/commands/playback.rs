@@ -55,6 +55,17 @@ async fn ensure_inner(app: &AppHandle) -> Result<(), AppError> {
     ensure_inner_with(app, true).await
 }
 
+/// podcast playback speed (0.5x - 3x, pitch kept). applies to whatever the
+/// sink is playing; the frontend sets it back to 1x for music
+#[tauri::command]
+pub fn set_playback_speed(speed: f32) -> Result<(), AppError> {
+    if !(0.5..=3.0).contains(&speed) {
+        return Err(AppError::InvalidInput(format!("speed out of range: {speed}")));
+    }
+    crate::stretch::set_speed(speed);
+    Ok(())
+}
+
 /// bring the librespot session up for the internal api layer (spclient calls)
 /// without ever popping a browser authorization at the user
 pub(crate) async fn warm_session(app: &AppHandle) -> Result<(), AppError> {

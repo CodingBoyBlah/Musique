@@ -52,6 +52,10 @@ interface PrefsStore {
   showFriends: boolean;
   setShowFriends: (v: boolean) => void;
 
+  // podcast playback speed, remembered across episodes (music is always 1x)
+  podcastSpeed: number;
+  setPodcastSpeed: (v: number) => void;
+
   sidebarMode: SidebarMode;
   setSidebarMode: (v: SidebarMode) => void;
 }
@@ -106,6 +110,8 @@ export const usePrefsStore = create<PrefsStore>()(
       setShowStats: (v) => set({ showStats: v }),
       showFriends: true,
       setShowFriends: (v) => set({ showFriends: v }),
+      podcastSpeed: 1,
+      setPodcastSpeed: (v) => set({ podcastSpeed: v }),
 
       sidebarMode: "pins",
       setSidebarMode: (v) => set({ sidebarMode: v }),

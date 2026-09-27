@@ -89,6 +89,9 @@ interface PlayerStore {
   setLastPlayingAt: (time: number) => void;
   onEvent:         (payload: unknown) => void;
   incrementPos:    () => void;
+  // the speed the sink is actually playing at, so the local playhead keeps up
+  playbackRate:    number;
+  setPlaybackRate: (r: number) => void;
   setPosition:     (ms: number) => void;
   setVolume:       (v: number) => void;
   setMuted:        (m: boolean) => void;
@@ -348,12 +351,16 @@ export const usePlayerStore = create<PlayerStore>()(
         }
       },
 
+      playbackRate: 1,
+      setPlaybackRate: (r) => set({ playbackRate: r }),
+
       incrementPos: () =>
         set((s) => {
           if (!s.isPlaying) return s;
+          const step = 1000 * (s.playbackRate || 1);
           const next = s.durationMs > 0
-            ? Math.min(s.positionMs + 1000, s.durationMs)
-            : s.positionMs + 1000;
+            ? Math.min(s.positionMs + step, s.durationMs)
+            : s.positionMs + step;
           return { positionMs: next };
         }),
 

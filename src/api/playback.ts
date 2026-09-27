@@ -134,3 +134,7 @@ export const getAudioCacheLimit = (): Promise<number> =>
 
 export const setAudioCacheLimit = (limitMb: number): Promise<void> =>
   invoke("set_audio_cache_limit", { limitMb });
+
+// pitch-preserving speed for whatever is playing (podcasts). 0.5 - 3
+export const setPlaybackSpeed = (speed: number): Promise<void> =>
+  invoke("set_playback_speed", { speed });

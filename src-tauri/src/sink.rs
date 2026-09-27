@@ -108,6 +108,8 @@ struct Output {
     /// not Spotify's.
     sample_rate: u32,
     resampler: Option<Resampler>,
+    /// pitch-preserving speed change (podcasts at 1.5x etc). None at 1x
+    stretcher: Option<crate::stretch::TimeStretch>,
     /// Duration of the audio device buffer in milliseconds granted by cpal / engine_buffer.
     device_buffer_ms: u32,
     /// Ring buffer of frame counts for recently appended chunks.
@@ -247,6 +249,22 @@ impl Sink for RodioSink {
             Some(resampler) => resampler.process(&samples),
             None => samples,
         };
+        // playback speed: rebuild the stretcher when the speed changes, drop it
+        // at 1x so normal playback is untouched
+        let speed = crate::stretch::speed() as f64;
+        if (speed - 1.0).abs() < 1e-3 {
+            output.stretcher = None;
+        } else if output.stretcher.as_ref().map(|s| (s.speed() - speed).abs() > 1e-3).unwrap_or(true) {
+            output.stretcher = Some(crate::stretch::TimeStretch::new(speed));
+        }
+        let samples = match &mut output.stretcher {
+            Some(stretcher) => stretcher.process(&samples),
+            None => samples,
+        };
+        if samples.is_empty() {
+            // the stretcher is still filling its first frame
+            return Ok(());
+        }
         // track the frame count of this chunk before appending to rodio
         let chunk_frames = (samples.len() / NUM_CHANNELS as usize) as u32;
         let slot = output.recent_chunk_idx;
@@ -461,6 +479,7 @@ fn open_output(preferred: Option<&str>, buffer_ms: u32) -> Result<Output, OpenEr
         failed,
         sample_rate,
         resampler,
+        stretcher: None,
         device_buffer_ms,
         recent_chunk_frames: [0; 32],
         recent_chunk_idx: 0,
