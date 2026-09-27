@@ -840,6 +840,7 @@ pub fn run() {
             commands::internal::get_tracks_metadata,
             commands::home_feed::get_home_feed,
             commands::artist_extras::get_artist_extras,
+            commands::artist_extras::get_artist_overview,
             commands::internal::get_canvas,
             commands::internal::get_track_credits,
             commands::internal::get_playlist_folders,

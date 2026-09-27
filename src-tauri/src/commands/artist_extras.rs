@@ -169,3 +169,180 @@ mod tests {
         assert_eq!(years(&[]), None);
     }
 }
+
+// ── artist overview (pathfinder) ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TopCity {
+    pub city:      String,
+    pub country:   Option<String>,
+    pub listeners: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Concert {
+    pub title: String,
+    /// iso-8601
+    pub date:  Option<String>,
+    pub venue: Option<String>,
+    pub city:  Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MerchItem {
+    pub name:      String,
+    pub price:     Option<String>,
+    pub url:       Option<String>,
+    pub image_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExternalLink {
+    pub name: String,
+    pub url:  String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ArtistOverview {
+    pub monthly_listeners: Option<i64>,
+    pub followers:         Option<i64>,
+    pub world_rank:        Option<i64>,
+    pub verified:          bool,
+    pub top_cities:        Vec<TopCity>,
+    pub header_image:      Option<String>,
+    pub gallery:           Vec<String>,
+    pub external_links:    Vec<ExternalLink>,
+    /// playlists the artist was discovered on / is featured in
+    pub discovered_on:     Vec<crate::commands::home_feed::HomeItem>,
+    pub featuring:         Vec<crate::commands::home_feed::HomeItem>,
+    pub concerts:          Vec<Concert>,
+    pub merch:             Vec<MerchItem>,
+}
+
+fn arr<'a>(v: &'a serde_json::Value, path: &[&str]) -> Vec<&'a serde_json::Value> {
+    crate::internal::pathfinder::get(v, path)
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().collect())
+        .unwrap_or_default()
+}
+
+fn first_source(v: &serde_json::Value) -> Option<String> {
+    v.get("sources")?
+        .as_array()?
+        .iter()
+        .filter_map(|s| Some((s.get("url")?.as_str()?, s.get("width").and_then(|w| w.as_i64()).unwrap_or(0))))
+        .max_by_key(|(_, w)| *w)
+        .map(|(u, _)| u.to_string())
+}
+
+pub(crate) fn overview_from(data: &serde_json::Value) -> ArtistOverview {
+    use crate::internal::pathfinder::{get, get_str};
+    let a = get(data, &["artistUnion"]).cloned().unwrap_or_default();
+    let n = |path: &[&str]| get(&a, path).and_then(|x| x.as_i64());
+    let items = |path: &[&str]| -> Vec<crate::commands::home_feed::HomeItem> {
+        arr(&a, path).into_iter().filter_map(crate::commands::home_feed::item_from).collect()
+    };
+    ArtistOverview {
+        monthly_listeners: n(&["stats", "monthlyListeners"]),
+        followers: n(&["stats", "followers"]),
+        world_rank: n(&["stats", "worldRank"]).filter(|r| *r > 0),
+        verified: get(&a, &["profile", "verified"]).and_then(|x| x.as_bool()).unwrap_or(false),
+        top_cities: arr(&a, &["stats", "topCities", "items"])
+            .into_iter()
+            .filter_map(|c| {
+                Some(TopCity {
+                    city: get_str(c, &["city"])?.to_string(),
+                    country: get_str(c, &["country"]).map(str::to_string),
+                    listeners: c.get("numberOfListeners").and_then(|x| x.as_i64()),
+                })
+            })
+            .collect(),
+        header_image: get(&a, &["visuals", "headerImage"]).and_then(first_source),
+        gallery: arr(&a, &["visuals", "gallery", "items"]).into_iter().filter_map(first_source).collect(),
+        external_links: arr(&a, &["profile", "externalLinks", "items"])
+            .into_iter()
+            .filter_map(|l| {
+                let url = get_str(l, &["url"])?;
+                url.starts_with("https://").then(|| ExternalLink {
+                    name: get_str(l, &["name"]).unwrap_or("Link").to_string(),
+                    url: url.to_string(),
+                })
+            })
+            .collect(),
+        discovered_on: items(&["relatedContent", "discoveredOnV2", "items"]),
+        featuring: items(&["relatedContent", "featuringV2", "items"]),
+        concerts: arr(&a, &["goods", "events", "concerts", "items"])
+            .into_iter()
+            .filter_map(|c| {
+                Some(Concert {
+                    title: get_str(c, &["title"]).or_else(|| get_str(c, &["venue", "name"]))?.to_string(),
+                    date: get_str(c, &["date", "isoString"]).map(str::to_string),
+                    venue: get_str(c, &["venue", "name"]).map(str::to_string),
+                    city: get_str(c, &["venue", "location", "name"]).map(str::to_string),
+                })
+            })
+            .collect(),
+        merch: arr(&a, &["goods", "merch", "items"])
+            .into_iter()
+            .filter_map(|m| {
+                Some(MerchItem {
+                    name: get_str(m, &["name"])?.to_string(),
+                    price: get_str(m, &["price"]).map(str::to_string),
+                    url: get_str(m, &["url"]).filter(|u| u.starts_with("https://")).map(str::to_string),
+                    image_url: get(m, &["image"]).and_then(first_source),
+                })
+            })
+            .collect(),
+    }
+}
+
+/// monthly listeners, world rank, top cities, discovered-on, concerts, merch,
+/// socials - the artist page's "about" data from pathfinder
+#[tauri::command]
+pub async fn get_artist_overview(app: AppHandle, id: String) -> Result<ArtistOverview, AppError> {
+    use tauri::Manager;
+    let pool = app.state::<crate::state::AppState>().db.clone();
+    let uri = format!("spotify:artist:{id}");
+    cache::cached_json(&pool, &uri, "artist-overview", 6 * cache::HOUR, || async {
+        let data = crate::internal::pathfinder::query(
+            &app,
+            "queryArtistOverview",
+            serde_json::json!({ "uri": uri, "locale": "", "preReleaseV2": false }),
+        )
+        .await?;
+        Ok(overview_from(&data))
+    })
+    .await
+}
+
+#[cfg(test)]
+mod overview_tests {
+    use super::*;
+
+    #[test]
+    fn parses_overview() {
+        let v = serde_json::json!({"artistUnion": {
+            "profile": {"verified": true, "externalLinks": {"items": [
+                {"name": "INSTAGRAM", "url": "https://instagram.com/x"}, {"name": "BAD", "url": "javascript:alert(1)"}
+            ]}},
+            "stats": {"monthlyListeners": 1234567, "followers": 99, "worldRank": 0,
+                      "topCities": {"items": [{"city": "London", "country": "GB", "numberOfListeners": 5000}]}},
+            "visuals": {"headerImage": {"sources": [{"url": "https://h/1", "width": 100}, {"url": "https://h/2", "width": 2000}]}},
+            "relatedContent": {"discoveredOnV2": {"items": [
+                {"data": {"uri": "spotify:playlist:p1", "name": "Hits", "images": {"items": [{"sources": [{"url": "https://i/p"}]}]}}}
+            ]}},
+            "goods": {"events": {"concerts": {"items": [
+                {"title": "Tour", "date": {"isoString": "2026-10-01T20:00:00Z"}, "venue": {"name": "Hall", "location": {"name": "Paris"}}}
+            ]}}}
+        }});
+        let o = overview_from(&v);
+        assert_eq!(o.monthly_listeners, Some(1_234_567));
+        assert_eq!(o.world_rank, None, "rank 0 means unranked");
+        assert!(o.verified);
+        assert_eq!(o.external_links.len(), 1, "non-https links are dropped");
+        assert_eq!(o.header_image.as_deref(), Some("https://h/2"));
+        assert_eq!(o.discovered_on[0].id, "p1");
+        assert_eq!(o.concerts[0].city.as_deref(), Some("Paris"));
+        assert_eq!(o.top_cities[0].listeners, Some(5000));
+    }
+}

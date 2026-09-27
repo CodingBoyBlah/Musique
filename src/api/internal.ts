@@ -101,3 +101,22 @@ export interface HomeFeed {
 // spotify's personalised home (daily mixes, daylist, made for you...)
 export const getHomeFeed = (timeZone: string): Promise<HomeFeed> =>
   invoke("get_home_feed", { timeZone });
+
+export interface ArtistOverview {
+  monthly_listeners: number | null;
+  followers: number | null;
+  world_rank: number | null;
+  verified: boolean;
+  top_cities: { city: string; country: string | null; listeners: number | null }[];
+  header_image: string | null;
+  gallery: string[];
+  external_links: { name: string; url: string }[];
+  discovered_on: HomeItem[];
+  featuring: HomeItem[];
+  concerts: { title: string; date: string | null; venue: string | null; city: string | null }[];
+  merch: { name: string; price: string | null; url: string | null; image_url: string | null }[];
+}
+
+// monthly listeners, top cities, discovered on, tour, merch (pathfinder)
+export const getArtistOverview = (id: string): Promise<ArtistOverview> =>
+  invoke("get_artist_overview", { id });

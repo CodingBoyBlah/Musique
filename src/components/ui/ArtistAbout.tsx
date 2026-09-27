@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { ArrowUpRight } from "@/lib/icons";
 import { CoverArt } from "./CoverArt";
 import { SectionTitle } from "./SectionTitle";
 
@@ -10,14 +12,18 @@ export function ArtistAbout({
   biography,
   image,
   stats,
+  cities = [],
+  links = [],
 }: {
   name: string;
   biography: string | null;
   image: string | null;
   stats: string[];
+  cities?: { city: string; country: string | null; listeners: number | null }[];
+  links?: { name: string; url: string }[];
 }) {
   const [expanded, setExpanded] = useState(false);
-  if (!biography && stats.length === 0) return null;
+  if (!biography && stats.length === 0 && cities.length === 0) return null;
   const long = (biography?.length ?? 0) > 420;
   const text = biography && long && !expanded ? `${biography.slice(0, 420).trimEnd()}...` : biography;
 
@@ -60,6 +66,37 @@ export function ArtistAbout({
             >
               {expanded ? "Show less" : "Read more"}
             </button>
+          )}
+          {cities.length > 0 && (
+            <div>
+              <div className="t-caption" style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--color-text-dim)", marginBottom: 6 }}>
+                Where people listen
+              </div>
+              <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+                {cities.slice(0, 5).map((c) => (
+                  <li key={`${c.city}-${c.country}`} className="tnum" style={{ fontSize: 13, color: "var(--color-text)", display: "flex", justifyContent: "space-between", gap: 12, maxWidth: 360 }}>
+                    <span>{c.city}{c.country ? `, ${c.country}` : ""}</span>
+                    {c.listeners != null && <span style={{ color: "var(--color-text-dim)" }}>{c.listeners.toLocaleString()} listeners</span>}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+          {links.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {links.map((l) => (
+                <button
+                  key={l.url}
+                  type="button"
+                  className="btn-pill focus-ring"
+                  onClick={() => openUrl(l.url).catch(() => {})}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4, textTransform: "capitalize" }}
+                >
+                  {l.name.toLowerCase()}
+                  <ArrowUpRight size={12} />
+                </button>
+              ))}
+            </div>
           )}
         </div>
       </div>

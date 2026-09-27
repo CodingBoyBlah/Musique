@@ -5,7 +5,9 @@ import { Check, UserPlus, Link2, Globe, Radio } from "@/lib/icons";
 import { playStation } from "../utils/radio";
 import { useArtist } from "../hooks/useArtist";
 import { useQuery } from "@tanstack/react-query";
-import { getArtistExtras } from "../api/internal";
+import { getArtistExtras, getArtistOverview } from "../api/internal";
+import { MediaTile } from "../components/ui/MediaTile";
+import { ArtistTour } from "../components/ui/ArtistTour";
 import { ArtistAbout } from "../components/ui/ArtistAbout";
 import { AlbumCard } from "../components/ui/AlbumCard";
 import { ArtistCard } from "../components/ui/ArtistCard";
@@ -45,6 +47,13 @@ export default function ArtistPage() {
   const { data: extras } = useQuery({
     queryKey: ["artist-extras", id],
     queryFn: () => getArtistExtras(id!),
+    enabled: !!id,
+    staleTime: 30 * 60_000,
+    retry: false,
+  });
+  const { data: overview } = useQuery({
+    queryKey: ["artist-overview", id],
+    queryFn: () => getArtistOverview(id!),
     enabled: !!id,
     staleTime: 30 * 60_000,
     retry: false,
@@ -137,7 +146,12 @@ export default function ArtistPage() {
 
   return (
     <div className="flex flex-col" onContextMenu={openMenu(shareEntries)}>
-      <PageHeader round imageUrl={data.image_url} eyebrow="Artist" title={data.name}>
+      <PageHeader round imageUrl={data.image_url} eyebrow={overview?.verified ? "Verified artist" : "Artist"} title={data.name}>
+        {overview?.monthly_listeners != null && (
+          <p className="tnum" style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "rgba(255, 255, 255, 0.8)" }}>
+            {overview.monthly_listeners.toLocaleString()} monthly listeners
+          </p>
+        )}
         {genres.length > 0 && (
           <div
             style={{
@@ -258,6 +272,20 @@ export default function ArtistPage() {
           renderItem={(al, i) => <AlbumCard album={al} index={i} />}
         />
         <Shelf
+          id="artist-featuring"
+          title={`Featuring ${data.name}`}
+          items={overview?.featuring ?? []}
+          getKey={(p) => p.id}
+          renderItem={(p, i) => <MediaTile to={`/playlist/${p.id}`} imageUrl={p.image_url} title={p.name} subtitle={p.subtitle} index={i} />}
+        />
+        <Shelf
+          id="artist-discovered-on"
+          title="Discovered on"
+          items={overview?.discovered_on ?? []}
+          getKey={(p) => p.id}
+          renderItem={(p, i) => <MediaTile to={`/playlist/${p.id}`} imageUrl={p.image_url} title={p.name} subtitle={p.subtitle} index={i} />}
+        />
+        <Shelf
           id="artist-related"
           title="Fans also like"
           items={data.related_artists?.length ? data.related_artists : extras?.related ?? []}
@@ -267,11 +295,17 @@ export default function ArtistPage() {
         <ArtistAbout
           name={data.name}
           biography={extras?.biography ?? null}
-          image={extras?.gallery[0] ?? data.image_url}
+          image={overview?.gallery[0] ?? extras?.gallery[0] ?? data.image_url}
           stats={[
+            overview?.monthly_listeners != null ? `${overview.monthly_listeners.toLocaleString()} monthly listeners` : null,
+            overview?.followers != null ? `${overview.followers.toLocaleString()} followers` : null,
+            overview?.world_rank ? `#${overview.world_rank} in the world` : null,
             extras?.active_years ? `Active ${extras.active_years}` : null,
           ].filter((s): s is string => !!s)}
+          cities={overview?.top_cities}
+          links={overview?.external_links}
         />
+        <ArtistTour concerts={overview?.concerts ?? []} merch={overview?.merch ?? []} />
       </div>
       {menuEl}
     </div>

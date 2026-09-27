@@ -80,8 +80,12 @@ fn artists_line(d: &Value) -> Option<String> {
 }
 
 pub(crate) fn item_from(v: &Value) -> Option<HomeItem> {
-    // items wrap their entity as content.data (older builds: itemV2.data)
-    let d = get(v, &["content", "data"]).or_else(|| get(v, &["itemV2", "data"])).unwrap_or(v);
+    // items wrap their entity as content.data (older builds: itemV2.data,
+    // artist overview lists: a bare data)
+    let d = get(v, &["content", "data"])
+        .or_else(|| get(v, &["itemV2", "data"]))
+        .or_else(|| get(v, &["data"]).filter(|d| d.get("uri").is_some()))
+        .unwrap_or(v);
     let uri = get_str(d, &["uri"]).or_else(|| get_str(v, &["uri"]))?;
     let mut parts = uri.split(':');
     let (_, kind, id) = (parts.next()?, parts.next()?, parts.next()?);
