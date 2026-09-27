@@ -613,15 +613,17 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
     background: var(--color-accent-hover);
 }
 
-/* playing on another device: a different fact, so a different colour */
+/* playing on another device: a different fact from "panel open", so a soft
+   accent tint rather than the filled pill - same hue family as the rest of
+   the app, no off-brand green */
 .tb-btn[data-tone="remote"] {
-    background: rgba(30, 215, 96, 0.16);
-    color: var(--color-primary, #1ed760);
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: color-mix(in srgb, var(--color-accent) 55%, #ffffff);
 }
 
 .tb-btn[data-tone="remote"]:hover {
-    background: rgba(30, 215, 96, 0.24);
-    color: var(--color-primary, #1ed760);
+    background: color-mix(in srgb, var(--color-accent) 28%, transparent);
+    color: #ffffff;
 }
 
 /* nothing to act on. still hoverable, so the tooltip can say why */
