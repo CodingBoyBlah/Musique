@@ -119,6 +119,8 @@ function AmbientBg({ url, override, video }: { url: string | null | undefined; o
   const awake = useWindowActive();
   // Settings > Animated background. still, not gone: the room keeps its colour
   const drift = usePrefsStore((s) => s.ambientMotion);
+  // the room moves with the music: paused, it holds still where it is
+  const playing = usePlayerStore((s) => s.isPlaying);
 
   /* Track changes crossfade rather than cut. The rooms are stacked inside the
      one drifting layer, so the drift itself never restarts; the new room fades
@@ -139,21 +141,23 @@ function AmbientBg({ url, override, video }: { url: string | null | undefined; o
       aria-hidden
       style={{ position: "absolute", inset: 0, overflow: "hidden", background: base, pointerEvents: "none", contain: "strict" }}
     >
-      <div className={awake && drift ? "amb-layer amb-1" : "amb-layer amb-1 amb-parked"}>
-        <AnimatePresence initial={false}>
-          {ready && (
-            <motion.div
-              key={key}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              // stay put under the incoming room until it is fully up
-              exit={{ opacity: 0, transition: { delay: ROOM_FADE_S, duration: 0 } }}
-              transition={{ duration: ROOM_FADE_S, ease: [0.4, 0, 0.2, 1] }}
-              style={{ position: "absolute", inset: 0, zIndex: z, backgroundSize: "cover", backgroundPosition: "center", ...roomFill(ambient) }}
-            />
-          )}
-        </AnimatePresence>
-        {video && !reduceLive && <LiveVideoRoom video={video} />}
+      <div className={awake && drift && playing ? "amb-layer amb-1" : "amb-layer amb-1 amb-parked"}>
+        <div className="amb-y">
+          <AnimatePresence initial={false}>
+            {ready && (
+              <motion.div
+                key={key}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                // stay put under the incoming room until it is fully up
+                exit={{ opacity: 0, transition: { delay: ROOM_FADE_S, duration: 0 } }}
+                transition={{ duration: ROOM_FADE_S, ease: [0.4, 0, 0.2, 1] }}
+                style={{ position: "absolute", inset: 0, zIndex: z, backgroundSize: "cover", backgroundPosition: "center", ...roomFill(ambient) }}
+              />
+            )}
+          </AnimatePresence>
+          {video && !reduceLive && <LiveVideoRoom video={video} />}
+        </div>
       </div>
 
 {/* One element, two stacked gradients: the light the sleeve pools into

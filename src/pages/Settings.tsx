@@ -456,7 +456,7 @@ function AppearanceCard() {
       <Divider />
       <SettingRow
         label="Animated background"
-        hint="Let the blurred cover art drift slowly behind the full-screen player. Turn off for a still background."
+        hint="Let the blurred cover art drift behind the full-screen player while music plays. Turn off for a still background."
         control={<Switch checked={ambientMotion} onChange={setAmbientMotion} />}
       />
       <Divider />
