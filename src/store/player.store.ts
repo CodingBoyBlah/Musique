@@ -287,6 +287,14 @@ export const usePlayerStore = create<PlayerStore>()(
         if (get().isRemotePlayback && msg.type !== "playing") {
           return;
         }
+        /* librespot reports every item by its bare base62 id. episodes live in
+           the app as "spotify:episode:<id>" (that prefix is what marks them as
+           podcasts everywhere - controls, speed, transcript), so map the bare id
+           back onto the episode we loaded instead of stripping the prefix off */
+        if (msg.track_id) {
+          const cur = get().currentId;
+          if (cur && cur !== msg.track_id && cur.endsWith(`:${msg.track_id}`)) msg.track_id = cur;
+        }
         switch (msg.type) {
           case "playing":
             set((s) => {
