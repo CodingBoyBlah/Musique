@@ -1,9 +1,10 @@
 import { useEffect, type ReactNode } from "react";
-import { motion } from "framer-motion";
 import { CoverArt } from "./CoverArt";
 import { useUIStore } from "../../store/ui.store";
-import { usePlayerStore } from "../../store/player.store";
-import { REFLOW_SPRING } from "../../lib/motion";
+
+// 220px on a wide page, easing down with it to 130px; about a fifth of the
+// header, which is where the old panel-open "compact" size landed as well
+const COVER = "clamp(130px, 20cqw, 220px)";
 
 interface Props {
   imageUrl: string | null | undefined;
@@ -14,18 +15,19 @@ interface Props {
   children: ReactNode; // meta lines + PlayActions
 }
 
-/* Album/playlist header. When the lyrics or queue rail opens the cover steps
-   down a size - as a layout animation, so the size flips once and framer
-   glides the difference as a transform on the same spring the grids reflow
-   on. It used to switch width/height straight away, and the header snapped
-   while everything around it moved. The title keeps one size throughout:
-   type that jumps a size mid-reflow reads as a glitch. */
+/* Album/playlist header.
+
+   The cover is sized off the header's own width (container query units), not
+   off whether a side panel is open. So it shrinks and grows continuously as
+   the page does - under a right-panel slide, a window drag, the sidebar
+   folding - with no render and no layout animation. It used to step down a
+   size when a panel opened, as a framer layout animation: a React render on
+   the first frame of the slide, and a projection pass that walked every
+   `layout` element on the page (every track row on an album) on every frame
+   of it. The title keeps one size throughout: type that changes size under a
+   reflow reads as a glitch. */
 export function PageHeader({ imageUrl, eyebrow, title, round, children }: Props) {
   const setPageTint = useUIStore((s) => s.setPageTint);
-  const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
-  const queueOpen = usePlayerStore((s) => s.queueOpen);
-  const friendsOpen = usePlayerStore((s) => s.friendsOpen);
-  const isCompact = lyricsOpen || queueOpen || friendsOpen;
 
   // publish this page's cover to the UI store for live accent tinting
   useEffect(() => {
@@ -42,22 +44,19 @@ export function PageHeader({ imageUrl, eyebrow, title, round, children }: Props)
         flexWrap: "wrap",
         minWidth: 0,
         padding: "12px 0 20px",
+        // makes cqw below mean "percent of this header's width"
+        containerType: "inline-size",
       }}
     >
-      {/* Fluid responsive album cover. flexShrink 0: a long title ellipsises,
-          it never squeezes the artwork. */}
-      <motion.div
-        layout
-        transition={{ layout: REFLOW_SPRING }}
+      {/* flexShrink 0: a long title ellipsises, it never squeezes the artwork */}
+      <div
         style={{
-          width: isCompact ? "clamp(130px, 17vw, 170px)" : "clamp(140px, 20vw, 220px)",
-          height: isCompact ? "clamp(130px, 17vw, 170px)" : "clamp(140px, 20vw, 220px)",
+          width: COVER,
+          height: COVER,
           flexShrink: 0,
           borderRadius: round ? "50%" : 14,
           overflow: "hidden",
-          boxShadow: isCompact
-            ? "0 14px 36px rgba(0, 0, 0, 0.5)"
-            : "0 24px 64px rgba(0, 0, 0, 0.65)",
+          boxShadow: "0 20px 54px rgba(0, 0, 0, 0.6)",
         }}
       >
         {/* radius passes down through this wrapper so the image is clipped to
@@ -73,11 +72,9 @@ export function PageHeader({ imageUrl, eyebrow, title, round, children }: Props)
             style={{ width: "100%", height: "100%", borderRadius: "inherit" }}
           />
         </div>
-      </motion.div>
+      </div>
 
-      <motion.div
-        layout="position"
-        transition={{ layout: REFLOW_SPRING }}
+      <div
         className="flex flex-col gap-2 min-w-0"
         style={{ flex: "1 1 240px", paddingBottom: 4 }}
       >
@@ -103,7 +100,7 @@ export function PageHeader({ imageUrl, eyebrow, title, round, children }: Props)
         </h1>
 
         {children}
-      </motion.div>
+      </div>
     </div>
   );
 }
