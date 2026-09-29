@@ -37,13 +37,15 @@ export function PodcastStage({ track, onVideo }: { track: TrackItem; onVideo?: (
         left: 0,
         top: 0,
         bottom: 0,
-        width: "min(50%, calc(100% - 420px))",
+        // everything left of the transcript card (which is min(50%, 760px)
+        // wide plus the view's side padding)
+        width: "calc(100% - min(50%, 760px) - clamp(20px, 3vw, 50px))",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 22,
-        padding: "clamp(40px, 6vh, 72px) clamp(24px, 4vw, 64px) 120px",
+        gap: "clamp(20px, 3vh, 32px)",
+        padding: "clamp(32px, 5vh, 64px) clamp(24px, 3.5vw, 64px)",
         boxSizing: "border-box",
         pointerEvents: "none",
       }}
@@ -65,7 +67,7 @@ export function PodcastStage({ track, onVideo }: { track: TrackItem; onVideo?: (
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.4, ease: EASE_OUT }}
-            style={{ width: "100%", maxHeight: "56vh", aspectRatio: "16 / 9", objectFit: "cover", borderRadius: 18, boxShadow: "0 30px 80px rgba(0,0,0,0.5)", background: "#000" }}
+            style={{ width: "100%", maxHeight: "68vh", aspectRatio: "16 / 9", objectFit: "cover", borderRadius: 20, boxShadow: "0 36px 90px rgba(0,0,0,0.55)", background: "#000" }}
           />
         ) : (
           <motion.img
@@ -76,15 +78,15 @@ export function PodcastStage({ track, onVideo }: { track: TrackItem; onVideo?: (
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.4, ease: EASE_OUT }}
-            style={{ width: "min(100%, 48vh)", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 18, boxShadow: "0 30px 80px rgba(0,0,0,0.5)" }}
+            style={{ width: "min(100%, 62vh)", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 20, boxShadow: "0 36px 90px rgba(0,0,0,0.55)" }}
           />
         )}
       </AnimatePresence>
-      <div style={{ width: "100%", maxWidth: video ? "100%" : "min(100%, 48vh)", textAlign: video ? "left" : "center", color: "#fff" }}>
-        <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", opacity: 0.65 }}>
+      <div style={{ width: "100%", maxWidth: video ? "100%" : "min(100%, 62vh)", textAlign: video ? "left" : "center", color: "#fff" }}>
+        <div style={{ fontSize: "clamp(12px, 1vw, 14px)", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", opacity: 0.65 }}>
           {track.album?.name ?? "Podcast"}
         </div>
-        <div style={{ marginTop: 6, fontSize: "clamp(20px, 2.2vw, 30px)", fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.15, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+        <div style={{ marginTop: 8, fontSize: "clamp(24px, 2.8vw, 40px)", fontWeight: 800, letterSpacing: "-0.025em", lineHeight: 1.1, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
           {track.name}
         </div>
       </div>
