@@ -98,8 +98,9 @@ export function JamCard() {
   }
 
   const card: React.CSSProperties = {
-    margin: "6px 10px 4px",
-    padding: 12,
+    // the panel's rhythm: box 4px from the edge, content on the 14px line
+    margin: "6px 4px 4px",
+    padding: 10,
     borderRadius: 14,
     display: "flex",
     flexDirection: "column",

@@ -223,7 +223,8 @@ function DevicesPopoverCard({
           display: "flex",
           flexDirection: "column",
           gap: 2,
-          padding: 6,
+          // 4 + the rows' 10px = the header's 14px content edge
+          padding: 4,
           maxHeight: 280,
           overflowY: "auto",
         }}

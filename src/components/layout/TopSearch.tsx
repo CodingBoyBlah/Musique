@@ -25,7 +25,8 @@ const SECTION_HEAD: React.CSSProperties = {
   letterSpacing: "0.08em",
   textTransform: "uppercase",
   color: "rgba(255, 255, 255, 0.42)",
-  padding: "10px 12px 4px",
+  // 10px in, like the rows, so a label starts on the same edge as the art under it
+  padding: "10px 10px 4px",
 };
 
 const ROW_TITLE: React.CSSProperties = {
@@ -298,7 +299,9 @@ export function TopSearch() {
                 style={{ ...rowStyle(selectedIndex === 0), color: selectedIndex === 0 ? "#fff" : "rgba(255, 255, 255, 0.75)" }}
               >
                 <div style={{
-                  width: 32, height: 32, borderRadius: 7, flexShrink: 0,
+                  // the same 34px square as the result covers, so every row's
+                  // text column starts on one line
+                  width: 34, height: 34, borderRadius: 6, flexShrink: 0,
                   background: selectedIndex === 0 ? "var(--color-accent)" : "rgba(255, 255, 255, 0.06)",
                   display: "flex", alignItems: "center", justifyContent: "center", color: "#fff",
                 }}>

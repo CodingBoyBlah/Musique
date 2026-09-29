@@ -69,7 +69,8 @@ const QueueTrackRow = memo(function QueueTrackRow({
       } : undefined}
       style={{
         display: "flex", alignItems: "center", gap: 9,
-        padding: "6px 8px",
+        // 4px container + 10px here = the panel's 14px content edge
+        padding: "6px 10px",
         opacity: dim ? 0.5 : 1,
       }}
     >
@@ -138,7 +139,7 @@ const NowPlayingCard = memo(function NowPlayingCard({ track, isPlaying }: { trac
     <div
       style={{
         display: "flex", alignItems: "center", gap: 11,
-        margin: "0 8px", padding: 10, borderRadius: 12,
+        margin: "0 4px", padding: 10, borderRadius: 12,
         background: "var(--color-surface)",
         outline: "1px solid var(--color-border)", outlineOffset: -1,
       }}
@@ -159,7 +160,7 @@ const NowPlayingCard = memo(function NowPlayingCard({ track, isPlaying }: { trac
 
 function SectionHead({ label, onClear }: { label: string; onClear?: () => void }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 12px 6px" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 14px 6px" }}>
       <p style={{ margin: 0, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.34)" }}>
         {label}
       </p>
@@ -180,7 +181,7 @@ function SectionHead({ label, onClear }: { label: string; onClear?: () => void }
 
 function EmptyRow({ children }: { children: React.ReactNode }) {
   return (
-    <p className="t-caption" style={{ margin: 0, padding: "4px 12px 8px", fontSize: 12, color: "rgba(255,255,255,0.45)" }}>{children}</p>
+    <p className="t-caption" style={{ margin: 0, padding: "4px 14px 8px", fontSize: 12, color: "rgba(255,255,255,0.45)" }}>{children}</p>
   );
 }
 
@@ -300,7 +301,7 @@ export function QueuePanel() {
           {isRemote ? <RemoteQueue deviceName={remoteName} /> : <>
           <SectionHead label="Next up" onClear={queue.length > 0 ? clearQueue : undefined} />
           {queue.length === 0 ? (
-            <div className="t-caption" style={{ margin: "0 12px", padding: "16px 14px", borderRadius: 10, border: "1.5px dashed var(--color-glass-border)", background: "var(--color-glass)", display: "flex", alignItems: "center", gap: 9, fontSize: 12, color: "var(--color-text-dim)" }}>
+            <div className="t-caption" style={{ margin: "0 4px", padding: "16px 10px", borderRadius: 10, border: "1.5px dashed var(--color-glass-border)", background: "var(--color-glass)", display: "flex", alignItems: "center", gap: 9, fontSize: 12, color: "var(--color-text-dim)" }}>
               <Queue size={14} strokeWidth={2} style={{ flexShrink: 0 }} />
               <span>Nothing queued. Add a song with the ＋ on any track.</span>
             </div>

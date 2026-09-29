@@ -134,7 +134,7 @@ export function TranscriptView({
         style={{
           height: "100%",
           overflowY: "auto",
-          padding: big ? "18vh 6px 42vh" : "18px 16px 55%",
+          padding: big ? "18vh 6px 42vh" : "18px 14px 55%",
           maskImage: "linear-gradient(180deg, transparent 0, #000 10%, #000 82%, transparent 100%)",
           WebkitMaskImage: "linear-gradient(180deg, transparent 0, #000 10%, #000 82%, transparent 100%)",
         }}
