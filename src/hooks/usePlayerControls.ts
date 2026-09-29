@@ -10,6 +10,8 @@ import {
 import { replenishQueue } from "../utils/radio";
 import { trackSkipped } from "../utils/listenTracker";
 import { toast } from "../store/toast.store";
+import { jamRole } from "../store/jam.store";
+import { jamNext, jamPrev, jamSeek, jamSetPlaying } from "../lib/jam";
 
 let transportInFlight = false;
 let pendingTarget: "play" | "pause" | null = null;
@@ -60,6 +62,10 @@ async function executeTransport() {
 
 export function transportTogglePlay(): void {
   const s = usePlayerStore.getState();
+  if (jamRole()) {
+    jamSetPlaying(!s.isPlaying);
+    return;
+  }
   if (s.isRemotePlayback) {
     const targetPlay = !s.isPlaying;
     s.setPlaying(targetPlay);
@@ -110,6 +116,10 @@ export function transportTogglePlay(): void {
 
 export function transportPlay(): void {
   const s = usePlayerStore.getState();
+  if (jamRole()) {
+    jamSetPlaying(true);
+    return;
+  }
   if (s.isRemotePlayback) {
     s.setPlaying(true);
     remotePlay()
@@ -141,6 +151,10 @@ export function transportPlay(): void {
 
 export function transportPause(): void {
   const s = usePlayerStore.getState();
+  if (jamRole()) {
+    jamSetPlaying(false);
+    return;
+  }
   if (s.isRemotePlayback) {
     s.setPlaying(false);
     remotePause()
@@ -165,6 +179,10 @@ export function transportPause(): void {
 
 export function transportNext(): void {
   const s = usePlayerStore.getState();
+  if (jamRole()) {
+    jamNext();
+    return;
+  }
   if (s.isRemotePlayback) {
     remoteNext()
       .then(() => {
@@ -198,6 +216,10 @@ export function transportNext(): void {
 
 export function transportPrev(): void {
   const s = usePlayerStore.getState();
+  if (jamRole()) {
+    jamPrev();
+    return;
+  }
   if (s.isRemotePlayback) {
     if (s.positionMs > 3000) {
       transportSeek(0);
@@ -236,6 +258,10 @@ export function transportPrev(): void {
 
 export function transportSeek(ms: number): void {
   const s = usePlayerStore.getState();
+  if (jamRole()) {
+    jamSeek(ms);
+    return;
+  }
   s.setPosition(ms);
   if (s.isRemotePlayback) {
     remoteSeek(ms)

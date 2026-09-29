@@ -12,6 +12,9 @@ import { Tooltip } from "../ui/Tooltip";
 import { EASE_DRAWER, EASE_OUT, RAIL_CLOSE, RAIL_OPEN } from "../../lib/motion";
 import { useQuery } from "@tanstack/react-query";
 import { getRemoteQueue } from "../../api/connect";
+import { useJamStore } from "../../store/jam.store";
+import { jamSkipTo, uriToId } from "../../lib/jam";
+import type { JamMember } from "../../api/social";
 
 const WIDTH = 272;
 
@@ -47,14 +50,36 @@ function Cover({ track, size }: { track: TrackItem; size: number }) {
   );
 }
 
+// whoever added a song to the jam, as a small face (spotify shows the same)
+function AddedBy({ member }: { member: JamMember }) {
+  return (
+    <Tooltip label={`Added by ${member.name}`} side="top" align="end">
+      <span
+        aria-label={`Added by ${member.name}`}
+        style={{
+          width: 18, height: 18, borderRadius: "50%", flexShrink: 0, overflow: "hidden",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "var(--color-surface-2)", fontSize: 9, fontWeight: 700, color: "var(--color-text)",
+          outline: "1px solid rgba(255,255,255,0.12)", outlineOffset: -1,
+        }}
+      >
+        {member.image_url
+          ? <img src={member.image_url} alt="" style={{ width: 18, height: 18, objectFit: "cover" }} />
+          : member.name.slice(0, 1).toUpperCase()}
+      </span>
+    </Tooltip>
+  );
+}
+
 const QueueTrackRow = memo(function QueueTrackRow({
-  track, onRemove, onPlay, reorderable, dim,
+  track, onRemove, onPlay, reorderable, dim, addedBy,
 }: {
   track:        TrackItem;
   onRemove?:    () => void;
   onPlay?:      () => void;
   reorderable?: boolean;
   dim?:         boolean;
+  addedBy?:     JamMember | null;
 }) {
   return (
     <div
@@ -92,7 +117,9 @@ const QueueTrackRow = memo(function QueueTrackRow({
           {track.artists.map((a) => a.name).join(", ")}
         </p>
       </div>
-      {onRemove ? (
+      {addedBy ? (
+        <AddedBy member={addedBy} />
+      ) : onRemove ? (
         <Tooltip label="Remove from queue" side="top" align="end">
           <button
             aria-label={`Remove ${track.name} from queue`}
@@ -215,6 +242,55 @@ function RemoteQueue({ deviceName }: { deviceName: string }) {
   );
 }
 
+/* the jam's queue: spotify's, held by this device's connect player and edited
+by everyone in the jam. songs people added come first, each with who added
+it; then what the jam's list plays next. */
+function JamQueue() {
+  const next    = useJamStore((s) => s.connect?.next ?? null);
+  const meta    = useJamStore((s) => s.meta);
+  const session = useJamStore((s) => s.session);
+  const canPick = !!session && (session.is_host || !session.queue_only_mode);
+
+  const byId = new Map((session?.members ?? []).map((m) => [m.id, m]));
+  const rows = (next ?? [])
+    .map((e, i) => {
+      const id = uriToId(e.uri);
+      const track = id ? meta[id] : undefined;
+      return track ? { track, key: `${e.uid || e.uri}-${i}`, queued: e.provider === "queue", by: e.queued_by ? byId.get(e.queued_by) ?? null : null } : null;
+    })
+    .filter((r): r is NonNullable<typeof r> => !!r)
+    .slice(0, 50);
+  const added = rows.filter((r) => r.queued);
+  const upNext = rows.filter((r) => !r.queued);
+
+  const row = (r: (typeof rows)[number]) => (
+    <QueueTrackRow
+      key={r.key}
+      track={r.track}
+      addedBy={r.by}
+      onPlay={canPick ? () => jamSkipTo(r.track.id) : undefined}
+    />
+  );
+
+  return (
+    <>
+      <SectionHead label="Added to the Jam" />
+      {added.length === 0 ? (
+        <EmptyRow>Nothing added yet. Anyone in the Jam can add songs with the ＋ on any track.</EmptyRow>
+      ) : (
+        <div style={{ padding: "0 4px" }}>{added.map(row)}</div>
+      )}
+      {upNext.length > 0 && (
+        <>
+          <SectionHead label="Next up" />
+          <div style={{ padding: "0 4px" }}>{upNext.map(row)}</div>
+        </>
+      )}
+      {next === null && <EmptyRow>Waiting for the Jam...</EmptyRow>}
+    </>
+  );
+}
+
 export function QueuePanel() {
   const toggleQueue     = usePlayerStore((s) => s.toggleQueue);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
@@ -222,6 +298,7 @@ export function QueuePanel() {
   const isPlaying       = usePlayerStore((s) => s.isPlaying);
   const isRemote        = usePlayerStore((s) => s.isRemotePlayback);
   const remoteName      = usePlayerStore((s) => s.activeDevice?.name ?? "device");
+  const inJam           = useJamStore((s) => !!s.session);
 
   const queue        = useQueueStore((s) => s.queue);
   const history      = useQueueStore((s) => s.history);
@@ -277,7 +354,7 @@ export function QueuePanel() {
       <div style={{ width: WIDTH, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {/* header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 12px 0 14px", height: 40, flexShrink: 0, borderBottom: "none" }}>
-          <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>Queue</span>
+          <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>{inJam ? "Jam queue" : "Queue"}</span>
           <Tooltip label="Close queue" side="bottom" align="end">
             <button
               onClick={toggleQueue}
@@ -298,7 +375,7 @@ export function QueuePanel() {
             : <EmptyRow>Nothing playing</EmptyRow>}
 
           {/* next up */}
-          {isRemote ? <RemoteQueue deviceName={remoteName} /> : <>
+          {inJam ? <JamQueue /> : isRemote ? <RemoteQueue deviceName={remoteName} /> : <>
           <SectionHead label="Next up" onClear={queue.length > 0 ? clearQueue : undefined} />
           {queue.length === 0 ? (
             <div className="t-caption" style={{ margin: "0 4px", padding: "16px 10px", borderRadius: 10, border: "1.5px dashed var(--color-glass-border)", background: "var(--color-glass)", display: "flex", alignItems: "center", gap: 9, fontSize: 12, color: "var(--color-text-dim)" }}>
@@ -349,7 +426,7 @@ export function QueuePanel() {
           </>}
 
           {/* history */}
-          {history.length > 0 && (
+          {!inJam && history.length > 0 && (
             <>
               <SectionHead label="Recently played" onClear={clearHistory} />
               <div style={{ padding: "0 4px" }}>

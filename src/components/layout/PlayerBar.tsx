@@ -12,6 +12,7 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
+import { useJamStore } from "../../store/jam.store";
 import {
   setVolume as apiSetVolume, setMuted as apiSetMuted,
 } from "../../api/playback";
@@ -696,8 +697,14 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
   // while another device plays, the buttons mirror (and drive) its state
   const remoteShuffle = usePlayerStore((s) => s.remoteShuffle);
   const remoteRepeat  = usePlayerStore((s) => s.remoteRepeat);
-  const shuffle = isRemotePlayback ? remoteShuffle : localShuffle;
-  const repeat  = isRemotePlayback
+  // in a jam they mirror the jam's, which spotify holds
+  const jam = useJamStore(useShallow((s) => (s.session && s.connect
+    ? { shuffle: s.connect.shuffle, repeat: s.connect.repeat_track ? "one" as const : s.connect.repeat_context ? "all" as const : "none" as const }
+    : null)));
+  const shuffle = jam ? jam.shuffle : isRemotePlayback ? remoteShuffle : localShuffle;
+  const repeat  = jam
+    ? jam.repeat
+    : isRemotePlayback
     ? (remoteRepeat === "track" ? "one" : remoteRepeat === "context" ? "all" : "none")
     : localRepeat;
 

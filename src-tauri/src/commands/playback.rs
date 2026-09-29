@@ -1133,3 +1133,97 @@ pub async fn get_output_latency_ms(app: AppHandle) -> Result<i64, AppError> {
         .unwrap_or(0);
     Ok(latency)
 }
+
+// ── connect-driven playback (spotify jam) ───────────────────────────────────
+//
+// in a jam the queue belongs to spotify: spirc holds it and social-connect
+// edits it for everyone. these drive spirc's queue directly instead of the
+// app's own, and the ui mirrors it from the "connect:state" event.
+
+async fn with_spirc<T>(
+    app: &AppHandle,
+    f: impl FnOnce(&crate::playback::PlaybackInner) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    if uses_youtube(app).await {
+        return Err(AppError::Playback(
+            "Jams play through Spotify. Switch the audio source to Spotify in Settings.".into(),
+        ));
+    }
+    ensure_inner(app).await?;
+    let playback = app.state::<AppState>().playback.clone();
+    let guard = playback.lock().await;
+    let inner = guard
+        .as_ref()
+        .ok_or_else(|| AppError::Playback("spotify session unavailable".into()))?;
+    f(inner)
+}
+
+/// the queue, current track and context this device last reported
+#[tauri::command]
+pub async fn get_connect_state(app: AppHandle) -> Result<Option<crate::playback::ConnectStateMsg>, AppError> {
+    let playback = app.state::<AppState>().playback.clone();
+    let guard = playback.lock().await;
+    Ok(guard.as_ref().map(|inner| inner.connect_state()))
+}
+
+/// play a list through spirc so it becomes the connect queue (a jam host's
+/// music is what the jam hears). `keep_stream` carries on the track already
+/// playing when it's the one at `index`
+#[tauri::command]
+pub async fn connect_load_tracks(
+    app: AppHandle,
+    ids: Vec<String>,
+    index: u32,
+    position_ms: u32,
+    start_playing: bool,
+    keep_stream: bool,
+) -> Result<(), AppError> {
+    let uris = ids
+        .iter()
+        .map(|id| crate::playback::track_uri(id))
+        .collect::<Result<Vec<_>, _>>()?;
+    if uris.is_empty() {
+        return Err(AppError::InvalidInput("nothing to play".into()));
+    }
+    let index = index.min(uris.len() as u32 - 1);
+    with_spirc(&app, |inner| inner.load_tracks(uris, index, position_ms, start_playing, keep_stream)).await
+}
+
+#[tauri::command]
+pub async fn connect_add_to_queue(app: AppHandle, id: String) -> Result<(), AppError> {
+    let uri = crate::playback::track_uri(&id)?;
+    with_spirc(&app, |inner| inner.add_to_queue(uri)).await
+}
+
+#[tauri::command]
+pub async fn connect_skip_to(app: AppHandle, id: String) -> Result<(), AppError> {
+    let uri = crate::playback::track_uri(&id)?;
+    with_spirc(&app, |inner| inner.skip_to(uri)).await
+}
+
+#[tauri::command]
+pub async fn connect_next(app: AppHandle) -> Result<(), AppError> {
+    with_spirc(&app, |inner| inner.next()).await
+}
+
+#[tauri::command]
+pub async fn connect_prev(app: AppHandle) -> Result<(), AppError> {
+    with_spirc(&app, |inner| inner.prev()).await
+}
+
+#[tauri::command]
+pub async fn connect_set_shuffle(app: AppHandle, on: bool) -> Result<(), AppError> {
+    with_spirc(&app, |inner| inner.set_shuffle(on)).await
+}
+
+#[tauri::command]
+pub async fn connect_set_repeat(app: AppHandle, context: bool, track: bool) -> Result<(), AppError> {
+    with_spirc(&app, |inner| inner.set_repeat(context, track)).await
+}
+
+/// a jam guest's pause is theirs alone (hold = true); resuming rejoins the
+/// jam where it has got to meanwhile
+#[tauri::command]
+pub async fn jam_hold(app: AppHandle, hold: bool) -> Result<(), AppError> {
+    with_spirc(&app, |inner| inner.set_jam_hold(hold)).await
+}

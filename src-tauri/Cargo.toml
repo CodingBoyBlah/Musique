@@ -110,6 +110,11 @@ librespot-core = { path = "vendor/librespot-core" }
 # playback even though storage-resolve returns 3-4 working mirrors. See
 # vendor/librespot-audio/src/fetch/mod.rs.
 librespot-audio = { path = "vendor/librespot-audio" }
+# Vendored librespot-connect, patched for Spotify Jam: social-connect pushes
+# every Jam edit as a transfer of the track already playing (kept, not
+# restarted), the app needs Spirc's queue to show it, and hosts add to the Jam
+# queue through Spirc. See vendor/librespot-connect/src/spirc.rs ("jam:").
+librespot-connect = { path = "vendor/librespot-connect" }
 
 [profile.dev]
 incremental = true

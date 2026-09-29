@@ -3,7 +3,7 @@ pub mod youtube;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
-use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, Spirc};
+use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, PlayingTrack, Spirc};
 use librespot_core::{
     authentication::Credentials,
     cache::Cache,
@@ -244,6 +244,7 @@ pub struct PlaybackInner {
     _event_task:           tauri::async_runtime::JoinHandle<()>,
     _spirc_task:           tauri::async_runtime::JoinHandle<()>,
     _dealer_task:          tauri::async_runtime::JoinHandle<()>,
+    _state_task:           tauri::async_runtime::JoinHandle<()>,
 }
 
 // map a librespot control error into our IPC error type
@@ -280,6 +281,7 @@ impl PlaybackInner {
         self._spirc_task.abort();
         self._event_task.abort();
         self._dealer_task.abort();
+        self._state_task.abort();
     }
 
     pub fn is_ended(&self) -> bool {
@@ -349,6 +351,142 @@ impl PlaybackInner {
     pub fn report_volume(&self, level: f64) {
         let v = (level.clamp(0.0, 1.0) * u16::MAX as f64).round() as u16;
         let _ = self.spirc.set_volume(v);
+    }
+
+    // ── connect-driven playback (jam) ────────────────────────────────────────
+    // in a jam the queue is spotify's, held by spirc and edited by everyone in
+    // it. these drive spirc's own queue instead of the app's.
+
+    /// what this device last reported to connect: the track, the queue, the
+    /// context. in a jam that's the jam
+    pub fn connect_state(&self) -> ConnectStateMsg {
+        ConnectStateMsg::from(&*self.spirc.state_updates().borrow())
+    }
+
+    /// load a list as the context, starting at `index`. with `keep_stream`,
+    /// the track already playing at that spot carries on instead of restarting
+    pub fn load_tracks(&self, uris: Vec<String>, index: u32, position_ms: u32, start_playing: bool, keep_stream: bool) -> Result<(), AppError> {
+        self.spirc.activate().map_err(spirc_err)?;
+        let current = uris.get(index as usize).cloned();
+        let request = LoadRequest::from_tracks(
+            uris,
+            LoadRequestOptions {
+                start_playing,
+                seek_to: position_ms,
+                playing_track: Some(PlayingTrack::Index(index)),
+                ..Default::default()
+            },
+        );
+        if keep_stream {
+            self.spirc.load_keep_stream(request).map_err(spirc_err)?;
+        } else {
+            self.spirc.load(request).map_err(spirc_err)?;
+        }
+        if let Some(uri) = current {
+            *self.current_uri.lock().unwrap() = Some(uri);
+        }
+        self.loaded.store(true, Ordering::Relaxed);
+        self.is_ended.store(false, Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub fn add_to_queue(&self, uri: String) -> Result<(), AppError> {
+        self.spirc.add_to_queue(uri).map_err(spirc_err)
+    }
+
+    pub fn skip_to(&self, uri: String) -> Result<(), AppError> {
+        self.spirc.skip_to(uri).map_err(spirc_err)
+    }
+
+    pub fn next(&self) -> Result<(), AppError> {
+        self.spirc.next().map_err(spirc_err)
+    }
+
+    pub fn prev(&self) -> Result<(), AppError> {
+        self.spirc.prev().map_err(spirc_err)
+    }
+
+    pub fn set_shuffle(&self, on: bool) -> Result<(), AppError> {
+        self.spirc.shuffle(on).map_err(spirc_err)
+    }
+
+    pub fn set_repeat(&self, context: bool, track: bool) -> Result<(), AppError> {
+        self.spirc.repeat(context).map_err(spirc_err)?;
+        self.spirc.repeat_track(track).map_err(spirc_err)
+    }
+
+    /// a jam guest pausing just for themselves, or rejoining where the jam is
+    pub fn set_jam_hold(&self, hold: bool) -> Result<(), AppError> {
+        self.spirc.set_jam_hold(hold).map_err(spirc_err)?;
+        self.is_playing_atomic.store(!hold, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+/// one row of spirc's queue, as the frontend shows it
+#[derive(Debug, Clone, Serialize)]
+pub struct QueueEntry {
+    pub uri:       String,
+    pub uid:       String,
+    /// "context", "queue" or "autoplay"
+    pub provider:  String,
+    /// in a jam, the username of whoever added it
+    pub queued_by: Option<String>,
+}
+
+impl QueueEntry {
+    fn from_track(t: &librespot_protocol::player::ProvidedTrack) -> Option<Self> {
+        let hidden = t.metadata.get("hidden").is_some_and(|v| v == "true");
+        if t.uri.is_empty() || t.uri == "spotify:delimiter" || hidden {
+            return None;
+        }
+        Some(QueueEntry {
+            uri:       t.uri.clone(),
+            uid:       t.uid.clone(),
+            provider:  t.provider.clone(),
+            queued_by: t.metadata.get("queued_by").filter(|v| !v.is_empty()).cloned(),
+        })
+    }
+}
+
+/// spirc's reported connect state, trimmed to what the ui mirrors
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectStateMsg {
+    pub active:        bool,
+    pub context_uri:   String,
+    pub track:         Option<QueueEntry>,
+    pub next:          Vec<QueueEntry>,
+    pub is_playing:    bool,
+    pub is_paused:     bool,
+    pub position_ms:   i64,
+    pub timestamp:     i64,
+    pub duration_ms:   i64,
+    pub shuffle:       bool,
+    pub repeat_context: bool,
+    pub repeat_track:  bool,
+    /// social-connect switched this device into jam mode
+    pub jam_mode:      bool,
+}
+
+impl From<&librespot_connect::ConnectSnapshot> for ConnectStateMsg {
+    fn from(s: &librespot_connect::ConnectSnapshot) -> Self {
+        let p = &s.player;
+        let options = p.options.as_ref();
+        ConnectStateMsg {
+            active:         s.active,
+            context_uri:    p.context_uri.clone(),
+            track:          p.track.as_ref().and_then(QueueEntry::from_track),
+            next:           p.next_tracks.iter().filter_map(QueueEntry::from_track).collect(),
+            is_playing:     p.is_playing,
+            is_paused:      p.is_paused,
+            position_ms:    p.position_as_of_timestamp,
+            timestamp:      p.timestamp,
+            duration_ms:    p.duration,
+            shuffle:        options.is_some_and(|o| o.shuffling_context),
+            repeat_context: options.is_some_and(|o| o.repeating_context),
+            repeat_track:   options.is_some_and(|o| o.repeating_track),
+            jam_mode:       options.is_some_and(|o| o.modes.get("jam").is_some_and(|v| v == "on")),
+        }
     }
 }
 
@@ -632,6 +770,21 @@ pub async fn create_inner(
     // spirc has the dealer connected now; tap it for device/jam/playlist pushes
     let dealer_task = crate::internal::dealer::spawn(app.clone(), session.clone());
 
+    // mirror every state spirc reports. in a jam spotify drives this device
+    // (social-connect transfers the jam here, skips, adds to its queue) and
+    // this is the only place the ui can see what that queue now is
+    let mut state_rx = spirc.state_updates();
+    let state_app = app.clone();
+    let state_task = tauri::async_runtime::spawn(async move {
+        while state_rx.changed().await.is_ok() {
+            let msg = ConnectStateMsg::from(&*state_rx.borrow_and_update());
+            let _ = state_app.emit("connect:state", msg);
+            // spirc reports in bursts (a jam edit is a transfer, then a
+            // resolve, then an update); the last one is the one that matters
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        }
+    });
+
     // the access point pushes CountryCode (and ProductInfo) as SEPARATE packets
     // that show up AFTER the session connects (Spirc::new above did the connect).
     // librespots availability filter (available_for_user) checks each tracks
@@ -754,6 +907,7 @@ pub async fn create_inner(
         _event_task:       event_task,
         _dealer_task:      dealer_task,
         _spirc_task:       spirc_task,
+        _state_task:       state_task,
     })
 }
 
