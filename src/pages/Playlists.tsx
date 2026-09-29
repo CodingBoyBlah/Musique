@@ -379,6 +379,7 @@ export default function Playlists() {
           <motion.div
             layout="position"
             transition={{ layout: REFLOW }}
+            data-rail-lock="flip"
             style={TILE_GRID}
           >
             {folders.map((f, i) => (

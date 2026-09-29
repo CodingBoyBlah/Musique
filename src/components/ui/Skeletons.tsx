@@ -50,6 +50,7 @@ export function CardGridSkeleton({
   return (
     <div
       aria-hidden
+      data-rail-lock="flip"
       style={{ ...TILE_GRID, gridTemplateColumns: `repeat(auto-fill, minmax(${minCol}, 1fr))` }}
     >
       {Array.from({ length: count }).map((_, i) => (

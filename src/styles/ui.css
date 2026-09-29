@@ -6,6 +6,17 @@
  * visible :focus-visible ring. */
 
 /* ── track row ─────────────────────────────────────────────────────────── */
+/* Rows off screen skip layout and paint entirely. A long album or playlist
+   is hundreds of these, and every one of them used to be laid out again on
+   every frame the page's width moved - a right-panel slide, a window drag -
+   though only the dozen on screen could be seen. `auto` remembers each row's
+   real height once it has been shown, so the scrollbar does not shift; 54px
+   (the 38px cover plus padding) is the guess for rows never yet on screen.
+   Safe to contain: the row's tooltips and menus are portalled out of it. */
+.track-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 54px;
+}
 .track-row:active {
     background: var(--color-active) !important;
 }

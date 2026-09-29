@@ -35,6 +35,8 @@ import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
 import { HomeFeedShelves } from "../components/ui/HomeFeedShelves";
 import { TILE_PAD, TILE_BLEED } from "../lib/layout";
+import { flipChildren, useRailPin } from "../lib/railFlip";
+import { flushSync } from "react-dom";
 
 // grid reflow spring for smooth panel gliding (critically damped)
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
@@ -398,23 +400,27 @@ function QuickActionsShelf() {
     return 3;
   });
 
+  /* Re-column as the shelf's width crosses 680 / 400. The cards slide to
+     their new cells and grow or shrink to their new width together
+     (flipChildren, "size" mode). They used to glide their position while
+     their width snapped - a card jumping from a third of the row to half of
+     it mid-move, which read as a stutter. */
+  const colsRef = useRef(cols);
+  colsRef.current = cols;
+  const colsFor = (w: number) => (w >= 680 ? 3 : w >= 400 ? 2 : 1);
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     let rafId = 0;
-    const measure = (w: number) => {
-      if (w <= 0) return;
-      const nextCols = w >= 680 ? 3 : w >= 400 ? 2 : 1;
-      setCols((prev) => (prev === nextCols ? prev : nextCols));
-    };
-    measure(el.getBoundingClientRect().width);
     const ro = new ResizeObserver((entries) => {
+      const w = entries[entries.length - 1]?.contentRect.width ?? 0;
       if (rafId) cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
         rafId = 0;
-        for (const entry of entries) {
-          measure(entry.contentRect.width);
-        }
+        if (w <= 0) return;
+        const next = colsFor(w);
+        if (next === colsRef.current) return;
+        flipChildren(el, () => flushSync(() => setCols(next)), "size");
       });
     });
     ro.observe(el);
@@ -423,6 +429,12 @@ function QuickActionsShelf() {
       ro.disconnect();
     };
   }, []);
+
+  // a right-rail slide pins this grid: re-column now, before the FLIP reads it
+  useRailPin(containerRef, () => {
+    const w = containerRef.current?.getBoundingClientRect().width ?? 0;
+    if (w > 0) setCols(colsFor(w));
+  });
 
   // captured once per mount: true only for the first Home visit this session
   const [animateIn] = useState(() => !quickShelfHasEntered);
@@ -647,6 +659,7 @@ function QuickActionsShelf() {
       layout="position"
       transformTemplate={zTransform}
       transition={{ layout: REFLOW }}
+      data-rail-lock="flip-size"
       aria-label="Quick actions"
       style={{
         display: "grid",

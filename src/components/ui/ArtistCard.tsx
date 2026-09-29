@@ -27,6 +27,7 @@ export function ArtistGrid({ children }: { children: React.ReactNode }) {
       <motion.div
         layout="position"
         transition={{ layout: REFLOW_SPRING }}
+        data-rail-lock="flip"
         style={TILE_GRID}
       >
         {children}

@@ -1,4 +1,5 @@
 import { useLayoutEffect, useState, type RefObject } from "react";
+import { useRailPin } from "../lib/railFlip";
 
 /* the most columns that fit AND divide the item count evenly, so a row of
 tiles never leaves one orphan hanging on the next line (6 tiles -> 6, 3, 2 or
@@ -24,5 +25,10 @@ export function useEvenColumns(ref: RefObject<HTMLElement | null>, count: number
     ro.observe(el);
     return () => ro.disconnect();
   }, [ref, count, minItem, gap]);
+  // a right-rail slide pins the grid: re-column now, before the FLIP reads it
+  useRailPin(ref, () => {
+    const el = ref.current;
+    if (el) setCols(evenColumns(el.clientWidth, count, minItem, gap));
+  });
   return cols;
 }

@@ -1,6 +1,7 @@
 import { useRef, useState, useLayoutEffect, useEffect, useMemo, useId, type ReactNode, type CSSProperties } from "react";
 import { motion, LayoutGroup } from "framer-motion";
 import { zTransform, REFLOW_SPRING, getGridItemTransition } from "../../lib/motion";
+import { useRailPin } from "../../lib/railFlip";
 
 interface EvenGridProps<T> {
   items: T[];
@@ -135,6 +136,18 @@ export function EvenGrid<T>({
     };
   }, []);
 
+  // a right-rail slide pins this grid: re-column now, before the FLIP reads it
+  useRailPin(containerRef, () => {
+    const w = containerRef.current?.getBoundingClientRect().width ?? 0;
+    if (w <= 0) return;
+    lastWidthRef.current = w;
+    const { itemsLength, minColWidth, gap, maxRows, minCols, maxCols } = paramsRef.current;
+    const next = calculateGridMetrics(w, itemsLength, minColWidth, gap, maxRows, minCols, maxCols);
+    setMetrics((prev) =>
+      prev.effectiveCols === next.effectiveCols && prev.visibleCount === next.visibleCount ? prev : next,
+    );
+  });
+
   // Update metrics synchronously during render when input parameters change
   const derivedMetrics = useMemo(() => {
     return calculateGridMetrics(
@@ -165,6 +178,7 @@ export function EvenGrid<T>({
     <LayoutGroup id={layoutGroupId}>
       <motion.div
         ref={containerRef}
+        data-rail-lock="flip"
         className={className}
         layout="position"
         transition={{ layout: REFLOW_SPRING }}
@@ -245,11 +259,20 @@ export function EvenGridSkeleton({
     return () => ro.disconnect();
   }, [gap, minColWidth, maxCols, minCols]);
 
+  useRailPin(containerRef, () => {
+    const w = containerRef.current?.getBoundingClientRect().width ?? 0;
+    if (w <= 0) return;
+    const fitCols = Math.floor((w + gap) / (minColWidth + gap));
+    const nextCols = Math.min(maxCols, Math.max(minCols, fitCols));
+    setCols((prev) => (prev === nextCols ? prev : nextCols));
+  });
+
   const totalCount = cols * maxRows;
 
   return (
     <div
       ref={containerRef}
+      data-rail-lock="flip"
       style={{
         display: "grid",
         gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,

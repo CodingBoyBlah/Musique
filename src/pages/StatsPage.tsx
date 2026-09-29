@@ -183,7 +183,7 @@ function StatTiles({ data }: { data: ListeningStats }) {
     ? `Most in a day: ${listenTime(data.biggest_day[1])}`
     : undefined;
   return (
-    <div ref={ref} style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: TILE_GAP }}>
+    <div ref={ref} data-rail-lock="flip" style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: TILE_GAP }}>
       <Tile label="Time listened" value={listenTime(data.total_ms)} hint={biggest} />
       <Tile label="Plays" value={data.plays.toLocaleString()} />
       <Tile label="Songs" value={data.distinct_tracks.toLocaleString()} />

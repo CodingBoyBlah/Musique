@@ -9,7 +9,7 @@ import { fmtMs } from "../../utils/fmt";
 import { meshGradient } from "../../lib/mesh";
 import type { TrackItem } from "../../types/spotify";
 import { Tooltip } from "../ui/Tooltip";
-import { EASE_DRAWER, EASE_OUT, SPRING_PANEL } from "../../lib/motion";
+import { EASE_DRAWER, EASE_OUT, RAIL_CLOSE, RAIL_OPEN } from "../../lib/motion";
 import { useQuery } from "@tanstack/react-query";
 import { getRemoteQueue } from "../../api/connect";
 
@@ -264,8 +264,8 @@ export function QueuePanel() {
       // the user is watching for the panel to respond.)
       initial={{ x: WIDTH }}
       animate={{ x: 0 }}
-      exit={{ x: WIDTH, transition: { duration: 0.22, ease: EASE_DRAWER } }}
-      transition={SPRING_PANEL}
+      exit={{ x: WIDTH, transition: RAIL_CLOSE }}
+      transition={RAIL_OPEN}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH, maxWidth: "100vw", display: "flex", flexDirection: "column", overflow: "hidden",

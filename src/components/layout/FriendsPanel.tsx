@@ -11,7 +11,7 @@ import { CoverArt } from "../ui/CoverArt";
 import { JamCard } from "./JamCard";
 import { Tooltip } from "../ui/Tooltip";
 import { errMsg } from "../../lib/err";
-import { EASE_DRAWER, SPRING_PANEL } from "../../lib/motion";
+import { RAIL_CLOSE, RAIL_OPEN } from "../../lib/motion";
 import type { TrackItem } from "../../types/spotify";
 
 const WIDTH = 272;
@@ -162,8 +162,8 @@ export function FriendsPanel() {
     <motion.div
       initial={{ x: WIDTH }}
       animate={{ x: 0 }}
-      exit={{ x: WIDTH, transition: { duration: 0.22, ease: EASE_DRAWER } }}
-      transition={SPRING_PANEL}
+      exit={{ x: WIDTH, transition: RAIL_CLOSE }}
+      transition={RAIL_OPEN}
       style={{ position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5, width: WIDTH, maxWidth: "100vw", display: "flex", flexDirection: "column", overflow: "hidden", willChange: "transform" }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 12px 0 14px", height: 40, flexShrink: 0 }}>
