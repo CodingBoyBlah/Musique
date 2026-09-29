@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { CoverArt } from "./CoverArt";
 import { getGridItemTransition } from "../../lib/motion";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
+import { TILE_PAD } from "../../lib/layout";
 
 const MotionLink = motion.create(Link);
 
@@ -47,7 +48,7 @@ export const MediaTile = memo(function MediaTile({
         display: "flex",
         flexDirection: "column",
         gap: 8,
-        padding: 10,
+        padding: TILE_PAD,
         borderRadius: 12,
         width: "100%",
         boxSizing: "border-box",

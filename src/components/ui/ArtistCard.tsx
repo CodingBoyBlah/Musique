@@ -8,6 +8,7 @@ import { prefetchArtist } from "../../lib/prefetch";
 import { gpuLayer, zTransform, REFLOW_SPRING, SPRING, EASE_OUT, getGridItemTransition } from "../../lib/motion";
 import "../../styles/ui.css";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
+import { TILE_GRID, TILE_PAD } from "../../lib/layout";
 
 interface Props {
   artist: { id: string; name: string; image_url?: string | null };
@@ -26,12 +27,7 @@ export function ArtistGrid({ children }: { children: React.ReactNode }) {
       <motion.div
         layout="position"
         transition={{ layout: REFLOW_SPRING }}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(clamp(120px, 14vw, 175px), 1fr))",
-          gap: "clamp(10px, 1.4vw, 16px)",
-          width: "100%",
-        }}
+        style={TILE_GRID}
       >
         {children}
       </motion.div>
@@ -66,7 +62,7 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        padding: 10,
+        padding: TILE_PAD,
         borderRadius: 12,
         width: "100%",
         boxSizing: "border-box",

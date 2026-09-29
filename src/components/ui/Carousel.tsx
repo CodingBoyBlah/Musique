@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "@/lib/icons";
+import { TILE_PAD } from "../../lib/layout";
 
 /* one horizontal shelf for the whole app (Home rows, Album "More by").
 
@@ -145,10 +146,11 @@ export function CarouselTrack<T>({
         scrollSnapType: "x mandatory",
         scrollbarWidth: "none",
         msOverflowStyle: "none",
-        // room for hover shadows, taken back with the negative margin so the
-        // row still lines up with the section title
-        padding: "4px 2px 14px",
-        margin: "-4px -2px -14px",
+        // room for hover shadows above/below, taken back with the negative
+        // margin; sideways it bleeds by the tile padding so the ARTWORK lines
+        // up with the section title (see lib/layout)
+        padding: "4px 0 14px",
+        margin: `-4px -${TILE_PAD}px -14px`,
       }}
     >
       {items.map((item, i) => (

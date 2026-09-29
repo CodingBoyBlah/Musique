@@ -16,6 +16,7 @@ import { transportPlay, transportPause } from "../../hooks/usePlayerControls";
 import { gpuLayer, zTransform, REFLOW_SPRING, getGridItemTransition } from "../../lib/motion";
 import "../../styles/ui.css";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
+import { TILE_GRID, TILE_PAD } from "../../lib/layout";
 
 const MotionLink = motion.create(Link);
 
@@ -33,12 +34,7 @@ export function AlbumGrid({ children }: { children: React.ReactNode }) {
       <motion.div
         layout="position"
         transition={{ layout: REFLOW_SPRING }}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(clamp(120px, 14vw, 175px), 1fr))",
-          gap: "clamp(10px, 1.5vw, 16px)",
-          width: "100%",
-        }}
+        style={TILE_GRID}
       >
         {children}
       </motion.div>
@@ -111,7 +107,7 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
         display: "flex",
         flexDirection: "column",
         gap: 8,
-        padding: 10,
+        padding: TILE_PAD,
         borderRadius: 12,
         width: "100%",
         boxSizing: "border-box",

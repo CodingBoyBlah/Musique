@@ -34,6 +34,7 @@ import { useReflowPulse } from "../hooks/useReflowPulse";
 import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
 import { HomeFeedShelves } from "../components/ui/HomeFeedShelves";
+import { TILE_PAD, TILE_BLEED } from "../lib/layout";
 
 // grid reflow spring for smooth panel gliding (critically damped)
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
@@ -695,16 +696,13 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
       whileTap={{ scale: 0.97 }}
       style={{
         width: "100%",
-        maxWidth: TILE_COVER,
-        height: TILE_H,
         overflow: "hidden",
         minWidth: 0,
         flexShrink: 0,
-        marginInline: "auto",
         display: "flex",
         flexDirection: "column",
         gap: 8,
-        padding: 10,
+        padding: TILE_PAD,
         borderRadius: 12,
         border: "none",
         background: hover ? "var(--color-surface-hover, rgba(255,255,255,0.06))" : "transparent",
@@ -720,7 +718,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
           position: "relative",
           width: "100%",
           aspectRatio: "1 / 1",
-          borderRadius: 10,
+          borderRadius: 8,
           overflow: "hidden",
           boxShadow: hover ? "0 12px 28px rgba(0, 0, 0, 0.5)" : "0 4px 14px rgba(0, 0, 0, 0.3)",
           transition: "box-shadow 0.25s ease",
@@ -813,6 +811,7 @@ function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string 
       items={tracks}
       minColWidth={TILE_COVER}
       gap={14}
+      style={TILE_BLEED}
       maxRows={2}
       getKey={(t) => t.id}
       renderItem={(t, i) => (
@@ -959,6 +958,7 @@ function ArtistTiles({ artists }: { artists: ArtistItem[] }) {
       items={artists}
       minColWidth={TILE_COVER}
       gap={14}
+      style={TILE_BLEED}
       maxRows={2}
       getKey={(a) => a.id}
       renderItem={(a, i) => <ArtistCard artist={a} index={i} />}

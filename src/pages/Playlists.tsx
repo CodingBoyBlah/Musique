@@ -22,6 +22,7 @@ import { useContextMenu, type MenuEntry } from "../components/ui/ContextMenu";
 import type { PlaylistSummary } from "../types/library";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 import { getGridItemTransition } from "../lib/motion";
+import { TILE_GRID, TILE_PAD } from "../lib/layout";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
 const MotionLink = motion.create(Link);
@@ -71,7 +72,7 @@ const PlaylistCard = memo(function PlaylistCard({
         display:        "flex",
         flexDirection:  "column",
         gap:            10,
-        padding:        "clamp(10px, 1.2vw, 14px)",
+        padding:        TILE_PAD,
         borderRadius:   12,
         width:          "100%",
         boxSizing:      "border-box",
@@ -192,7 +193,7 @@ const FolderCard = memo(function FolderCard({ folder, index = 0 }: { folder: Fol
       whileHover={{ y: -3 }}
       whileTap={{ scale: 0.98 }}
       style={{
-        display: "flex", flexDirection: "column", gap: 10, padding: "clamp(10px, 1.2vw, 14px)", borderRadius: 12,
+        display: "flex", flexDirection: "column", gap: 10, padding: TILE_PAD, borderRadius: 12,
         width: "100%", boxSizing: "border-box", textDecoration: "none", color: "inherit",
         background: hover ? "var(--color-surface-hover)" : "transparent", transition: "background 0.18s ease", minWidth: 0,
       }}
@@ -378,12 +379,7 @@ export default function Playlists() {
           <motion.div
             layout="position"
             transition={{ layout: REFLOW }}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(clamp(130px, 14vw, 170px), 1fr))",
-              gap: "clamp(10px, 1.4vw, 16px)",
-              width: "100%",
-            }}
+            style={TILE_GRID}
           >
             {folders.map((f, i) => (
               <FolderCard key={`folder-${f.id}`} folder={f} index={i} />

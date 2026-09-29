@@ -1,3 +1,4 @@
+import { TILE_GRID, TILE_PAD } from "../../lib/layout";
 /* loading placeholders shaped like the content they stand in for, so the page
 keeps its layout while data arrives instead of flashing a "Loading…" line.
 Static (no shimmer): a shimmer is one more moving thing to ignore, and it would
@@ -49,15 +50,10 @@ export function CardGridSkeleton({
   return (
     <div
       aria-hidden
-      style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(auto-fill, minmax(${minCol}, 1fr))`,
-        gap: "clamp(10px, 1.5vw, 16px)",
-        width: "100%",
-      }}
+      style={{ ...TILE_GRID, gridTemplateColumns: `repeat(auto-fill, minmax(${minCol}, 1fr))` }}
     >
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} style={{ display: "flex", flexDirection: "column", gap: 10, padding: "clamp(10px, 1.2vw, 14px)" }}>
+        <div key={i} style={{ display: "flex", flexDirection: "column", gap: 10, padding: TILE_PAD }}>
           <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: round ? "50%" : 8, background: BLOCK }} />
           <div style={{ width: "70%", height: 11, borderRadius: 4, background: BLOCK, alignSelf: round ? "center" : undefined }} />
           <div style={{ width: "45%", height: 9, borderRadius: 4, background: BLOCK, opacity: 0.7, alignSelf: round ? "center" : undefined }} />

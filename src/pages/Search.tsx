@@ -39,6 +39,7 @@ import type {
   TrackItem,
   SearchResults,
 } from "../types/spotify";
+import { TILE_GRID } from "../lib/layout";
 
 const CATEGORIES = ["all", "songs", "artists", "albums", "playlists", "podcasts"] as const;
 type Category = (typeof CATEGORIES)[number];
@@ -397,12 +398,7 @@ function PlaylistGrid({ children }: { children: React.ReactNode }) {
     <motion.div
       layout="position"
       transition={{ layout: REFLOW_SPRING }}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(clamp(120px, 14vw, 175px), 1fr))",
-        gap: "clamp(10px, 1.5vw, 16px)",
-        width: "100%",
-      }}
+      style={TILE_GRID}
     >
       {children}
     </motion.div>

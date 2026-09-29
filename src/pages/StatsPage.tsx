@@ -144,10 +144,15 @@ function RankedTracks({ id, title, rows, contextId, caption }: { id: string; tit
               className="q-row focus-ring"
               data-clickable
               onClick={() => play(i)}
-              style={{ all: "unset", boxSizing: "border-box", width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "6px 8px", borderRadius: 8, cursor: "pointer" }}
+              style={{
+                all: "unset", boxSizing: "border-box", width: "100%", display: "flex", alignItems: "center", gap: 12,
+                // the same geometry as TrackRow, so every track list in the app lines up
+                padding: "8px 12px", margin: "1.5px 0", borderRadius: 8, cursor: "pointer",
+                background: i % 2 === 0 ? "rgba(255,255,255,0.032)" : "transparent",
+              }}
             >
-              <span className="tnum" style={{ width: 22, textAlign: "right", fontSize: 13, color: "var(--color-text-dim)" }}>{i + 1}</span>
-              <CoverArt url={r.item.album?.image_url} alt="" size={40} style={{ width: 40, height: 40, flexShrink: 0 }} />
+              <span className="tnum" style={{ width: 28, flexShrink: 0, textAlign: "center", fontSize: 13, color: "var(--color-text-muted)" }}>{i + 1}</span>
+              <CoverArt url={r.item.album?.image_url} alt="" size={38} style={{ width: 38, height: 38, flexShrink: 0 }} />
               <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
                 <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.item.name}</span>
                 <span className="t-caption" style={{ fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
