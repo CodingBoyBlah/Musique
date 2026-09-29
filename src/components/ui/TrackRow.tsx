@@ -22,6 +22,7 @@ import { transportPlay, transportPause } from "../../hooks/usePlayerControls";
 import { AnimatedPlayPause, AnimatedHeart } from "../playground/AnimatedIcons";
 import { Tooltip } from "./Tooltip";
 import "../../styles/ui.css";
+import { isEpisodeId } from "../../utils/episode";
 
 interface Props {
   track:         TrackItem;
@@ -149,7 +150,8 @@ function TrackRowImpl({
   // Only meaningful while audio actually comes from YouTube. This is the
   // escape hatch for a bad automatic match - matching refuses rather than
   // guessing, so a track that won't play needs somewhere to be corrected.
-  if (backend?.active === "youtube") {
+  // episodes aren't matched on youtube - they come from the show's feed
+  if (backend?.active === "youtube" && !isEpisodeId(track.id)) {
     menuEntries.push({
       label: "Change YouTube source…",
       icon: <Music size={14} />,

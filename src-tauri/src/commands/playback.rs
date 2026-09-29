@@ -271,6 +271,9 @@ fn yt_claim() -> u64 {
 /// taken. The download is ~1s of network work; holding the playback mutex
 /// across it would block every transport command for its duration.
 async fn yt_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppError> {
+    if let Some(episode_id) = id.strip_prefix("spotify:episode:") {
+        return yt_play_episode(app, id, episode_id, position_ms).await;
+    }
     let ticket = yt_claim();
     ensure_yt(app).await?;
     let pool = app.state::<AppState>().db.clone();
@@ -299,6 +302,108 @@ async fn yt_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppE
     Ok(())
 }
 
+/// Play a podcast episode on the YouTube backend. Spotify only streams episodes
+/// to its own session, so the audio comes from the show's RSS feed (or YouTube
+/// Music) instead - see `episode_audio`. Episodes stream rather than download
+/// whole, so this starts on the first chunk.
+async fn yt_play_episode(
+    app: &AppHandle,
+    id: &str,
+    episode_id: &str,
+    position_ms: u32,
+) -> Result<(), AppError> {
+    use rodio::Source;
+
+    let ticket = yt_claim();
+    let current = || YT_REQUEST.load(Ordering::SeqCst) == ticket;
+    ensure_yt(app).await?;
+    let pool = app.state::<AppState>().db.clone();
+    let token = crate::commands::spotify::tok(app).await?;
+
+    let found = crate::episode_audio::resolve(&pool, &token, episode_id).await?;
+    if !current() {
+        return Ok(());
+    }
+    let opened = match crate::episode_audio::remote::open(&found.url, found.user_agent).await {
+        Ok(opened) => opened,
+        Err(e) => {
+            // a remembered url that stopped working shouldn't stick
+            crate::episode_audio::forget(&pool, episode_id).await;
+            return Err(e);
+        }
+    };
+    if !current() {
+        return Ok(());
+    }
+    eprintln!("[youtube] episode {episode_id} via {} ({} bytes)", found.via, opened.len);
+
+    let handle = opened.handle.clone();
+    if position_ms > 0 && found.duration_ms > 0 {
+        // rough (see EpisodeStream::byte_for); the exact spot for an mp4 is
+        // only known once its index is read, below
+        let byte = (opened.len as u128 * position_ms as u128 / found.duration_ms as u128) as u64;
+        handle.prefetch(byte.saturating_sub(64 * 1024), std::time::Duration::from_secs(8)).await;
+    }
+
+    // the container type without its codec parameters, which the probe
+    // doesn't match on; the feed's word first, the server's second
+    let mime = found
+        .mime
+        .or(opened.content_type)
+        .map(|m| m.split(';').next().unwrap_or_default().trim().to_string())
+        .filter(|m| m.starts_with("audio/"));
+    let reader = opened.reader;
+    let clock = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let source_clock = std::sync::Arc::clone(&clock);
+    // probing and the first seek read the file, which can wait on the network,
+    // so they run on a blocking thread rather than an async worker
+    let (source, segments, started_at) = tokio::task::spawn_blocking(move || -> Result<_, AppError> {
+        let mut decoder = crate::episode_audio::source::EpisodeDecoder::open(reader, mime)
+            .map_err(|e| AppError::Playback(format!("episode decode: {e}")))?;
+        let segments = decoder.segments();
+        let mut start = 0u32;
+        if position_ms > 0 {
+            match decoder.try_seek(std::time::Duration::from_millis(position_ms as u64)) {
+                Ok(()) => start = position_ms,
+                Err(e) => eprintln!("[youtube] episode seek to {position_ms}ms on load failed: {e}"),
+            }
+        }
+        Ok((crate::episode_audio::source::EpisodeSource::new(decoder, source_clock, start as u64), segments, start))
+    })
+    .await
+    .map_err(|e| AppError::Playback(format!("episode decode: {e}")))??;
+
+    let stream = crate::playback::youtube::EpisodeStream { handle, duration_ms: found.duration_ms, segments };
+    let yt = app.state::<AppState>().yt.clone();
+    let guard = yt.lock().await;
+    if !current() {
+        eprintln!("[youtube] dropping superseded load of {id}");
+        return Ok(());
+    }
+    if let Some(player) = guard.as_ref() {
+        player.play_episode(id, source, clock, stream, started_at);
+    }
+    Ok(())
+}
+
+/// Seek on the YouTube backend. Music is fully in memory, so that's instant;
+/// a streaming episode first pulls the bytes around the target so the audio
+/// thread doesn't sit waiting on the network mid-seek.
+async fn yt_seek(app: &AppHandle, position_ms: u32) -> Result<(), AppError> {
+    let yt = app.state::<AppState>().yt.clone();
+    let episode = yt.lock().await.as_ref().and_then(|p| p.episode_stream());
+    if let Some(episode) = episode {
+        if let Some(byte) = episode.byte_for(position_ms) {
+            episode.handle.prefetch(byte, std::time::Duration::from_secs(6)).await;
+        }
+    }
+    let guard = yt.lock().await;
+    if let Some(player) = guard.as_ref() {
+        player.seek(position_ms)?;
+    }
+    Ok(())
+}
+
 /// Resolve, extract and download a track ahead of playing it.
 ///
 /// Fire-and-forget: a preload failing must never surface to the user or block
@@ -306,6 +411,16 @@ async fn yt_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppE
 /// played, `yt_play` simply pays the cost then instead.
 async fn yt_preload(app: &AppHandle, id: &str) {
     let pool = app.state::<AppState>().db.clone();
+    if let Some(episode_id) = id.strip_prefix("spotify:episode:") {
+        // not the audio (that's hundreds of MB) - just find where it lives,
+        // so pressing play skips the feed lookup
+        if let Ok(token) = crate::commands::spotify::tok(app).await {
+            if let Err(e) = crate::episode_audio::resolve(&pool, &token, episode_id).await {
+                eprintln!("[youtube] preload {id}: {e}");
+            }
+        }
+        return;
+    }
     let query = match match_query(app, &pool, id).await {
         Ok(q) => q,
         Err(e) => {
@@ -727,13 +842,18 @@ pub async fn resume_or_play(app: AppHandle, id: String, position_ms: u32) -> Res
         if resumable {
             yt_claim();
             let yt = app.state::<AppState>().yt.clone();
+            let drifted = yt
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|p| position_ms > 0 && p.position_ms().abs_diff(position_ms) > 2000);
+            if drifted {
+                if let Err(e) = yt_seek(&app, position_ms).await {
+                    eprintln!("[youtube] seek on resume failed: {e}");
+                }
+            }
             let guard = yt.lock().await;
             if let Some(player) = guard.as_ref() {
-                if position_ms > 0 && player.position_ms().abs_diff(position_ms) > 2000 {
-                    if let Err(e) = player.seek(position_ms) {
-                        eprintln!("[youtube] seek on resume failed: {e}");
-                    }
-                }
                 player.resume()?;
             }
         } else {
@@ -793,14 +913,7 @@ pub async fn stop_playback(app: AppHandle) -> Result<(), AppError> {
 #[tauri::command]
 pub async fn seek_playback(app: AppHandle, position_ms: u32) -> Result<(), AppError> {
     if uses_youtube(&app).await {
-        // The whole track is buffered in memory, so this is an exact seek with
-        // no re-fetch - see `youtube::stream` for why it is fetched that way.
-        let yt = app.state::<AppState>().yt.clone();
-        let guard = yt.lock().await;
-        if let Some(player) = guard.as_ref() {
-            player.seek(position_ms)?;
-        }
-        return Ok(());
+        return yt_seek(&app, position_ms).await;
     }
 
     let playback = app.state::<AppState>().playback.clone();

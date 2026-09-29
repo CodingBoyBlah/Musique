@@ -45,6 +45,8 @@ rand = "0.8"
 sha1 = "0.10"
 sha2 = "0.10"
 url = "2"
+# podcast rss feeds (episode audio on the youtube backend)
+roxmltree = "0.20"
 log = "0.4"
 librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
 librespot-metadata = { version = "0.8", default-features = false }

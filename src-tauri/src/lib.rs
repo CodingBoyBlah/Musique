@@ -424,6 +424,7 @@ pub fn audio_probe() -> i32 {
 
 mod db;
 mod discord;
+mod episode_audio;
 mod errors;
 mod http;
 mod internal;

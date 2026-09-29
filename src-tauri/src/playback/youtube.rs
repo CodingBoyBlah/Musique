@@ -40,6 +40,31 @@ use super::{PlayerMsg, SharedVolume};
 /// IPC traffic identical to the librespot path.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// What a seek needs to know about the episode that is streaming.
+#[derive(Clone)]
+pub struct EpisodeStream {
+    pub handle:      crate::episode_audio::remote::RemoteHandle,
+    pub duration_ms: u64,
+    /// A fragmented mp4's fragment table, when it has one.
+    pub segments:    Option<Arc<crate::episode_audio::mp4::Segments>>,
+}
+
+impl EpisodeStream {
+    /// Where to start downloading for a seek to `position_ms`. Exact for a
+    /// fragmented mp4 (the fragment it lands in); otherwise proportional,
+    /// which is close for the constant-bitrate mp3s most podcasts are, and
+    /// started a little early so the decoder's frame search is covered.
+    pub fn byte_for(&self, position_ms: u32) -> Option<u64> {
+        if let Some(segments) = &self.segments {
+            return Some(segments.at(position_ms as u64).0);
+        }
+        (self.duration_ms > 0).then(|| {
+            let byte = (self.handle.len() as u128 * position_ms as u128 / self.duration_ms as u128) as u64;
+            byte.saturating_sub(64 * 1024)
+        })
+    }
+}
+
 pub struct YtPlayback {
     // Dropping the stream closes the audio device, so it is owned here even
     // though nothing reads it.
@@ -71,6 +96,14 @@ pub struct YtPlayback {
     /// Per-track linear gain from YouTube's `loudnessDb`, folded into the sink
     /// volume so switching backends does not change perceived loudness.
     gain:         Arc<Mutex<f32>>,
+    /// Set while a podcast episode is playing: its own position, in the
+    /// episode's time (see `episode_audio::source` - at 2x the sink's sample
+    /// count would say half as much has played). None for music, which reads
+    /// the sink.
+    clock:        Arc<Mutex<Option<Arc<AtomicU64>>>>,
+    /// The streaming episode file, so a seek can fetch the bytes around its
+    /// target before the audio thread goes looking for them.
+    episode:      Mutex<Option<EpisodeStream>>,
     /// Aborted on drop - a dropped JoinHandle only detaches, which would leave
     /// the poll loop (and the sink/AppHandle it holds) running forever.
     watch_task:   tauri::async_runtime::JoinHandle<()>,
@@ -113,6 +146,7 @@ impl YtPlayback {
         let is_ended    = Arc::new(AtomicBool::new(false));
         let duration_ms = Arc::new(AtomicU64::new(0));
         let generation  = Arc::new(AtomicU64::new(0));
+        let clock       = Arc::new(Mutex::new(None::<Arc<AtomicU64>>));
 
         let watch_task = spawn_watcher(
             app.clone(),
@@ -122,6 +156,7 @@ impl YtPlayback {
             Arc::clone(&is_playing),
             Arc::clone(&is_ended),
             Arc::clone(&generation),
+            Arc::clone(&clock),
         );
 
         Ok(Self {
@@ -137,6 +172,8 @@ impl YtPlayback {
             duration_ms,
             generation,
             gain: Arc::new(Mutex::new(1.0)),
+            clock,
+            episode: Mutex::new(None),
             watch_task,
         })
     }
@@ -155,6 +192,8 @@ impl YtPlayback {
         // cannot attribute the old track's drained queue to the new track.
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.sink.clear();
+        *self.clock.lock().unwrap() = None;
+        *self.episode.lock().unwrap() = None;
 
         let cursor = Cursor::new(audio);
         // itag 140 is AAC in an MP4 container. Naming the container skips
@@ -197,6 +236,41 @@ impl YtPlayback {
         );
         self.announce_playing(position_ms);
         Ok(())
+    }
+
+    /// Play a podcast episode from an already-built source (decoding and the
+    /// initial seek happen off the async runtime - see `commands::playback`).
+    pub fn play_episode(
+        &self,
+        track_id: &str,
+        source: impl rodio::Source + Send + 'static,
+        clock: Arc<AtomicU64>,
+        stream: EpisodeStream,
+        position_ms: u32,
+    ) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.sink.clear();
+        *self.clock.lock().unwrap() = Some(clock);
+        self.duration_ms.store(stream.duration_ms, Ordering::Relaxed);
+        *self.episode.lock().unwrap() = Some(stream);
+
+        self.sink.append(source);
+        // no loudness figure for a publisher's file; play it as mastered
+        *self.gain.lock().unwrap() = 1.0;
+        self.apply_volume();
+
+        *self.current.lock().unwrap() = Some(track_id.to_string());
+        self.is_ended.store(false, Ordering::Relaxed);
+        self.is_playing.store(true, Ordering::Relaxed);
+        self.sink.play();
+
+        eprintln!("[youtube] playing episode {track_id} from {position_ms}ms");
+        self.announce_playing(position_ms);
+    }
+
+    /// The streaming episode, if one is loaded.
+    pub fn episode_stream(&self) -> Option<EpisodeStream> {
+        self.episode.lock().unwrap().clone()
     }
 
     pub fn resume(&self) -> Result<(), AppError> {
@@ -257,7 +331,7 @@ impl YtPlayback {
     }
 
     pub fn position_ms(&self) -> u32 {
-        self.sink.get_pos().as_millis().min(u32::MAX as u128) as u32
+        position_of(&self.sink, &self.clock)
     }
 
     pub fn is_playing(&self) -> bool {
@@ -322,6 +396,7 @@ fn spawn_watcher(
     is_playing: Arc<AtomicBool>,
     is_ended: Arc<AtomicBool>,
     generation: Arc<AtomicU64>,
+    clock: Arc<Mutex<Option<Arc<AtomicU64>>>>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         let mut last_emit = std::time::Instant::now()
@@ -356,7 +431,7 @@ fn spawn_watcher(
                 continue;
             }
 
-            let position_ms = sink.get_pos().as_millis().min(u32::MAX as u128) as u32;
+            let position_ms = position_of(&sink, &clock);
             let due = last_emit.elapsed() >= Duration::from_millis(1000);
             // A jump means a seek happened; report it immediately rather than
             // letting the frontend interpolate towards a stale position.
@@ -369,6 +444,15 @@ fn spawn_watcher(
             }
         }
     })
+}
+
+/// Where playback is: the episode's own clock while one is playing, the sink's
+/// sample count for music.
+fn position_of(sink: &rodio::Sink, clock: &Mutex<Option<Arc<AtomicU64>>>) -> u32 {
+    match clock.lock().unwrap().as_ref() {
+        Some(c) => c.load(Ordering::Relaxed).min(u32::MAX as u64) as u32,
+        None => sink.get_pos().as_millis().min(u32::MAX as u128) as u32,
+    }
 }
 
 fn emit(app: &AppHandle, msg: PlayerMsg) {
