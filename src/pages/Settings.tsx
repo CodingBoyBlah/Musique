@@ -488,6 +488,18 @@ const PREMIUM_INFO = (
   </Tooltip>
 );
 
+/* Podcasts on YouTube Music play from the show's own public feed (or its
+   YouTube uploads), so the few that exist only on Spotify can't. */
+const PODCAST_INFO = (
+  <Tooltip label="Podcasts play from each show's public feed. Spotify exclusives won't play">
+    <span
+      style={{ display: "inline-flex", alignItems: "center", cursor: "help" }}
+    >
+      <Info size={12} strokeWidth={2.2} />
+    </span>
+  </Tooltip>
+);
+
 function backendOptions(spotifyAvailable: boolean): {
   value: PlaybackBackend;
   label: string;
@@ -502,7 +514,7 @@ function backendOptions(spotifyAvailable: boolean): {
       disabled: !spotifyAvailable,
       info: PREMIUM_INFO,
     },
-    { value: "youtube", label: "YouTube Music" },
+    { value: "youtube", label: "YouTube Music", info: PODCAST_INFO },
   ];
 }
 
