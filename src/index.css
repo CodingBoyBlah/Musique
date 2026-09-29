@@ -1108,11 +1108,11 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .ovs-track[data-on="true"] {
     pointer-events: auto;
 }
-/* 3px at rest, anchored to the right so it widens inward when grabbed */
+/* 3px at rest, flush with the strip's right edge so it widens inward when grabbed */
 .ovs-thumb {
     position: absolute;
     top: 0;
-    right: 2px;
+    right: 0;
     width: 3px;
     border-radius: 99px;
     background: rgba(255, 255, 255, 0.26);

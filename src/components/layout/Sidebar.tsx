@@ -29,6 +29,8 @@ import { chromePx } from "../../lib/zoom";
 rail, 10px corners. Every icon and pinned cover sits on this same grid, so the
 rail reads as one column rather than a stack of odd-sized pieces. */
 const RAIL_ITEM = 40;
+// the gap between the rail and the page card (the card's own left margin)
+const GUTTER = 4;
 const RAIL_RADIUS = 10;
 // a pinned cover inset in its target, so the selected pill shows as an even
 // 4px ring around it; its corners follow the pill's (10 - 4 = 6)
@@ -407,7 +409,9 @@ export default function Sidebar() {
         flexShrink:    0,
         display:       "flex",
         flexDirection: "column",
-        overflow:      "hidden",
+        /* clips like overflow:hidden, but 4px wider on the right so the
+           scrollbar can sit in the gap and touch the page card */
+        clipPath:      `inset(0 -${GUTTER}px 0 0)`,
         background:    "transparent",
         borderRight:   "none",
         /* the rail runs to the top of the window. on windows the first
@@ -616,7 +620,7 @@ export default function Sidebar() {
           )}
         </Section>
       </div>
-      <OverlayScrollbar target={railRef} />
+      <OverlayScrollbar target={railRef} edge={-GUTTER} />
       </div>
       {menuEl}
     </motion.nav>
