@@ -122,8 +122,16 @@ pub struct JamSession {
 pub(crate) fn jam_from(v: &Value) -> Option<JamSession> {
     let session_id = s(v, &["session_id"])?;
     let owner = s(v, &["session_owner_id"]);
-    let join_token = s(v, &["join_session_token"]);
-    let join_url = s(v, &["join_session_url"])
+    /* spotify hands back its internal address here
+       (hm://social-connect/v2/sessions/join/<token>), which nothing outside
+       spotify can open. the shareable link is the open.spotify.com one built
+       from the same token */
+    let raw_url = s(v, &["join_session_url"]);
+    let join_token = s(v, &["join_session_token"]).or_else(|| {
+        raw_url.as_deref().and_then(|u| u.trim_end_matches('/').rsplit('/').next()).map(str::to_string)
+    });
+    let join_url = raw_url
+        .filter(|u| u.starts_with("https://"))
         .or_else(|| join_token.as_ref().map(|t| format!("https://open.spotify.com/socialsession/{t}")));
     let members = v
         .get("session_members")
@@ -227,6 +235,13 @@ mod jam_tests {
         .unwrap();
         let j = jam_from(&v).unwrap();
         assert_eq!(j.join_url.as_deref(), Some("https://open.spotify.com/socialsession/tok123"));
+
+        // the internal hm:// address is never what gets shared
+        let v: Value = serde_json::from_str(
+            r#"{"session_id": "abc", "join_session_url": "hm://social-connect/v2/sessions/join/4Oxc"}"#,
+        )
+        .unwrap();
+        assert_eq!(jam_from(&v).unwrap().join_url.as_deref(), Some("https://open.spotify.com/socialsession/4Oxc"));
         assert!(j.is_host);
         assert!(j.members[0].is_host);
         assert_eq!(j.members[1].name, "pal");
