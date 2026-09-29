@@ -3,7 +3,7 @@ import { useEvenColumns } from "../hooks/useEvenColumns";
 import { Link, Navigate } from "react-router-dom";
 import { usePrefsStore } from "../store/prefs.store";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart } from "@/lib/icons";
+import { Stats } from "@/lib/icons";
 import { getListeningStats, type ListeningStats, type Ranked, type StatsRange } from "../api/stats";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { SectionTitle } from "../components/ui/SectionTitle";
@@ -230,7 +230,7 @@ export default function StatsPage() {
         />
       ) : data.plays === 0 ? (
         <EmptyState
-          icon={<BarChart size={22} />}
+          icon={<Stats size={22} />}
           title="Nothing here yet"
           description="Stats build up from what you play in Musique. Play a few songs and check back."
         />

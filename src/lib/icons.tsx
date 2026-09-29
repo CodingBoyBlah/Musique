@@ -67,6 +67,8 @@ const PANEL = rrect(3, 4, 18, 16, 3) + "M9.5 4v16";
 const DEVICES_MONITOR = "M12.5 15H4.5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1";
 const DEVICES_PHONE = rrect(14.5, 9.5, 7, 11, 1.8);
 const QUEUE_PLAY = "M4 5.2v4.6a.6.6 0 0 0 .9.5l3.7-2.3a.6.6 0 0 0 0-1L4.9 4.7a.6.6 0 0 0-.9.5z";
+const STATS_FRAME = rrect(3, 3.5, 18, 17, 4.5);
+const STATS_BARS = "M8 16.5v-3M12 16.5V8M16 16.5v-5.5";
 const EYE = "M2.5 12C4.5 7.8 8 5.5 12 5.5s7.5 2.3 9.5 6.5c-2 4.2-5.5 6.5-9.5 6.5S4.5 16.2 2.5 12z";
 
 export const iconPaths = {
@@ -156,6 +158,10 @@ export const iconPaths = {
     "M10 4.5c.4 3.9 2.6 6.1 6.5 6.5-3.9.4-6.1 2.6-6.5 6.5-.4-3.9-2.6-6.1-6.5-6.5 3.9-.4 6.1-2.6 6.5-6.5z" +
     "M18 2.5c.15 1.4.9 2.35 2.5 2.5-1.6.15-2.35.9-2.5 2.5-.15-1.6-.9-2.35-2.5-2.5 1.6-.15 2.35-1.1 2.5-2.5z",
   Speaker: rrect(5, 2.5, 14, 19, 2.5) + circle(12, 14.5, 3.5) + "M12 6.5h.01",
+  // listening stats: three rising bars in a soft frame. drawn to sit with
+  // Captions and Info, and to fill when Stats is the page you are on - the
+  // bare bar chart it replaced was the one nav icon with no filled state
+  Stats: STATS_FRAME + STATS_BARS,
   Trash2:
     "M4 6.5h16M9.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v1.5" +
     "M6 6.5l.8 12.1a2 2 0 0 0 2 1.9h6.4a2 2 0 0 0 2-1.9L18 6.5M10 11v5M14 11v5",
@@ -240,6 +246,7 @@ const SOLID: Partial<Record<IconName, Solid>> = {
     cut: circle(12, 14.5, 3.5) + "M12 6.5h.01",
     edge: rrect(5, 2.5, 14, 19, 2.5),
   },
+  Stats: { fill: STATS_FRAME, cut: STATS_BARS, edge: STATS_FRAME },
   Tv: { fill: rrect(3, 5, 18, 12.5, 2.5) },
   User: { fill: circle(12, 7.5, 4) + PERSON_BODY },
   UserPlus: {
@@ -382,6 +389,7 @@ export const SkipForward = createIcon("SkipForward");
 export const Smartphone = createIcon("Smartphone");
 export const Sparkles = createIcon("Sparkles");
 export const Speaker = createIcon("Speaker");
+export const Stats = createIcon("Stats");
 export const Trash2 = createIcon("Trash2");
 export const Tv = createIcon("Tv");
 export const User = createIcon("User");
@@ -401,7 +409,7 @@ const ICONS: Record<string, LucideIcon> = {
   MonitorSpeaker, MoreHorizontal, Music, Music2, PanelLeft, PanelLeftClose,
   Pause, Pencil, Pin, PinOff, Play, Plus, Queue, Radio, RefreshCw, Repeat, Repeat1, RotateCcw,
   RotateCw, Search, Settings, Share2, Shuffle, SkipBack, SkipForward,
-  Smartphone, Sparkles, Speaker, Trash2, Tv, User, UserPlus, Users,
+  Smartphone, Sparkles, Speaker, Stats, Trash2, Tv, User, UserPlus, Users,
   Volume1, Volume2, VolumeX, X,
 };
 

@@ -4,7 +4,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, animate, useMotionValue, useTransform, useReducedMotion, type MotionValue } from "framer-motion";
 import {
   Home, ListMusic,
-  Music, Disc3, User, Mic, BarChart,
+  Music, Disc3, User, Mic, Stats,
   Pin, PinOff,
   ChevronDown, Folder,
   type LucideIcon,
@@ -458,7 +458,7 @@ export default function Sidebar() {
         <Section label="Discover" first expanded={spotifyOpen} onToggle={() => setSpotifyOpen(v => !v)} collapsed={isCollapsed}>
           <NavItem icon={Home} label="Home"      active={path === "/"}                                          onClick={() => navigate("/")} collapsed={isCollapsed} />
           <NavItem icon={ListMusic} label="Playlists" active={path === "/playlists" || onPlaylistWithoutRow}           onClick={() => navigate("/playlists")} collapsed={isCollapsed} />
-          {showStats && <NavItem icon={BarChart} label="Stats" active={path === "/stats"} onClick={() => navigate("/stats")} collapsed={isCollapsed} />}
+          {showStats && <NavItem icon={Stats} label="Stats" active={path === "/stats"} onClick={() => navigate("/stats")} collapsed={isCollapsed} />}
         </Section>
 
         <Section label="Library" expanded={libraryOpen} onToggle={() => setLibraryOpen(v => !v)} collapsed={isCollapsed}>
