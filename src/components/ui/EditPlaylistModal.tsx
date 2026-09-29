@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
-import { X, Globe, EyeOff, Users, Check } from "@/lib/icons";
+import { X, Info } from "@/lib/icons";
+import { Tooltip } from "./Tooltip";
+import { SegmentedControl } from "../playground/PlaygroundControls";
 import { Modal } from "./Modal";
 import { CoverArt } from "./CoverArt";
 import { updatePlaylistDetails } from "../../api/library";
 import { toast } from "../../store/toast.store";
 import { errMsg } from "../../lib/err";
-import { PRESS, PRESS_TRANSITION, SPRING } from "../../lib/motion";
 import type { PlaylistDetail } from "../../types/spotify";
 
 type Visibility = "public" | "private" | "collaborative";
@@ -14,10 +14,10 @@ type Visibility = "public" | "private" | "collaborative";
 /* spotify has three sharing states, not two switches: a collaborative
 playlist is always private (the api refuses public + collaborative). one
 choice of three says that honestly instead of switches that flip each other. */
-const VISIBILITY: { value: Visibility; label: string; hint: string; Icon: typeof Globe }[] = [
-  { value: "public", label: "Public", hint: "On your profile and in search", Icon: Globe },
-  { value: "private", label: "Private", hint: "Only people with the link", Icon: EyeOff },
-  { value: "collaborative", label: "Collaborative", hint: "Friends with the link can add songs", Icon: Users },
+const VISIBILITY: { value: Visibility; label: string; hint: string }[] = [
+  { value: "public", label: "Public", hint: "on your profile and in search" },
+  { value: "private", label: "Private", hint: "only people with the link" },
+  { value: "collaborative", label: "Collaborative", hint: "friends with the link can add songs (always private on Spotify)" },
 ];
 
 const NAME_MAX = 100;
@@ -197,55 +197,30 @@ export function EditPlaylistModal({
         </div>
 
         <div style={{ padding: "20px 20px 0" }}>
-          <div id="edit-playlist-vis" style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-dim)", marginBottom: 8 }}>Who can see it</div>
-          <div role="radiogroup" aria-labelledby="edit-playlist-vis" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-            {VISIBILITY.map(({ value, label, hint, Icon }) => {
-              const on = visibility === value;
-              return (
-                <motion.button
-                  key={value}
-                  type="button"
-                  role="radio"
-                  aria-checked={on}
-                  onClick={() => setVisibility(value)}
-                  whileTap={PRESS}
-                  transition={PRESS_TRANSITION}
-                  className="focus-ring"
-                  style={{
-                    position: "relative",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "flex-start",
-                    gap: 6,
-                    padding: "12px 12px 11px",
-                    borderRadius: 12,
-                    border: "1px solid",
-                    borderColor: on ? "color-mix(in srgb, var(--color-accent) 70%, transparent)" : "rgba(255,255,255,0.08)",
-                    background: on ? "color-mix(in srgb, var(--color-accent) 16%, transparent)" : "rgba(255,255,255,0.03)",
-                    color: "var(--color-text-hi)",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    transition: "background 0.16s ease, border-color 0.16s ease",
-                    minWidth: 0,
-                  }}
-                >
-                  <span style={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "space-between" }}>
-                    <Icon size={17} strokeWidth={1.9} style={{ color: on ? "var(--color-accent)" : "var(--color-text-dim)" }} />
-                    {on && (
-                      <motion.span
-                        layoutId="edit-playlist-vis-check"
-                        transition={SPRING}
-                        style={{ width: 18, height: 18, borderRadius: 99, background: "var(--color-accent)", display: "flex", alignItems: "center", justifyContent: "center" }}
-                      >
-                        <Check size={11} strokeWidth={3} style={{ color: "#fff" }} />
-                      </motion.span>
-                    )}
-                  </span>
-                  <span style={{ fontSize: 13.5, fontWeight: 650 }}>{label}</span>
-                  <span className="t-caption" style={{ fontSize: 11.5, lineHeight: 1.35, color: "var(--color-text-dim)" }}>{hint}</span>
-                </motion.button>
-              );
-            })}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+            <span id="edit-playlist-vis" style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-dim)" }}>Who can see it</span>
+            <Tooltip
+              side="top"
+              label={
+                <span style={{ display: "flex", flexDirection: "column", gap: 4, maxWidth: 240, textAlign: "left" }}>
+                  {VISIBILITY.map((v) => (
+                    <span key={v.value}><b>{v.label}</b>: {v.hint}</span>
+                  ))}
+                </span>
+              }
+            >
+              <span tabIndex={0} aria-label="What these mean" className="focus-ring" style={{ display: "inline-flex", color: "var(--color-text-dim)", cursor: "help", borderRadius: 99 }}>
+                <Info size={13} />
+              </span>
+            </Tooltip>
+          </div>
+          <div role="radiogroup" aria-labelledby="edit-playlist-vis" style={{ display: "flex" }}>
+            <SegmentedControl
+              options={VISIBILITY.map((v) => v.label)}
+              value={VISIBILITY.find((v) => v.value === visibility)!.label}
+              onChange={(label) => setVisibility(VISIBILITY.find((v) => v.label === label)?.value ?? "public")}
+              layoutId="edit-playlist-visibility"
+            />
           </div>
         </div>
 
