@@ -59,13 +59,13 @@ function NavItem({
         display:       "flex",
         alignItems:    "center",
         justifyContent: collapsed ? "center" : "flex-start",
-        gap:           collapsed ? 0 : 11,
+        gap:           collapsed ? 0 : 10,
         height:        collapsed ? RAIL_ITEM : 34,
         /* collapsed: a fixed square, centred in the column, so the active
          pill (inset: 0) is a perfect square */
         width:         collapsed ? RAIL_ITEM : "100%",
         margin:        collapsed ? "0 auto" : undefined,
-        padding:       collapsed ? 0 : "0 10px",
+        padding:       collapsed ? 0 : "0 8px",
         borderRadius:  collapsed ? RAIL_RADIUS : 8,
         border:        "none",
         fontSize:      13.5,
@@ -93,7 +93,9 @@ function NavItem({
       <span className="nav-icon" data-active={active || undefined} style={{
         position: "relative",
         zIndex: 1,
-        width: 20, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+        /* a 26px slot, the same as a playlist cover: icons are centred on the
+         covers' centre line and every label starts on one text edge */
+        width: collapsed ? 20 : 26, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
       }}>
         {/* a touch larger alone in the rail, where the icon is the only label */}
         <Icon size={collapsed ? 19 : 18} strokeWidth={1.7} active={active} />
@@ -243,7 +245,9 @@ function Section({
         className="sb-section-head focus-ring"
         style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          width: "100%", height: 28, padding: "0 10px", border: "none", background: "transparent",
+          // 8px in like every row, so a label starts on the edge the icons and
+          // covers below it start on
+          width: "100%", height: 28, padding: "0 8px", border: "none", background: "transparent",
           borderRadius: 6,
           font: "inherit",
           // capitals at 11px want open tracking or they clump into a block
