@@ -57,8 +57,18 @@ fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(|x| x.as_str()).map(str::to_string).filter(|x| !x.is_empty())
 }
 
-fn first_image(v: &Value) -> Option<String> {
-    v.get("images")?.as_array()?.first()?.get("url")?.as_str().map(str::to_string)
+/// the largest artwork on offer. show/episode image lists aren't reliably
+/// largest-first like album ones are, and taking [0] got 64px covers blown up
+/// to tile size
+pub(crate) fn first_image(v: &Value) -> Option<String> {
+    v.get("images")?
+        .as_array()?
+        .iter()
+        .enumerate()
+        .filter_map(|(n, i)| Some((i.get("url")?.as_str()?, i.get("width").and_then(|w| w.as_i64()).unwrap_or(0), n)))
+        // widest wins; with no widths given, keep spotify's own first pick
+        .max_by_key(|(_, w, n)| (*w, std::cmp::Reverse(*n)))
+        .map(|(u, _, _)| u.to_string())
 }
 
 pub(crate) fn show_from(v: &Value) -> Option<ShowItem> {
@@ -240,6 +250,17 @@ mod tests {
         assert_eq!(e.resume_position_ms, Some(120_000));
         assert_eq!(e.show_name.as_deref(), Some("The Show"));
         assert_eq!(e.image_url.as_deref(), Some("https://img/ep"));
+    }
+
+    #[test]
+    fn picks_largest_art() {
+        let v: Value = serde_json::from_str(
+            r#"{"images": [{"url": "s", "width": 64}, {"url": "l", "width": 640}, {"url": "m", "width": 300}]}"#,
+        )
+        .unwrap();
+        assert_eq!(first_image(&v).as_deref(), Some("l"));
+        let v: Value = serde_json::from_str(r#"{"images": [{"url": "a"}, {"url": "b"}]}"#).unwrap();
+        assert_eq!(first_image(&v).as_deref(), Some("a"));
     }
 
     #[test]
