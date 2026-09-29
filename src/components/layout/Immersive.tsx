@@ -51,8 +51,68 @@ import {
  * subtree onto a render surface that has to be re-blended on every frame the
  * ambient moves. Blurring once into a bitmap and then only transforming it
  * costs nothing per frame, and the artwork now supplies its own texture. */
-function AmbientBg({ url, override }: { url: string | null | undefined; override?: Ambient | null }) {
+/* The room, live off a playing video (canvas / podcast preview).
+ *
+ * Every new video frame is drawn into a tiny 96x54 canvas - blurred and
+ * saturated there, where it costs next to nothing - and the canvas is scaled up
+ * to fill the window, which the bilinear upscale turns into a soft wash. So the
+ * backdrop moves with the video in real time instead of re-reading one frame
+ * every couple of seconds. It sits inside the drifting layer, so the drift and
+ * the "animated background" setting still apply. */
+function LiveVideoRoom({ video }: { video: HTMLVideoElement }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const cv = ref.current;
+    const ctx = cv?.getContext("2d");
+    if (!cv || !ctx) return;
+    setShown(false);
+    let dead = false;
+    let drewOnce = false;
+    let handle = 0;
+    const W = cv.width;
+    const H = cv.height;
+    // drawn oversize so the blur has real pixels at the edges (no dark rim)
+    const over = 0.4;
+    const hasRvfc = "requestVideoFrameCallback" in video;
+    const draw = () => {
+      if (dead) return;
+      if (video.readyState >= 2 && !document.hidden) {
+        ctx.filter = "blur(4px) saturate(1.75)";
+        ctx.drawImage(video, (-W * over) / 2, (-H * over) / 2, W * (1 + over), H * (1 + over));
+        if (!drewOnce) {
+          drewOnce = true;
+          setShown(true);
+        }
+      }
+      handle = hasRvfc
+        ? (video as HTMLVideoElement & { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(draw)
+        : requestAnimationFrame(draw);
+    };
+    draw();
+    return () => {
+      dead = true;
+      if (hasRvfc) (video as HTMLVideoElement & { cancelVideoFrameCallback: (h: number) => void }).cancelVideoFrameCallback(handle);
+      else cancelAnimationFrame(handle);
+    };
+  }, [video]);
+  return (
+    <motion.canvas
+      ref={ref}
+      width={96}
+      height={54}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: shown ? 1 : 0 }}
+      transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 100000, transform: "scale(1.08)" }}
+    />
+  );
+}
+
+function AmbientBg({ url, override, video }: { url: string | null | undefined; override?: Ambient | null; video?: HTMLVideoElement | null }) {
   const cover = useAmbient(url);
+  // reduced motion keeps the calm, slowly-resampled room instead of a live one
+  const reduceLive = useReducedMotion();
   // a playing canvas lights the room from its own frames
   const ambient = override ? { ...override, ready: true } : cover;
   const { base, glow, ready } = ambient;
@@ -93,6 +153,7 @@ function AmbientBg({ url, override }: { url: string | null | undefined; override
             />
           )}
         </AnimatePresence>
+        {video && !reduceLive && <LiveVideoRoom video={video} />}
       </div>
 
 {/* One element, two stacked gradients: the light the sleeve pools into
@@ -487,7 +548,9 @@ export function Immersive() {
   const canvas = useCanvas(open ? track?.id : null);
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const podcast = isEpisodeId(track?.id);
-  const videoAmbient = useVideoAmbient(podcast || (canvas && canvas.kind !== "image") ? videoEl : null);
+  const liveVideo = podcast || (canvas && canvas.kind !== "image") ? videoEl : null;
+  // colours for the lyric ink/glow still come from periodic reads; the backdrop itself is live
+  const videoAmbient = useVideoAmbient(liveVideo);
   // lyric ink and glow follow the video too, so type and room stay one hue
   const { glow, ink } = videoAmbient ?? coverAmbient;
 
@@ -523,7 +586,7 @@ export function Immersive() {
           }}
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b" }}
         >
-          <AmbientBg url={track.album?.image_url} override={videoAmbient} />
+          <AmbientBg url={track.album?.image_url} override={videoAmbient} video={liveVideo} />
           {podcast ? (
             <PodcastStage track={track} onVideo={setVideoEl} />
           ) : (
