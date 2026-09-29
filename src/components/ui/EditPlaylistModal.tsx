@@ -202,7 +202,7 @@ export function EditPlaylistModal({
             <Tooltip
               side="top"
               label={
-                <span style={{ display: "flex", flexDirection: "column", gap: 4, maxWidth: 240, textAlign: "left" }}>
+                <span style={{ display: "flex", flexDirection: "column", gap: 4, width: 240, maxWidth: "70vw", whiteSpace: "normal", textAlign: "left" }}>
                   {VISIBILITY.map((v) => (
                     <span key={v.value}><b>{v.label}</b>: {v.hint}</span>
                   ))}
