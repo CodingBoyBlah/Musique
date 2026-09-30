@@ -5395,6 +5395,7 @@ dependencies = [
  "futures-util",
  "keyring",
  "libc",
+ "librespot-audio",
  "librespot-connect",
  "librespot-core",
  "librespot-metadata",

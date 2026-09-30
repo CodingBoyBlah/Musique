@@ -58,6 +58,7 @@ bytes = "1"
 # StreamExt over the dealer subscriptions (internal/dealer.rs). already in the tree via librespot
 futures-util = "0.3"
 librespot-playback = { version = "0.8", default-features = false, features = ["rodio-backend"] }
+librespot-audio = { version = "0.8", default-features = false }
 # Direct rodio dep so playback/mod.rs can build its OWN output sink (DeviceSink)
 # that opens the device at its NATIVE sample rate. librespot's built-in rodio
 # backend forces 44100, which trips a SIGSEGV bug in cpal 0.16's macOS

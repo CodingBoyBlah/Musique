@@ -23,7 +23,7 @@ import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
 import { TrackRow } from "../components/ui/TrackRow";
 import { useSortTools } from "../components/ui/SortToolbar";
 import { usePlayerStore } from "../store/player.store";
-import { useQueueStore } from "../store/queue.store";
+import { LIKED_SONGS_URI, useQueueStore } from "../store/queue.store";
 import { playTrack } from "../api/playback";
 import { useSpeedDialStore } from "../store/speedDial.store";
 import { useReflowPulse } from "../hooks/useReflowPulse";
@@ -64,7 +64,7 @@ function LikedSongsTab() {
   }
 
   const handlePlay = (index: number) => {
-    const start = playContext(view, index, "liked");
+    const start = playContext(view, index, "liked", LIKED_SONGS_URI);
     if (start) {
       setCurrentTrack(start);
       playTrack(start.id).catch(() => {});

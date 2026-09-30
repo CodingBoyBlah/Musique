@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { usePlayerStore } from "../store/player.store";
+import { useQueueStore } from "../store/queue.store";
 import { toast } from "../store/toast.store";
 import { errMsg } from "../lib/err";
 import { jamRole } from "../store/jam.store";
@@ -31,6 +32,17 @@ const failPlayback = (e: unknown): never => {
   throw e;
 };
 
+/**
+ * The Spotify context uri to report `id` under, so the play shows up as
+ * "Playlist name · x tracks played" in Spotify's Recents instead of a loose
+ * track. Only while `id` actually belongs to the loaded context - a track
+ * queued by hand from elsewhere isn't part of that playlist.
+ */
+const contextUriFor = (id: string): string | null => {
+  const { contextUri, contextTracks } = useQueueStore.getState();
+  return contextUri && contextTracks.some((t) => t.id === id) ? contextUri : null;
+};
+
 export const warmupPlayback  = (): Promise<void>                     => invoke("warmup_playback");
 export const playTrack       = (id: string): Promise<void> => {
   // in a jam, what plays is the jam's call (see lib/jam.ts)
@@ -40,9 +52,10 @@ export const playTrack       = (id: string): Promise<void> => {
   store.setTargetState("playing");
   store.setPlaying(true);
   store.setLastPlayingAt(Date.now());
-  return invoke<void>("play_track", { id }).catch(failPlayback);
+  return invoke<void>("play_track", { id, contextUri: contextUriFor(id) }).catch(failPlayback);
 };
-export const retryPlayTrack  = (id: string): Promise<void>           => invoke("retry_play_track", { id });
+export const retryPlayTrack  = (id: string): Promise<void>           =>
+  invoke("retry_play_track", { id, contextUri: contextUriFor(id) });
 
 // ── connect-driven playback (spotify jam) ──
 // in a jam the queue is spotify's, held by this device's connect player
@@ -101,7 +114,7 @@ export const resumeOrPlay    = (id: string, positionMs: number): Promise<void> =
   store.setPlaying(true);
   store.setPosition(safePos);
   store.setLastPlayingAt(Date.now());
-  return invoke<void>("resume_or_play", { id, positionMs: safePos }).catch(failPlayback);
+  return invoke<void>("resume_or_play", { id, positionMs: safePos, contextUri: contextUriFor(id) }).catch(failPlayback);
 };
 export const stopPlayback    = (): Promise<void>                     => invoke("stop_playback");
 export const seekPlayback    = (positionMs: number): Promise<void>   => invoke("seek_playback", { positionMs });

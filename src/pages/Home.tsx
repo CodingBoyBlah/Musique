@@ -15,7 +15,7 @@ import {
   useMyPlaylists,
 } from "../hooks/useLibrary";
 import { usePlayerStore } from "../store/player.store";
-import { useQueueStore } from "../store/queue.store";
+import { LIKED_SONGS_URI, useQueueStore } from "../store/queue.store";
 import { useSpeedDialStore, type SpeedDialEntry } from "../store/speedDial.store";
 import { playTrack } from "../api/playback";
 import { transportPlay, transportPause } from "../hooks/usePlayerControls";
@@ -128,7 +128,7 @@ const QuickActionCard = memo(function QuickActionCard({
       try {
         const tracks = await getLikedSongs(100, 0);
         if (tracks && tracks.length > 0) {
-          const start = playContext(tracks, 0, "liked-songs");
+          const start = playContext(tracks, 0, "liked-songs", LIKED_SONGS_URI);
           if (start) {
             setCurrentTrack(start);
             playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
@@ -181,7 +181,7 @@ const QuickActionCard = memo(function QuickActionCard({
         const pl = await getPlaylist(item.playlistId);
         const tracks = pl?.tracks ?? [];
         if (tracks.length > 0) {
-          const start = playContext(tracks, 0, item.playlistId);
+          const start = playContext(tracks, 0, item.playlistId, `spotify:playlist:${item.playlistId}`);
           if (start) {
             setCurrentTrack(start);
             playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
@@ -201,7 +201,7 @@ const QuickActionCard = memo(function QuickActionCard({
         const full = await getAlbum(item.albumId);
         const tracks = full?.tracks ?? [];
         if (tracks.length > 0) {
-          const start = playContext(tracks, 0, item.albumId);
+          const start = playContext(tracks, 0, item.albumId, `spotify:album:${item.albumId}`);
           if (start) {
             setCurrentTrack(start);
             playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
@@ -221,7 +221,7 @@ const QuickActionCard = memo(function QuickActionCard({
         const artist = await getArtist(item.artistId);
         const tracks = artist?.top_tracks ?? [];
         if (tracks.length > 0) {
-          const start = playContext(tracks, 0, item.artistId);
+          const start = playContext(tracks, 0, item.artistId, `spotify:artist:${item.artistId}`);
           if (start) {
             setCurrentTrack(start);
             playTrack(start.id).then(() => setPlaying(true)).catch(() => {});

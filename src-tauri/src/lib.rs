@@ -244,6 +244,86 @@ pub fn playback_probe() -> i32 {
     })
 }
 
+/// `--lossless-probe`: for a handful of saved tracks, list the file manifest,
+/// then for every FLAC file request its audio key, pull the first bytes off the
+/// CDN, decrypt, and check for the `fLaC` stream marker.
+pub fn lossless_probe() -> i32 {
+    use librespot_audio::{AudioDecrypt, AudioFile};
+    use librespot_core::{config::SessionConfig, session::Session, SpotifyId, SpotifyUri};
+    use librespot_metadata::audio::{AudioFileFormat, AudioItem};
+    use std::io::Read;
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("runtime")
+        .block_on(async {
+            let Ok(appdata) = std::env::var("APPDATA") else { return 12 };
+            let db_url = format!("sqlite:{}/dev.boyblah.musique/spotify-client.db", appdata.replace('\\', "/"));
+            let Ok(pool) = sqlx::SqlitePool::connect(&db_url).await else { return 1 };
+            let creds_dir = std::path::PathBuf::from(&appdata).join("dev.boyblah.musique").join("credentials");
+            let cache = librespot_core::cache::Cache::new(Some(&creds_dir), None, None, None).ok();
+            let Some(creds) = cache.as_ref().and_then(|c| c.credentials()) else {
+                eprintln!("[lossless-probe] no cached credentials");
+                return 2;
+            };
+            let mut cfg = SessionConfig::default();
+            cfg.device_id = auth::PLAYBACK_DEVICE_ID.to_string();
+            let session = Session::new(cfg, cache);
+            if let Err(e) = session.connect(creds, false).await {
+                eprintln!("[lossless-probe] connect failed: {e}");
+                return 3;
+            }
+            for _ in 0..50 {
+                if !session.country().is_empty() { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            eprintln!("[lossless-probe] connected, country = {:?}", session.country());
+
+            let mut ids: Vec<String> = sqlx::query_as::<_, (String,)>("SELECT track_id FROM saved_tracks LIMIT 5")
+                .fetch_all(&pool).await.unwrap_or_default().into_iter().map(|t| t.0).collect();
+            ids.push("4PTG3Z6ehGkBFwjybzWkR8".into());
+
+            let mut ok = 0;
+            for b62 in ids {
+                let Ok(id) = SpotifyId::from_base62(&b62) else { continue };
+                let item = match AudioItem::get_file(&session, SpotifyUri::Track { id }).await {
+                    Ok(i) => i,
+                    Err(e) => { eprintln!("[lossless-probe] {b62}: metadata failed: {e}"); continue; }
+                };
+                let formats: Vec<_> = item.files.keys().map(|f| format!("{f:?}")).collect();
+                eprintln!("\n[lossless-probe] {b62} <{}> formats: {}", item.name, formats.join(", "));
+                for fmt in [AudioFileFormat::FLAC_FLAC, AudioFileFormat::FLAC_FLAC_24BIT] {
+                    let Some(&file_id) = item.files.get(&fmt) else { continue };
+                    let key = match session.audio_key().request(id, file_id).await {
+                        Ok(k) => { eprintln!("  {fmt:?}: audio key GRANTED"); Some(k) }
+                        Err(e) => { eprintln!("  {fmt:?}: audio key FAILED: {e}"); None }
+                    };
+                    let file = match AudioFile::open(&session, file_id, 150 * 1024).await {
+                        Ok(f) => f,
+                        Err(e) => { eprintln!("  {fmt:?}: CDN open FAILED: {e}"); continue; }
+                    };
+                    let head = tokio::task::spawn_blocking(move || {
+                        let mut d = AudioDecrypt::new(key, file);
+                        let mut buf = [0u8; 64];
+                        d.read_exact(&mut buf).map(|_| buf)
+                    }).await;
+                    match head {
+                        Ok(Ok(buf)) => {
+                            let hex: String = buf[..16].iter().map(|b| format!("{b:02x}")).collect();
+                            let pos = buf.windows(4).position(|w| w == b"fLaC");
+                            eprintln!("  {fmt:?}: decrypted head {hex} fLaC@{pos:?}");
+                            if pos.is_some() { ok += 1; }
+                        }
+                        other => eprintln!("  {fmt:?}: read failed: {other:?}"),
+                    }
+                }
+            }
+            eprintln!("\n[lossless-probe] decodable FLAC files: {ok}");
+            if ok > 0 { 0 } else { 8 }
+        })
+}
+
 pub fn quality_probe() -> i32 {
     use librespot_core::{
         config::SessionConfig, session::Session, SpotifyId, SpotifyUri,

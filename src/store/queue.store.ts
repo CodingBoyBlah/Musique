@@ -10,6 +10,10 @@ import { jamCycleRepeat, jamEnqueue, jamToggleShuffle } from "../lib/jam";
 
 const PERSIST_CAP = 1000;
 
+// Liked Songs as a context. Spotify's own uri for it embeds the username, which
+// only the backend session knows, so the backend swaps this for the real one.
+export const LIKED_SONGS_URI = "spotify:collection:tracks";
+
 type Repeat = "none" | "one" | "all";
 
 function shuffled<T>(arr: T[]): T[] {
@@ -26,6 +30,10 @@ interface QueueStore {
   history:       TrackItem[];
   contextTracks: TrackItem[];     // full ordered list of the current play context
   contextId:     string | null;   // id of the playlist/album/etc playing right now
+  // the same context as a Spotify uri (spotify:playlist:..., spotify:album:...),
+  // sent with each play so the listen shows under it in Spotify's Recents.
+  // null for the app's own contexts (search, radio, made for you...)
+  contextUri:    string | null;
   shuffle:       boolean;
   repeat:        Repeat;
 
@@ -43,9 +51,9 @@ interface QueueStore {
   cycleRepeat:   () => void;
 
   
-  playContext:         (tracks: TrackItem[], startIndex: number, contextId?: string | null) => TrackItem | null;
+  playContext:         (tracks: TrackItem[], startIndex: number, contextId?: string | null, contextUri?: string | null) => TrackItem | null;
   // same but shuffled - random track first, rest queued in random order
-  playContextShuffled: (tracks: TrackItem[], contextId?: string | null) => TrackItem | null;
+  playContextShuffled: (tracks: TrackItem[], contextId?: string | null, contextUri?: string | null) => TrackItem | null;
 
   // next track to play (mutates queue/history) null = nothing left.
   advance:  (current: TrackItem | null) => TrackItem | null;
@@ -62,6 +70,7 @@ export const useQueueStore = create<QueueStore>()(
       history:       [],
       contextTracks: [],
       contextId:     null,
+      contextUri:    null,
       shuffle:       false,
       repeat:        "none",
 
@@ -85,12 +94,13 @@ export const useQueueStore = create<QueueStore>()(
         set((s) => ({ queue: [...s.queue, { ...track }] }));
       },
 
-      playContext: (tracks, startIndex, contextId = null) => {
+      playContext: (tracks, startIndex, contextId = null, contextUri = null) => {
         const start = tracks[startIndex] ?? null;
         if (!start) return null;
         set({
           contextTracks: tracks,
           contextId,
+          contextUri,
           history:       [],
           queue:         tracks.slice(startIndex + 1),
           shuffle:       false,
@@ -98,13 +108,14 @@ export const useQueueStore = create<QueueStore>()(
         return start;
       },
 
-      playContextShuffled: (tracks, contextId = null) => {
+      playContextShuffled: (tracks, contextId = null, contextUri = null) => {
         if (tracks.length === 0) return null;
         const order = shuffled(tracks);
         const [start, ...rest] = order;
         set({
           contextTracks: tracks,
           contextId,
+          contextUri,
           history:       [],
           queue:         rest,
           shuffle:       true,
@@ -143,7 +154,7 @@ export const useQueueStore = create<QueueStore>()(
 
       clearQueue:   () => set({ queue: [] }),
       clearHistory: () => set({ history: [] }),
-      clearAll:     () => set({ queue: [], history: [], contextTracks: [], contextId: null }),
+      clearAll:     () => set({ queue: [], history: [], contextTracks: [], contextId: null, contextUri: null }),
 
       toggleShuffle: () => {
         if (jamRole()) {
@@ -285,6 +296,7 @@ export const useQueueStore = create<QueueStore>()(
         history:       s.history.slice(-30),
         contextTracks: s.contextTracks.slice(0, PERSIST_CAP),
         contextId:     s.contextId,
+        contextUri:    s.contextUri,
         shuffle:       s.shuffle,
         repeat:        s.repeat,
       }),
