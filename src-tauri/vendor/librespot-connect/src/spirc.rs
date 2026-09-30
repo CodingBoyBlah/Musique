@@ -47,6 +47,29 @@ use tokio::{
     time::sleep,
 };
 
+/// Where the listener is in a play request, as opposed to the decoder.
+type HeardPosition = Box<dyn Fn(u64) -> Option<u32> + Send + Sync>;
+
+/// musique: the audio output keeps seconds of decoded audio queued in front of
+/// the speaker, so the positions the player reports (the decoder's) run that
+/// far ahead of what anyone hears. Connect state goes to Spotify and, in a Jam,
+/// to everyone in it, so it should carry the heard position.
+static HEARD_POSITION: std::sync::RwLock<Option<HeardPosition>> = std::sync::RwLock::new(None);
+
+/// Tell Connect where the listener is in a play request (by its id), when the
+/// output knows. `None` falls back to the player's own figure.
+pub fn set_heard_position(heard: impl Fn(u64) -> Option<u32> + Send + Sync + 'static) {
+    *HEARD_POSITION.write().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(heard));
+}
+
+fn heard_position(play_request_id: Option<u64>, decoded: u32) -> u32 {
+    let hook = HEARD_POSITION.read().unwrap_or_else(|e| e.into_inner());
+    match (hook.as_ref(), play_request_id) {
+        (Some(heard), Some(id)) => heard(id).unwrap_or(decoded),
+        _ => decoded,
+    }
+}
+
 #[derive(Debug, Error)]
 enum SpircError {
     #[error("response payload empty")]
@@ -912,6 +935,7 @@ impl SpircTask {
             return Ok(());
         }
 
+        let play_request_id = event.get_play_request_id();
         match event {
             PlayerEvent::EndOfTrack { .. } => {
                 let next_track = self
@@ -945,12 +969,18 @@ impl SpircTask {
             PlayerEvent::Playing { position_ms, .. }
             | PlayerEvent::PositionCorrection { position_ms, .. } => {
                 trace!("==> Playing");
-                let new_nominal_start_time = self.now_ms() - position_ms as i64;
+                // musique: for a correction mid-track the decoder is ahead of
+                // the speaker, so go by what is heard. (a track just starting
+                // has nothing queued in front of it, and keeps the decoder's)
+                let heard_ms = heard_position(play_request_id, position_ms);
+                let now_ms = self.now_ms();
                 match self.play_status {
                     SpircPlayStatus::Playing {
                         ref mut nominal_start_time,
                         ..
                     } => {
+                        let position_ms = heard_ms;
+                        let new_nominal_start_time = now_ms - position_ms as i64;
                         if (*nominal_start_time - new_nominal_start_time).abs() > 100 {
                             *nominal_start_time = new_nominal_start_time;
                             self.connect_state
@@ -960,6 +990,7 @@ impl SpircTask {
                         }
                     }
                     SpircPlayStatus::LoadingPlay { .. } | SpircPlayStatus::LoadingPause { .. } => {
+                        let new_nominal_start_time = self.now_ms() - position_ms as i64;
                         self.connect_state
                             .update_position(position_ms, self.now_ms());
                         self.play_status = SpircPlayStatus::Playing {
@@ -975,6 +1006,8 @@ impl SpircTask {
                 ..
             } => {
                 trace!("==> Paused");
+                // musique: where the sound stopped, not where the decoder had got to
+                let new_position_ms = heard_position(play_request_id, new_position_ms);
                 match self.play_status {
                     SpircPlayStatus::Paused { .. } | SpircPlayStatus::Playing { .. } => {
                         self.connect_state

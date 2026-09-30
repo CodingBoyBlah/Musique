@@ -211,6 +211,8 @@ pub fn playback_probe() -> i32 {
                 on_err.clone(),
                 Box::new(librespot_playback::mixer::NoOpVolume),
                 crate::sink::DEFAULT_BUFFER_MS,
+                crate::sink::Playout::new(),
+                Default::default(),
             )) as Box<dyn Sink>,
         );
         let mut rx = player.get_player_event_channel();
@@ -353,6 +355,8 @@ pub fn quality_probe() -> i32 {
                         on_err.clone(),
                         Box::new(librespot_playback::mixer::NoOpVolume),
                         crate::sink::DEFAULT_BUFFER_MS,
+                        crate::sink::Playout::new(),
+                        Default::default(),
                     )) as Box<dyn Sink>,
                 );
 
@@ -416,6 +420,8 @@ pub fn audio_probe() -> i32 {
         Arc::new(|_| {}),
         Box::new(librespot_playback::mixer::NoOpVolume),
         crate::sink::DEFAULT_BUFFER_MS,
+        crate::sink::Playout::new(),
+        Default::default(),
     );
     let _ = sink.start();
     let _ = sink.stop();
@@ -433,6 +439,7 @@ mod library;
 mod lyrics;
 mod media_controls;
 mod playback;
+mod playout;
 mod recommend;
 mod resample;
 mod sink;

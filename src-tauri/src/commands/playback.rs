@@ -58,11 +58,23 @@ async fn ensure_inner(app: &AppHandle) -> Result<(), AppError> {
 /// podcast playback speed (0.5x - 3x, pitch kept). applies to whatever the
 /// sink is playing; the frontend sets it back to 1x for music
 #[tauri::command]
-pub fn set_playback_speed(speed: f32) -> Result<(), AppError> {
+pub async fn set_playback_speed(app: AppHandle, speed: f32) -> Result<(), AppError> {
     if !(0.5..=3.0).contains(&speed) {
         return Err(AppError::InvalidInput(format!("speed out of range: {speed}")));
     }
+    let before = crate::stretch::speed();
     crate::stretch::set_speed(speed);
+    if (before - speed).abs() < 1e-3 {
+        return Ok(());
+    }
+    // seconds of audio are queued ahead, stretched at the old speed. the
+    // youtube backend's prebuffer starts over on its own; spotify's player
+    // has to be sent back to what is being heard
+    let playback = app.state::<AppState>().playback.clone();
+    let guard = playback.lock().await;
+    if let Some(inner) = guard.as_ref() {
+        inner.speed_changed()?;
+    }
     Ok(())
 }
 
