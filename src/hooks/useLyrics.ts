@@ -1,3 +1,4 @@
+import { isEpisodeId } from "../utils/episode";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -21,7 +22,7 @@ export function useLyrics(track: TrackItem | null) {
   const { data, isLoading, isError, isFetching, refetch } = useQuery<Lyrics>({
     queryKey:  ["lyrics", trackId],
     queryFn:   () => getLyrics(debouncedTrack!),
-    enabled:   !!debouncedTrack,
+    enabled:   !!debouncedTrack && !isEpisodeId(debouncedTrack.id),
     staleTime: Infinity,
     gcTime:    60 * 60_000,
     retry:     1,

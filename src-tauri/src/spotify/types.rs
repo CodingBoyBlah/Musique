@@ -143,6 +143,12 @@ pub(crate) struct SpSearchResponse {
     pub artists:   Option<SpPage<SpArtist>>,
     pub albums:    Option<SpPage<SpAlbumSimple>>,
     pub playlists: Option<SpPlaylistSearchPage>,
+    // podcasts stay loosely typed: their pages carry `null`
+    // entries and optional fields the parsers in commands/ already tolerate
+    #[serde(default)]
+    pub shows:      Option<serde_json::Value>,
+    #[serde(default)]
+    pub episodes:   Option<serde_json::Value>,
 }
 
 // spotifys search returns `null` entries in the playlists array so just tolerate em
@@ -239,11 +245,25 @@ pub(crate) struct SpPlaylist {
     pub tracks:      Option<SpPlaylistTrackPage>,
     #[serde(default)]
     pub snapshot_id: Option<String>,
+    #[serde(default)]
+    pub public:        Option<bool>,
+    #[serde(default)]
+    pub collaborative: Option<bool>,
+    #[serde(default)]
+    pub followers:     Option<SpFollowers>,
+}
+
+#[derive(Clone, Deserialize)]
+pub(crate) struct SpFollowers {
+    #[serde(default)]
+    pub total: Option<i64>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct SpOwner {
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub id:           Option<String>,
 }
 
 // ─── ipc output types, public, serialize + deserialize ──────────────────────
@@ -296,6 +316,10 @@ pub struct SearchResults {
     pub artists:   Vec<ArtistItem>,
     pub albums:    Vec<AlbumItem>,
     pub playlists: Vec<PlaylistCard>,
+    #[serde(default)]
+    pub shows:     Vec<crate::commands::podcasts::ShowItem>,
+    #[serde(default)]
+    pub episodes:  Vec<crate::commands::podcasts::EpisodeItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -344,4 +368,14 @@ pub struct PlaylistDetail {
     pub owner_name:   Option<String>,
     pub total_tracks: i64,
     pub tracks:       Vec<TrackItem>,
+    // who owns it + how it's shared. absent on the offline/cached path, so the
+    // ui must treat None as "unknown", not "no"
+    #[serde(default)]
+    pub owner_id:      Option<String>,
+    #[serde(default)]
+    pub public:        Option<bool>,
+    #[serde(default)]
+    pub collaborative: Option<bool>,
+    #[serde(default)]
+    pub followers:     Option<i64>,
 }

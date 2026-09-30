@@ -67,3 +67,39 @@ export const remoteSetVolume = (volumePercent: number): Promise<void> =>
 
 export const getMusiqueDeviceId = (): Promise<string> =>
   invoke("get_musique_device_id");
+
+export interface RemoteQueue {
+  currently_playing: TrackItem | null;
+  queue: TrackItem[];
+}
+
+// spotify's own queue on whichever device is playing right now
+export const getRemoteQueue = (): Promise<RemoteQueue> =>
+  invoke("get_remote_queue");
+
+export const remoteSetShuffle = (state: boolean): Promise<void> =>
+  invoke("remote_set_shuffle", { state });
+
+export type RemoteRepeat = "off" | "context" | "track";
+
+export const remoteSetRepeat = (state: RemoteRepeat): Promise<void> =>
+  invoke("remote_set_repeat", { state });
+
+// a bare track id, or a full uri (episodes)
+export const remoteAddToQueue = (id: string): Promise<void> =>
+  invoke("remote_add_to_queue", { id });
+
+export const remotePlayContext = (opts: {
+  contextUri: string;
+  deviceId?: string | null;
+  offsetUri?: string | null;
+  offsetPosition?: number | null;
+  positionMs?: number | null;
+}): Promise<void> =>
+  invoke("remote_play_context", {
+    deviceId:       opts.deviceId ?? null,
+    contextUri:     opts.contextUri,
+    offsetUri:      opts.offsetUri ?? null,
+    offsetPosition: opts.offsetPosition ?? null,
+    positionMs:     opts.positionMs != null ? Math.round(opts.positionMs) : null,
+  });

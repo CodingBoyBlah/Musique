@@ -13,7 +13,7 @@ import { useAmbient } from "../../hooks/useAmbient";
 import { seekPlayback } from "../../api/playback";
 import { Loader } from "../ui/Loader";
 import { Tooltip } from "../ui/Tooltip";
-import { zTransform, EASE_OUT, PRESS, SPRING_PANEL } from "../../lib/motion";
+import { zTransform, EASE_OUT, PRESS, RAIL_CLOSE, RAIL_OPEN } from "../../lib/motion";
 import { useLyricFollow } from "../../hooks/useLyricFollow";
 import { ReturnPill } from "./LyricReturnPill";
 import "../../styles/lyrics.css";
@@ -34,12 +34,48 @@ import {
   useMoreContrast,
   type Row,
 } from "../../lib/lyrics";
+import { TranscriptView } from "../podcast/TranscriptView";
+import { isEpisodeId } from "../../utils/episode";
 
 const WIDTH = 366;
 
 // panel
 
+/* Podcasts have no lyrics - their transcript takes the same place. The two are
+   separate components on purpose: the song panel's hooks (the lyric clock, row
+   tracking, the follower) follow the playhead, and running them for an
+   episode re-rendered the transcript on every tick for nothing. */
 export function LyricsPanel() {
+  const episode = usePlayerStore((s) => !!s.currentTrack && isEpisodeId(s.currentTrack.id));
+  return episode ? <TranscriptPanel /> : <SongLyricsPanel />;
+}
+
+function TranscriptPanel() {
+  const track = usePlayerStore((s) => s.currentTrack);
+  const { ink } = useAmbient(track?.album?.image_url);
+  if (!track) return null;
+  return (
+    <motion.div
+      initial={{ x: WIDTH }}
+      animate={{ x: 0 }}
+      exit={{ x: WIDTH, transition: RAIL_CLOSE }}
+      transformTemplate={zTransform}
+      transition={RAIL_OPEN}
+      style={{ position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5, width: WIDTH, maxWidth: "100vw", overflow: "hidden", contain: "paint", willChange: "transform", display: "flex", flexDirection: "column" }}
+    >
+      <div style={{ display: "flex", alignItems: "center", padding: "4px 14px 0", height: 40, flexShrink: 0, fontSize: 14, fontWeight: 700, color: "var(--color-text-hi)" }}>
+        Transcript
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <TranscriptView episodeId={track.id} ink={ink} empty={NO_TRANSCRIPT} />
+      </div>
+    </motion.div>
+  );
+}
+
+const NO_TRANSCRIPT = <CenterNote title="No transcript" subtitle="Spotify has no transcript for this episode." />;
+
+function SongLyricsPanel() {
   const track = usePlayerStore((s) => s.currentTrack);
   const setPosition = usePlayerStore((s) => s.setPosition);
   const reduceMotion = useReducedMotion();
@@ -149,15 +185,16 @@ export function LyricsPanel() {
       // framer `layout` both ways. This panel just slides over that region; its
       // width never animates, so nothing reflows per-frame.
       //
-      // Slides along the edge it is docked to and nothing else: the scale it
-      // used to carry pulled it off that edge, and the old spring (zeta ~0.89)
-      // overshot on a toggle that had no momentum behind it. Critically damped,
-      // and out along the same path it came in on.
-      initial={{ opacity: 0, x: 60 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 60 }}
+      // Slides the full width of the rail, on the same curve Layout slides the
+      // rail's frame, so the sheet's edge stays on the card's edge the whole
+      // way in and out. (It used to move only 60px and fade, which let the
+      // frame outrun it.) Critically damped: a toggle has no momentum to
+      // overshoot with.
+      initial={{ x: WIDTH }}
+      animate={{ x: 0 }}
+      exit={{ x: WIDTH, transition: RAIL_CLOSE }}
       transformTemplate={zTransform}
-      transition={SPRING_PANEL}
+      transition={RAIL_OPEN}
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH,

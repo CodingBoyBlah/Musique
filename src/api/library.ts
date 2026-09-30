@@ -50,6 +50,15 @@ export const followArtist = (id: string): Promise<void> =>
 export const unfollowArtist = (id: string): Promise<void> =>
   invoke("unfollow_artist", { id });
 
+export const saveAlbum = (id: string): Promise<void> =>
+  invoke("save_album", { id });
+
+export const unsaveAlbum = (id: string): Promise<void> =>
+  invoke("unsave_album", { id });
+
+export const isAlbumSaved = (id: string): Promise<boolean> =>
+  invoke("is_album_saved", { id });
+
 export const isArtistFollowed = (id: string): Promise<boolean> =>
   invoke("is_artist_followed", { id });
 
@@ -62,3 +71,25 @@ export const removeTrackFromPlaylist = (playlistId: string, trackId: string): Pr
 
 export const createPlaylist = (name: string, description: string | null, isPublic: boolean): Promise<string> =>
   invoke("create_playlist", { name, description, public: isPublic });
+
+export const updatePlaylistDetails = (
+  id: string,
+  changes: { name?: string; description?: string; public?: boolean; collaborative?: boolean },
+): Promise<void> =>
+  invoke("update_playlist_details", {
+    id,
+    name:          changes.name ?? null,
+    description:   changes.description ?? null,
+    public:        changes.public ?? null,
+    collaborative: changes.collaborative ?? null,
+  });
+
+export const followPlaylist = (id: string): Promise<void> =>
+  invoke("follow_playlist", { id });
+
+// on a playlist you own this deletes it (spotify has no separate delete)
+export const unfollowPlaylist = (id: string): Promise<void> =>
+  invoke("unfollow_playlist", { id });
+
+export const isPlaylistFollowed = (id: string): Promise<boolean> =>
+  invoke("is_playlist_followed", { id });

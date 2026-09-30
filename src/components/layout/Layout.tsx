@@ -1,18 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { TitleBar, WindowCaptionControls } from "./TitleBar";
-import Sidebar from "./Sidebar";
-import { PlayerBar } from "./PlayerBar";
+import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate } from "framer-motion";
+import { TitleBar as TitleBarView, WindowCaptionControls as CaptionControlsView } from "./TitleBar";
+import SidebarView from "./Sidebar";
+import { PlayerBar as PlayerBarView } from "./PlayerBar";
 import { usePositionTicker } from "../../hooks/usePositionTicker";
 import { QueuePanel } from "./QueuePanel";
+import { FriendsPanel } from "./FriendsPanel";
 import { LyricsPanel } from "./LyricsPanel";
-import { QuitConfirm } from "../ui/QuitConfirm";
-import { Toaster } from "../ui/Toaster";
-import { Immersive } from "./Immersive";
-import { AddToPlaylistModal } from "../ui/AddToPlaylistModal";
-import { YtMatchModal } from "../ui/YtMatchModal";
-import { DevicesPopover } from "./DevicesPopover";
+import { QuitConfirm as QuitConfirmView } from "../ui/QuitConfirm";
+import { Toaster as ToasterView } from "../ui/Toaster";
+import { Immersive as ImmersiveView } from "./Immersive";
+import { AddToPlaylistModal as AddToPlaylistView } from "../ui/AddToPlaylistModal";
+import { CreditsModal as CreditsView } from "../ui/CreditsModal";
+import { YtMatchModal as YtMatchView } from "../ui/YtMatchModal";
+import { DevicesPopover as DevicesView } from "./DevicesPopover";
 import { usePlayerStore } from "../../store/player.store";
 import { useUIStore } from "../../store/ui.store";
 import { getBackdropActive } from "../../api/window";
@@ -20,8 +22,26 @@ import { backdropScrim } from "../../lib/backdrop";
 import { isMac } from "../../lib/platform";
 import { usePrefsStore } from "../../store/prefs.store";
 import { chromePx } from "../../lib/zoom";
-import { EASE_OUT } from "../../lib/motion";
+import { EASE_OUT, RAIL_CLOSE, RAIL_CLOSE_S, RAIL_OPEN, RAIL_OPEN_S } from "../../lib/motion";
+import { pinRailGrids } from "../../lib/railFlip";
 import "../../styles/layout.css";
+
+/* The shell's fixed pieces take no props from Layout - each reads the stores
+   it needs itself - so Layout re-rendering (every panel toggle, every resize
+   that crosses the crush line) has nothing to tell them. Memoised, a panel
+   toggle renders Layout and the panel, not the whole window, which is most of
+   the work in the frame the slide starts on. */
+const Sidebar = memo(SidebarView);
+const TitleBar = memo(TitleBarView);
+const WindowCaptionControls = memo(CaptionControlsView);
+const PlayerBar = memo(PlayerBarView);
+const QuitConfirm = memo(QuitConfirmView);
+const Toaster = memo(ToasterView);
+const Immersive = memo(ImmersiveView);
+const AddToPlaylistModal = memo(AddToPlaylistView);
+const CreditsModal = memo(CreditsView);
+const YtMatchModal = memo(YtMatchView);
+const DevicesPopover = memo(DevicesView);
 
 /* collapsed sidebar. on mac the native traffic lights live in this column at
    their fixed OS positions (12px dots, 20px pitch, first centre at x=20), so
@@ -32,6 +52,10 @@ const MAC_COLLAPSED_SIDEBAR_W = 72;
 export default function Layout() {
   const queueOpen = usePlayerStore((s) => s.queueOpen);
   const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
+  // the panel can be switched off in settings; a stale open flag must not keep it
+  const friendsFlag = usePlayerStore((s) => s.friendsOpen);
+  const friendsOn = usePrefsStore((s) => s.showFriends);
+  const friendsOpen = friendsFlag && friendsOn;
   const immersiveOpen = usePlayerStore((s) => s.immersiveOpen);
   // one owner for the playhead clock, whatever else is on screen
   usePositionTicker();
@@ -81,7 +105,7 @@ export default function Layout() {
       const w = window.innerWidth;
       const isCollapsed = sidebarCollapsed || w < 768;
       const sw = isCollapsed ? collapsedSidebarW : 232;
-      const rpw = lyricsOpen ? 366 : queueOpen ? 272 : 0;
+      const rpw = lyricsOpen ? 366 : queueOpen || friendsOpen ? 272 : 0;
       const nextCrush = w - sw - rpw < 340;
       setWillCrushMain((prev) => (prev === nextCrush ? prev : nextCrush));
     };
@@ -102,47 +126,57 @@ export default function Layout() {
       window.removeEventListener("resize", onResizeThrottled);
       if (rId) cancelAnimationFrame(rId);
     };
-  }, [sidebarCollapsed, collapsedSidebarW, lyricsOpen, queueOpen]);
+  }, [sidebarCollapsed, collapsedSidebarW, lyricsOpen, queueOpen, friendsOpen]);
 
-  const rawPanelWidth = lyricsOpen ? 366 : queueOpen ? 272 : 0;
+  const rawPanelWidth = lyricsOpen ? 366 : queueOpen || friendsOpen ? 272 : 0;
   const spacerWidth = willCrushMain ? 0 : rawPanelWidth;
 
-  /* Right rail width, held through a close.
+  /* The right rail slides, and the page flows with it.
 
-     The rail used to drop to display:none on the same frame the panel was told
-     to close, so its slide-out never showed and the page card snapped wider.
-     Now a closing panel keeps its rail until AnimatePresence reports the exit
-     complete; only then does the rail give its width back. That moment bumps
-     railSettleTick in the UI store, which the grid cards subscribe to through
-     useReflowPulse - so they re-render (and framer re-measures them) on the
-     very render the column widens, and glide into the space.
+     frameRail is the rail's width, and with it the card's right edge and the
+     dock. It runs on the same curve as the panel's sheet, so the edge and the
+     panel travel as one piece, and the page - headings, text, track rows -
+     reflows with the edge as it moves instead of jumping to its new width.
 
-     Refs rather than state: the hold has to be decided during the render that
-     closes the panel, or there is one painted frame with no rail at all. */
-  const railSettleTick = useUIStore((s) => s.railSettleTick);
-  const bumpRailSettle = useUIStore((s) => s.bumpRailSettle);
-  const lastRailW = useRef(spacerWidth);
-  const holdTick = useRef<number | null>(null);
-  if (rawPanelWidth > 0) {
-    if (spacerWidth > 0) lastRailW.current = spacerWidth;
-    holdTick.current = null;
-  } else if (holdTick.current === null && lastRailW.current > 0) {
-    holdTick.current = railSettleTick;
-  }
-  const holdingRail = rawPanelWidth === 0 && holdTick.current === railSettleTick;
-  const railWidth = willCrushMain
-    ? 0
-    : rawPanelWidth > 0
-    ? spacerWidth
-    : holdingRail
-    ? lastRailW.current
-    : 0;
-  if (rawPanelWidth === 0 && !holdingRail) lastRailW.current = 0;
+     Tile grids are pinned to their landing width on the first frame and their
+     cards FLIPped there on the compositor, in step with the edge - see
+     lib/railFlip. Nothing in a slide renders through React after the first
+     frame: the edge is a motion value and the cards are Web Animations, which
+     is what keeps the close from stalling on the frame it lands. */
+  const frameRail = useMotionValue(spacerWidth);
+  const railW = useTransform(frameRail, (v) => Math.max(0, v));
+  const tintRight = useTransform(railW, (v) => -v);
+  const tintShift = useTransform(railW, (v) => -v / 2);
 
-  const onPanelExitComplete = () => {
-    const s = usePlayerStore.getState();
-    if (!s.lyricsOpen && !s.queueOpen) bumpRailSettle();
-  };
+  useLayoutEffect(() => {
+    const from = frameRail.get();
+    if (from === spacerWidth) return;
+    if (reduceMotion || !mainRef.current) {
+      frameRail.jump(spacerWidth);
+      return;
+    }
+    const main = mainRef.current;
+    const opening = spacerWidth > from;
+    const seconds = opening ? RAIL_OPEN_S : RAIL_CLOSE_S;
+    let live = true;
+    let unpin = () => {};
+    // after the commit but before the frame is painted: the JS-columned grids
+    // re-render synchronously inside the pin, which React refuses mid-commit
+    queueMicrotask(() => {
+      if (live) unpin = pinRailGrids(main, from - spacerWidth, seconds * 1000);
+    });
+    const ctl = animate(frameRail, spacerWidth, opening ? RAIL_OPEN : RAIL_CLOSE);
+    ctl.then(() => { if (live) unpin(); });
+    // the pins hold the landing width, so releasing them moves nothing - it
+    // only hands the grids back to the page for the next resize. An
+    // interrupted slide releases them too; the next one re-pins from where
+    // the page actually is.
+    return () => {
+      live = false;
+      ctl.stop();
+      unpin();
+    };
+  }, [spacerWidth, frameRail, reduceMotion]);
 
   /* `trim_memory` used to fire 1.5s after every navigation. That call empties
      the working set of this process and of every WebView2 child, so it landed
@@ -270,7 +304,14 @@ export default function Layout() {
                     transition={{ duration: 0.7, ease: "easeOut" }}
                     style={{
                       position: "absolute",
-                      inset: 0,
+                      /* Blurred, so it must never be resized mid-slide - that
+                         re-runs the blur every frame. It stays the width of
+                         card + rail (a constant), overhangs the card's edge
+                         where the card clips it, and is moved back to the
+                         card's centre by a transform, which costs nothing. */
+                      top: 0, left: 0, bottom: 0,
+                      right: tintRight,
+                      x: tintShift,
                       zIndex: 0,
                       pointerEvents: "none",
                       overflow: "hidden",
@@ -341,23 +382,26 @@ export default function Layout() {
             </div>
 
             {/* Right rail - Lyrics or Queue on base layer */}
-            <div
+            <motion.div
               style={{
-                width: railWidth,
+                width: railW,
                 flexShrink: 0,
                 position: "relative",
                 overflow: "hidden",
                 height: "100%",
-                display: railWidth > 0 ? "flex" : "none",
+                display: "flex",
               }}
             >
-              <AnimatePresence initial={false} onExitComplete={onPanelExitComplete}>
+              <AnimatePresence initial={false}>
                 {lyricsOpen && <LyricsPanel key="lyrics" />}
               </AnimatePresence>
-              <AnimatePresence initial={false} onExitComplete={onPanelExitComplete}>
+              <AnimatePresence initial={false}>
                 {queueOpen && <QueuePanel key="queue" />}
               </AnimatePresence>
-            </div>
+              <AnimatePresence initial={false}>
+                {friendsOpen && <FriendsPanel key="friends" />}
+              </AnimatePresence>
+            </motion.div>
           </div>
         </div>
 
@@ -367,6 +411,7 @@ export default function Layout() {
       <Immersive />
       <QuitConfirm />
       <AddToPlaylistModal />
+      <CreditsModal />
       <YtMatchModal />
       <Toaster />
       {/* always at the window's own top-right corner, in the top bar's strip,

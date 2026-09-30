@@ -45,6 +45,23 @@ pub async fn songs(query: &str) -> Result<Vec<SongResult>, AppError> {
     Ok(rows.into_iter().filter_map(parse_row).collect())
 }
 
+/// Opaque InnerTube filter token for the Episodes tab (podcast episodes).
+const PARAMS_EPISODES: &str = "EgWKAQJIAWoKEAoQCRADEAUQBA%3D%3D";
+
+/// Search YouTube Music's podcast episodes. Rows come back in the same shape
+/// as songs; `artists` is usually empty (the show isn't an artist) and the
+/// duration is often missing from the row, so callers check the video itself.
+pub async fn episodes(query: &str) -> Result<Vec<SongResult>, AppError> {
+    let body = json!({ "query": query, "params": PARAMS_EPISODES });
+    let res = innertube::post(&WEB_REMIX, "search", body).await?;
+
+    let mut rows = Vec::new();
+    innertube::find_all(&res, "musicResponsiveListItemRenderer", &mut rows);
+    innertube::find_all(&res, "musicMultiRowListItemRenderer", &mut rows);
+
+    Ok(rows.into_iter().filter_map(parse_row).collect())
+}
+
 fn parse_row(row: &serde_json::Value) -> Option<SongResult> {
     // The watchEndpoint is what actually plays; a row without one is a header
     // or a navigation shelf, not a song.

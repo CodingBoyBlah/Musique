@@ -11,6 +11,11 @@ import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
 import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
 import { Shelf } from "../components/ui/Shelf";
 import { CoverArt } from "../components/ui/CoverArt";
+import { MediaTile } from "../components/ui/MediaTile";
+import { EpisodeRow } from "../components/ui/EpisodeRow";
+import { usePlayEpisodes } from "../hooks/usePlayEpisodes";
+import { EPISODE_PREFIX } from "../utils/episode";
+import type { EpisodeItem } from "../types/podcast";
 import { TrackRow } from "../components/ui/TrackRow";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { AnimatedPlayPause } from "../components/playground/AnimatedIcons";
@@ -26,7 +31,7 @@ import { releaseYear } from "../utils/fmt";
 import { errMsg } from "../lib/err";
 import { toast } from "../store/toast.store";
 import { useReflowPulse } from "../hooks/useReflowPulse";
-import { getGridItemTransition, EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING } from "../lib/motion";
+import { EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING } from "../lib/motion";
 import type {
   PlaylistCard as PlaylistCardType,
   ArtistItem,
@@ -34,8 +39,9 @@ import type {
   TrackItem,
   SearchResults,
 } from "../types/spotify";
+import { TILE_GRID } from "../lib/layout";
 
-const CATEGORIES = ["all", "songs", "artists", "albums", "playlists"] as const;
+const CATEGORIES = ["all", "songs", "artists", "albums", "playlists", "podcasts"] as const;
 type Category = (typeof CATEGORIES)[number];
 const CATEGORY_LABEL: Record<Category, string> = {
   all: "All",
@@ -43,6 +49,7 @@ const CATEGORY_LABEL: Record<Category, string> = {
   artists: "Artists",
   albums: "Albums",
   playlists: "Playlists",
+  podcasts: "Podcasts",
 };
 const LABEL_TO_CATEGORY = Object.fromEntries(
   CATEGORIES.map((c) => [CATEGORY_LABEL[c], c]),
@@ -51,7 +58,6 @@ const LABEL_TO_CATEGORY = Object.fromEntries(
 // songs shown beside the top result before "Show all"
 const SONGS_PREVIEW = 4;
 
-const MotionLink = motion.create(Link);
 
 // ─── Top Result resolution & card ───────────────────────────────────────────
 
@@ -355,88 +361,35 @@ const TopResultCard = memo(function TopResultCard({
   );
 });
 
+// ─── Episodes ───────────────────────────────────────────────────────────────
+
+function SearchEpisodes({ episodes }: { episodes: EpisodeItem[] }) {
+  const play = usePlayEpisodes(episodes, "search-episodes");
+  const currentId = usePlayerStore((s) => s.currentId);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  return (
+    <div>
+      {episodes.map((ep, i) => {
+        const active = currentId === `${EPISODE_PREFIX}${ep.id}`;
+        return <EpisodeRow key={ep.id} episode={ep} active={active} playing={active && isPlaying} onPlay={() => play(i)} showShow />;
+      })}
+    </div>
+  );
+}
+
 // ─── Playlist card ──────────────────────────────────────────────────────────
 
 // dressed exactly like AlbumCard so a shelf of playlists sits flush with a
 // shelf of albums: same padding, radius, artwork shadow and type
 const PlaylistResultCard = memo(function PlaylistResultCard({ playlist, index = 0 }: { playlist: PlaylistCardType; index?: number }) {
-  useReflowPulse();
-  const [hover, setHover] = useState(false);
   return (
-    <MotionLink
+    <MediaTile
       to={`/playlist/${playlist.id}`}
-      layout="position"
-      className="card-link"
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onFocus={() => setHover(true)}
-      onBlur={() => setHover(false)}
-      whileHover={{ y: -3 }}
-      whileTap={{ scale: 0.98 }}
-      transition={{ type: "spring", stiffness: 480, damping: 36, ...getGridItemTransition(index) }}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        padding: 10,
-        borderRadius: 12,
-        width: "100%",
-        boxSizing: "border-box",
-        textDecoration: "none",
-        color: "inherit",
-        background: hover ? "var(--color-surface-hover)" : "transparent",
-        transition: "background 0.18s ease",
-        minWidth: 0,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          aspectRatio: "1 / 1",
-          borderRadius: 8,
-          overflow: "hidden",
-          flexShrink: 0,
-          boxShadow: hover ? "0 12px 28px rgba(0, 0, 0, 0.5)" : "0 4px 14px rgba(0, 0, 0, 0.3)",
-          transition: "box-shadow 0.25s ease",
-        }}
-      >
-        <CoverArt url={playlist.image_url} alt={playlist.name} size={160} style={{ width: "100%", height: "100%" }} />
-      </div>
-      <span
-        style={{
-          display: "block",
-          fontSize: 13.5,
-          fontWeight: 600,
-          letterSpacing: "-0.012em",
-          lineHeight: "17px",
-          height: 17,
-          color: "var(--color-text-hi)",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          minWidth: 0,
-        }}
-      >
-        {playlist.name}
-      </span>
-      <span
-        className="t-caption"
-        style={{
-          display: "block",
-          fontSize: 12,
-          lineHeight: "15px",
-          height: 15,
-          color: "var(--color-text-dim)",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          minWidth: 0,
-        }}
-      >
-        {playlist.owner_name ? `By ${playlist.owner_name}` : "Playlist"}
-      </span>
-    </MotionLink>
+      imageUrl={playlist.image_url}
+      title={playlist.name}
+      subtitle={playlist.owner_name ? `By ${playlist.owner_name}` : "Playlist"}
+      index={index}
+    />
   );
 });
 
@@ -445,12 +398,8 @@ function PlaylistGrid({ children }: { children: React.ReactNode }) {
     <motion.div
       layout="position"
       transition={{ layout: REFLOW_SPRING }}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(clamp(120px, 14vw, 175px), 1fr))",
-        gap: "clamp(10px, 1.5vw, 16px)",
-        width: "100%",
-      }}
+      data-rail-lock="flip"
+      style={TILE_GRID}
     >
       {children}
     </motion.div>
@@ -765,6 +714,14 @@ export default function Search() {
                 renderItem={(pl, i) => <PlaylistResultCard playlist={pl} index={i} />}
                 extra={showAll("playlists")}
               />
+              <Shelf
+                id="search-shows"
+                title="Podcasts"
+                items={data.shows ?? []}
+                getKey={(s) => s.id}
+                renderItem={(s, i) => <MediaTile to={`/show/${s.id}`} imageUrl={s.image_url} title={s.name} subtitle={s.publisher} index={i} />}
+                extra={showAll("podcasts")}
+              />
             </>
           )}
 
@@ -793,6 +750,28 @@ export default function Search() {
               </AlbumGrid>
             ) : (
               <EmptyState title="No albums match" description="Try All to see other kinds of results." />
+            )
+          )}
+
+          {cat === "podcasts" && (
+            (data.shows?.length ?? 0) + (data.episodes?.length ?? 0) > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+                {(data.shows?.length ?? 0) > 0 && (
+                  <AlbumGrid>
+                    {data.shows!.map((s, i) => (
+                      <MediaTile key={s.id} to={`/show/${s.id}`} imageUrl={s.image_url} title={s.name} subtitle={s.publisher} index={i} />
+                    ))}
+                  </AlbumGrid>
+                )}
+                {(data.episodes?.length ?? 0) > 0 && (
+                  <section aria-labelledby="search-episodes">
+                    <SectionTitle id="search-episodes">Episodes</SectionTitle>
+                    <SearchEpisodes episodes={data.episodes!} />
+                  </section>
+                )}
+              </div>
+            ) : (
+              <EmptyState title="No podcasts match" description="Try All to see other kinds of results." />
             )
           )}
 

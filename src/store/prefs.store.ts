@@ -38,9 +38,23 @@ interface PrefsStore {
   ambientMotion: boolean;
   setAmbientMotion: (v: boolean) => void;
 
+  // play the artist's canvas (looping video) in place of the cover
+  showCanvas: boolean;
+  setShowCanvas: (v: boolean) => void;
+
   // whole-app zoom factor (1 = 100%). applied to the webview by lib/zoom.ts
   uiZoom: number;
   setUiZoom: (v: number) => void;
+
+  // optional pages / panels the user can switch off entirely
+  showStats: boolean;
+  setShowStats: (v: boolean) => void;
+  showFriends: boolean;
+  setShowFriends: (v: boolean) => void;
+
+  // podcast playback speed, remembered across episodes (music is always 1x)
+  podcastSpeed: number;
+  setPodcastSpeed: (v: number) => void;
 
   sidebarMode: SidebarMode;
   setSidebarMode: (v: SidebarMode) => void;
@@ -86,8 +100,18 @@ export const usePrefsStore = create<PrefsStore>()(
       ambientMotion: true,
       setAmbientMotion: (v) => set({ ambientMotion: v }),
 
+      showCanvas: true,
+      setShowCanvas: (v) => set({ showCanvas: v }),
+
       uiZoom: 1,
       setUiZoom: (v) => set({ uiZoom: v }),
+
+      showStats: true,
+      setShowStats: (v) => set({ showStats: v }),
+      showFriends: true,
+      setShowFriends: (v) => set({ showFriends: v }),
+      podcastSpeed: 1,
+      setPodcastSpeed: (v) => set({ podcastSpeed: v }),
 
       sidebarMode: "pins",
       setSidebarMode: (v) => set({ sidebarMode: v }),

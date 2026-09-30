@@ -27,6 +27,21 @@ export const SPRING = { type: "spring" as const, bounce: 0, duration: 0.3 };
 // Slightly slower sibling for larger surfaces (panels, sheets).
 export const SPRING_PANEL = { type: "spring" as const, bounce: 0, duration: 0.4 };
 
+// The right rail (lyrics / queue / friends). Every piece of a rail slide runs
+// on these: the rail's frame (Layout), each panel's sheet, and the tile grids'
+// FLIP (lib/railFlip, which drives the Web Animations API and so needs the
+// same curve as a CSS string). One curve for all of them is what keeps the
+// card's edge, the panel and the cards travelling as one piece.
+//
+// A tween on the sheet curve rather than a spring: it leaves at speed, so the
+// panel answers the click on the very next frame, and spends the rest of its
+// time landing softly. A spring had to be long to be smooth, and read as slow.
+export const RAIL_OPEN_S = 0.36;
+export const RAIL_CLOSE_S = 0.3;
+export const RAIL_EASE_CSS = `cubic-bezier(${EASE_DRAWER.join(", ")})`;
+export const RAIL_OPEN = { duration: RAIL_OPEN_S, ease: EASE_DRAWER };
+export const RAIL_CLOSE = { duration: RAIL_CLOSE_S, ease: EASE_DRAWER };
+
 // Press feedback for framer-driven buttons. Subtle on purpose: these are
 // pressed dozens of times a day.
 export const PRESS = { scale: 0.96 };

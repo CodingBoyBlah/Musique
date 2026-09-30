@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { usePlayerStore } from "../store/player.store";
 import {
   getDevices,
@@ -10,6 +11,13 @@ import {
 import { pausePlayback, resumeOrPlay } from "../api/playback";
 import { toast } from "../store/toast.store";
 import { errMsg } from "../lib/err";
+
+/* the backend forwards spotify's connect-cluster pushes as
+"connect:cluster-changed". once one has arrived we know pushes work, so the
+polling below backs off to a slow safety net. several components mount this
+hook; the shared timestamp keeps one push from refetching once per instance. */
+let pushSeen = false;
+let lastPushRefresh = 0;
 
 export function useDevices() {
   const devices = usePlayerStore((s) => s.devices);
@@ -75,6 +83,31 @@ export function useDevices() {
     refreshPlayback();
   }, [refreshDevices, refreshPlayback]);
 
+  // live device/playback changes pushed over the dealer
+  const [pushLive, setPushLive] = useState(pushSeen);
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let gone = false;
+    listen("connect:cluster-changed", () => {
+      pushSeen = true;
+      setPushLive(true);
+      const now = Date.now();
+      if (now - lastPushRefresh < 500) return;
+      lastPushRefresh = now;
+      refreshDevices();
+      refreshPlayback();
+    })
+      .then((u) => {
+        if (gone) u();
+        else off = u;
+      })
+      .catch(() => {});
+    return () => {
+      gone = true;
+      off?.();
+    };
+  }, [refreshDevices, refreshPlayback]);
+
   // Devices panel polling: faster when panel is open
   useEffect(() => {
     if (!devicesOpen) return;
@@ -92,13 +125,17 @@ export function useDevices() {
     const isPlayingLocal = store.isPlaying && !isRemotePlayback;
     if (isPlayingLocal && !devicesOpen) return;
 
-    const intervalMs = devicesOpen ? 2500 : isRemotePlayback ? 3000 : 10000;
+    // with pushes flowing, polls only keep the remote scrubber honest and
+    // catch anything a push missed
+    const intervalMs = pushLive
+      ? devicesOpen ? 8000 : isRemotePlayback ? 5000 : 30000
+      : devicesOpen ? 2500 : isRemotePlayback ? 3000 : 10000;
     const timer = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       refreshPlayback();
     }, intervalMs);
     return () => clearInterval(timer);
-  }, [isRemotePlayback, devicesOpen, refreshPlayback]);
+  }, [isRemotePlayback, devicesOpen, refreshPlayback, pushLive]);
 
   const transfer = useCallback(
     async (deviceId: string) => {

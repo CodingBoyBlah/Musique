@@ -1,7 +1,9 @@
 import { memo, useState } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2, Check } from "@/lib/icons";
+import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2, Check, Info, Radio } from "@/lib/icons";
+import { useCreditsStore } from "../../store/credits.store";
+import { playTrackRadio } from "../../utils/radio";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TrackItem } from "../../types/spotify";
@@ -20,6 +22,7 @@ import { transportPlay, transportPause } from "../../hooks/usePlayerControls";
 import { AnimatedPlayPause, AnimatedHeart } from "../playground/AnimatedIcons";
 import { Tooltip } from "./Tooltip";
 import "../../styles/ui.css";
+import { isEpisodeId } from "../../utils/episode";
 
 interface Props {
   track:         TrackItem;
@@ -138,12 +141,17 @@ function TrackRowImpl({
     danger: true,
     onSelect: () => onRemoveFromPlaylist(track),
   });
+  if (!track.id.startsWith("spotify:")) {
+    menuEntries.push({ label: "Start radio", icon: <Radio size={14} />, onSelect: () => { playTrackRadio(track); } });
+    menuEntries.push({ label: "Show credits", icon: <Info size={14} />, onSelect: () => useCreditsStore.getState().open(track) });
+  }
   if (track.artists[0]) menuEntries.push({ label: "Go to artist", icon: <User size={14} />, onSelect: () => navigate(`/artist/${track.artists[0].id}`) });
   if (track.album) menuEntries.push({ label: "Go to album", icon: <Disc3 size={14} />, onSelect: () => navigate(`/album/${track.album!.id}`) });
   // Only meaningful while audio actually comes from YouTube. This is the
   // escape hatch for a bad automatic match - matching refuses rather than
   // guessing, so a track that won't play needs somewhere to be corrected.
-  if (backend?.active === "youtube") {
+  // episodes aren't matched on youtube - they come from the show's feed
+  if (backend?.active === "youtube" && !isEpisodeId(track.id)) {
     menuEntries.push({
       label: "Change YouTube source…",
       icon: <Music size={14} />,

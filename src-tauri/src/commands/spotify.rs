@@ -216,6 +216,17 @@ pub async fn search(
                 owner_name:  pl.owner.as_ref().and_then(|o| o.display_name.clone()),
             }).collect())
             .unwrap_or_default(),
+        shows: raw.shows.as_ref()
+            .and_then(|p| p.get("items"))
+            .and_then(|i| i.as_array())
+            .map(|a| a.iter().filter_map(crate::commands::podcasts::show_from).collect())
+            .unwrap_or_default(),
+        episodes: raw.episodes.as_ref()
+            .and_then(|p| p.get("items"))
+            .and_then(|i| i.as_array())
+            .map(|a| a.iter().filter(|e| !e.is_null())
+                .filter_map(|e| crate::commands::podcasts::episode_from(e, None)).collect())
+            .unwrap_or_default(),
     };
 
     let pool = &app.state::<AppState>().db.clone();
@@ -421,6 +432,14 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
     let pl: SpPlaylist = match spotify::spotify_get(&token, &format!("{BASE}/playlists/{id}")).await {
         Ok(pl) => pl,
         Err(e) => {
+            // spotify-made playlists (daily mix, discover weekly, editorial)
+            // 404 on the public api for most apps; spclient still serves them.
+            // a real network outage falls through to whatever we cached
+            if let Ok(detail) = crate::commands::internal::internal_playlist(&app, &id).await {
+                if !detail.tracks.is_empty() {
+                    return Ok(detail);
+                }
+            }
             return match crate::commands::library::load_cached_playlist(&pool, &id).await? {
                 Some(detail) => Ok(detail),
                 None         => Err(e),
@@ -430,7 +449,12 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
 
     // snapshot unchanged and already cached so serve cache, no extra requests
     if cached_count > 0 && pl.snapshot_id.is_some() && pl.snapshot_id == cached_snapshot {
-        if let Some(detail) = crate::commands::library::load_cached_playlist(&pool, &id).await? {
+        if let Some(mut detail) = crate::commands::library::load_cached_playlist(&pool, &id).await? {
+            // tracks from cache, but the sharing/ownership bits are live
+            detail.owner_id      = pl.owner.as_ref().and_then(|o| o.id.clone());
+            detail.public        = pl.public;
+            detail.collaborative = pl.collaborative;
+            detail.followers     = pl.followers.as_ref().and_then(|f| f.total);
             return Ok(detail);
         }
     }
@@ -471,6 +495,10 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
         owner_name:   pl.owner.as_ref().and_then(|o| o.display_name.clone()),
         total_tracks: total,
         tracks,
+        owner_id:      pl.owner.as_ref().and_then(|o| o.id.clone()),
+        public:        pl.public,
+        collaborative: pl.collaborative,
+        followers:     pl.followers.as_ref().and_then(|f| f.total),
     };
 
     // persist to SQLite asynchronously in the background so the UI doesn't block on 300+ disk writes

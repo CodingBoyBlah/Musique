@@ -1,3 +1,5 @@
+import type { ShowItem, EpisodeItem } from "./podcast";
+
 export interface ArtistItem {
   id:          string;
   name:        string;
@@ -41,6 +43,8 @@ export interface SearchResults {
   artists:   ArtistItem[];
   albums:    AlbumItem[];
   playlists: PlaylistCard[];
+  shows?:    ShowItem[];
+  episodes?: EpisodeItem[];
 }
 
 export interface Profile {
@@ -100,4 +104,9 @@ export interface PlaylistDetail {
   owner_name:   string | null;
   total_tracks: number;
   tracks:       TrackItem[];
+  // null on the offline/cached path: "unknown", not "no"
+  owner_id?:      string | null;
+  public?:        boolean | null;
+  collaborative?: boolean | null;
+  followers?:     number | null;
 }

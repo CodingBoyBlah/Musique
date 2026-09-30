@@ -45,9 +45,18 @@ rand = "0.8"
 sha1 = "0.10"
 sha2 = "0.10"
 url = "2"
+# podcast rss feeds (episode audio on the youtube backend)
+roxmltree = "0.20"
 log = "0.4"
 librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
 librespot-metadata = { version = "0.8", default-features = false }
+# Protobuf types + runtime for decoding spclient payloads directly (extended
+# metadata, rootlist, canvas). Same versions librespot-core already pulls in.
+librespot-protocol = "0.8"
+protobuf = "3"
+bytes = "1"
+# StreamExt over the dealer subscriptions (internal/dealer.rs). already in the tree via librespot
+futures-util = "0.3"
 librespot-playback = { version = "0.8", default-features = false, features = ["rodio-backend"] }
 librespot-audio = { version = "0.8", default-features = false }
 # Direct rodio dep so playback/mod.rs can build its OWN output sink (DeviceSink)
@@ -102,6 +111,11 @@ librespot-core = { path = "vendor/librespot-core" }
 # playback even though storage-resolve returns 3-4 working mirrors. See
 # vendor/librespot-audio/src/fetch/mod.rs.
 librespot-audio = { path = "vendor/librespot-audio" }
+# Vendored librespot-connect, patched for Spotify Jam: social-connect pushes
+# every Jam edit as a transfer of the track already playing (kept, not
+# restarted), the app needs Spirc's queue to show it, and hosts add to the Jam
+# queue through Spirc. See vendor/librespot-connect/src/spirc.rs ("jam:").
+librespot-connect = { path = "vendor/librespot-connect" }
 
 [profile.dev]
 incremental = true

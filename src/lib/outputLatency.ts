@@ -15,6 +15,11 @@ import { invoke } from "@tauri-apps/api/core";
  * the manual offset goes back to being what it should always have been: a
  * personal preference, defaulting to zero.
  *
+ * Since the playout queue (src-tauri/src/playout.rs) keeps seconds of audio
+ * ready ahead of the speaker, both backends report positions as HEARD - taken
+ * where the queue meets the device - so the figure here is only the device
+ * buffer past that point, not the queue.
+ *
  * Deliberately NOT a react hook or a store value. The clock reads it inside
  * `getClock()`, so a latency change must not re-render anything - this codebase
  * has an explicit no-re-render-cascade mandate. One module-level number, one

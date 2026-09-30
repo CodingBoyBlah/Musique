@@ -55,6 +55,35 @@ async fn ensure_inner(app: &AppHandle) -> Result<(), AppError> {
     ensure_inner_with(app, true).await
 }
 
+/// podcast playback speed (0.5x - 3x, pitch kept). applies to whatever the
+/// sink is playing; the frontend sets it back to 1x for music
+#[tauri::command]
+pub async fn set_playback_speed(app: AppHandle, speed: f32) -> Result<(), AppError> {
+    if !(0.5..=3.0).contains(&speed) {
+        return Err(AppError::InvalidInput(format!("speed out of range: {speed}")));
+    }
+    let before = crate::stretch::speed();
+    crate::stretch::set_speed(speed);
+    if (before - speed).abs() < 1e-3 {
+        return Ok(());
+    }
+    // seconds of audio are queued ahead, stretched at the old speed. the
+    // youtube backend's prebuffer starts over on its own; spotify's player
+    // has to be sent back to what is being heard
+    let playback = app.state::<AppState>().playback.clone();
+    let guard = playback.lock().await;
+    if let Some(inner) = guard.as_ref() {
+        inner.speed_changed()?;
+    }
+    Ok(())
+}
+
+/// bring the librespot session up for the internal api layer (spclient calls)
+/// without ever popping a browser authorization at the user
+pub(crate) async fn warm_session(app: &AppHandle) -> Result<(), AppError> {
+    ensure_inner_with(app, false).await
+}
+
 /// `interactive = false` never opens a browser authorization; see `create_inner`.
 async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), AppError> {
     let s        = app.state::<AppState>();
@@ -254,6 +283,9 @@ fn yt_claim() -> u64 {
 /// taken. The download is ~1s of network work; holding the playback mutex
 /// across it would block every transport command for its duration.
 async fn yt_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppError> {
+    if let Some(episode_id) = id.strip_prefix("spotify:episode:") {
+        return yt_play_episode(app, id, episode_id, position_ms).await;
+    }
     let ticket = yt_claim();
     ensure_yt(app).await?;
     let pool = app.state::<AppState>().db.clone();
@@ -282,6 +314,108 @@ async fn yt_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppE
     Ok(())
 }
 
+/// Play a podcast episode on the YouTube backend. Spotify only streams episodes
+/// to its own session, so the audio comes from the show's RSS feed (or YouTube
+/// Music) instead - see `episode_audio`. Episodes stream rather than download
+/// whole, so this starts on the first chunk.
+async fn yt_play_episode(
+    app: &AppHandle,
+    id: &str,
+    episode_id: &str,
+    position_ms: u32,
+) -> Result<(), AppError> {
+    use rodio::Source;
+
+    let ticket = yt_claim();
+    let current = || YT_REQUEST.load(Ordering::SeqCst) == ticket;
+    ensure_yt(app).await?;
+    let pool = app.state::<AppState>().db.clone();
+    let token = crate::commands::spotify::tok(app).await?;
+
+    let found = crate::episode_audio::resolve(&pool, &token, episode_id).await?;
+    if !current() {
+        return Ok(());
+    }
+    let opened = match crate::episode_audio::remote::open(&found.url, found.user_agent).await {
+        Ok(opened) => opened,
+        Err(e) => {
+            // a remembered url that stopped working shouldn't stick
+            crate::episode_audio::forget(&pool, episode_id).await;
+            return Err(e);
+        }
+    };
+    if !current() {
+        return Ok(());
+    }
+    eprintln!("[youtube] episode {episode_id} via {} ({} bytes)", found.via, opened.len);
+
+    let handle = opened.handle.clone();
+    if position_ms > 0 && found.duration_ms > 0 {
+        // rough (see EpisodeStream::byte_for); the exact spot for an mp4 is
+        // only known once its index is read, below
+        let byte = (opened.len as u128 * position_ms as u128 / found.duration_ms as u128) as u64;
+        handle.prefetch(byte.saturating_sub(64 * 1024), std::time::Duration::from_secs(8)).await;
+    }
+
+    // the container type without its codec parameters, which the probe
+    // doesn't match on; the feed's word first, the server's second
+    let mime = found
+        .mime
+        .or(opened.content_type)
+        .map(|m| m.split(';').next().unwrap_or_default().trim().to_string())
+        .filter(|m| m.starts_with("audio/"));
+    let reader = opened.reader;
+    let clock = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let source_clock = std::sync::Arc::clone(&clock);
+    // probing and the first seek read the file, which can wait on the network,
+    // so they run on a blocking thread rather than an async worker
+    let (source, segments, started_at) = tokio::task::spawn_blocking(move || -> Result<_, AppError> {
+        let mut decoder = crate::episode_audio::source::EpisodeDecoder::open(reader, mime)
+            .map_err(|e| AppError::Playback(format!("episode decode: {e}")))?;
+        let segments = decoder.segments();
+        let mut start = 0u32;
+        if position_ms > 0 {
+            match decoder.try_seek(std::time::Duration::from_millis(position_ms as u64)) {
+                Ok(()) => start = position_ms,
+                Err(e) => eprintln!("[youtube] episode seek to {position_ms}ms on load failed: {e}"),
+            }
+        }
+        Ok((crate::episode_audio::source::EpisodeSource::new(decoder, source_clock, start as u64), segments, start))
+    })
+    .await
+    .map_err(|e| AppError::Playback(format!("episode decode: {e}")))??;
+
+    let stream = crate::playback::youtube::EpisodeStream { handle, duration_ms: found.duration_ms, segments };
+    let yt = app.state::<AppState>().yt.clone();
+    let guard = yt.lock().await;
+    if !current() {
+        eprintln!("[youtube] dropping superseded load of {id}");
+        return Ok(());
+    }
+    if let Some(player) = guard.as_ref() {
+        player.play_episode(id, source, clock, stream, started_at);
+    }
+    Ok(())
+}
+
+/// Seek on the YouTube backend. Music is fully in memory, so that's instant;
+/// a streaming episode first pulls the bytes around the target so the audio
+/// thread doesn't sit waiting on the network mid-seek.
+async fn yt_seek(app: &AppHandle, position_ms: u32) -> Result<(), AppError> {
+    let yt = app.state::<AppState>().yt.clone();
+    let episode = yt.lock().await.as_ref().and_then(|p| p.episode_stream());
+    if let Some(episode) = episode {
+        if let Some(byte) = episode.byte_for(position_ms) {
+            episode.handle.prefetch(byte, std::time::Duration::from_secs(6)).await;
+        }
+    }
+    let guard = yt.lock().await;
+    if let Some(player) = guard.as_ref() {
+        player.seek(position_ms)?;
+    }
+    Ok(())
+}
+
 /// Resolve, extract and download a track ahead of playing it.
 ///
 /// Fire-and-forget: a preload failing must never surface to the user or block
@@ -289,6 +423,16 @@ async fn yt_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppE
 /// played, `yt_play` simply pays the cost then instead.
 async fn yt_preload(app: &AppHandle, id: &str) {
     let pool = app.state::<AppState>().db.clone();
+    if let Some(episode_id) = id.strip_prefix("spotify:episode:") {
+        // not the audio (that's hundreds of MB) - just find where it lives,
+        // so pressing play skips the feed lookup
+        if let Ok(token) = crate::commands::spotify::tok(app).await {
+            if let Err(e) = crate::episode_audio::resolve(&pool, &token, episode_id).await {
+                eprintln!("[youtube] preload {id}: {e}");
+            }
+        }
+        return;
+    }
     let query = match match_query(app, &pool, id).await {
         Ok(q) => q,
         Err(e) => {
@@ -717,13 +861,18 @@ pub async fn resume_or_play(
         if resumable {
             yt_claim();
             let yt = app.state::<AppState>().yt.clone();
+            let drifted = yt
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|p| position_ms > 0 && p.position_ms().abs_diff(position_ms) > 2000);
+            if drifted {
+                if let Err(e) = yt_seek(&app, position_ms).await {
+                    eprintln!("[youtube] seek on resume failed: {e}");
+                }
+            }
             let guard = yt.lock().await;
             if let Some(player) = guard.as_ref() {
-                if position_ms > 0 && player.position_ms().abs_diff(position_ms) > 2000 {
-                    if let Err(e) = player.seek(position_ms) {
-                        eprintln!("[youtube] seek on resume failed: {e}");
-                    }
-                }
                 player.resume()?;
             }
         } else {
@@ -784,14 +933,7 @@ pub async fn stop_playback(app: AppHandle) -> Result<(), AppError> {
 #[tauri::command]
 pub async fn seek_playback(app: AppHandle, position_ms: u32) -> Result<(), AppError> {
     if uses_youtube(&app).await {
-        // The whole track is buffered in memory, so this is an exact seek with
-        // no re-fetch - see `youtube::stream` for why it is fetched that way.
-        let yt = app.state::<AppState>().yt.clone();
-        let guard = yt.lock().await;
-        if let Some(player) = guard.as_ref() {
-            player.seek(position_ms)?;
-        }
-        return Ok(());
+        return yt_seek(&app, position_ms).await;
     }
 
     let playback = app.state::<AppState>().playback.clone();
@@ -1010,4 +1152,98 @@ pub async fn get_output_latency_ms(app: AppHandle) -> Result<i64, AppError> {
         .map(|inner| inner.output_latency_ms())
         .unwrap_or(0);
     Ok(latency)
+}
+
+// ── connect-driven playback (spotify jam) ───────────────────────────────────
+//
+// in a jam the queue belongs to spotify: spirc holds it and social-connect
+// edits it for everyone. these drive spirc's queue directly instead of the
+// app's own, and the ui mirrors it from the "connect:state" event.
+
+async fn with_spirc<T>(
+    app: &AppHandle,
+    f: impl FnOnce(&crate::playback::PlaybackInner) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    if uses_youtube(app).await {
+        return Err(AppError::Playback(
+            "Jams play through Spotify. Switch the audio source to Spotify in Settings.".into(),
+        ));
+    }
+    ensure_inner(app).await?;
+    let playback = app.state::<AppState>().playback.clone();
+    let guard = playback.lock().await;
+    let inner = guard
+        .as_ref()
+        .ok_or_else(|| AppError::Playback("spotify session unavailable".into()))?;
+    f(inner)
+}
+
+/// the queue, current track and context this device last reported
+#[tauri::command]
+pub async fn get_connect_state(app: AppHandle) -> Result<Option<crate::playback::ConnectStateMsg>, AppError> {
+    let playback = app.state::<AppState>().playback.clone();
+    let guard = playback.lock().await;
+    Ok(guard.as_ref().map(|inner| inner.connect_state()))
+}
+
+/// play a list through spirc so it becomes the connect queue (a jam host's
+/// music is what the jam hears). `keep_stream` carries on the track already
+/// playing when it's the one at `index`
+#[tauri::command]
+pub async fn connect_load_tracks(
+    app: AppHandle,
+    ids: Vec<String>,
+    index: u32,
+    position_ms: u32,
+    start_playing: bool,
+    keep_stream: bool,
+) -> Result<(), AppError> {
+    let uris = ids
+        .iter()
+        .map(|id| crate::playback::track_uri(id))
+        .collect::<Result<Vec<_>, _>>()?;
+    if uris.is_empty() {
+        return Err(AppError::InvalidInput("nothing to play".into()));
+    }
+    let index = index.min(uris.len() as u32 - 1);
+    with_spirc(&app, |inner| inner.load_tracks(uris, index, position_ms, start_playing, keep_stream)).await
+}
+
+#[tauri::command]
+pub async fn connect_add_to_queue(app: AppHandle, id: String) -> Result<(), AppError> {
+    let uri = crate::playback::track_uri(&id)?;
+    with_spirc(&app, |inner| inner.add_to_queue(uri)).await
+}
+
+#[tauri::command]
+pub async fn connect_skip_to(app: AppHandle, id: String) -> Result<(), AppError> {
+    let uri = crate::playback::track_uri(&id)?;
+    with_spirc(&app, |inner| inner.skip_to(uri)).await
+}
+
+#[tauri::command]
+pub async fn connect_next(app: AppHandle) -> Result<(), AppError> {
+    with_spirc(&app, |inner| inner.next()).await
+}
+
+#[tauri::command]
+pub async fn connect_prev(app: AppHandle) -> Result<(), AppError> {
+    with_spirc(&app, |inner| inner.prev()).await
+}
+
+#[tauri::command]
+pub async fn connect_set_shuffle(app: AppHandle, on: bool) -> Result<(), AppError> {
+    with_spirc(&app, |inner| inner.set_shuffle(on)).await
+}
+
+#[tauri::command]
+pub async fn connect_set_repeat(app: AppHandle, context: bool, track: bool) -> Result<(), AppError> {
+    with_spirc(&app, |inner| inner.set_repeat(context, track)).await
+}
+
+/// a jam guest's pause is theirs alone (hold = true); resuming rejoins the
+/// jam where it has got to meanwhile
+#[tauri::command]
+pub async fn jam_hold(app: AppHandle, hold: bool) -> Result<(), AppError> {
+    with_spirc(&app, |inner| inner.set_jam_hold(hold)).await
 }

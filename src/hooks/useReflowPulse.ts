@@ -1,5 +1,4 @@
 import { useSyncExternalStore } from "react";
-import { usePlayerStore } from "../store/player.store";
 import { useUIStore } from "../store/ui.store";
 
 /* reflow pulse
@@ -8,7 +7,7 @@ framer-motion layout animations only fire when the motion component itself
 re-renders (framer snapshots the old box on render, measures the new one
 after commit, animates the delta). grid cards are memoised and their pages
 dont subscribe to window size or the side panels - so when the grid
-re-columns (resize, lyrics/queue panel opens) the card boxes move via CSS but
+re-columns (window resize, sidebar collapse) the card boxes move via CSS but
 no react render happens, framer never re-measures, cards teleport instead of
 gliding. annoying as hell to track down.
 
@@ -52,10 +51,10 @@ function getSnapshot() {
 export function useReflowPulse(): void {
   // resize -> grid re-columns
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  // side panels & sidebar toggles eat/free horizontal space -> grid re-columns.
-  usePlayerStore((s) => (s.lyricsOpen ? 1 : 0) | (s.queueOpen ? 2 : 0));
+  // the left sidebar collapsing frees horizontal space -> grid re-columns.
+  // The right rail is deliberately NOT here: Layout moves the grids through a
+  // rail slide itself (lib/railFlip), on the compositor. Re-rendering every
+  // card for framer to measure was the stall on the frame a close landed on,
+  // and a wasted render of all of them on the first frame of every toggle.
   useUIStore((s) => s.sidebarCollapsed);
-  // a closing panel keeps its rail until it has slid out; the column only
-  // widens when that settles, so that is the render the grid has to catch.
-  useUIStore((s) => s.railSettleTick);
 }

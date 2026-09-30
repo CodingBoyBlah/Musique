@@ -67,12 +67,15 @@ const PANEL = rrect(3, 4, 18, 16, 3) + "M9.5 4v16";
 const DEVICES_MONITOR = "M12.5 15H4.5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1";
 const DEVICES_PHONE = rrect(14.5, 9.5, 7, 11, 1.8);
 const QUEUE_PLAY = "M4 5.2v4.6a.6.6 0 0 0 .9.5l3.7-2.3a.6.6 0 0 0 0-1L4.9 4.7a.6.6 0 0 0-.9.5z";
+const STATS_FRAME = rrect(3, 3.5, 18, 17, 4.5);
+const STATS_BARS = "M8 16.5v-3M12 16.5V8M16 16.5v-5.5";
 const EYE = "M2.5 12C4.5 7.8 8 5.5 12 5.5s7.5 2.3 9.5 6.5c-2 4.2-5.5 6.5-9.5 6.5S4.5 16.2 2.5 12z";
 
 export const iconPaths = {
   AlertTriangle: "M10.27 4.5a2 2 0 0 1 3.46 0l7.5 13a2 2 0 0 1-1.73 3H4.5a2 2 0 0 1-1.73-3zM12 9.5v4M12 17h.01",
   ArrowRight: "M5 12h14M13 6l6 6-6 6",
   ArrowUpRight: "M7 17 17 7M8.5 7H17v8.5",
+  BarChart: "M4 20.5h16M6.5 20.5V13M12 20.5V5.5M17.5 20.5V10",
   Captions: rrect(3, 5, 18, 14, 3) + "M7 12h3.5M13.5 12h3.5M7 15.5h6M16 15.5h1",
   Cast:
     "M2.5 8V6.5A2.5 2.5 0 0 1 5 4h14a2.5 2.5 0 0 1 2.5 2.5v11A2.5 2.5 0 0 1 19 20h-5" +
@@ -86,6 +89,7 @@ export const iconPaths = {
   Disc3: circle(12, 12, 9) + circle(12, 12, 2.5) + "M6.5 12A5.5 5.5 0 0 1 12 6.5",
   Eye: EYE + circle(12, 12, 3),
   EyeOff: EYE + "M3.5 3.5l17 17",
+  Folder: "M3.5 7.5a2 2 0 0 1 2-2h3.6a1.5 1.5 0 0 1 1.1.5l1.6 1.8h6.7a2 2 0 0 1 2 2v7.7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z",
   Globe:
     circle(12, 12, 9) + "M3 12h18" +
     "M12 3c-2.5 2.5-3.8 5.6-3.8 9s1.3 6.5 3.8 9c2.5-2.5 3.8-5.6 3.8-9S14.5 5.5 12 3z",
@@ -111,6 +115,7 @@ export const iconPaths = {
   LogOut: "M10 4H6.5A2.5 2.5 0 0 0 4 6.5v11A2.5 2.5 0 0 0 6.5 20H10M16 8l4 4-4 4M20 12H9.5",
   Maximize2: "M14.5 3.5h6v6M20.5 3.5 14 10M9.5 20.5h-6v-6M3.5 20.5 10 14",
   Minimize2: "M14 4v6h6M14 10l6.5-6.5M10 20v-6H4M10 14l-6.5 6.5",
+  Mic: rrect(9, 3, 6, 11, 3) + "M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7",
   Minus: "M5 12h14",
   MonitorSpeaker:
     rrect(2.5, 4.5, 11, 9, 2) + "M8 13.5v3M5.5 17h5" + rrect(16, 3.5, 5.5, 17, 2) +
@@ -121,11 +126,15 @@ export const iconPaths = {
   PanelLeft: PANEL,
   PanelLeftClose: PANEL + "M16 9.5 13.5 12l2.5 2.5",
   Pause: rrect(6, 4.5, 4, 15, 1.2) + rrect(14, 4.5, 4, 15, 1.2),
+  Pencil: "M4.5 19.5v-3.8L15.3 4.9a2.2 2.2 0 0 1 3.1 0l.7.7a2.2 2.2 0 0 1 0 3.1L8.3 19.5zM13 7.2l3.8 3.8",
   Pin: "M12 16v5M8.5 3.5h7M9.5 3.5v5.2l-3 3.3V14.5h11V12l-3-3.3V3.5",
   PinOff: "M12 16v5M8.5 3.5h7M14.5 3.5v5.2l3 3.3v2.5h-3M9.5 6.5v2.2l-3 3.3v2.5h8M3.5 3.5l17 17",
   Play: "M7 5.4a1.2 1.2 0 0 1 1.8-1.04l10.4 6.6a1.2 1.2 0 0 1 0 2.08l-10.4 6.6A1.2 1.2 0 0 1 7 18.6z",
   Plus: "M12 5v14M5 12h14",
   Queue: QUEUE_PLAY + "M12 7.5h8.5M3.5 13.5h17M3.5 19h17",
+  Radio:
+    circle(12, 12, 2) +
+    "M8.46 8.46a5 5 0 0 0 0 7.08M15.54 8.46a5 5 0 0 1 0 7.08M5.64 5.64a9 9 0 0 0 0 12.72M18.36 5.64a9 9 0 0 1 0 12.72",
   RefreshCw:
     "M20 11A8 8 0 0 0 6.1 6.6L4 8.5M4 4v4.5h4.5M4 13a8 8 0 0 0 13.9 4.4L20 15.5M20 20v-4.5h-4.5",
   Repeat: REPEAT,
@@ -149,6 +158,10 @@ export const iconPaths = {
     "M10 4.5c.4 3.9 2.6 6.1 6.5 6.5-3.9.4-6.1 2.6-6.5 6.5-.4-3.9-2.6-6.1-6.5-6.5 3.9-.4 6.1-2.6 6.5-6.5z" +
     "M18 2.5c.15 1.4.9 2.35 2.5 2.5-1.6.15-2.35.9-2.5 2.5-.15-1.6-.9-2.35-2.5-2.5 1.6-.15 2.35-1.1 2.5-2.5z",
   Speaker: rrect(5, 2.5, 14, 19, 2.5) + circle(12, 14.5, 3.5) + "M12 6.5h.01",
+  // listening stats: three rising bars in a soft frame. drawn to sit with
+  // Captions and Info, and to fill when Stats is the page you are on - the
+  // bare bar chart it replaced was the one nav icon with no filled state
+  Stats: STATS_FRAME + STATS_BARS,
   Trash2:
     "M4 6.5h16M9.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v1.5" +
     "M6 6.5l.8 12.1a2 2 0 0 0 2 1.9h6.4a2 2 0 0 0 2-1.9L18 6.5M10 11v5M14 11v5",
@@ -233,6 +246,7 @@ const SOLID: Partial<Record<IconName, Solid>> = {
     cut: circle(12, 14.5, 3.5) + "M12 6.5h.01",
     edge: rrect(5, 2.5, 14, 19, 2.5),
   },
+  Stats: { fill: STATS_FRAME, cut: STATS_BARS, edge: STATS_FRAME },
   Tv: { fill: rrect(3, 5, 18, 12.5, 2.5) },
   User: { fill: circle(12, 7.5, 4) + PERSON_BODY },
   UserPlus: {
@@ -315,6 +329,7 @@ function createVolumeIcon(displayName: string, waves: string) {
 export const AlertTriangle = createIcon("AlertTriangle");
 export const ArrowRight = createIcon("ArrowRight");
 export const ArrowUpRight = createIcon("ArrowUpRight");
+export const BarChart = createIcon("BarChart");
 export const Captions = createIcon("Captions");
 export const Cast = createIcon("Cast");
 export const Check = createIcon("Check");
@@ -326,6 +341,7 @@ export const Devices = createIcon("Devices");
 export const Disc3 = createIcon("Disc3");
 export const Eye = createIcon("Eye");
 export const EyeOff = createIcon("EyeOff");
+export const Folder = createIcon("Folder");
 export const Globe = createIcon("Globe");
 export const GripVertical = createIcon("GripVertical");
 export const Heart = createIcon("Heart");
@@ -343,6 +359,7 @@ export const LogOut = createIcon("LogOut");
 export const Maximize2 = createIcon("Maximize2");
 // the counterpart to Maximize2, which is what opens the immersive view
 export const Minimize2 = createIcon("Minimize2");
+export const Mic = createIcon("Mic");
 export const Minus = createIcon("Minus");
 export const MonitorSpeaker = createIcon("MonitorSpeaker");
 export const MoreHorizontal = createIcon("MoreHorizontal");
@@ -351,11 +368,13 @@ export const Music2 = createIcon("Music2");
 export const PanelLeft = createIcon("PanelLeft");
 export const PanelLeftClose = createIcon("PanelLeftClose");
 export const Pause = createIcon("Pause");
+export const Pencil = createIcon("Pencil");
 export const Pin = createIcon("Pin");
 export const PinOff = createIcon("PinOff");
 export const Play = createIcon("Play");
 export const Plus = createIcon("Plus");
 export const Queue = createIcon("Queue");
+export const Radio = createIcon("Radio");
 export const RefreshCw = createIcon("RefreshCw");
 export const Repeat = createIcon("Repeat");
 export const Repeat1 = createIcon("Repeat1");
@@ -370,6 +389,7 @@ export const SkipForward = createIcon("SkipForward");
 export const Smartphone = createIcon("Smartphone");
 export const Sparkles = createIcon("Sparkles");
 export const Speaker = createIcon("Speaker");
+export const Stats = createIcon("Stats");
 export const Trash2 = createIcon("Trash2");
 export const Tv = createIcon("Tv");
 export const User = createIcon("User");
@@ -382,14 +402,14 @@ export const Volume2 = createVolumeIcon("Volume2", "M16 9.5a3.5 3.5 0 0 1 0 5M18
 export const VolumeX = createVolumeIcon("VolumeX", "M16.5 9.5l5 5M21.5 9.5l-5 5");
 
 const ICONS: Record<string, LucideIcon> = {
-  AlertTriangle, ArrowRight, ArrowUpRight, Captions, Cast, Check,
+  AlertTriangle, ArrowRight, ArrowUpRight, BarChart, Captions, Cast, Check,
   ChevronDown, ChevronLeft, ChevronRight, Clock, Devices, Disc3, Eye, EyeOff,
-  Globe, GripVertical, Heart, Home, Info, Languages, Laptop, Link, Link2,
-  ListMusic, ListPlus, Loader2, LogIn, LogOut, Maximize2, Minimize2, Minus,
+  Folder, Globe, GripVertical, Heart, Home, Info, Languages, Laptop, Link, Link2,
+  ListMusic, ListPlus, Loader2, LogIn, LogOut, Maximize2, Mic, Minimize2, Minus,
   MonitorSpeaker, MoreHorizontal, Music, Music2, PanelLeft, PanelLeftClose,
-  Pause, Pin, PinOff, Play, Plus, Queue, RefreshCw, Repeat, Repeat1, RotateCcw,
+  Pause, Pencil, Pin, PinOff, Play, Plus, Queue, Radio, RefreshCw, Repeat, Repeat1, RotateCcw,
   RotateCw, Search, Settings, Share2, Shuffle, SkipBack, SkipForward,
-  Smartphone, Sparkles, Speaker, Trash2, Tv, User, UserPlus, Users,
+  Smartphone, Sparkles, Speaker, Stats, Trash2, Tv, User, UserPlus, Users,
   Volume1, Volume2, VolumeX, X,
 };
 

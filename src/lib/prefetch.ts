@@ -1,3 +1,4 @@
+import { isEpisodeId } from "../utils/episode";
 import type { QueryClient } from "@tanstack/react-query";
 import { getAlbum, getArtist, getPlaylist } from "../api/spotify";
 import { getLyrics } from "../api/lyrics";
@@ -33,7 +34,7 @@ export function prefetchPlaylist(qc: QueryClient, id: string | undefined | null)
 
 // lyrics are cached hard (sqlite-backed), so warm them and the panel never spins
 export function prefetchLyrics(qc: QueryClient, track: TrackItem | null | undefined) {
-  if (!track) return;
+  if (!track || isEpisodeId(track.id)) return;
   qc.prefetchQuery({
     queryKey:  ["lyrics", track.id],
     queryFn:   () => getLyrics(track),

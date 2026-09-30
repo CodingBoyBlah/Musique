@@ -4,11 +4,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Search, Play, X, ArrowRight } from "@/lib/icons";
 import { useSearch } from "../../hooks/useSearch";
 import { usePlayerStore } from "../../store/player.store";
-import { playTrack } from "../../api/playback";
+import { playTrack, resumeOrPlay } from "../../api/playback";
 import { CoverArt } from "../ui/CoverArt";
 import { fmtMs } from "../../utils/fmt";
 import { isMac } from "../../lib/platform";
 import { EASE_OUT } from "../../lib/motion";
+import { episodeToTrack } from "../../utils/episode";
 
 /* the search field in the middle of the top bar.
 
@@ -24,7 +25,8 @@ const SECTION_HEAD: React.CSSProperties = {
   letterSpacing: "0.08em",
   textTransform: "uppercase",
   color: "rgba(255, 255, 255, 0.42)",
-  padding: "10px 12px 4px",
+  // 10px in, like the rows, so a label starts on the same edge as the art under it
+  padding: "10px 10px 4px",
 };
 
 const ROW_TITLE: React.CSSProperties = {
@@ -120,24 +122,31 @@ export function TopSearch() {
   const hasQuery = query.trim().length > 0;
   const open = focused && hasQuery && !onSearchPage;
   const { data, isLoading, isPlaceholderData } = useSearch(onSearchPage ? "" : debouncedQuery);
-  const resultCount = (data?.tracks?.length ?? 0) + (data?.albums?.length ?? 0) + (data?.artists?.length ?? 0);
+  const resultCount = (data?.tracks?.length ?? 0) + (data?.albums?.length ?? 0) + (data?.artists?.length ?? 0)
+    + (data?.shows?.length ?? 0) + (data?.episodes?.length ?? 0);
   const settled = debouncedQuery === query.trim() && !isLoading && !isPlaceholderData;
 
   const tracks = data?.tracks?.slice(0, 4) ?? [];
   const albums = data?.albums?.slice(0, 3) ?? [];
   const artists = data?.artists?.slice(0, 2) ?? [];
+  const shows = data?.shows?.slice(0, 2) ?? [];
+  const episodes = data?.episodes?.slice(0, 2) ?? [];
 
   type FlatItem =
     | { type: "query" }
     | { type: "track"; data: typeof tracks[0] }
     | { type: "album"; data: typeof albums[0] }
-    | { type: "artist"; data: typeof artists[0] };
+    | { type: "artist"; data: typeof artists[0] }
+    | { type: "show"; data: typeof shows[0] }
+    | { type: "episode"; data: typeof episodes[0] };
 
   const items: FlatItem[] = [
     { type: "query" },
     ...tracks.map((t) => ({ type: "track" as const, data: t })),
     ...albums.map((a) => ({ type: "album" as const, data: a })),
     ...artists.map((ar) => ({ type: "artist" as const, data: ar })),
+    ...shows.map((sh) => ({ type: "show" as const, data: sh })),
+    ...episodes.map((ep) => ({ type: "episode" as const, data: ep })),
   ];
 
   function openResults() {
@@ -160,6 +169,14 @@ export function TopSearch() {
       playTrack(item.data.id).catch(() => {});
     } else if (item.type === "album") {
       navigate(`/album/${item.data.id}`);
+    } else if (item.type === "show") {
+      navigate(`/show/${item.data.id}`);
+    } else if (item.type === "episode") {
+      const ep = item.data;
+      const track = episodeToTrack(ep);
+      setCurrentTrack(track);
+      const pos = !ep.fully_played && ep.resume_position_ms ? ep.resume_position_ms : 0;
+      (pos > 0 ? resumeOrPlay(track.id, pos) : playTrack(track.id)).catch(() => {});
     } else {
       navigate(`/artist/${item.data.id}`);
     }
@@ -282,7 +299,9 @@ export function TopSearch() {
                 style={{ ...rowStyle(selectedIndex === 0), color: selectedIndex === 0 ? "#fff" : "rgba(255, 255, 255, 0.75)" }}
               >
                 <div style={{
-                  width: 32, height: 32, borderRadius: 7, flexShrink: 0,
+                  // the same 34px square as the result covers, so every row's
+                  // text column starts on one line
+                  width: 34, height: 34, borderRadius: 6, flexShrink: 0,
                   background: selectedIndex === 0 ? "var(--color-accent)" : "rgba(255, 255, 255, 0.06)",
                   display: "flex", alignItems: "center", justifyContent: "center", color: "#fff",
                 }}>
@@ -360,6 +379,47 @@ export function TopSearch() {
                       <p style={{ ...ROW_TITLE, color: sel ? "#fff" : "rgba(255, 255, 255, 0.9)" }}>{ar.name}</p>
                     </div>
                     <span style={KIND_TAG}>Artist</span>
+                  </div>
+                );
+              })}
+
+              {shows.length + episodes.length > 0 && <div style={SECTION_HEAD}>Podcasts</div>}
+              {shows.map((sh, i) => {
+                const idx = 1 + tracks.length + albums.length + artists.length + i;
+                const sel = selectedIndex === idx;
+                return (
+                  <div key={sh.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
+                    onClick={() => handleSelect(idx)} onMouseEnter={() => setSelectedIndex(idx)} style={rowStyle(sel)}>
+                    <div style={{ width: 34, height: 34, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
+                      <CoverArt url={sh.image_url} alt={sh.name} size={34} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ ...ROW_TITLE, color: sel ? "#fff" : "rgba(255, 255, 255, 0.9)" }}>{sh.name}</p>
+                      <p style={ROW_SUB}>{sh.publisher}</p>
+                    </div>
+                    <span style={KIND_TAG}>Podcast</span>
+                  </div>
+                );
+              })}
+              {episodes.map((ep, i) => {
+                const idx = 1 + tracks.length + albums.length + artists.length + shows.length + i;
+                const sel = selectedIndex === idx;
+                return (
+                  <div key={ep.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
+                    onClick={() => handleSelect(idx)} onMouseEnter={() => setSelectedIndex(idx)} style={rowStyle(sel)}>
+                    <div style={{ position: "relative", width: 34, height: 34, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
+                      <CoverArt url={ep.image_url} alt={ep.name} size={34} />
+                      {sel && (
+                        <div style={{ position: "absolute", inset: 0, background: "rgba(0, 0, 0, 0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <Play size={14} fill="#fff" strokeWidth={0} />
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ ...ROW_TITLE, color: sel ? "#fff" : "rgba(255, 255, 255, 0.9)" }}>{ep.name}</p>
+                      <p style={ROW_SUB}>{ep.show_name ?? "Episode"}</p>
+                    </div>
+                    <span style={KIND_TAG}>Episode</span>
                   </div>
                 );
               })}

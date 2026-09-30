@@ -342,15 +342,11 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
 
 .amb-layer {
     position: absolute;
-    /* 124% of the window, down from 144%.
-     *
-     * This is the size of the texture Chromium has to hold and re-blend on
-     * every frame, and it is not the box that matters but the box times the
-     * largest scale the keyframes reach: at -22% and scale 1.24 the layer
-     * rastered at about 1.79x the window in each direction, which is 3.2x the
-     * window's pixels. The drift now peaks at scale 1.06 with no rotation, so
-     * -8% is enough to keep the corners covered at 3% travel. */
-    inset: -8%;
+    /* 124% of the window. This is the texture Chromium holds and re-blends on
+     * every frame, and what matters is the box times the largest scale the
+     * keyframes reach - 1.12 here, so about 1.39x the window each way. The
+     * margin keeps the corners covered through 5% of travel plus a 2deg turn. */
+    inset: -12%;
     background-size: cover;
     background-position: center;
     will-change: transform;
@@ -358,26 +354,44 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
     pointer-events: none;
 }
 
-/* Fast enough to be caught moving. Speed is free here - the frame is
-   recomposited at 60fps for as long as any animation runs at all, so a 17s
-   cycle costs exactly what a 90s one did. */
-.amb-1 { animation: amb-drift-1 17s ease-in-out infinite; }
+/* the second axis of the drift, nested so each can run its own clock */
+.amb-y {
+    position: absolute;
+    inset: 0;
+    will-change: transform;
+    backface-visibility: hidden;
+}
 
-/* Nobody is looking: stop damaging the frame. See hooks/useWindowActive - an
+/* Two sine-like axes on periods that never line up.
+ *
+ * The first version ran one 17s loop through three keyframes, eased in and
+ * out of each, so the field came to a dead stop every five or six seconds and
+ * only moved 3% between them - too slow to be seen. Each axis here alternates
+ * on its own ease-in-out, which is as close to a sine as CSS gets, and the two
+ * turn at different moments, so while one is easing through a turn the other
+ * is at full speed: the field never rests. Speed is free - the frame is
+ * recomposited at 60fps for as long as anything animates at all. */
+.amb-1 { animation: amb-sway 6.2s ease-in-out infinite alternate; }
+.amb-1 > .amb-y { animation: amb-swell 4.4s ease-in-out infinite alternate; }
+
+/* Paused music, or nobody looking: hold the field exactly where it is, so it
+   picks up from there rather than jumping. See hooks/useWindowActive - an
    unfocused window is not a hidden one, and Chromium keeps its animations
    running at full rate. */
-.amb-parked { animation-play-state: paused; }
+.amb-parked,
+.amb-parked > .amb-y { animation-play-state: paused; }
 
-/* Gentle on purpose. This layer fills the whole window, and a full-viewport
-   field that swells and turns is exactly the kind of motion that unsettles
-   people - so no rotation, a small scale range and a few percent of travel.
-   The colour still flows; it just no longer lurches. The drift can be turned
-   off in Settings (prefs.ambientMotion) and stops for reduced motion or
-   reduced transparency. */
-@keyframes amb-drift-1 {
-    0%, 100% { transform: scale(1.02) translate3d(0, 0, 0); }
-    33%      { transform: scale(1.06) translate3d(3%, -2.5%, 0); }
-    66%      { transform: scale(1.04) translate3d(-2.5%, 2%, 0); }
+/* No full rotation and a bounded scale: this layer fills the whole window, and
+   a full-viewport field that spins is exactly the kind of motion that
+   unsettles people. The drift can be turned off in Settings
+   (prefs.ambientMotion) and stops for reduced motion or reduced transparency. */
+@keyframes amb-sway {
+    from { transform: translate3d(-5%, 0, 0) rotate(-2deg); }
+    to   { transform: translate3d(5%, 0, 0) rotate(2deg); }
+}
+@keyframes amb-swell {
+    from { transform: translate3d(0, 4%, 0) scale(1.04); }
+    to   { transform: translate3d(0, -4%, 0) scale(1.12); }
 }
 
 /* ── lyrics ───────────────────────────────────────────────────────────────
@@ -527,7 +541,7 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .amb-layer { animation: none !important; }
+    .amb-layer, .amb-y { animation: none !important; }
 }
 
 
@@ -613,15 +627,17 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
     background: var(--color-accent-hover);
 }
 
-/* playing on another device: a different fact, so a different colour */
+/* playing on another device: a different fact from "panel open", so a soft
+   accent tint rather than the filled pill - same hue family as the rest of
+   the app, no off-brand green */
 .tb-btn[data-tone="remote"] {
-    background: rgba(30, 215, 96, 0.16);
-    color: var(--color-primary, #1ed760);
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: color-mix(in srgb, var(--color-accent) 55%, #ffffff);
 }
 
 .tb-btn[data-tone="remote"]:hover {
-    background: rgba(30, 215, 96, 0.24);
-    color: var(--color-primary, #1ed760);
+    background: color-mix(in srgb, var(--color-accent) 28%, transparent);
+    color: #ffffff;
 }
 
 /* nothing to act on. still hoverable, so the tooltip can say why */
@@ -1052,7 +1068,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;
     }
-    .amb-layer {
+    .amb-layer, .amb-y {
         animation: none !important;
     }
 }
@@ -1106,11 +1122,11 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .ovs-track[data-on="true"] {
     pointer-events: auto;
 }
-/* 3px at rest, anchored to the right so it widens inward when grabbed */
+/* 3px at rest, flush with the strip's right edge so it widens inward when grabbed */
 .ovs-thumb {
     position: absolute;
     top: 0;
-    right: 2px;
+    right: 0;
     width: 3px;
     border-radius: 99px;
     background: rgba(255, 255, 255, 0.26);
@@ -1138,5 +1154,52 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 @media (prefers-contrast: more) {
     .ovs-thumb {
         background: rgba(255, 255, 255, 0.6);
+    }
+}
+
+/* friends panel: a friend's cover turns into a play button on hover/focus */
+.fr-art-play {
+    opacity: 0;
+    transition: opacity 0.14s ease;
+}
+.fr-art:focus-visible .fr-art-play {
+    opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+    .fr-row:hover .fr-art-play {
+        opacity: 1;
+    }
+    .fr-ctx:hover {
+        color: var(--color-text-hi) !important;
+    }
+}
+
+/* credits: the chevron on a linked person only shows it's a link on hover */
+.credit-chev {
+    opacity: 0.35;
+    transition: opacity 0.14s ease, transform 0.14s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+    .credit-link:hover .credit-chev {
+        opacity: 1;
+        transform: translateX(2px);
+    }
+}
+
+/* sidebar folders: a hairline down the left of everything inside a folder */
+.sb-guide {
+    position: absolute;
+    left: -8px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.1);
+    pointer-events: none;
+}
+
+/* transcript sentences: a faint wash under the one you're about to click */
+@media (hover: hover) and (pointer: fine) {
+    .tr-sentence:hover {
+        background: rgba(255, 255, 255, 0.07);
     }
 }

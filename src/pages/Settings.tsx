@@ -16,6 +16,7 @@ import {
   type ConnectionStatus,
 } from "../store/credentials.store";
 import { usePrefsStore, type SidebarMode } from "../store/prefs.store";
+import { usePlayerStore } from "../store/player.store";
 import {
   type AudioQuality,
   type PlaybackBackend,
@@ -41,8 +42,9 @@ import {
 import { isWindows, isMac } from "../lib/platform";
 import { useThemeStore, type ThemeSource } from "../store/theme.store";
 import { useReflowPulse } from "../hooks/useReflowPulse";
-import { EASE_OUT, PRESS_TRANSITION, REFLOW_SPRING, SPRING } from "../lib/motion";
+import { EASE_OUT, PRESS_TRANSITION, REFLOW_SPRING } from "../lib/motion";
 import "../styles/ui.css";
+import { Switch } from "../components/ui/Switch";
 
 const REFLOW = REFLOW_SPRING;
 
@@ -274,51 +276,6 @@ function SettingRow({
   );
 }
 
-function Switch({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className="switch"
-      style={{
-        width: 44,
-        height: 24,
-        borderRadius: 99,
-        border: "none",
-        cursor: "pointer",
-        padding: 2,
-        display: "flex",
-        alignItems: "center",
-        flexShrink: 0,
-        justifyContent: checked ? "flex-end" : "flex-start",
-        background: checked ? "var(--color-accent)" : "rgba(255, 255, 255, 0.12)",
-        transition: "background 0.2s",
-      }}
-    >
-      {/* critically damped: a toggle flip has no momentum to overshoot with */}
-      <motion.div
-        layout
-        transition={{ ...SPRING, duration: 0.25 }}
-        style={{
-          width: 20,
-          height: 20,
-          borderRadius: 99,
-          background: "#ffffff",
-          boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
-        }}
-      />
-    </button>
-  );
-}
-
 function Segmented<T extends string>({
   value,
   options,
@@ -450,6 +407,8 @@ function AppearanceCard() {
   const sidebarMode = usePrefsStore((s) => s.sidebarMode);
   const setSidebarMode = usePrefsStore((s) => s.setSidebarMode);
   const setAmbientMotion = usePrefsStore((s) => s.setAmbientMotion);
+  const showCanvas = usePrefsStore((s) => s.showCanvas);
+  const setShowCanvas = usePrefsStore((s) => s.setShowCanvas);
 
   return (
     <Card title="Appearance">
@@ -497,8 +456,14 @@ function AppearanceCard() {
       <Divider />
       <SettingRow
         label="Animated background"
-        hint="Let the blurred cover art drift slowly behind the full-screen player. Turn off for a still background."
+        hint="Let the blurred cover art drift behind the full-screen player while music plays. Turn off for a still background."
         control={<Switch checked={ambientMotion} onChange={setAmbientMotion} />}
+      />
+      <Divider />
+      <SettingRow
+        label="Animated artwork"
+        hint="Play the looping video (Spotify Canvas) some artists attach to their tracks in the full-screen player. The background takes its colours from the video."
+        control={<Switch checked={showCanvas} onChange={setShowCanvas} />}
       />
     </Card>
   );
@@ -523,6 +488,18 @@ const PREMIUM_INFO = (
   </Tooltip>
 );
 
+/* Podcasts on YouTube Music play from the show's own public feed (or its
+   YouTube uploads), so the few that exist only on Spotify can't. */
+const PODCAST_INFO = (
+  <Tooltip label="Podcasts play from each show's public feed. Spotify exclusives won't play">
+    <span
+      style={{ display: "inline-flex", alignItems: "center", cursor: "help" }}
+    >
+      <Info size={12} strokeWidth={2.2} />
+    </span>
+  </Tooltip>
+);
+
 function backendOptions(spotifyAvailable: boolean): {
   value: PlaybackBackend;
   label: string;
@@ -537,7 +514,7 @@ function backendOptions(spotifyAvailable: boolean): {
       disabled: !spotifyAvailable,
       info: PREMIUM_INFO,
     },
-    { value: "youtube", label: "YouTube Music" },
+    { value: "youtube", label: "YouTube Music", info: PODCAST_INFO },
   ];
 }
 
@@ -699,6 +676,36 @@ function GeneralCard() {
         label="Discord Rich Presence"
         hint="Show the song you're playing on your Discord profile."
         control={<Switch checked={discordPresence} onChange={toggleDiscord} />}
+      />
+    </Card>
+  );
+}
+
+function FeaturesCard() {
+  const showStats = usePrefsStore((s) => s.showStats);
+  const setShowStats = usePrefsStore((s) => s.setShowStats);
+  const showFriends = usePrefsStore((s) => s.showFriends);
+  const setShowFriends = usePrefsStore((s) => s.setShowFriends);
+  return (
+    <Card title="Features">
+      <SettingRow
+        label="Friend activity"
+        hint="The Friends panel in the top bar: what people you follow are playing, and Jams."
+        control={
+          <Switch
+            checked={showFriends}
+            onChange={(v) => {
+              setShowFriends(v);
+              if (!v && usePlayerStore.getState().friendsOpen) usePlayerStore.getState().toggleFriends();
+            }}
+          />
+        }
+      />
+      <Divider />
+      <SettingRow
+        label="Listening stats"
+        hint="The Stats page in the sidebar: time listened, streaks, top songs and when you listen. Worked out on this device."
+        control={<Switch checked={showStats} onChange={setShowStats} />}
       />
     </Card>
   );
@@ -1181,6 +1188,7 @@ export default function Settings() {
 
       <PlaybackCard />
       <GeneralCard />
+      <FeaturesCard />
       <AppearanceCard />
       <VisualCard />
       <LastfmCard />

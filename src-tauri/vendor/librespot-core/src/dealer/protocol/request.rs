@@ -84,8 +84,11 @@ impl Display for Command {
 pub struct TransferCommand {
     #[serde(default, deserialize_with = "base64_proto")]
     pub data: Option<TransferState>,
+    #[serde(default)]
     pub options: TransferOptions,
+    #[serde(default)]
     pub from_device_identifier: String,
+    #[serde(default)]
     pub logging_params: LoggingParams,
 }
 
@@ -93,15 +96,18 @@ pub struct TransferCommand {
 pub struct PlayCommand {
     #[serde(deserialize_with = "json_proto")]
     pub context: Context,
-    #[serde(deserialize_with = "json_proto")]
+    #[serde(default, deserialize_with = "json_proto")]
     pub play_origin: PlayOrigin,
+    #[serde(default)]
     pub options: PlayOptions,
+    #[serde(default)]
     pub logging_params: LoggingParams,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct PauseCommand {
     // does send options with it, but seems to be empty, investigate which options are send here
+    #[serde(default)]
     pub logging_params: LoggingParams,
 }
 
@@ -109,6 +115,7 @@ pub struct PauseCommand {
 pub struct SeekToCommand {
     pub value: u32,
     pub position: u32,
+    #[serde(default)]
     pub logging_params: LoggingParams,
 }
 
@@ -116,12 +123,14 @@ pub struct SeekToCommand {
 pub struct SkipNextCommand {
     #[serde(default, deserialize_with = "option_json_proto")]
     pub track: Option<ProvidedTrack>,
+    #[serde(default)]
     pub logging_params: LoggingParams,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SetValueCommand {
     pub value: bool,
+    #[serde(default)]
     pub logging_params: LoggingParams,
 }
 
@@ -129,6 +138,7 @@ pub struct SetValueCommand {
 pub struct AddToQueueCommand {
     #[serde(deserialize_with = "json_proto")]
     pub track: ProvidedTrack,
+    #[serde(default)]
     pub logging_params: LoggingParams,
 }
 
@@ -141,6 +151,7 @@ pub struct SetQueueCommand {
     // this queue revision is actually the last revision, so using it will not update the web ui
     // might be that internally they use the last revision to create the next revision
     pub queue_revision: String,
+    #[serde(default)]
     pub logging_params: LoggingParams,
 }
 
@@ -150,6 +161,11 @@ pub struct SetOptionsCommand {
     pub repeating_context: Option<bool>,
     pub repeating_track: Option<bool>,
     pub options: Option<OptionsOptions>,
+    /// jam: social-connect turns a Jam on and off on the playing device with a
+    /// set_options that carries nothing but `{"modes":{"jam":"on"|"off"}}`
+    #[serde(default)]
+    pub modes: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
     pub logging_params: LoggingParams,
 }
 
@@ -162,6 +178,7 @@ pub struct UpdateContextCommand {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct GenericCommand {
+    #[serde(default)]
     pub logging_params: LoggingParams,
 }
 
@@ -177,7 +194,7 @@ pub struct TransferOptions {
     pub retain_session: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct PlayOptions {
     pub skip_to: Option<SkipTo>,
     #[serde(default, deserialize_with = "option_json_proto")]
@@ -193,7 +210,8 @@ pub struct PlayOptions {
     pub system_initiated: Option<bool>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
 pub struct OptionsOptions {
     only_for_local_device: bool,
     override_restrictions: bool,
@@ -207,7 +225,7 @@ pub struct SkipTo {
     pub track_index: Option<u32>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct LoggingParams {
     pub interaction_ids: Option<Vec<String>>,
     pub device_identifier: Option<String>,

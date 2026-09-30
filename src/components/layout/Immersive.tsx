@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCanvas } from "../../hooks/useCanvas";
+import { useVideoAmbient } from "../../hooks/useVideoAmbient";
+import { CreditsList } from "../ui/CreditsList";
+import { PodcastStage, EpisodeAbout } from "../podcast/PodcastStage";
+import { TranscriptView } from "../podcast/TranscriptView";
+import { isEpisodeId } from "../../utils/episode";
+import type { Canvas } from "../../api/internal";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Minimize2, Captions, Queue, Music } from "@/lib/icons";
+import { Minimize2, Captions, Queue, Music, Info } from "@/lib/icons";
 import { useUIStore } from "../../store/ui.store";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
@@ -44,12 +51,76 @@ import {
  * subtree onto a render surface that has to be re-blended on every frame the
  * ambient moves. Blurring once into a bitmap and then only transforming it
  * costs nothing per frame, and the artwork now supplies its own texture. */
-function AmbientBg({ url }: { url: string | null | undefined }) {
-  const ambient = useAmbient(url);
+/* The room, live off a playing video (canvas / podcast preview).
+ *
+ * Every new video frame is drawn into a tiny 96x54 canvas - blurred and
+ * saturated there, where it costs next to nothing - and the canvas is scaled up
+ * to fill the window, which the bilinear upscale turns into a soft wash. So the
+ * backdrop moves with the video in real time instead of re-reading one frame
+ * every couple of seconds. It sits inside the drifting layer, so the drift and
+ * the "animated background" setting still apply. */
+function LiveVideoRoom({ video }: { video: HTMLVideoElement }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const cv = ref.current;
+    const ctx = cv?.getContext("2d");
+    if (!cv || !ctx) return;
+    setShown(false);
+    let dead = false;
+    let drewOnce = false;
+    let handle = 0;
+    const W = cv.width;
+    const H = cv.height;
+    // drawn oversize so the blur has real pixels at the edges (no dark rim)
+    const over = 0.4;
+    const hasRvfc = "requestVideoFrameCallback" in video;
+    const draw = () => {
+      if (dead) return;
+      if (video.readyState >= 2 && !document.hidden) {
+        ctx.filter = "blur(4px) saturate(1.75)";
+        ctx.drawImage(video, (-W * over) / 2, (-H * over) / 2, W * (1 + over), H * (1 + over));
+        if (!drewOnce) {
+          drewOnce = true;
+          setShown(true);
+        }
+      }
+      handle = hasRvfc
+        ? (video as HTMLVideoElement & { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(draw)
+        : requestAnimationFrame(draw);
+    };
+    draw();
+    return () => {
+      dead = true;
+      if (hasRvfc) (video as HTMLVideoElement & { cancelVideoFrameCallback: (h: number) => void }).cancelVideoFrameCallback(handle);
+      else cancelAnimationFrame(handle);
+    };
+  }, [video]);
+  return (
+    <motion.canvas
+      ref={ref}
+      width={96}
+      height={54}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: shown ? 1 : 0 }}
+      transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 100000, transform: "scale(1.08)" }}
+    />
+  );
+}
+
+function AmbientBg({ url, override, video }: { url: string | null | undefined; override?: Ambient | null; video?: HTMLVideoElement | null }) {
+  const cover = useAmbient(url);
+  // reduced motion keeps the calm, slowly-resampled room instead of a live one
+  const reduceLive = useReducedMotion();
+  // a playing canvas lights the room from its own frames
+  const ambient = override ? { ...override, ready: true } : cover;
   const { base, glow, ready } = ambient;
   const awake = useWindowActive();
   // Settings > Animated background. still, not gone: the room keeps its colour
   const drift = usePrefsStore((s) => s.ambientMotion);
+  // the room moves with the music: paused, it holds still where it is
+  const playing = usePlayerStore((s) => s.isPlaying);
 
   /* Track changes crossfade rather than cut. The rooms are stacked inside the
      one drifting layer, so the drift itself never restarts; the new room fades
@@ -70,20 +141,23 @@ function AmbientBg({ url }: { url: string | null | undefined }) {
       aria-hidden
       style={{ position: "absolute", inset: 0, overflow: "hidden", background: base, pointerEvents: "none", contain: "strict" }}
     >
-      <div className={awake && drift ? "amb-layer amb-1" : "amb-layer amb-1 amb-parked"}>
-        <AnimatePresence initial={false}>
-          {ready && (
-            <motion.div
-              key={key}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              // stay put under the incoming room until it is fully up
-              exit={{ opacity: 0, transition: { delay: ROOM_FADE_S, duration: 0 } }}
-              transition={{ duration: ROOM_FADE_S, ease: [0.4, 0, 0.2, 1] }}
-              style={{ position: "absolute", inset: 0, zIndex: z, backgroundSize: "cover", backgroundPosition: "center", ...roomFill(ambient) }}
-            />
-          )}
-        </AnimatePresence>
+      <div className={awake && drift && playing ? "amb-layer amb-1" : "amb-layer amb-1 amb-parked"}>
+        <div className="amb-y">
+          <AnimatePresence initial={false}>
+            {ready && (
+              <motion.div
+                key={key}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                // stay put under the incoming room until it is fully up
+                exit={{ opacity: 0, transition: { delay: ROOM_FADE_S, duration: 0 } }}
+                transition={{ duration: ROOM_FADE_S, ease: [0.4, 0, 0.2, 1] }}
+                style={{ position: "absolute", inset: 0, zIndex: z, backgroundSize: "cover", backgroundPosition: "center", ...roomFill(ambient) }}
+              />
+            )}
+          </AnimatePresence>
+          {video && !reduceLive && <LiveVideoRoom video={video} />}
+        </div>
       </div>
 
 {/* One element, two stacked gradients: the light the sleeve pools into
@@ -126,9 +200,26 @@ function roomFill(a: Ambient): React.CSSProperties {
  * right and softens all four corners, so the drifting blur underneath comes
  * through exactly where the lyrics are. One mask on a static image rasterises
  * once - it is not a filter and it costs nothing per frame. */
-function Sleeve({ url, alt }: { url: string | null | undefined; alt: string }) {
+function Sleeve({
+  url, alt, canvas, onVideo,
+}: {
+  url: string | null | undefined;
+  alt: string;
+  canvas?: Canvas | null;
+  onVideo?: (v: HTMLVideoElement | null) => void;
+}) {
   const src = coverUrl(url, 900) ?? url;
-  if (!src) return null;
+  const reduceMotion = useReducedMotion();
+  /* the canvas cdn sends CORS headers, so the video loads as anonymous and its
+     frames can be read for the room's colours. if one ever doesn't, the load
+     fails - retry without it (the video still plays, the colours stay the
+     cover's) */
+  const [cors, setCors] = useState(true);
+  useEffect(() => setCors(true), [canvas?.url]);
+  if (!src && !canvas) return null;
+  // a still canvas is just a better picture; a moving one respects reduced motion
+  const video = canvas && canvas.kind !== "image" && !reduceMotion ? canvas.url : null;
+  const still = canvas?.kind === "image" ? canvas.url : src;
 
 /* Three masks, multiplied together.
  *
@@ -157,9 +248,34 @@ const SLEEVE_MASK = [
   return (
     <div aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "62%", overflow: "hidden", pointerEvents: "none" }}>
       <AnimatePresence initial={false}>
+        {video ? (
+          <motion.video
+            key={`${video}-${cors}`}
+            ref={onVideo}
+            src={video}
+            crossOrigin={cors ? "anonymous" : undefined}
+            onError={() => { if (cors) setCors(false); }}
+            autoPlay
+            loop
+            muted
+            playsInline
+            poster={src ?? undefined}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+            style={{
+              position: "absolute", inset: 0,
+              width: "100%", height: "100%", objectFit: "cover", objectPosition: "center",
+              WebkitMaskImage: SLEEVE_MASK,
+              maskImage: SLEEVE_MASK,
+              maskComposite: "intersect",
+            }}
+          />
+        ) : (
         <motion.img
-          key={src}
-          src={src}
+          key={still ?? undefined}
+          src={still ?? undefined}
           alt={alt}
           referrerPolicy="no-referrer"
           decoding="async"
@@ -175,6 +291,7 @@ const SLEEVE_MASK = [
             maskComposite: "intersect",
           }}
         />
+        )}
       </AnimatePresence>
     </div>
   );
@@ -430,7 +547,16 @@ export function Immersive() {
   const track    = usePlayerStore((s) => s.currentTrack);
   // the same cached read AmbientBg does: the lyric ink and glow come off the
   // cover, so the type is lit by the record it belongs to
-  const { glow, ink } = useAmbient(track?.album?.image_url);
+  const coverAmbient = useAmbient(track?.album?.image_url);
+  // only fetch while the view is actually up
+  const canvas = useCanvas(open ? track?.id : null);
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const podcast = isEpisodeId(track?.id);
+  const liveVideo = podcast || (canvas && canvas.kind !== "image") ? videoEl : null;
+  // colours for the lyric ink/glow still come from periodic reads; the backdrop itself is live
+  const videoAmbient = useVideoAmbient(liveVideo);
+  // lyric ink and glow follow the video too, so type and room stay one hue
+  const { glow, ink } = videoAmbient ?? coverAmbient;
 
   // esc closes
   useEffect(() => {
@@ -464,8 +590,12 @@ export function Immersive() {
           }}
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b" }}
         >
-          <AmbientBg url={track.album?.image_url} />
-          <Sleeve url={track.album?.image_url} alt={track.name} />
+          <AmbientBg url={track.album?.image_url} override={videoAmbient} video={liveVideo} />
+          {podcast ? (
+            <PodcastStage track={track} onVideo={setVideoEl} />
+          ) : (
+            <Sleeve url={track.album?.image_url} alt={track.name} canvas={canvas} onVideo={setVideoEl} />
+          )}
 
           {/* window drag strip immersive covers the whole window (titlebar
               included) so without this you couldnt drag the window here. BUT this sits OVER
@@ -529,8 +659,9 @@ export function Immersive() {
               >
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
                   <div className="lyr-tabs">
-                    <PanelTab active={panel === "lyrics"} onClick={() => setPanel("lyrics")} icon={<Captions size={14} active={panel === "lyrics"} />} label="Lyrics" />
+                    <PanelTab active={panel === "lyrics"} onClick={() => setPanel("lyrics")} icon={<Captions size={14} active={panel === "lyrics"} />} label={podcast ? "Transcript" : "Lyrics"} />
                     <PanelTab active={panel === "queue"} onClick={() => setPanel("queue")} icon={<Queue size={14} active={panel === "queue"} />} label="Queue" />
+                    <PanelTab active={panel === "credits"} onClick={() => setPanel("credits")} icon={<Info size={14} active={panel === "credits"} />} label={podcast ? "About" : "Credits"} />
                   </div>
                   <button
                     className="imm-close"
@@ -546,10 +677,10 @@ export function Immersive() {
                     nothing. The drift is sideways, toward the tab picked,
                     because the tabs sit side by side. */}
                 <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-                  <AnimatePresence initial={false} custom={panel === "queue" ? 1 : -1}>
+                  <AnimatePresence initial={false} custom={panel === "lyrics" ? -1 : 1}>
                     <motion.div
                       key={panel}
-                      custom={panel === "queue" ? 1 : -1}
+                      custom={panel === "lyrics" ? -1 : 1}
                       variants={TAB_VARIANTS}
                       initial="enter"
                       animate="center"
@@ -557,7 +688,19 @@ export function Immersive() {
                       transition={{ duration: 0.15, ease: EASE_OUT }}
                       style={{ position: "absolute", inset: 0 }}
                     >
-                      {panel === "lyrics" ? <ImmersiveLyrics glow={glow} ink={ink} /> : <ImmersiveQueue />}
+                      {panel === "lyrics" && podcast ? (
+                        <TranscriptView episodeId={track.id} size="stage" ink={ink} />
+                      ) : panel === "lyrics" ? (
+                        <ImmersiveLyrics glow={glow} ink={ink} />
+                      ) : panel === "credits" && podcast ? (
+                        <EpisodeAbout track={track} ink={ink} />
+                      ) : panel === "credits" ? (
+                        <div className="scroll-y" style={{ position: "absolute", inset: 0, overflowY: "auto", paddingRight: 6 }}>
+                          <CreditsList trackId={track.id} onNavigate={() => setOpen(false)} dark />
+                        </div>
+                      ) : (
+                        <ImmersiveQueue />
+                      )}
                     </motion.div>
                   </AnimatePresence>
                 </div>

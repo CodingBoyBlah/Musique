@@ -7,6 +7,8 @@ import { usePinsStore, type PinnedItem } from "../../store/pins.store";
 import { useSpeedDialStore } from "../../store/speedDial.store";
 import { usePrefsStore } from "../../store/prefs.store";
 import { playTrack, pausePlayback, resumeOrPlay } from "../../api/playback";
+import { remotePlayContext, remoteSetShuffle } from "../../api/connect";
+import { toast } from "../../store/toast.store";
 import type { TrackItem } from "../../types/spotify";
 import { EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING, zTransform } from "../../lib/motion";
 import "../../styles/ui.css";
@@ -17,22 +19,26 @@ import { AnimatedPlayPause } from "../playground/AnimatedIcons";
 
 // the page this row plays. Artists can't be pinned to the sidebar, so an
 // artist page passes its own right-hand control (Follow) as `accessory`.
-type ContextItem = PinnedItem | (Omit<PinnedItem, "type"> & { type: "artist" });
+type ContextItem = PinnedItem | (Omit<PinnedItem, "type"> & { type: "artist" | "show" });
 
 interface Props {
   tracks:     TrackItem[];
   contextId:  string;
   pinItem:    ContextItem;
   accessory?: ReactNode;
+  /* how to start playback once the context is queued. defaults to playing
+     the first item from the top; podcasts pass one that resumes the episode
+     where you left off */
+  onStart?:   (start: TrackItem) => void;
+  // a podcast in shuffled order makes no sense
+  hideShuffle?: boolean;
 }
 
-export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
+export function PlayActions({ tracks, contextId, pinItem, accessory, onStart, hideShuffle }: Props) {
   const setCurrentTrack     = usePlayerStore((s) => s.setCurrentTrack);
   const currentTrack        = usePlayerStore((s) => s.currentTrack);
   const isPlaying           = usePlayerStore((s) => s.isPlaying);
   const sessionReady        = usePlayerStore((s) => s.sessionReady);
-  const lyricsOpen          = usePlayerStore((s) => s.lyricsOpen);
-  const queueOpen           = usePlayerStore((s) => s.queueOpen);
   const playContext         = useQueueStore((s) => s.playContext);
   const playContextShuffled = useQueueStore((s) => s.playContextShuffled);
   const activeContext       = useQueueStore((s) => s.contextId);
@@ -42,22 +48,40 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
   const sidebarMode         = usePrefsStore((s) => s.sidebarMode);
   const { open: openMenu, element: menuEl } = useContextMenu();
 
-  // when the button row gets narrow or when lyrics/queue rail opens,
-  // condense Play and Shuffle to circular icon buttons with smooth blur morph
+  // when the button row runs out of room, condense Play and Shuffle to
+  // circular icon buttons. Width only: this used to condense whenever a side
+  // panel opened, room or not, which made the first frame of every panel
+  // slide a render plus a layout animation - and a layout animation walks
+  // every `layout` element on the page (each track row) on every frame.
   const rootRef = useRef<HTMLDivElement>(null);
+  const spacerRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
+  // the room the full-size row needs, measured whenever it is full size. It
+  // depends on what is in the row (Save, Pin, Follow...), so a fixed width
+  // threshold was either too early or let the row overflow
+  const need = useRef(0);
+  const compactRef = useRef(false);
   useEffect(() => {
     const el = rootRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width ?? 0;
-      setCompact(w > 0 && w < 360);
+      if (w <= 0) return;
+      if (!compactRef.current) {
+        const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
+        const kids = Array.from(el.children) as HTMLElement[];
+        const used = kids.reduce((sum, k) => (k === spacerRef.current ? sum : sum + k.offsetWidth), 0);
+        need.current = used + gap * Math.max(0, kids.length - 1);
+      }
+      const next = w < need.current;
+      compactRef.current = next;
+      setCompact(next);
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
-  const isCondensed = lyricsOpen || queueOpen || compact;
+  const isCondensed = compact;
 
   const shareKind = pinItem.type as ShareKind;
   const shareEntries = [
@@ -72,10 +96,28 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
   const pinned   = pins.some((p) => p.id === pinItem.id);
   // with the sidebar listing every playlist instead of pins, a pin has
   // nowhere to show up, so the button goes and Share takes its slot
-  const pinnable = pinItem.type !== "artist" && sidebarMode !== "playlists";
+  const pinnable = (pinItem.type === "playlist" || pinItem.type === "album") && sidebarMode !== "playlists";
+
+  // another device is playing: start the real context over there so its own
+  // next/prev/shuffle walk the album/playlist, not a one-track queue
+  function playRemote(shuffled: boolean): boolean {
+    const p = usePlayerStore.getState();
+    if (!p.isRemotePlayback || !/^[A-Za-z0-9]{22}$/.test(pinItem.id)) return false;
+    const deviceId = p.activeDevice?.id ?? null;
+    const go = async () => {
+      if (shuffled) {
+        await remoteSetShuffle(true).catch(() => {});
+        p.setRemoteShuffle(true);
+      }
+      await remotePlayContext({ contextUri: `spotify:${pinItem.type}:${pinItem.id}`, deviceId });
+    };
+    go().catch(() => toast.error(`Couldn't play on ${p.activeDevice?.name ?? "the remote device"}`));
+    return true;
+  }
 
   function onPlay() {
     if (playing) { pausePlayback().catch(() => {}); return; }
+    if (!isActive && playRemote(false)) return;
     if (isActive && currentTrack) {
       const pos = sessionReady ? usePlayerStore.getState().positionMs : 0;
       resumeOrPlay(currentTrack.id, pos).catch(() => {});
@@ -84,7 +126,8 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
     const start = playContext(tracks, 0, contextId, contextUri);
     if (start) {
       setCurrentTrack(start);
-      playTrack(start.id).catch(() => {});
+      if (onStart) onStart(start);
+      else playTrack(start.id).catch(() => {});
       if (pinItem.type === "playlist") {
         useSpeedDialStore.getState().recordPlaylist({ id: pinItem.id, name: pinItem.name, image_url: pinItem.image_url });
       } else if (pinItem.type === "album") {
@@ -96,6 +139,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
   }
 
   function onShuffle() {
+    if (playRemote(true)) return;
     const start = playContextShuffled(tracks, contextId, contextUri);
     if (start) {
       setCurrentTrack(start);
@@ -114,7 +158,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
 
   // no pin button to sit beside: Share becomes a labelled pill of the same
   // size. an artist page has Follow there instead, so it keeps the icon
-  const shareLabelled = !pinnable && pinItem.type !== "artist";
+  const shareLabelled = !pinnable && pinItem.type !== "artist" && pinItem.type !== "show";
 
   return (
     <div ref={rootRef} className="flex items-center mt-2" style={{ gap: 10, width: "100%" }}>
@@ -183,7 +227,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
         </motion.button>
       </Tooltip>
 
-      <Tooltip label={shuffleActive ? "Shuffle active" : "Shuffle play"} side="top">
+      {!hideShuffle && <Tooltip label={shuffleActive ? "Shuffle active" : "Shuffle play"} side="top">
         <motion.button
           layout
           initial={false}
@@ -251,9 +295,9 @@ export function PlayActions({ tracks, contextId, pinItem, accessory }: Props) {
             )}
           </AnimatePresence>
         </motion.button>
-      </Tooltip>
+      </Tooltip>}
 
-      <div style={{ flex: 1 }} />
+      <div ref={spacerRef} style={{ flex: 1 }} />
 
       {/* Right actions: Pin and Share. The button pins to the sidebar, so it
           says Pin - it used to say Add with a plus, which read as adding to

@@ -4,7 +4,7 @@ pub mod youtube;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
-use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, Spirc};
+use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, PlayingTrack, Spirc};
 use librespot_core::{
     authentication::Credentials,
     cache::Cache,
@@ -240,11 +240,15 @@ pub struct PlaybackInner {
     pub is_playing_atomic: Arc<AtomicBool>,
     pub needs_rebuild:     Arc<AtomicBool>,
     pub output_latency:    Arc<AtomicI64>,
+    /// The audio queued in front of the speaker (see `sink::Playout`).
+    playout:               Arc<crate::sink::Playout>,
     listens:               Arc<listening::ListenTracker>,
     spirc:                 Spirc,
     session:               Session,
     _event_task:           tauri::async_runtime::JoinHandle<()>,
     _spirc_task:           tauri::async_runtime::JoinHandle<()>,
+    _dealer_task:          tauri::async_runtime::JoinHandle<()>,
+    _state_task:           tauri::async_runtime::JoinHandle<()>,
 }
 
 // map a librespot control error into our IPC error type
@@ -282,6 +286,8 @@ impl PlaybackInner {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         self._spirc_task.abort();
         self._event_task.abort();
+        self._dealer_task.abort();
+        self._state_task.abort();
     }
 
     pub fn is_ended(&self) -> bool {
@@ -316,6 +322,7 @@ impl PlaybackInner {
 
     pub fn play_uri(&self, uri: String, position_ms: u32) -> Result<(), AppError> {
         eprintln!("[playback] play_uri uri={uri} pos={position_ms}");
+        self.playout.loading();
         self.spirc.activate().map_err(spirc_err)?;
         self.spirc.load(LoadRequest::from_tracks(
             vec![uri.clone()],
@@ -335,6 +342,9 @@ impl PlaybackInner {
     pub fn resume(&self) -> Result<(), AppError> {
         eprintln!("[playback] resume");
         self.spirc.play().map_err(spirc_err)?;
+        // straight away, from what is already queued; the player catches up.
+        // also what resumes the tail of a track the player is done with
+        self.playout.ring.set_held(false);
         self.is_playing_atomic.store(true, Ordering::Relaxed);
         self.is_ended.store(false, Ordering::Relaxed);
         Ok(())
@@ -343,6 +353,10 @@ impl PlaybackInner {
     pub fn pause(&self) -> Result<(), AppError> {
         eprintln!("[playback] pause");
         self.spirc.pause().map_err(spirc_err)?;
+        // silence now rather than when the player gets to it - and the player
+        // may have nothing to pause, when all that's left is a finished
+        // track's tail still playing out
+        self.playout.ring.set_held(true);
         self.is_playing_atomic.store(false, Ordering::Relaxed);
         Ok(())
     }
@@ -353,11 +367,162 @@ impl PlaybackInner {
         Ok(())
     }
 
+    /// The playback speed changed. What's queued was stretched at the old
+    /// speed, so start again from what is being heard.
+    pub fn speed_changed(&self) -> Result<(), AppError> {
+        match self.playout.heard_now() {
+            Some(position_ms) if self.loaded.load(Ordering::Relaxed) => self.seek(position_ms),
+            _ => Ok(()),
+        }
+    }
+
     // push a volume change (0.0..=1.0) into Spirc so the connect-state it reports
     // matches. best-effort: a failure here never blocks the local volume change.
     pub fn report_volume(&self, level: f64) {
         let v = (level.clamp(0.0, 1.0) * u16::MAX as f64).round() as u16;
         let _ = self.spirc.set_volume(v);
+    }
+
+    // ── connect-driven playback (jam) ────────────────────────────────────────
+    // in a jam the queue is spotify's, held by spirc and edited by everyone in
+    // it. these drive spirc's own queue instead of the app's.
+
+    /// what this device last reported to connect: the track, the queue, the
+    /// context. in a jam that's the jam
+    pub fn connect_state(&self) -> ConnectStateMsg {
+        ConnectStateMsg::from(&*self.spirc.state_updates().borrow())
+    }
+
+    /// load a list as the context, starting at `index`. with `keep_stream`,
+    /// the track already playing at that spot carries on instead of restarting
+    pub fn load_tracks(&self, uris: Vec<String>, index: u32, position_ms: u32, start_playing: bool, keep_stream: bool) -> Result<(), AppError> {
+        if !keep_stream {
+            self.playout.user_load();
+        }
+        self.spirc.activate().map_err(spirc_err)?;
+        let current = uris.get(index as usize).cloned();
+        let request = LoadRequest::from_tracks(
+            uris,
+            LoadRequestOptions {
+                start_playing,
+                seek_to: position_ms,
+                playing_track: Some(PlayingTrack::Index(index)),
+                ..Default::default()
+            },
+        );
+        if keep_stream {
+            self.spirc.load_keep_stream(request).map_err(spirc_err)?;
+        } else {
+            self.spirc.load(request).map_err(spirc_err)?;
+        }
+        if let Some(uri) = current {
+            *self.current_uri.lock().unwrap() = Some(uri);
+        }
+        self.loaded.store(true, Ordering::Relaxed);
+        self.is_ended.store(false, Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub fn add_to_queue(&self, uri: String) -> Result<(), AppError> {
+        self.spirc.add_to_queue(uri).map_err(spirc_err)
+    }
+
+    pub fn skip_to(&self, uri: String) -> Result<(), AppError> {
+        self.playout.user_load();
+        self.spirc.skip_to(uri).map_err(spirc_err)
+    }
+
+    pub fn next(&self) -> Result<(), AppError> {
+        self.playout.user_load();
+        self.spirc.next().map_err(spirc_err)
+    }
+
+    pub fn prev(&self) -> Result<(), AppError> {
+        self.playout.user_load();
+        self.spirc.prev().map_err(spirc_err)
+    }
+
+    pub fn set_shuffle(&self, on: bool) -> Result<(), AppError> {
+        self.spirc.shuffle(on).map_err(spirc_err)
+    }
+
+    pub fn set_repeat(&self, context: bool, track: bool) -> Result<(), AppError> {
+        self.spirc.repeat(context).map_err(spirc_err)?;
+        self.spirc.repeat_track(track).map_err(spirc_err)
+    }
+
+    /// a jam guest pausing just for themselves, or rejoining where the jam is
+    pub fn set_jam_hold(&self, hold: bool) -> Result<(), AppError> {
+        self.spirc.set_jam_hold(hold).map_err(spirc_err)?;
+        self.is_playing_atomic.store(!hold, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+/// one row of spirc's queue, as the frontend shows it
+#[derive(Debug, Clone, Serialize)]
+pub struct QueueEntry {
+    pub uri:       String,
+    pub uid:       String,
+    /// "context", "queue" or "autoplay"
+    pub provider:  String,
+    /// in a jam, the username of whoever added it
+    pub queued_by: Option<String>,
+}
+
+impl QueueEntry {
+    fn from_track(t: &librespot_protocol::player::ProvidedTrack) -> Option<Self> {
+        let hidden = t.metadata.get("hidden").is_some_and(|v| v == "true");
+        if t.uri.is_empty() || t.uri == "spotify:delimiter" || hidden {
+            return None;
+        }
+        Some(QueueEntry {
+            uri:       t.uri.clone(),
+            uid:       t.uid.clone(),
+            provider:  t.provider.clone(),
+            queued_by: t.metadata.get("queued_by").filter(|v| !v.is_empty()).cloned(),
+        })
+    }
+}
+
+/// spirc's reported connect state, trimmed to what the ui mirrors
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectStateMsg {
+    pub active:        bool,
+    pub context_uri:   String,
+    pub track:         Option<QueueEntry>,
+    pub next:          Vec<QueueEntry>,
+    pub is_playing:    bool,
+    pub is_paused:     bool,
+    pub position_ms:   i64,
+    pub timestamp:     i64,
+    pub duration_ms:   i64,
+    pub shuffle:       bool,
+    pub repeat_context: bool,
+    pub repeat_track:  bool,
+    /// social-connect switched this device into jam mode
+    pub jam_mode:      bool,
+}
+
+impl From<&librespot_connect::ConnectSnapshot> for ConnectStateMsg {
+    fn from(s: &librespot_connect::ConnectSnapshot) -> Self {
+        let p = &s.player;
+        let options = p.options.as_ref();
+        ConnectStateMsg {
+            active:         s.active,
+            context_uri:    p.context_uri.clone(),
+            track:          p.track.as_ref().and_then(QueueEntry::from_track),
+            next:           p.next_tracks.iter().filter_map(QueueEntry::from_track).collect(),
+            is_playing:     p.is_playing,
+            is_paused:      p.is_paused,
+            position_ms:    p.position_as_of_timestamp,
+            timestamp:      p.timestamp,
+            duration_ms:    p.duration,
+            shuffle:        options.is_some_and(|o| o.shuffling_context),
+            repeat_context: options.is_some_and(|o| o.repeating_context),
+            repeat_track:   options.is_some_and(|o| o.repeating_track),
+            jam_mode:       options.is_some_and(|o| o.modes.get("jam").is_some_and(|v| v == "on")),
+        }
     }
 }
 
@@ -491,6 +656,10 @@ pub async fn create_inner(
 
     let output_latency = Arc::new(AtomicI64::new(0));
     let latency_sink = Arc::clone(&output_latency);
+    let playout = crate::sink::Playout::new();
+    let sink_playout = Arc::clone(&playout);
+    let event_slot: crate::sink::EventSlot = Arc::new(Mutex::new(None));
+    let sink_events = Arc::clone(&event_slot);
     // frames the real output accepted, what listening history is measured from
     let rendered_frames = Arc::new(AtomicU64::new(0));
     let rendered_sink = Arc::clone(&rendered_frames);
@@ -516,6 +685,8 @@ pub async fn create_inner(
             on_err,
             Box::new(vol_clone),
             crate::sink::DEFAULT_BUFFER_MS,
+            Arc::clone(&sink_playout),
+            Arc::clone(&sink_events),
         ).with_latency_tracker(Arc::clone(&latency_sink));
         // the silent fallback above is deliberately NOT counted: nobody heard it
         Box::new(listening::CountingSink::new(Box::new(rodio), Arc::clone(&rendered_sink))) as Box<dyn Sink>
@@ -548,6 +719,16 @@ pub async fn create_inner(
         make_sink,
     );
     eprintln!("[playback] STEP player built");
+    // Subscribed before anything can be loaded, so the sink sees every event.
+    // Commands reach the player in order and none has been sent yet.
+    *event_slot.lock().unwrap() = Some(player.get_player_event_channel());
+    // Connect reports this device's position to Spotify (and, in a Jam, to
+    // everyone in it). The decoder runs seconds ahead of the speaker, so
+    // report what is being heard.
+    let heard_playout = Arc::clone(&playout);
+    librespot_connect::set_heard_position(move |play_request_id| {
+        heard_playout.ring.heard(play_request_id)
+    });
 
     let mixer: Arc<dyn Mixer> = Arc::new(SharedMixer(volume.clone()));
     let connect_config = ConnectConfig {
@@ -651,6 +832,23 @@ pub async fn create_inner(
     })?;
     eprintln!("[playback] STEP spirc connected (Connect device 'Musique' registered)");
     let spirc_task = tauri::async_runtime::spawn(spirc_task);
+    // spirc has the dealer connected now; tap it for device/jam/playlist pushes
+    let dealer_task = crate::internal::dealer::spawn(app.clone(), session.clone());
+
+    // mirror every state spirc reports. in a jam spotify drives this device
+    // (social-connect transfers the jam here, skips, adds to its queue) and
+    // this is the only place the ui can see what that queue now is
+    let mut state_rx = spirc.state_updates();
+    let state_app = app.clone();
+    let state_task = tauri::async_runtime::spawn(async move {
+        while state_rx.changed().await.is_ok() {
+            let msg = ConnectStateMsg::from(&*state_rx.borrow_and_update());
+            let _ = state_app.emit("connect:state", msg);
+            // spirc reports in bursts (a jam edit is a transfer, then a
+            // resolve, then an update); the last one is the one that matters
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        }
+    });
 
     // the access point pushes CountryCode (and ProductInfo) as SEPARATE packets
     // that show up AFTER the session connects (Spirc::new above did the connect).
@@ -685,7 +883,9 @@ pub async fn create_inner(
 
     let mut event_rx = player.get_player_event_channel();
     let event_app    = app.clone();
+    let event_playout = Arc::clone(&playout);
     let event_task   = tauri::async_runtime::spawn(async move {
+        let playout = event_playout;
         // coalesce PositionChanged: librespot can fire it very frequently, and every
         // one becomes a JSON-serialized IPC message + a React state update. We forward
         // at most ~4x/sec (or immediately on a real jump like a seek). The frontend
@@ -694,22 +894,69 @@ pub async fn create_inner(
             .checked_sub(std::time::Duration::from_secs(1))
             .unwrap_or_else(std::time::Instant::now);
         let mut last_pos_ms: u32 = 0;
-        while let Some(event) = event_rx.recv().await {
+        // events that came in while an end of track was held back
+        let mut held: std::collections::VecDeque<PlayerEvent> = std::collections::VecDeque::new();
+        // where the last pause left the listener, so a resume picks up from
+        // there and not from the decoder, which is seconds further on
+        let mut paused_at: Option<(u64, u32)> = None;
+        loop {
+            let event = match held.pop_front() {
+                Some(event) => event,
+                None => match event_rx.recv().await {
+                    Some(event) => event,
+                    None => break,
+                },
+            };
             log::trace!("[playback event] {event:?}");
+
+            // the decoder reaches the end of a track seconds before the
+            // speaker does. hold the news (and whatever follows it) until the
+            // tail has nearly played, so the interface moves on with the
+            // music and the next track loads just in time to follow it
+            if let PlayerEvent::EndOfTrack { play_request_id, .. } = &event {
+                if !hold_end_of_track(&playout, *play_request_id, &mut event_rx, &mut held).await {
+                    // the user moved on while the tail played; the queue
+                    // mustn't also advance
+                    continue;
+                }
+                playout.told_end();
+            }
+
+            // positions as heard rather than as decoded
+            let position = match &event {
+                PlayerEvent::Paused { play_request_id, position_ms, .. } => {
+                    let heard = playout.ring.heard(*play_request_id).unwrap_or(*position_ms);
+                    paused_at = Some((*play_request_id, heard));
+                    Some(heard)
+                }
+                PlayerEvent::Playing { play_request_id, position_ms, .. } => Some(match paused_at.take() {
+                    Some((request, heard)) if request == *play_request_id => heard,
+                    // a new track, or a seek: the queue was flushed there
+                    _ => *position_ms,
+                }),
+                PlayerEvent::PositionChanged { play_request_id, position_ms, .. } =>
+                    Some(playout.ring.heard(*play_request_id).unwrap_or(*position_ms)),
+                PlayerEvent::Seeked { .. } | PlayerEvent::PlayRequestIdChanged { .. } => {
+                    paused_at = None;
+                    None
+                }
+                _ => None,
+            };
+
             listens_event.on_event(&event);
             // pass the playback state along to the os media controls
             match &event {
-                PlayerEvent::Playing { position_ms, .. } => {
+                PlayerEvent::Playing { .. } => {
                     is_playing_atomic_clone.store(true, Ordering::Relaxed);
                     is_ended_clone.store(false, Ordering::Relaxed);
                     let _ = media_tx.try_send(
-                        crate::media_controls::MediaMsg::Playing { position_ms: *position_ms as u64 }
+                        crate::media_controls::MediaMsg::Playing { position_ms: position.unwrap_or(0) as u64 }
                     );
                 }
-                PlayerEvent::Paused { position_ms, .. } => {
+                PlayerEvent::Paused { .. } => {
                     is_playing_atomic_clone.store(false, Ordering::Relaxed);
                     let _ = media_tx.try_send(
-                        crate::media_controls::MediaMsg::Paused { position_ms: *position_ms as u64 }
+                        crate::media_controls::MediaMsg::Paused { position_ms: position.unwrap_or(0) as u64 }
                     );
                 }
                 PlayerEvent::Stopped { .. }
@@ -726,14 +973,15 @@ pub async fn create_inner(
                 PlayerEvent::Playing { track_id, position_ms, .. } =>
                     Some(PlayerMsg::Playing {
                         track_id:    track_id.to_id().ok(),
-                        position_ms,
+                        position_ms: position.unwrap_or(position_ms),
                     }),
                 PlayerEvent::Paused { track_id, position_ms, .. } =>
                     Some(PlayerMsg::Paused {
                         track_id:    track_id.to_id().ok(),
-                        position_ms,
+                        position_ms: position.unwrap_or(position_ms),
                     }),
                 PlayerEvent::PositionChanged { track_id, position_ms, .. } => {
+                    let position_ms = position.unwrap_or(position_ms);
                     let due   = last_pos_emit.elapsed() >= std::time::Duration::from_millis(1000);
                     let moved = position_ms.abs_diff(last_pos_ms) >= 1000;
                     if due || moved {
@@ -775,12 +1023,64 @@ pub async fn create_inner(
         is_playing_atomic,
         needs_rebuild:     Arc::new(AtomicBool::new(false)),
         output_latency,
+        playout,
         listens,
         spirc,
         session,
         _event_task:       event_task,
+        _dealer_task:      dealer_task,
         _spirc_task:       spirc_task,
+        _state_task:       state_task,
     })
+}
+
+/// How much of a finished track may still be left to play when the interface
+/// is told it ended. About what loading the next track takes, so that one
+/// follows on without a gap.
+const END_OF_TRACK_LEAD_MS: u64 = 400;
+
+/// Wait until the tail of play `tag` has nearly played out, keeping any events
+/// that arrive meanwhile in `held`, in order.
+///
+/// False when the tail was thrown away instead (the user skipped or picked
+/// something else during it): that end of track should not be reported, or
+/// the queue would move on past what the user just chose.
+async fn hold_end_of_track(
+    playout: &crate::sink::Playout,
+    tag: u64,
+    events: &mut librespot_playback::player::PlayerEventChannel,
+    held: &mut std::collections::VecDeque<PlayerEvent>,
+) -> bool {
+    use std::time::{Duration, Instant};
+
+    let flushes = playout.ring.flushes();
+    let loads = playout.user_loads();
+    let mut left = u64::MAX;
+    let mut moving = Instant::now();
+    loop {
+        if playout.ring.flushes() != flushes || playout.user_loads() != loads {
+            return false;
+        }
+        let now_left = playout.ring.queued_ms_of(tag);
+        if now_left <= END_OF_TRACK_LEAD_MS {
+            return true;
+        }
+        if now_left < left || playout.ring.held() {
+            left = now_left;
+            moving = Instant::now();
+        } else if moving.elapsed() > Duration::from_secs(3) {
+            // not draining and not paused: nothing is playing it (the output
+            // died), so don't hold the queue up waiting for it
+            return true;
+        }
+        tokio::select! {
+            event = events.recv() => match event {
+                Some(event) => held.push_back(event),
+                None => return true,
+            },
+            _ = tokio::time::sleep(Duration::from_millis(20)) => {}
+        }
+    }
 }
 
 // track id parsing stuff
@@ -789,6 +1089,14 @@ pub fn parse_track_id(raw: &str) -> Result<SpotifyUri, AppError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(AppError::InvalidInput("Track id is required".into()));
+    }
+
+    // podcast episodes ride the same load path as tracks - spirc and the
+    // player both take episode uris as-is
+    if let Some(v) = trimmed.strip_prefix("spotify:episode:") {
+        let spotify_id = SpotifyId::from_base62(v)
+            .map_err(|_| AppError::InvalidInput(format!("Invalid Spotify episode id: {trimmed}")))?;
+        return Ok(SpotifyUri::Episode { id: spotify_id });
     }
 
     let id = if let Some(v) = trimmed.strip_prefix("spotify:track:") {

@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   ChevronLeft, ChevronRight,
-  User, Settings, LogOut, LogIn,
+  User, Users, Settings, LogOut, LogIn,
   Queue, Captions, Devices,
   PanelLeft, PanelLeftClose,
 } from "@/lib/icons";
@@ -15,6 +15,7 @@ import { useDevices } from "../../hooks/useDevices";
 import { Tooltip } from "../ui/Tooltip";
 import { isMac } from "../../lib/platform";
 import { usePlayerStore } from "../../store/player.store";
+import { usePrefsStore } from "../../store/prefs.store";
 import { useUIStore } from "../../store/ui.store";
 import { TopSearch } from "./TopSearch";
 import { EASE_OUT } from "../../lib/motion";
@@ -321,6 +322,7 @@ function AccountMenu() {
 
             <div style={{ height: 1, background: "var(--color-divider)", margin: "0 2px 6px" }} />
 
+            {loggedIn && <AccountMenuItem icon={<User size={16} strokeWidth={2} />} label="Profile" onClick={() => go("/profile")} />}
             <AccountMenuItem icon={<Settings size={16} strokeWidth={2} />} label="Settings" onClick={() => go("/settings")} />
 
             <div style={{ height: 1, background: "var(--color-divider)", margin: "6px 2px" }} />
@@ -429,6 +431,9 @@ export function TitleBar() {
   const toggleLyrics = usePlayerStore((s) => s.toggleLyrics);
   const queueOpen = usePlayerStore((s) => s.queueOpen);
   const toggleQueue = usePlayerStore((s) => s.toggleQueue);
+  const friendsOpen = usePlayerStore((s) => s.friendsOpen);
+  const toggleFriends = usePlayerStore((s) => s.toggleFriends);
+  const showFriends = usePrefsStore((s) => s.showFriends);
   const hasTrack = usePlayerStore((s) => s.currentTrack !== null);
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
@@ -535,6 +540,16 @@ export function TitleBar() {
           >
             <Queue size={17} strokeWidth={1.75} active={queueOpen} />
           </CapsuleButton>
+
+          {showFriends && <CapsuleButton
+            label={friendsOpen ? "Hide friend activity" : "Friend activity"}
+            onClick={toggleFriends}
+            on={friendsOpen}
+            aria-label="Friend activity"
+            aria-pressed={friendsOpen}
+          >
+            <Users size={17} strokeWidth={1.75} active={friendsOpen} />
+          </CapsuleButton>}
 
           <span className="tb-sep" aria-hidden />
 

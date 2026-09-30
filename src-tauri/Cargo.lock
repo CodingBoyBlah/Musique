@@ -2893,8 +2893,6 @@ dependencies = [
 [[package]]
 name = "librespot-connect"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b2a21e9e19b906c6676b1a515fc5529d5414f69049f5a167dfb2ea3206e5a27"
 dependencies = [
  "futures-util",
  "librespot-core",
@@ -4610,6 +4608,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "roxmltree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
+
+[[package]]
 name = "rsa"
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5381,12 +5385,14 @@ name = "spotify"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "bytes",
  "cipher",
  "cpal",
  "des",
  "discord-rich-presence",
  "dotenvy",
  "flate2",
+ "futures-util",
  "keyring",
  "libc",
  "librespot-audio",
@@ -5394,12 +5400,15 @@ dependencies = [
  "librespot-core",
  "librespot-metadata",
  "librespot-playback",
+ "librespot-protocol",
  "log",
  "md5",
  "notify-rust",
+ "protobuf",
  "rand 0.8.6",
  "reqwest 0.12.28",
  "rodio",
+ "roxmltree",
  "serde",
  "serde_json",
  "sha1",

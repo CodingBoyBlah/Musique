@@ -211,6 +211,8 @@ pub fn playback_probe() -> i32 {
                 on_err.clone(),
                 Box::new(librespot_playback::mixer::NoOpVolume),
                 crate::sink::DEFAULT_BUFFER_MS,
+                crate::sink::Playout::new(),
+                Default::default(),
             )) as Box<dyn Sink>,
         );
         let mut rx = player.get_player_event_channel();
@@ -433,6 +435,8 @@ pub fn quality_probe() -> i32 {
                         on_err.clone(),
                         Box::new(librespot_playback::mixer::NoOpVolume),
                         crate::sink::DEFAULT_BUFFER_MS,
+                        crate::sink::Playout::new(),
+                        Default::default(),
                     )) as Box<dyn Sink>,
                 );
 
@@ -496,6 +500,8 @@ pub fn audio_probe() -> i32 {
         Arc::new(|_| {}),
         Box::new(librespot_playback::mixer::NoOpVolume),
         crate::sink::DEFAULT_BUFFER_MS,
+        crate::sink::Playout::new(),
+        Default::default(),
     );
     let _ = sink.start();
     let _ = sink.stop();
@@ -504,17 +510,21 @@ pub fn audio_probe() -> i32 {
 
 mod db;
 mod discord;
+mod episode_audio;
 mod errors;
 mod http;
+mod internal;
 mod lastfm;
 mod library;
 mod lyrics;
 mod media_controls;
 mod playback;
+mod playout;
 mod recommend;
 mod resample;
 mod sink;
 mod spotify;
+mod stretch;
 mod youtube;
 mod state;
 mod mem_trim;
@@ -916,6 +926,49 @@ pub fn run() {
             commands::spotify::get_playlist,
             commands::spotify::get_recommendations,
             commands::spotify::record_listen_event,
+            commands::internal::get_tracks_metadata,
+            commands::social::get_friend_activity,
+            commands::stats::get_listening_stats,
+            commands::social::get_jam,
+            commands::social::start_jam,
+            commands::social::join_jam,
+            commands::social::leave_jam,
+            commands::social::set_jam_queue_only,
+            commands::social::kick_jam_member,
+            commands::social::jam_command,
+            commands::playback::get_connect_state,
+            commands::playback::connect_load_tracks,
+            commands::playback::connect_add_to_queue,
+            commands::playback::connect_skip_to,
+            commands::playback::connect_next,
+            commands::playback::connect_prev,
+            commands::playback::connect_set_shuffle,
+            commands::playback::connect_set_repeat,
+            commands::playback::jam_hold,
+            commands::home_feed::get_home_feed,
+            commands::artist_extras::get_artist_extras,
+            commands::artist_extras::get_artist_overview,
+            commands::internal::get_canvas,
+            commands::internal::get_track_credits,
+            commands::internal::get_playlist_folders,
+            commands::internal::get_track_radio,
+            commands::internal::get_station,
+            commands::internal::get_autoplay_tracks,
+            commands::internal::get_extracted_colors,
+            commands::profile::get_user_profile,
+            commands::podcasts::get_show,
+            commands::episode_extras::get_episode_transcript,
+            commands::episode_extras::get_episode_media,
+            commands::podcasts::get_show_episodes,
+            commands::podcasts::get_episode,
+            commands::podcasts::get_saved_shows,
+            commands::podcasts::save_show,
+            commands::podcasts::unsave_show,
+            commands::podcasts::is_show_saved,
+            commands::profile::get_user_followers,
+            commands::profile::get_user_following,
+            commands::profile::set_user_followed,
+            commands::profile::is_user_followed,
             commands::playback::warmup_playback,
             commands::playback::play_track,
             commands::playback::retry_play_track,
@@ -932,6 +985,7 @@ pub fn run() {
             commands::playback::pin_yt_match,
             commands::playback::forget_yt_match,
             commands::playback::set_volume,
+            commands::playback::set_playback_speed,
             commands::playback::set_muted,
             commands::playback::get_volume,
             commands::playback::get_audio_quality,
@@ -957,9 +1011,16 @@ pub fn run() {
             commands::library::follow_artist,
             commands::library::unfollow_artist,
             commands::library::is_artist_followed,
+            commands::library::save_album,
+            commands::library::unsave_album,
+            commands::library::is_album_saved,
             commands::library::add_track_to_playlist,
             commands::library::remove_track_from_playlist,
             commands::library::create_playlist,
+            commands::library::update_playlist_details,
+            commands::library::follow_playlist,
+            commands::library::unfollow_playlist,
+            commands::library::is_playlist_followed,
             commands::media::update_now_playing,
             commands::media::set_discord_enabled,
             commands::media::show_playback_notification,
@@ -989,6 +1050,11 @@ pub fn run() {
             commands::connect::remote_seek,
             commands::connect::remote_set_volume,
             commands::connect::get_musique_device_id,
+            commands::connect::get_remote_queue,
+            commands::connect::remote_set_shuffle,
+            commands::connect::remote_set_repeat,
+            commands::connect::remote_add_to_queue,
+            commands::connect::remote_play_context,
             mem_trim::trim_memory,
         ])
         .run(tauri::generate_context!())

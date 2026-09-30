@@ -16,6 +16,10 @@
 //  * **Whole track buffered before playback.** See `youtube::stream`. At ~3-4 MB
 //    per track this is cheap, and it makes seeking exact and instant instead of
 //    requiring range bookkeeping inside the decoder.
+//  * **Decoding never happens on the audio thread.** Every source plays
+//    through `playout::prebuffer`: a thread of its own decodes seconds ahead
+//    and the device only copies samples out of a queue, so a busy machine or
+//    a podcast download that stalls is never heard.
 //  * **Position is polled, not pushed.** rodio has no event channel, so a timer
 //    task samples `Sink::get_pos`. Emission is coalesced on the same ~1/second
 //    rule the librespot path uses, for the same reason: every event is a JSON
@@ -29,7 +33,12 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 
-use crate::{errors::AppError, media_controls::MediaMsg, youtube::ExtractedStream};
+use crate::{
+    errors::AppError,
+    media_controls::MediaMsg,
+    playout::{self, Ring},
+    youtube::ExtractedStream,
+};
 
 use super::{PlayerMsg, SharedVolume};
 
@@ -39,6 +48,31 @@ use super::{PlayerMsg, SharedVolume};
 /// advance feels immediate, while the 1/second emit coalescing below keeps the
 /// IPC traffic identical to the librespot path.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// What a seek needs to know about the episode that is streaming.
+#[derive(Clone)]
+pub struct EpisodeStream {
+    pub handle:      crate::episode_audio::remote::RemoteHandle,
+    pub duration_ms: u64,
+    /// A fragmented mp4's fragment table, when it has one.
+    pub segments:    Option<Arc<crate::episode_audio::mp4::Segments>>,
+}
+
+impl EpisodeStream {
+    /// Where to start downloading for a seek to `position_ms`. Exact for a
+    /// fragmented mp4 (the fragment it lands in); otherwise proportional,
+    /// which is close for the constant-bitrate mp3s most podcasts are, and
+    /// started a little early so the decoder's frame search is covered.
+    pub fn byte_for(&self, position_ms: u32) -> Option<u64> {
+        if let Some(segments) = &self.segments {
+            return Some(segments.at(position_ms as u64).0);
+        }
+        (self.duration_ms > 0).then(|| {
+            let byte = (self.handle.len() as u128 * position_ms as u128 / self.duration_ms as u128) as u64;
+            byte.saturating_sub(64 * 1024)
+        })
+    }
+}
 
 pub struct YtPlayback {
     // Dropping the stream closes the audio device, so it is owned here even
@@ -71,6 +105,14 @@ pub struct YtPlayback {
     /// Per-track linear gain from YouTube's `loudnessDb`, folded into the sink
     /// volume so switching backends does not change perceived loudness.
     gain:         Arc<Mutex<f32>>,
+    /// The queue in front of the speaker for what is playing. Its heard
+    /// position is the position: in the track's own time (at 2x an episode's
+    /// sample count would say half as much had played), and not counting
+    /// what is still queued.
+    clock:        Arc<Mutex<Option<Arc<Ring>>>>,
+    /// The streaming episode file, so a seek can fetch the bytes around its
+    /// target before the audio thread goes looking for them.
+    episode:      Mutex<Option<EpisodeStream>>,
     /// Aborted on drop - a dropped JoinHandle only detaches, which would leave
     /// the poll loop (and the sink/AppHandle it holds) running forever.
     watch_task:   tauri::async_runtime::JoinHandle<()>,
@@ -89,7 +131,9 @@ impl YtPlayback {
         volume: SharedVolume,
         media_tx: std::sync::mpsc::SyncSender<MediaMsg>,
     ) -> Result<Self, AppError> {
-        let stream = rodio::OutputStreamBuilder::open_default_stream()
+        // with a real device buffer: the default can be ~10ms on Windows,
+        // which the slightest hitch on the audio thread runs through
+        let stream = crate::sink::open_default_output(crate::sink::DEFAULT_BUFFER_MS)
             .map_err(|e| AppError::Playback(format!("audio output: {e}")))?;
         let sink = Arc::new(rodio::Sink::connect_new(stream.mixer()));
 
@@ -113,6 +157,7 @@ impl YtPlayback {
         let is_ended    = Arc::new(AtomicBool::new(false));
         let duration_ms = Arc::new(AtomicU64::new(0));
         let generation  = Arc::new(AtomicU64::new(0));
+        let clock       = Arc::new(Mutex::new(None::<Arc<Ring>>));
 
         let watch_task = spawn_watcher(
             app.clone(),
@@ -122,6 +167,7 @@ impl YtPlayback {
             Arc::clone(&is_playing),
             Arc::clone(&is_ended),
             Arc::clone(&generation),
+            Arc::clone(&clock),
         );
 
         Ok(Self {
@@ -137,6 +183,8 @@ impl YtPlayback {
             duration_ms,
             generation,
             gain: Arc::new(Mutex::new(1.0)),
+            clock,
+            episode: Mutex::new(None),
             watch_task,
         })
     }
@@ -155,6 +203,8 @@ impl YtPlayback {
         // cannot attribute the old track's drained queue to the new track.
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.sink.clear();
+        *self.clock.lock().unwrap() = None;
+        *self.episode.lock().unwrap() = None;
 
         let cursor = Cursor::new(audio);
         // itag 140 is AAC in an MP4 container. Naming the container skips
@@ -172,18 +222,15 @@ impl YtPlayback {
             ))
         })?;
 
-        self.sink.append(decoder);
+        // A failed start-position seek is not fatal - the track still plays,
+        // just from the start (the prebuffer logs it).
+        let at = Duration::from_millis(position_ms as u64);
+        let (source, ring) = playout::prebuffer(decoder, at, position_ms > 0, None);
+        *self.clock.lock().unwrap() = Some(ring);
+        self.sink.append(source);
 
         *self.gain.lock().unwrap() = loudness_gain(stream.format.loudness_db);
         self.apply_volume();
-
-        if position_ms > 0 {
-            // A failed seek is not fatal - the track still plays, just from the
-            // start. Better than refusing to play at all.
-            if let Err(e) = self.sink.try_seek(Duration::from_millis(position_ms as u64)) {
-                eprintln!("[youtube] seek to {position_ms}ms on load failed: {e}");
-            }
-        }
 
         *self.current.lock().unwrap() = Some(track_id.to_string());
         self.duration_ms.store(stream.duration_ms.unwrap_or(0), Ordering::Relaxed);
@@ -197,6 +244,43 @@ impl YtPlayback {
         );
         self.announce_playing(position_ms);
         Ok(())
+    }
+
+    /// Play a podcast episode from an already-built source (decoding and the
+    /// initial seek happen off the async runtime - see `commands::playback`).
+    pub fn play_episode(
+        &self,
+        track_id: &str,
+        source: impl rodio::Source + Send + 'static,
+        clock: Arc<AtomicU64>,
+        stream: EpisodeStream,
+        position_ms: u32,
+    ) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.sink.clear();
+        let at = Duration::from_millis(position_ms as u64);
+        let (source, ring) = playout::prebuffer(source, at, false, Some(clock));
+        *self.clock.lock().unwrap() = Some(ring);
+        self.duration_ms.store(stream.duration_ms, Ordering::Relaxed);
+        *self.episode.lock().unwrap() = Some(stream);
+
+        self.sink.append(source);
+        // no loudness figure for a publisher's file; play it as mastered
+        *self.gain.lock().unwrap() = 1.0;
+        self.apply_volume();
+
+        *self.current.lock().unwrap() = Some(track_id.to_string());
+        self.is_ended.store(false, Ordering::Relaxed);
+        self.is_playing.store(true, Ordering::Relaxed);
+        self.sink.play();
+
+        eprintln!("[youtube] playing episode {track_id} from {position_ms}ms");
+        self.announce_playing(position_ms);
+    }
+
+    /// The streaming episode, if one is loaded.
+    pub fn episode_stream(&self) -> Option<EpisodeStream> {
+        self.episode.lock().unwrap().clone()
     }
 
     pub fn resume(&self) -> Result<(), AppError> {
@@ -257,7 +341,7 @@ impl YtPlayback {
     }
 
     pub fn position_ms(&self) -> u32 {
-        self.sink.get_pos().as_millis().min(u32::MAX as u128) as u32
+        position_of(&self.sink, &self.clock)
     }
 
     pub fn is_playing(&self) -> bool {
@@ -322,6 +406,7 @@ fn spawn_watcher(
     is_playing: Arc<AtomicBool>,
     is_ended: Arc<AtomicBool>,
     generation: Arc<AtomicU64>,
+    clock: Arc<Mutex<Option<Arc<Ring>>>>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         let mut last_emit = std::time::Instant::now()
@@ -356,7 +441,7 @@ fn spawn_watcher(
                 continue;
             }
 
-            let position_ms = sink.get_pos().as_millis().min(u32::MAX as u128) as u32;
+            let position_ms = position_of(&sink, &clock);
             let due = last_emit.elapsed() >= Duration::from_millis(1000);
             // A jump means a seek happened; report it immediately rather than
             // letting the frontend interpolate towards a stale position.
@@ -369,6 +454,14 @@ fn spawn_watcher(
             }
         }
     })
+}
+
+/// Where playback is: what the listener is hearing, in the track's own time.
+fn position_of(sink: &rodio::Sink, clock: &Mutex<Option<Arc<Ring>>>) -> u32 {
+    match clock.lock().unwrap().as_ref() {
+        Some(ring) => ring.heard_ms().min(u32::MAX as u64) as u32,
+        None => sink.get_pos().as_millis().min(u32::MAX as u128) as u32,
+    }
 }
 
 fn emit(app: &AppHandle, msg: PlayerMsg) {

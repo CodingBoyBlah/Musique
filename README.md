@@ -1,101 +1,79 @@
-# Musique: The blazing-fast Spotify desktop client
+# Musique: the blazing-fast Spotify desktop client
 
 ![Musique](public/banner.png)
 
-> **⚠️ Unofficial.** Not affiliated with, endorsed by, or connected to Spotify.
-
+> **Unofficial.** Not affiliated with, endorsed by, or connected to Spotify.
 > Uses the reverse-engineered librespot protocol, which is against Spotify's
 > Terms of Service. Provided as-is for educational purposes. Use at your own risk.
 
-> **Requires a Spotify Premium account** for playback.
-
-
-<!-- TODO replace with a  hero screenshot -->
-<!-- ![Musique](public/banner.png) -->
-
 ## Screenshots
 
-![Screenshot 1](public/one.png)
-![Screenshot 2](public/two.png)
-![Screenshot 3](public/three.png)
-![Screenshot 4](public/four.png)
-
-
-
+<div align="center">
+  <img src="public/one.png" width="48%" alt="Screenshot 1" />
+  <img src="public/two.png" width="48%" alt="Screenshot 2" />
+</div>
+<div align="center">
+  <img src="public/three.png" width="48%" alt="Screenshot 3" />
+  <img src="public/four.png" width="48%" alt="Screenshot 4" />
+</div>
 
 ## Features
 
-- **Full playback** - stream audio directly via a patched librespot core (Spotify Premium required)
-- **Synced Lyrics** - Line-by-line and word-by-word lyrics from LRCLIB, with romanization for Japanese and Chinese.
-- **Share links** - Cross-platform song link sharing via odesli (example: song.link, album.link)
-- **Library Sync + offline cache** - playlists, saved tracks, new releases (reads are cache-first for offline compatability)
-- **Native window chrome/tint** - Windows 11 Mica/Acrylic, and MacOS vibrancy.
-- **Dynamic Accent Colors** - Based on the album/playlist, your wallpaper, or your system accent color.
-- **Customizable Transparency** 
-- **OS media controls integration** 
+- **Full playback** via a patched librespot core (Spotify Premium). Free accounts play through YouTube Music instead, with metadata and lyrics still coming from Spotify.
+- **Synced lyrics** from LRCLIB, Apple Music, Musixmatch, NetEase, QQ Music, Kugou, AMLL, BetterLyrics and Spotify. Line and word-by-word timing, with romanization for Japanese and Chinese.
+- **Podcasts**, including playback speed control.
+- **Spotify Connect and Jam.** Shows up as a Connect device in the official apps.
+- **Share links** for any platform via Odesli (song.link, album.link).
+- **Library sync + offline cache.** Playlists, saved tracks and new releases load from a local SQLite cache first.
+- **Native window chrome.** Mica/Acrylic on Windows 11, vibrancy on macOS.
+- **Dynamic accent colors** from the album/playlist, your wallpaper, or your system accent.
+- **Customizable transparency**
+- **Discord Rich Presence** and **Last.fm scrobbling**
+- **OS media controls**
+- **Auto-updates** from GitHub releases
 
-### ⚠️ In progress:
+## Install
 
-- **Discord Rich Presence** - Discord rich presence compatabilty, to show what you're listening to.
-- **LastFM integration** - Auto scrobbling, and statistics in-app.
+Grab the latest build from [Releases](https://github.com/CodingBoyBlah/Musique/releases/latest).
 
+## Tech stack
 
+**Frontend:** React 19, TypeScript, Vite 7, Tailwind v4, Zustand, TanStack Query, React Router
 
-## Tech Stack
+**Backend:** Rust, Tauri 2, sqlx + SQLite, keyring (OS keychain), reqwest, vendored librespot
 
-### Frontend:
-- **React 19**
-- **Typescript**
-- **Vite 7**
-- **Tailwind v4**
-- **Zustand**
-- **Tanstack Query**
-- **React Router**
+## Building from source
 
-### Backend:
+You need the [Rust](https://rustup.rs/) toolchain, Node, [pnpm](https://pnpm.io/) v11, and
+[Tauri's platform deps](https://v2.tauri.app/start/prerequisites/). On Linux also install `libasound2-dev`.
 
-- **Rust**
-- **Tauri 2**
-- **sqlx + SQLite**
-- **keyring (OS keychain)**
-- **reqwest**
-- **Vendored librespot**
+```bash
+pnpm install
+pnpm tauri dev
+```
 
+Login works out of the box. If you'd rather use your own Spotify app, copy
+`.env.example` to `.env` and fill it in, or set it in Settings.
 
+## Security
 
-
-## Prerequisites
-
-- **A Spotify Premium** account (required for playback)
-- A Spotify app in the [Developer Dashboard](https://developer.spotify.com/dashboard) , with valid `client_id` and `client_secret`
-- [Rust](https://rustup.rs/) toolchain
-- Node + [pnpm](https://pnpm.io/) v11
-- Platform build deps (see below)
-
-### Security
 Tokens and the client secret live only in the OS keyring (Windows Credential
-Manager / MacOS Keychain / Secret Service)
+Manager / macOS Keychain / Secret Service). Nothing sensitive crosses the IPC
+boundary to the frontend, and no credentials are committed to the repo.
 
- Nothing sensitive crosses the IPC
-boundary to the frontend, and no credentials are committed to the repo
+## Acknowledgements
 
-### Acknowledgements
+- [librespot](https://github.com/librespot-org/librespot): the open Spotify protocol client this is built on (MIT)
+- [LRCLIB](https://lrclib.net/): synced lyrics
+- [Cider](https://cider.sh/): the inspiration
 
-- librespot: the open Spotify protocol client this is built on (MIT)
-- LRCLIB: synced lyrics
-- Cider: the inspiration
+## Credits
 
-### License
-
-MIT: see the license file. Vendored librespot retains its own MIT
-license under src-tauri/vendor/
-
-### Credits:
 - [Anirudh](https://github.com/techwithanirudh) - macOS testing
-
 - [Laura](https://github.com/lauragarden) - macOS testing
-
-- [Luiggi](
-https://github.com/luiggineedsabreak) - Linux and Windows testing
-
+- [Luiggi](https://github.com/luiggineedsabreak) - Linux and Windows testing
 - [spacefren](https://github.com/spacefren) - Linux testing
+
+## License
+
+MIT, see [LICENSE](LICENSE). Vendored librespot keeps its own MIT license under `src-tauri/vendor/`.

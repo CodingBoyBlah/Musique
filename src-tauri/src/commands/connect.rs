@@ -180,9 +180,7 @@ pub async fn get_playback_state(app: AppHandle) -> Result<Option<RemotePlaybackS
         None => return Ok(None),
     };
 
-    let track = raw.item.and_then(|val| {
-        serde_json::from_value::<SpTrack>(val).ok().map(|t| item_from_track(&t))
-    });
+    let track = raw.item.and_then(item_from_value);
 
     Ok(Some(RemotePlaybackState {
         device,
@@ -350,4 +348,134 @@ pub async fn remote_set_volume(app: AppHandle, volume_percent: u8) -> Result<(),
 #[tauri::command]
 pub async fn get_musique_device_id(app: AppHandle) -> Result<String, AppError> {
     Ok(musique_device_id(&app).await)
+}
+
+// ── remote queue / shuffle / repeat / context playback ──────────────────────
+
+/// a queue/playback item is a track OR a podcast episode. episodes come back
+/// with the show where a track has its album, and keep their full uri as the id
+/// so the player can tell the two apart.
+pub(crate) fn item_from_value(val: serde_json::Value) -> Option<TrackItem> {
+    let kind = val.get("type").and_then(|t| t.as_str()).unwrap_or("track");
+    if kind == "episode" {
+        let show = val.get("show");
+        let image = val
+            .get("images")
+            .or_else(|| show.and_then(|s| s.get("images")))
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|i| i.get("url"))
+            .and_then(|u| u.as_str())
+            .map(str::to_string);
+        let show_id = show.and_then(|s| s.get("id")).and_then(|v| v.as_str()).unwrap_or_default();
+        let show_name = show.and_then(|s| s.get("name")).and_then(|v| v.as_str()).unwrap_or_default();
+        let publisher = show.and_then(|s| s.get("publisher")).and_then(|v| v.as_str()).unwrap_or(show_name);
+        return Some(TrackItem {
+            id: format!("spotify:episode:{}", val.get("id")?.as_str()?),
+            name: val.get("name")?.as_str()?.to_string(),
+            duration_ms: val.get("duration_ms").and_then(|v| v.as_i64()).unwrap_or(0),
+            explicit: val.get("explicit").and_then(|v| v.as_bool()).unwrap_or(false),
+            artists: vec![ArtistItem { id: show_id.to_string(), name: publisher.to_string(), image_url: None, popularity: None }],
+            album: Some(AlbumItem {
+                id: show_id.to_string(),
+                name: show_name.to_string(),
+                album_type: "show".into(),
+                image_url: image,
+                release_date: val.get("release_date").and_then(|v| v.as_str()).map(str::to_string),
+                artists: Vec::new(),
+                popularity: None,
+            }),
+            popularity: None,
+        });
+    }
+    serde_json::from_value::<SpTrack>(val).ok().map(|t| item_from_track(&t))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteQueue {
+    pub currently_playing: Option<TrackItem>,
+    pub queue: Vec<TrackItem>,
+}
+
+#[derive(Deserialize)]
+struct RawQueue {
+    currently_playing: Option<serde_json::Value>,
+    #[serde(default)]
+    queue: Vec<serde_json::Value>,
+}
+
+/// what spotify itself has queued on the active device. only meaningful while
+/// another device is playing - musique keeps its own queue locally.
+#[tauri::command]
+pub async fn get_remote_queue(app: AppHandle) -> Result<RemoteQueue, AppError> {
+    let token = tok(&app).await?;
+    let raw: RawQueue = crate::spotify::spotify_get(&token, &format!("{BASE}/me/player/queue")).await?;
+    Ok(RemoteQueue {
+        currently_playing: raw.currently_playing.and_then(item_from_value),
+        queue: raw.queue.into_iter().filter_map(item_from_value).collect(),
+    })
+}
+
+#[tauri::command]
+pub async fn remote_set_shuffle(app: AppHandle, state: bool) -> Result<(), AppError> {
+    let token = tok(&app).await?;
+    let url = format!("{BASE}/me/player/shuffle?state={state}");
+    crate::spotify::spotify_write(&token, reqwest::Method::PUT, &url).await
+}
+
+/// `state` is spotify's own vocabulary: "off" | "context" | "track"
+#[tauri::command]
+pub async fn remote_set_repeat(app: AppHandle, state: String) -> Result<(), AppError> {
+    if !matches!(state.as_str(), "off" | "context" | "track") {
+        return Err(AppError::InvalidInput(format!("bad repeat state: {state}")));
+    }
+    let token = tok(&app).await?;
+    let url = format!("{BASE}/me/player/repeat?state={state}");
+    crate::spotify::spotify_write(&token, reqwest::Method::PUT, &url).await
+}
+
+fn playable_uri(id: &str) -> String {
+    if id.starts_with("spotify:") {
+        id.to_string()
+    } else {
+        format!("spotify:track:{id}")
+    }
+}
+
+#[tauri::command]
+pub async fn remote_add_to_queue(app: AppHandle, id: String) -> Result<(), AppError> {
+    let token = tok(&app).await?;
+    let mut url = url::Url::parse(&format!("{BASE}/me/player/queue")).unwrap();
+    url.query_pairs_mut().append_pair("uri", &playable_uri(&id));
+    crate::spotify::spotify_write(&token, reqwest::Method::POST, url.as_str()).await
+}
+
+/// start a whole context (album / playlist / artist / show) on a remote device,
+/// optionally from a given track in it - so next/prev on the phone walk the
+/// real context instead of a one-track queue
+#[tauri::command]
+pub async fn remote_play_context(
+    app: AppHandle,
+    device_id: Option<String>,
+    context_uri: String,
+    offset_uri: Option<String>,
+    offset_position: Option<u32>,
+    position_ms: Option<u32>,
+) -> Result<(), AppError> {
+    let token = tok(&app).await?;
+    let mut url = url::Url::parse(&format!("{BASE}/me/player/play")).unwrap();
+    if let Some(id) = &device_id {
+        url.query_pairs_mut().append_pair("device_id", id);
+    }
+    let mut body = serde_json::json!({ "context_uri": context_uri });
+    if let Some(u) = offset_uri {
+        body["offset"] = serde_json::json!({ "uri": playable_uri(&u) });
+    } else if let Some(p) = offset_position {
+        body["offset"] = serde_json::json!({ "position": p });
+    }
+    if let Some(p) = position_ms {
+        body["position_ms"] = serde_json::json!(p);
+    }
+    crate::spotify::spotify_write_json(&token, reqwest::Method::PUT, url.as_str(), body).await?;
+    Ok(())
 }

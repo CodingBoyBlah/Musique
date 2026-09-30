@@ -7,7 +7,11 @@ export function updateNowPlaying(track: TrackItem, positionMs = 0): void {
     artist:     track.artists.map((a) => a.name).join(", "),
     album:      track.album?.name ?? "",
     coverUrl:   track.album?.image_url ?? null,
-    trackUrl:   track.id ? `https://open.spotify.com/track/${track.id}` : null,
+    trackUrl:   track.id
+      ? track.id.startsWith("spotify:episode:")
+        ? `https://open.spotify.com/episode/${track.id.slice("spotify:episode:".length)}`
+        : `https://open.spotify.com/track/${track.id}`
+      : null,
     durationMs: track.duration_ms,
     positionMs,
   }).catch(() => {});

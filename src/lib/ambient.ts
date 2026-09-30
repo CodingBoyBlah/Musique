@@ -58,7 +58,7 @@ const BLUR_PX = 160;
  * canvas edge the gaussian still has real pixels to sample - draw it at exactly
  * the canvas size and it samples transparent black just outside the frame,
  * which rims the whole wash in a dark border. */
-function preblur(img: HTMLImageElement): string {
+function preblur(img: CanvasImageSource): string {
   const cv = document.createElement("canvas");
   cv.width = BLUR_PX;
   cv.height = BLUR_PX;
@@ -83,7 +83,7 @@ function preblur(img: HTMLImageElement): string {
 const SAMPLE = 24;
 const BINS = 16;
 
-function read(img: HTMLImageElement): Ambient | null {
+function read(img: CanvasImageSource): Ambient | null {
   const cv = document.createElement("canvas");
   cv.width = SAMPLE;
   cv.height = SAMPLE;
@@ -207,4 +207,12 @@ export function loadAmbient(url: string | null | undefined): Promise<Ambient> {
 
   inflight.set(url, job);
   return job;
+}
+
+/** the same room, read off whatever frame a canvas video is showing right now.
+    null when the frame can't be read (not decoded yet, or a cross-origin video
+    without CORS) - the caller keeps the cover's room then. */
+export function ambientFromFrame(video: HTMLVideoElement): Ambient | null {
+  if (video.readyState < 2 || !video.videoWidth) return null;
+  return read(video);
 }

@@ -19,6 +19,9 @@ const PlaylistPage = lazy(() => import("./pages/PlaylistPage"));
 const ArtistPage = lazy(() => import("./pages/ArtistPage"));
 const AlbumPage = lazy(() => import("./pages/AlbumPage"));
 const Playground = lazy(() => import("./pages/Playground"));
+const ProfilePage = lazy(() => import("./pages/ProfilePage"));
+const ShowPage = lazy(() => import("./pages/ShowPage"));
+const StatsPage = lazy(() => import("./pages/StatsPage"));
 import { getCredentials, validateCredentials } from "./api/credentials";
 import { getAuthStatus } from "./api/auth";
 import {
@@ -28,6 +31,7 @@ import {
   warmupPlayback,
   preloadTrack,
   retryPlayTrack,
+  setPlaybackSpeed,
 } from "./api/playback";
 import {
   updateNowPlaying,
@@ -59,7 +63,10 @@ import {
 } from "./hooks/usePlayerControls";
 import { prefetchLyrics } from "./lib/prefetch";
 import { lastfmNowPlaying, lastfmScrobble } from "./api/lastfm";
+import { isEpisodeId } from "./utils/episode";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useJamSync } from "./hooks/useJamSync";
+import { jamRole } from "./store/jam.store";
 
 function AppInit() {
   const setFromCredentials = useCredentialsStore((s) => s.setFromCredentials);
@@ -69,6 +76,36 @@ function AppInit() {
   const onEvent = usePlayerStore((s) => s.onEvent);
 
   const invalidateLibrary = useInvalidateLibrary();
+
+  // spotify jam: session + the connect state spotify drives it with
+  useJamSync(isLoggedIn);
+
+  // podcasts play at the chosen speed, music always at 1x. re-applied on every
+  // track change so a song after an episode never comes out sped up
+  const currentIdForSpeed = usePlayerStore((s) => s.currentId);
+  const podcastSpeed = usePrefsStore((s) => s.podcastSpeed);
+  useEffect(() => {
+    const rate = isEpisodeId(currentIdForSpeed) ? podcastSpeed : 1;
+    usePlayerStore.getState().setPlaybackRate(rate);
+    setPlaybackSpeed(rate).catch(() => {});
+  }, [currentIdForSpeed, podcastSpeed]);
+
+  // a playlist (or the folder tree) changed on another device
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let gone = false;
+    listen("library:playlist-changed", () => {
+      queryClient.invalidateQueries({ queryKey: ["library", "rootlist"] });
+      queryClient.invalidateQueries({ queryKey: ["playlist"] });
+    })
+      .then((u) => (gone ? u() : (off = u)))
+      .catch(() => {});
+    return () => {
+      gone = true;
+      off?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const queryClient = useQueryClient();
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const upcoming = useQueueStore((s) => s.queue);
@@ -207,14 +244,23 @@ Home recs so they're cached before the user gets there
         return;
       }
 
+      /* in a jam spotify owns the queue: spirc advances, skips unplayable
+         songs and preloads by itself, and the app's queue must not step in
+         (it used to, and played its own next song over the jam's) */
+      const inJam = !!jamRole();
+
       if (msg.type === "playing") {
         const { currentTrack } = usePlayerStore.getState();
         // it played so let it be autoretried again if it ever dies later
         if (msg.track_id) retriedUnavailable.current.delete(msg.track_id);
-        if (currentTrack) {
+        if (currentTrack && !inJam) {
           replenishQueue(currentTrack).catch(() => {});
         }
-        if (currentTrack && currentTrack.id !== lastTrackId.current) {
+        // in a jam the song can change under us before its metadata has
+        // arrived; the jam effect below runs this once it has
+        const isThisTrack =
+          !inJam || !msg.track_id || currentTrack?.id === msg.track_id || !!currentTrack?.id.endsWith(`:${msg.track_id}`);
+        if (currentTrack && isThisTrack && currentTrack.id !== lastTrackId.current) {
           // new track started = scrobble the previous one if it earned it
           maybeScrobble();
           lastTrackId.current = currentTrack.id;
@@ -231,18 +277,20 @@ Home recs so they're cached before the user gets there
           // last.fm: set nowplaying + scrobblekeeping for this track
           const artist = currentTrack.artists.map((a) => a.name).join(", ");
           const album = currentTrack.album?.name ?? "";
-          lastfmNowPlaying(artist, currentTrack.name, album);
+          const isEpisode = isEpisodeId(currentTrack.id);
+          if (!isEpisode) lastfmNowPlaying(artist, currentTrack.name, album);
             scrobbleRef.current = {
               artist,
               track: currentTrack.name,
               album,
               startedAt: Math.floor(Date.now() / 1000),
               durationMs: currentTrack.duration_ms,
-              scrobbled: false,
+              // podcasts aren't scrobbles
+              scrobbled: isEpisode,
             };
 
             // Proactively preload next track so skips and transitions are instant
-            const next = useQueueStore.getState().peek(currentTrack);
+            const next = inJam ? null : useQueueStore.getState().peek(currentTrack);
             if (next) {
               setTimeout(() => {
                 preloadTrack(next.id).catch(() => {});
@@ -250,6 +298,11 @@ Home recs so they're cached before the user gets there
             }
           }
         }
+
+      if (inJam && (msg.type === "unavailable" || msg.type === "time_to_preload_next_track")) {
+        if (msg.type === "unavailable") toast.error("Can't play this song here. The Jam moves on.");
+        return;
+      }
 
       if (msg.type === "unavailable") {
         /* librespot connected but the track didn't load. usually transient: a
@@ -296,6 +349,7 @@ Home recs so they're cached before the user gets there
         maybeScrobble();
         const { currentTrack, setCurrentTrack } = usePlayerStore.getState();
         trackCompleted(currentTrack);
+        if (inJam) return;
         const next = useQueueStore.getState().advance(currentTrack);
         if (next) {
           setCurrentTrack(next);
@@ -319,6 +373,16 @@ Home recs so they're cached before the user gets there
       p.then((u) => u()).catch(() => {});
     };
   }, [handlePlayerEvent]);
+
+  /* jam: the song changed under us (the host skipped, the next one in the
+     jam's queue came up) and its metadata has just arrived. run the
+     new-song bookkeeping - notification, now playing, scrobble - for it */
+  const nowPlayingId = usePlayerStore((s) => s.currentTrack?.id ?? null);
+  useEffect(() => {
+    if (!jamRole() || !nowPlayingId || nowPlayingId === lastTrackId.current) return;
+    if (!usePlayerStore.getState().isPlaying) return;
+    handlePlayerEvent({ type: "playing", track_id: nowPlayingId });
+  }, [nowPlayingId, handlePlayerEvent]);
 
   // library sync event
   useEffect(() => {
@@ -419,6 +483,38 @@ export default function App() {
             element={
               <Suspense fallback={<Loader />}>
                 <AlbumPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="profile"
+            element={
+              <Suspense fallback={<Loader />}>
+                <ProfilePage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="show/:id"
+            element={
+              <Suspense fallback={<Loader />}>
+                <ShowPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="stats"
+            element={
+              <Suspense fallback={<Loader />}>
+                <StatsPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="user/:id"
+            element={
+              <Suspense fallback={<Loader />}>
+                <ProfilePage />
               </Suspense>
             }
           />

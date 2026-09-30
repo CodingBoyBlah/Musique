@@ -1,8 +1,14 @@
 import { useState, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Check, UserPlus, Link2, Globe } from "@/lib/icons";
+import { Check, UserPlus, Link2, Globe, Radio } from "@/lib/icons";
+import { playStation } from "../utils/radio";
 import { useArtist } from "../hooks/useArtist";
+import { useQuery } from "@tanstack/react-query";
+import { getArtistExtras, getArtistOverview } from "../api/internal";
+import { MediaTile } from "../components/ui/MediaTile";
+import { ArtistTour } from "../components/ui/ArtistTour";
+import { ArtistAbout } from "../components/ui/ArtistAbout";
 import { AlbumCard } from "../components/ui/AlbumCard";
 import { ArtistCard } from "../components/ui/ArtistCard";
 import { TrackRow } from "../components/ui/TrackRow";
@@ -36,6 +42,22 @@ export default function ArtistPage() {
   const { id } = useParams<{ id: string }>();
   const { data, isLoading, error, refetch } = useArtist(id);
   const { data: following = false } = useIsArtistFollowed(id);
+  // bio / fans also like / appears on come from spotify's internal metadata,
+  // separately, so the page never waits on them
+  const { data: extras } = useQuery({
+    queryKey: ["artist-extras", id],
+    queryFn: () => getArtistExtras(id!),
+    enabled: !!id,
+    staleTime: 30 * 60_000,
+    retry: false,
+  });
+  const { data: overview } = useQuery({
+    queryKey: ["artist-overview", id],
+    queryFn: () => getArtistOverview(id!),
+    enabled: !!id,
+    staleTime: 30 * 60_000,
+    retry: false,
+  });
   const toggleFollow = useToggleFollow();
 
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
@@ -76,6 +98,7 @@ export default function ArtistPage() {
   const genres = data.genres.slice(0, 3);
 
   const shareEntries = [
+    { label: "Artist radio", icon: <Radio size={14} />, onSelect: () => { playStation(`spotify:artist:${data.id}`, data.name); } },
     { label: "Copy Spotify link", icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("artist", data.id) },
     { label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("artist", data.id) },
   ];
@@ -123,7 +146,12 @@ export default function ArtistPage() {
 
   return (
     <div className="flex flex-col" onContextMenu={openMenu(shareEntries)}>
-      <PageHeader round imageUrl={data.image_url} eyebrow="Artist" title={data.name}>
+      <PageHeader round imageUrl={data.image_url} eyebrow={overview?.verified ? "Verified artist" : "Artist"} title={data.name}>
+        {overview?.monthly_listeners != null && (
+          <p className="tnum" style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "rgba(255, 255, 255, 0.8)" }}>
+            {overview.monthly_listeners.toLocaleString()} monthly listeners
+          </p>
+        )}
         {genres.length > 0 && (
           <div
             style={{
@@ -148,7 +176,29 @@ export default function ArtistPage() {
             ))}
           </div>
         )}
-        <PlayActions tracks={topTracks} contextId={contextId} pinItem={artistItem} accessory={followButton} />
+        <PlayActions
+          tracks={topTracks}
+          contextId={contextId}
+          pinItem={artistItem}
+          accessory={
+            <>
+              {followButton}
+              <Tooltip label="Artist radio" side="top">
+                <motion.button
+                  type="button"
+                  aria-label={`${data.name} radio`}
+                  className="ghost-pill focus-ring"
+                  onClick={() => playStation(`spotify:artist:${data.id}`, data.name)}
+                  whileTap={PRESS}
+                  transition={PRESS_TRANSITION}
+                  style={{ height: 36, width: 36, borderRadius: 99, color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <Radio size={15} strokeWidth={2.1} />
+                </motion.button>
+              </Tooltip>
+            </>
+          }
+        />
       </PageHeader>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "clamp(28px, 4vw, 44px)", paddingTop: 8 }}>
@@ -215,12 +265,47 @@ export default function ArtistPage() {
           renderItem={(al, i) => <AlbumCard album={al} index={i} />}
         />
         <Shelf
+          id="artist-appears-on"
+          title="Appears on"
+          items={extras?.appears_on ?? []}
+          getKey={(al) => al.id}
+          renderItem={(al, i) => <AlbumCard album={al} index={i} />}
+        />
+        <Shelf
+          id="artist-featuring"
+          title={`Featuring ${data.name}`}
+          items={overview?.featuring ?? []}
+          getKey={(p) => p.id}
+          renderItem={(p, i) => <MediaTile to={`/playlist/${p.id}`} imageUrl={p.image_url} title={p.name} subtitle={p.subtitle} index={i} />}
+        />
+        <Shelf
+          id="artist-discovered-on"
+          title="Discovered on"
+          items={overview?.discovered_on ?? []}
+          getKey={(p) => p.id}
+          renderItem={(p, i) => <MediaTile to={`/playlist/${p.id}`} imageUrl={p.image_url} title={p.name} subtitle={p.subtitle} index={i} />}
+        />
+        <Shelf
           id="artist-related"
           title="Fans also like"
-          items={data.related_artists ?? []}
+          items={data.related_artists?.length ? data.related_artists : extras?.related ?? []}
           getKey={(ar) => ar.id}
           renderItem={(ar, i) => <ArtistCard artist={ar} index={i} />}
         />
+        <ArtistAbout
+          name={data.name}
+          biography={extras?.biography ?? null}
+          images={[...(overview?.gallery ?? []), ...(extras?.gallery ?? []), ...(data.image_url ? [data.image_url] : [])].filter((v, i, arr) => arr.indexOf(v) === i)}
+          stats={{
+            monthlyListeners: overview?.monthly_listeners,
+            followers: overview?.followers,
+            worldRank: overview?.world_rank,
+            activeYears: extras?.active_years,
+          }}
+          cities={overview?.top_cities}
+          links={overview?.external_links}
+        />
+        <ArtistTour concerts={overview?.concerts ?? []} merch={overview?.merch ?? []} />
       </div>
       {menuEl}
     </div>

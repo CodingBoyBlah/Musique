@@ -108,7 +108,11 @@ impl Default for AudioFetchParams {
             initial_ping_time_estimate: Duration::from_millis(500),
             maximum_assumed_ping_time: Duration::from_millis(1500),
             read_ahead_before_playback: Duration::from_secs(1),
-            read_ahead_during_playback: Duration::from_secs(5),
+            // musique: 5s upstream. A network hiccup longer than the read-ahead
+            // starves the decoder, and the output only has so much queued. At
+            // 320 kbps 30s is ~1.2 MB - nothing - and rides out a far longer
+            // stall.
+            read_ahead_during_playback: Duration::from_secs(30),
             prefetch_threshold_factor: 4.0,
             download_timeout: Duration::from_secs(
                 (minimum_download_size / minimum_throughput) as u64,

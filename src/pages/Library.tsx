@@ -1,7 +1,10 @@
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Heart, Users, Disc3 } from "@/lib/icons";
+import { Heart, Users, Disc3, Mic } from "@/lib/icons";
+import { useQuery } from "@tanstack/react-query";
+import { getSavedShows } from "../api/podcasts";
+import { MediaTile } from "../components/ui/MediaTile";
 import { useAuth } from "../hooks/useAuth";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SignInPrompt } from "../components/ui/SignInPrompt";
@@ -27,7 +30,7 @@ import { useReflowPulse } from "../hooks/useReflowPulse";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
 
-const TAB_KEYS = ["songs", "albums", "artists"] as const;
+const TAB_KEYS = ["songs", "albums", "artists", "podcasts"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 
 // liked songs
@@ -193,6 +196,32 @@ function ArtistsTab() {
 
 // library page
 
+// shows you follow
+function PodcastsTab() {
+  const { data: shows = [], isLoading } = useQuery({
+    queryKey: ["library", "shows"],
+    queryFn: getSavedShows,
+    staleTime: 300_000,
+  });
+  if (isLoading) return <CardGridSkeleton count={10} />;
+  if (shows.length === 0) {
+    return (
+      <EmptyState
+        icon={<Mic size={22} />}
+        title="No podcasts yet"
+        description="Follow a show and it lands here. Search finds podcasts too."
+      />
+    );
+  }
+  return (
+    <AlbumGrid>
+      {shows.map((s, i) => (
+        <MediaTile key={s.id} to={`/show/${s.id}`} imageUrl={s.image_url} title={s.name} subtitle={s.publisher} index={i} />
+      ))}
+    </AlbumGrid>
+  );
+}
+
 export default function Library() {
   useReflowPulse();
   const { loggedIn } = useAuth();
@@ -242,6 +271,7 @@ export default function Library() {
         {tab === "songs"   && <LikedSongsTab />}
         {tab === "albums"  && <AlbumsTab />}
         {tab === "artists" && <ArtistsTab />}
+        {tab === "podcasts" && <PodcastsTab />}
       </motion.div>
     </motion.div>
   );

@@ -1,7 +1,11 @@
-// ms -> m:ss. no hours, tracks are never that long
+// ms -> m:ss, or h:mm:ss past the hour
 export function fmtMs(ms: number): string {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60);
+  // podcasts run past an hour: 1:58:07, not 118:07
+  if (m >= 60) {
+    return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  }
   return `${m}:${String(s % 60).padStart(2, "0")}`;
 }
 

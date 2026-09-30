@@ -1,0 +1,44 @@
+name: Bug report
+description: Something broke
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Musique version
+      placeholder: "1.2.4"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+    validations:
+      required: true
+  - type: dropdown
+    id: account
+    attributes:
+      label: Spotify plan
+      options:
+        - Premium
+        - Free
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Terminal output, or `spotify-panic.log` from your temp folder if the app crashed.
+      render: shell

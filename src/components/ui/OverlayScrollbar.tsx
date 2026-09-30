@@ -12,7 +12,9 @@ track pages toward the click. */
 const MIN_THUMB = 28;
 const IDLE_MS = 900;
 
-export function OverlayScrollbar({ target }: { target: RefObject<HTMLElement | null> }) {
+/* `edge` moves the strip sideways from the host's right edge - negative
+reaches past it, e.g. into a gutter next to the host */
+export function OverlayScrollbar({ target, edge = 0 }: { target: RefObject<HTMLElement | null>; edge?: number }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [m, setM] = useState({ size: 0, offset: 0, on: false });
   const [scrolling, setScrolling] = useState(false);
@@ -108,6 +110,7 @@ export function OverlayScrollbar({ target }: { target: RefObject<HTMLElement | n
       data-visible={scrolling || dragging || undefined}
       data-dragging={dragging || undefined}
       onPointerDown={onTrackDown}
+      style={edge ? { right: edge } : undefined}
     >
       {m.on && (
         <div

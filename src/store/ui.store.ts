@@ -24,14 +24,6 @@ interface UIState {
   toggleMacSimulated: () => void;
   setMacSimulated: (v: boolean) => void;
 
-  // bumped when a closing side panel has finished sliding out and the right
-  // rail actually gives its width back. Layout holds the rail open until then
-  // (so the exit is seen), and useReflowPulse subscribes to it so the grid
-  // cards re-measure on the same render the column widens - they glide into
-  // the freed space rather than teleport.
-  railSettleTick: number;
-  bumpRailSettle: () => void;
-
   // the immersive overlay has finished fading in and fully covers the shell.
   // set by Immersive from its own onAnimationComplete; Layout hides (and
   // inerts) the shell underneath on it, instead of guessing with a timer.
@@ -58,8 +50,6 @@ export const useUIStore = create<UIState>()(
       macSimulated: false,
       toggleMacSimulated: () => set((s) => ({ macSimulated: !s.macSimulated })),
       setMacSimulated: (v) => set({ macSimulated: v }),
-      railSettleTick: 0,
-      bumpRailSettle: () => set((s) => ({ railSettleTick: s.railSettleTick + 1 })),
       immersiveCovered: false,
       setImmersiveCovered: (v) => set({ immersiveCovered: v }),
     }),

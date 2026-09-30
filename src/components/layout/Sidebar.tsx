@@ -4,13 +4,16 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, animate, useMotionValue, useTransform, useReducedMotion, type MotionValue } from "framer-motion";
 import {
   Home, ListMusic,
-  Music, Disc3, User,
+  Music, Disc3, User, Mic, Stats,
   Pin, PinOff,
-  ChevronDown,
+  ChevronDown, Folder,
   type LucideIcon,
 } from "@/lib/icons";
 import { usePinsStore, type PinnedItem } from "../../store/pins.store";
 import { useMyPlaylists } from "../../hooks/useLibrary";
+import { usePlaylistFolders } from "../../hooks/usePlaylistFolders";
+import { flattenRows, type SidebarRow } from "../../lib/rootlist";
+import type { RootItem } from "../../api/internal";
 import { useUIStore } from "../../store/ui.store";
 import { useContextMenu } from "../ui/ContextMenu";
 import { gpuLayer, zTransform, EASE_OUT, SPRING, PRESS_TRANSITION } from "../../lib/motion";
@@ -26,6 +29,8 @@ import { chromePx } from "../../lib/zoom";
 rail, 10px corners. Every icon and pinned cover sits on this same grid, so the
 rail reads as one column rather than a stack of odd-sized pieces. */
 const RAIL_ITEM = 40;
+// the gap between the rail and the page card (the card's own left margin)
+const GUTTER = 4;
 const RAIL_RADIUS = 10;
 // a pinned cover inset in its target, so the selected pill shows as an even
 // 4px ring around it; its corners follow the pill's (10 - 4 = 6)
@@ -56,13 +61,13 @@ function NavItem({
         display:       "flex",
         alignItems:    "center",
         justifyContent: collapsed ? "center" : "flex-start",
-        gap:           collapsed ? 0 : 11,
+        gap:           collapsed ? 0 : 10,
         height:        collapsed ? RAIL_ITEM : 34,
         /* collapsed: a fixed square, centred in the column, so the active
          pill (inset: 0) is a perfect square */
         width:         collapsed ? RAIL_ITEM : "100%",
         margin:        collapsed ? "0 auto" : undefined,
-        padding:       collapsed ? 0 : "0 10px",
+        padding:       collapsed ? 0 : "0 8px",
         borderRadius:  collapsed ? RAIL_RADIUS : 8,
         border:        "none",
         fontSize:      13.5,
@@ -90,7 +95,9 @@ function NavItem({
       <span className="nav-icon" data-active={active || undefined} style={{
         position: "relative",
         zIndex: 1,
-        width: 20, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+        /* a 26px slot, the same as a playlist cover: icons are centred on the
+         covers' centre line and every label starts on one text edge */
+        width: collapsed ? 20 : 26, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
       }}>
         {/* a touch larger alone in the rail, where the icon is the only label */}
         <Icon size={collapsed ? 19 : 18} strokeWidth={1.7} active={active} />
@@ -240,7 +247,9 @@ function Section({
         className="sb-section-head focus-ring"
         style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          width: "100%", height: 28, padding: "0 10px", border: "none", background: "transparent",
+          // 8px in like every row, so a label starts on the edge the icons and
+          // covers below it start on
+          width: "100%", height: 28, padding: "0 8px", border: "none", background: "transparent",
           borderRadius: 6,
           font: "inherit",
           // capitals at 11px want open tracking or they clump into a block
@@ -285,6 +294,7 @@ export default function Sidebar() {
   const pins        = usePinsStore((s) => s.pins);
   const removePin   = usePinsStore((s) => s.removePin);
   const sidebarMode = usePrefsStore((s) => s.sidebarMode);
+  const showStats   = usePrefsStore((s) => s.showStats);
   const { data: myPlaylists = [], isLoading: playlistsLoading } = useMyPlaylists();
   const qc          = useQueryClient();
   const { open: openMenu, element: menuEl } = useContextMenu();
@@ -296,9 +306,49 @@ export default function Sidebar() {
   /* the last section lists either your pins or every playlist you have
    (Settings -> Sidebar). both are the same kind of row, so one list drives it */
   const showAllPlaylists = sidebarMode === "playlists";
-  const entries: PinnedItem[] = showAllPlaylists
+  /* with the rootlist, "all playlists" follows spotify's own order and folder
+   nesting (folders collapse; the collapsed rail just keeps the order) */
+  const { data: rootTree } = usePlaylistFolders();
+  const [closedFolders, setClosedFolders] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem("sidebar-closed-folders") ?? "[]") as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  const toggleFolder = useCallback((id: string) => {
+    setClosedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try { localStorage.setItem("sidebar-closed-folders", JSON.stringify([...next])); } catch { /* private mode */ }
+      return next;
+    });
+  }, []);
+  const syncedById = new Map(myPlaylists.map((pl) => [pl.id, pl]));
+  const rootNames = new Map<string, { name: string | null; image_url: string | null }>();
+  (function walk(items: RootItem[]) {
+    for (const it of items) {
+      if (it.kind === "playlist") rootNames.set(it.id, { name: it.name, image_url: it.image_url });
+      else walk(it.children);
+    }
+  })(rootTree ?? []);
+  const useTree = showAllPlaylists && !!rootTree && rootTree.length > 0;
+  // every playlist (what "is the open page in the sidebar" checks against),
+  // and the rows actually shown with closed folders folded away
+  const allRows: SidebarRow[] = useTree ? flattenRows(rootTree!, new Set()) : [];
+  const openRows: SidebarRow[] = useTree ? flattenRows(rootTree!, closedFolders) : [];
+  const asEntry = (id: string): PinnedItem => {
+    const pl = syncedById.get(id);
+    const meta = rootNames.get(id);
+    return { id, name: pl?.name ?? meta?.name ?? "Playlist", image_url: pl?.image_url ?? meta?.image_url ?? null, type: "playlist" };
+  };
+  const entries: PinnedItem[] = useTree
+    ? allRows.filter((r) => r.kind === "playlist").map((r) => asEntry(r.id))
+    : showAllPlaylists
     ? myPlaylists.map((pl) => ({ id: pl.id, name: pl.name, image_url: pl.image_url, type: "playlist" as const }))
     : pins;
+  const depthOf = new Map(allRows.filter((r) => r.kind === "playlist").map((r) => [r.id, r.depth]));
 
   /* which library item (if any) is open + is it in that list. lets the
    sidebar light up the specific row when it's open, and only fall back to
@@ -359,7 +409,9 @@ export default function Sidebar() {
         flexShrink:    0,
         display:       "flex",
         flexDirection: "column",
-        overflow:      "hidden",
+        /* clips like overflow:hidden, but 4px wider on the right so the
+           scrollbar can sit in the gap and touch the page card */
+        clipPath:      `inset(0 -${GUTTER}px 0 0)`,
         background:    "transparent",
         borderRight:   "none",
         /* the rail runs to the top of the window. on windows the first
@@ -406,12 +458,14 @@ export default function Sidebar() {
         <Section label="Discover" first expanded={spotifyOpen} onToggle={() => setSpotifyOpen(v => !v)} collapsed={isCollapsed}>
           <NavItem icon={Home} label="Home"      active={path === "/"}                                          onClick={() => navigate("/")} collapsed={isCollapsed} />
           <NavItem icon={ListMusic} label="Playlists" active={path === "/playlists" || onPlaylistWithoutRow}           onClick={() => navigate("/playlists")} collapsed={isCollapsed} />
+          {showStats && <NavItem icon={Stats} label="Stats" active={path === "/stats"} onClick={() => navigate("/stats")} collapsed={isCollapsed} />}
         </Section>
 
         <Section label="Library" expanded={libraryOpen} onToggle={() => setLibraryOpen(v => !v)} collapsed={isCollapsed}>
           <NavItem icon={Music} label="Songs"   active={onLibrary && tab === "songs"}   onClick={() => navigate("/library?tab=songs")} collapsed={isCollapsed} />
           <NavItem icon={Disc3} label="Albums"  active={onLibrary && tab === "albums"}  onClick={() => navigate("/library?tab=albums")} collapsed={isCollapsed} />
           <NavItem icon={User} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} collapsed={isCollapsed} />
+          <NavItem icon={Mic} label="Podcasts" active={(onLibrary && tab === "podcasts") || path.startsWith("/show/")} onClick={() => navigate("/library?tab=podcasts")} collapsed={isCollapsed} />
         </Section>
 
         <Section label={showAllPlaylists ? "Your playlists" : "Pins"} expanded={pinsOpen} onToggle={() => setPinsOpen(v => !v)} collapsed={isCollapsed}>
@@ -449,7 +503,40 @@ export default function Sidebar() {
               </div>
             ) : null
           ) : (
-            entries.map((p) => {
+            (useTree
+              ? (isCollapsed ? allRows.filter((r) => r.kind === "playlist") : openRows).map((r) => (r.kind === "folder" ? r : asEntry(r.id)))
+              : entries
+            ).map((row) => {
+              if ("kind" in row && row.kind === "folder") {
+                const fIndent = row.depth * 14;
+                return (
+                  <button
+                    key={`folder-${row.id}`}
+                    type="button"
+                    className="sb-item focus-ring"
+                    onClick={() => toggleFolder(row.id)}
+                    onDoubleClick={() => navigate(`/playlists?folder=${encodeURIComponent(row.id)}`)}
+                    aria-expanded={row.open}
+                    title={`${row.name} · ${row.count} playlists (double-click to open)`}
+                    style={{
+                      position: "relative", display: "flex", alignItems: "center", gap: 10, height: 34,
+                      width: `calc(100% - ${fIndent}px)`, marginLeft: fIndent,
+                      padding: "0 8px", border: "none", background: "transparent",
+                      borderRadius: 8, cursor: "pointer", color: "var(--color-text)", fontSize: 13, fontWeight: 600, textAlign: "left",
+                    }}
+                  >
+                    {row.depth > 0 && <span aria-hidden className="sb-guide" />}
+                    <span style={{ width: 26, height: 26, borderRadius: 5, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--color-surface-2)", color: "var(--color-text-dim)" }}>
+                      <Folder size={14} strokeWidth={1.9} />
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name}</span>
+                    <span className="tnum" style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-dim)" }}>{row.count}</span>
+                    <ChevronDown size={13} style={{ flexShrink: 0, color: "var(--color-text-dim)", transform: row.open ? "none" : "rotate(-90deg)", transition: "transform 0.18s ease" }} />
+                  </button>
+                );
+              }
+              const p = row as PinnedItem;
+              const indent = isCollapsed ? 0 : (depthOf.get(p.id) ?? 0) * 14;
               const active = openId === p.id && openType === p.type;
               const coverSize = isCollapsed ? RAIL_COVER : 26;
               const coverRadius = isCollapsed ? RAIL_RADIUS - (RAIL_ITEM - RAIL_COVER) / 2 : 5;
@@ -478,8 +565,8 @@ export default function Sidebar() {
                     justifyContent: isCollapsed ? "center" : "flex-start",
                     gap:           isCollapsed ? 0 : 10,
                     height:        isCollapsed ? RAIL_ITEM : 34,
-                    width:         isCollapsed ? RAIL_ITEM : "100%",
-                    margin:        isCollapsed ? "0 auto" : undefined,
+                    width:         isCollapsed ? RAIL_ITEM : `calc(100% - ${indent}px)`,
+                    margin:        isCollapsed ? "0 auto" : `0 0 0 ${indent}px`,
                     padding:       isCollapsed ? 0 : "0 8px",
                     borderRadius:  isCollapsed ? RAIL_RADIUS : 8,
                     border:        "none",
@@ -493,6 +580,7 @@ export default function Sidebar() {
                     else prefetchPlaylist(qc, p.id);
                   }}
                 >
+                  {indent > 0 && <span aria-hidden className="sb-guide" />}
                   {active && !isCollapsed && (
                     <motion.div
                       layoutId="activeNavPill"
@@ -532,7 +620,7 @@ export default function Sidebar() {
           )}
         </Section>
       </div>
-      <OverlayScrollbar target={railRef} />
+      <OverlayScrollbar target={railRef} edge={-GUTTER} />
       </div>
       {menuEl}
     </motion.nav>

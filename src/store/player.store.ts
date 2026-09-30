@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { dedupedStorage } from "../lib/persistStorage";
 import type { TrackItem } from "../types/spotify";
-import type { SpotifyDevice, RemotePlaybackState } from "../api/connect";
+import type { SpotifyDevice, RemotePlaybackState, RemoteRepeat } from "../api/connect";
 
 interface PlayerStore {
   devicesOpen: boolean;
@@ -22,9 +22,19 @@ interface PlayerStore {
   setIsRemotePlayback: (isRemote: boolean) => void;
 
   syncRemotePlayback: (state: RemotePlaybackState | null) => void;
+  // shuffle/repeat as the remote device reports them. local playback keeps its
+  // own in queue.store; these only drive the buttons while another device plays
+  remoteShuffle: boolean;
+  remoteRepeat:  RemoteRepeat;
+  setRemoteShuffle: (on: boolean) => void;
+  setRemoteRepeat:  (r: RemoteRepeat) => void;
 
   queueOpen:    boolean;
   toggleQueue:  () => void;
+
+  // friend activity, the third panel on the right rail
+  friendsOpen:   boolean;
+  toggleFriends: () => void;
 
   lyricsOpen:   boolean;
   toggleLyrics: () => void;
@@ -35,8 +45,8 @@ interface PlayerStore {
   setImmersiveOpen: (open: boolean) => void;
   toggleImmersive: () => void;
   // which panel the immersive view shows on its right side
-  immersivePanel: "lyrics" | "queue";
-  setImmersivePanel: (p: "lyrics" | "queue") => void;
+  immersivePanel: "lyrics" | "queue" | "credits";
+  setImmersivePanel: (p: "lyrics" | "queue" | "credits") => void;
 
   // manual sync nudge for lyrics, in ms. purely a personal preference now:
   // the systematic error it used to paper over (reported position runs ahead of
@@ -79,6 +89,9 @@ interface PlayerStore {
   setLastPlayingAt: (time: number) => void;
   onEvent:         (payload: unknown) => void;
   incrementPos:    () => void;
+  // the speed the sink is actually playing at, so the local playhead keeps up
+  playbackRate:    number;
+  setPlaybackRate: (r: number) => void;
   setPosition:     (ms: number) => void;
   setVolume:       (v: number) => void;
   setMuted:        (m: boolean) => void;
@@ -103,6 +116,11 @@ export const usePlayerStore = create<PlayerStore>()(
 
       isRemotePlayback: false,
       setIsRemotePlayback: (isRemote) => set({ isRemotePlayback: isRemote }),
+
+      remoteShuffle: false,
+      remoteRepeat:  "off",
+      setRemoteShuffle: (on) => set({ remoteShuffle: on }),
+      setRemoteRepeat:  (r) => set({ remoteRepeat: r }),
 
       syncRemotePlayback: (state) =>
         set((s) => {
@@ -163,16 +181,23 @@ export const usePlayerStore = create<PlayerStore>()(
             durationMs: state.track?.duration_ms ?? s.durationMs,
             positionMs: remotePos,
             volume: state.device.volume_percent != null ? state.device.volume_percent : s.volume,
+            remoteShuffle: state.shuffle_state,
+            remoteRepeat: (["off", "context", "track"].includes(state.repeat_state)
+              ? state.repeat_state
+              : "off") as RemoteRepeat,
           };
         }),
 
       queueOpen:    false,
-      // queue + lyrics share the right rail, so opening one closes the other
-      toggleQueue:  () => set((s) => ({ queueOpen: !s.queueOpen, lyricsOpen: false })),
+      // queue, lyrics and friends share the right rail, so opening one closes the others
+      toggleQueue:  () => set((s) => ({ queueOpen: !s.queueOpen, lyricsOpen: false, friendsOpen: false })),
+
+      friendsOpen:   false,
+      toggleFriends: () => set((s) => ({ friendsOpen: !s.friendsOpen, lyricsOpen: false, queueOpen: false })),
 
       lyricsOpen:    false,
-      toggleLyrics:  () => set((s) => ({ lyricsOpen: !s.lyricsOpen, queueOpen: false })),
-      setLyricsOpen: (open) => set({ lyricsOpen: open }),
+      toggleLyrics:  () => set((s) => ({ lyricsOpen: !s.lyricsOpen, queueOpen: false, friendsOpen: false })),
+      setLyricsOpen: (open) => set(open ? { lyricsOpen: true, queueOpen: false, friendsOpen: false } : { lyricsOpen: false }),
 
       immersiveOpen:     false,
       setImmersiveOpen:  (open) => set({ immersiveOpen: open }),
@@ -223,6 +248,7 @@ export const usePlayerStore = create<PlayerStore>()(
           targetStateTime: 0,
           queueOpen: false,
           lyricsOpen: false,
+          friendsOpen: false,
           immersiveOpen: false,
           devicesOpen: false,
           isRemotePlayback: false,
@@ -260,6 +286,14 @@ export const usePlayerStore = create<PlayerStore>()(
         // so remote state isn't wiped out.
         if (get().isRemotePlayback && msg.type !== "playing") {
           return;
+        }
+        /* librespot reports every item by its bare base62 id. episodes live in
+           the app as "spotify:episode:<id>" (that prefix is what marks them as
+           podcasts everywhere - controls, speed, transcript), so map the bare id
+           back onto the episode we loaded instead of stripping the prefix off */
+        if (msg.track_id) {
+          const cur = get().currentId;
+          if (cur && cur !== msg.track_id && cur.endsWith(`:${msg.track_id}`)) msg.track_id = cur;
         }
         switch (msg.type) {
           case "playing":
@@ -325,12 +359,16 @@ export const usePlayerStore = create<PlayerStore>()(
         }
       },
 
+      playbackRate: 1,
+      setPlaybackRate: (r) => set({ playbackRate: r }),
+
       incrementPos: () =>
         set((s) => {
           if (!s.isPlaying) return s;
+          const step = 1000 * (s.playbackRate || 1);
           const next = s.durationMs > 0
-            ? Math.min(s.positionMs + 1000, s.durationMs)
-            : s.positionMs + 1000;
+            ? Math.min(s.positionMs + step, s.durationMs)
+            : s.positionMs + step;
           return { positionMs: next };
         }),
 
