@@ -852,12 +852,12 @@ pub(crate) async fn load_cached_playlist(
     }
 
     let track_ids: Vec<&str> = track_rows.iter().map(|r| r.id.as_str()).collect();
-    let artists_by_track = fetch_artists_for_tracks(pool, &track_ids).await?;
+    let mut artists_by_track = fetch_artists_for_tracks(pool, &track_ids).await?;
 
     let tracks: Vec<TrackItem> = track_rows
         .into_iter()
         .map(|row| TrackItem {
-            artists: artists_by_track.get(&row.id).cloned().unwrap_or_default(),
+            artists: artists_by_track.remove(&row.id).unwrap_or_default(),
             album: row.album_id.map(|aid| AlbumItem {
                 id: aid,
                 name: row.album_name.unwrap_or_default(),
@@ -1156,5 +1156,14 @@ mod tests {
         let t2_artists = map.get("t2").unwrap();
         assert_eq!(t2_artists.len(), 1);
         assert_eq!(t2_artists[0].name, "Artist 2");
+
+        sqlx::query("INSERT INTO playlists (id, name, total_tracks, updated_at) VALUES ('p1', 'Mix', 2, 0)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES ('p1', 't2', 0, 0), ('p1', 't1', 1, 0)")
+            .execute(&pool).await.unwrap();
+        let playlist = load_cached_playlist(&pool, "p1").await.unwrap().unwrap();
+        assert_eq!(playlist.tracks.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["t2", "t1"]);
+        assert_eq!(playlist.tracks[0].artists[0].name, "Artist 2");
+        assert_eq!(playlist.tracks[1].artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), vec!["Artist 1", "Artist 2"]);
     }
 }
