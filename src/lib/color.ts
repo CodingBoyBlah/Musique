@@ -111,20 +111,45 @@ export function extractVibrant(img: HTMLImageElement): RGB | null {
 }
 
 
+const MAX_COLOR_CACHE = 128;
 const memCache = new Map<string, string | null>();
+const inflightAccents = new Map<string, Promise<string | null>>();
+
+function cacheColor(url: string, hex: string | null) {
+  if (memCache.has(url)) {
+    memCache.delete(url);
+  } else if (memCache.size >= MAX_COLOR_CACHE) {
+    const oldest = memCache.keys().next().value;
+    if (oldest !== undefined) memCache.delete(oldest);
+  }
+  memCache.set(url, hex);
+}
 
 export function loadCoverAccent(url: string): Promise<string | null> {
-  if (memCache.has(url)) return Promise.resolve(memCache.get(url)!);
+  if (memCache.has(url)) {
+    const v = memCache.get(url)!;
+    memCache.delete(url);
+    memCache.set(url, v);
+    return Promise.resolve(v);
+  }
   const ls = localStorage.getItem("cover-accent-v2:" + url);
-  if (ls !== null) { const v = ls || null; memCache.set(url, v); return Promise.resolve(v); }
-  return new Promise((resolve) => {
+  if (ls !== null) {
+    const v = ls || null;
+    cacheColor(url, v);
+    return Promise.resolve(v);
+  }
+
+  const pending = inflightAccents.get(url);
+  if (pending) return pending;
+
+  const job = new Promise<string | null>((resolve) => {
     const img = new Image();
     img.crossOrigin = "anonymous";   // spotifys i.scdn.co sends ACAO:* so canvas can read it
     img.referrerPolicy = "no-referrer";
     img.onload = () => {
       const raw = extractVibrant(img);
       const hex = raw ? rgbToHex(normalizeBrightness(raw)) : null;
-      memCache.set(url, hex);
+      cacheColor(url, hex);
       try { localStorage.setItem("cover-accent-v2:" + url, hex ?? ""); } catch { /* quota */ }
       resolve(hex);
     };
@@ -134,16 +159,22 @@ export function loadCoverAccent(url: string): Promise<string | null> {
       getExtractedColors([url])
         .then(([c]) => {
           const hex = c?.raw ? rgbToHex(normalizeBrightness(hexToRgb(c.raw))) : null;
-          memCache.set(url, hex);
+          cacheColor(url, hex);
           if (hex) {
             try { localStorage.setItem("cover-accent-v2:" + url, hex); } catch { /* quota */ }
           }
           resolve(hex);
         })
-        .catch(() => { memCache.set(url, null); resolve(null); });
+        .catch(() => {
+          cacheColor(url, null);
+          resolve(null);
+        });
     };
     img.src = url;
-  });
+  }).finally(() => inflightAccents.delete(url));
+
+  inflightAccents.set(url, job);
+  return job;
 }
 
 

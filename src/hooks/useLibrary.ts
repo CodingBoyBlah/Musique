@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   getLikedSongs,
@@ -132,7 +133,7 @@ export function useSyncLibrary() {
 // stable callback that invalidates every library query (the `library:synced event uses this)
 export function useInvalidateLibrary() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: ["library"] });
+  return useCallback(() => qc.invalidateQueries({ queryKey: ["library"] }), [qc]);
 }
 
 // liked-state for a set of track ids (local cache, fast + offline)

@@ -67,6 +67,7 @@ import { isEpisodeId } from "./utils/episode";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useJamSync } from "./hooks/useJamSync";
 import { jamRole } from "./store/jam.store";
+import { cleanupAsyncListeners } from "./lib/asyncListeners";
 
 function AppInit() {
   const setFromCredentials = useCredentialsStore((s) => s.setFromCredentials);
@@ -125,6 +126,13 @@ function AppInit() {
     durationMs: number;
     scrobbled: boolean;
   } | null>(null);
+  const preloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (preloadTimerRef.current) clearTimeout(preloadTimerRef.current);
+    };
+  }, []);
 
   // os notif permission
   useEffect(() => {
@@ -290,10 +298,16 @@ Home recs so they're cached before the user gets there
             };
 
             // Proactively preload next track so skips and transitions are instant
+            if (preloadTimerRef.current) clearTimeout(preloadTimerRef.current);
+            preloadTimerRef.current = null;
             const next = inJam ? null : useQueueStore.getState().peek(currentTrack);
             if (next) {
-              setTimeout(() => {
-                preloadTrack(next.id).catch(() => {});
+              preloadTimerRef.current = setTimeout(() => {
+                preloadTimerRef.current = null;
+                const playing = usePlayerStore.getState().currentTrack;
+                if (!jamRole() && playing?.id === currentTrack.id && useQueueStore.getState().peek(playing)?.id === next.id) {
+                  preloadTrack(next.id).catch(() => {});
+                }
               }, 1200);
             }
           }
@@ -368,9 +382,17 @@ Home recs so they're cached before the user gets there
 
   // librespot player events
   useEffect(() => {
-    const p = listen("player:event", (e) => handlePlayerEvent(e.payload));
+    let unlisten: (() => void) | null = null;
+    let gone = false;
+    listen("player:event", (e) => handlePlayerEvent(e.payload))
+      .then((u) => {
+        if (gone) u();
+        else unlisten = u;
+      })
+      .catch(() => {});
     return () => {
-      p.then((u) => u()).catch(() => {});
+      gone = true;
+      unlisten?.();
     };
   }, [handlePlayerEvent]);
 
@@ -386,30 +408,30 @@ Home recs so they're cached before the user gets there
 
   // library sync event
   useEffect(() => {
-    const p = listen("library:synced", () => invalidateLibrary());
+    let unlisten: (() => void) | null = null;
+    let gone = false;
+    listen("library:synced", () => invalidateLibrary())
+      .then((u) => {
+        if (gone) u();
+        else unlisten = u;
+      })
+      .catch(() => {});
     return () => {
-      p.then((u) => u()).catch(() => {});
+      gone = true;
+      unlisten?.();
     };
   }, [invalidateLibrary]);
 
   // os media control events (tray menu for now)
-  // nope
   useEffect(() => {
-    const unlisteners: Array<() => void> = [];
-
-    const reg = async () => {
-      unlisteners.push(
-        await listen("media:play", () => transportPlay()),
-        await listen("media:pause", () => transportPause()),
-        await listen("media:stop", () => transportPause()),
-        await listen("media:toggle", () => transportTogglePlay()),
-        await listen("media:next", () => transportNext()),
-        await listen("media:prev", () => transportPrev()),
-      );
-    };
-
-    reg().catch(() => {});
-    return () => unlisteners.forEach((u) => u());
+    return cleanupAsyncListeners([
+      listen("media:play", () => transportPlay()),
+      listen("media:pause", () => transportPause()),
+      listen("media:stop", () => transportPause()),
+      listen("media:toggle", () => transportTogglePlay()),
+      listen("media:next", () => transportNext()),
+      listen("media:prev", () => transportPrev()),
+    ]);
   }, []);
 
   return null;

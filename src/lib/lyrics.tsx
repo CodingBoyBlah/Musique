@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties } from "react";
 import type { LyricLine } from "../api/lyrics";
 import { usePlayerStore } from "../store/player.store";
@@ -32,44 +32,51 @@ reports whole-second positions, so we run a free interpolated clock and only
 soft-correct it toward the reported position (hard resync on a real seek /
 track jump). resync lets a consumer snap it after a click-to-seek. */
 export function useLyricClock() {
-  const positionMs = usePlayerStore((s) => s.positionMs);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const offset = usePlayerStore((s) => s.lyricsOffsetMs);
-
-  const baseRef = useRef({ pos: positionMs, at: performance.now() });
-  const playingRef = useRef(isPlaying);
-  const offsetRef = useRef(offset);
+  const initial = usePlayerStore.getState();
+  const baseRef = useRef({ pos: initial.positionMs, at: performance.now() });
+  const playingRef = useRef(initial.isPlaying);
+  const offsetRef = useRef(initial.lyricsOffsetMs);
 
   // ref-counted, shared with any other lyric surface; polls slowly in the
   // background and never re-renders us
   useEffect(() => startLatencyPolling(), []);
-  useEffect(() => {
-    offsetRef.current = offset;
-  }, [offset]);
 
   useEffect(() => {
-    const now = performance.now();
-    const predicted = playingRef.current
-      ? baseRef.current.pos + (now - baseRef.current.at)
-      : baseRef.current.pos;
-    const drift = positionMs - predicted;
-    if (Math.abs(drift) > 1200) {
-      baseRef.current = { pos: positionMs, at: now }; // seek / track change
-    } else {
-      baseRef.current = { pos: predicted + drift * 0.2, at: now }; // gentle pull
-    }
-  }, [positionMs]);
+    const init = usePlayerStore.getState();
+    baseRef.current = { pos: init.positionMs, at: performance.now() };
+    playingRef.current = init.isPlaying;
+    offsetRef.current = init.lyricsOffsetMs;
 
-  useEffect(() => {
-    const now = performance.now();
-    baseRef.current = {
-      pos: playingRef.current
-        ? baseRef.current.pos + (now - baseRef.current.at)
-        : baseRef.current.pos,
-      at: now,
-    };
-    playingRef.current = isPlaying;
-  }, [isPlaying]);
+    return usePlayerStore.subscribe((state, prev) => {
+      offsetRef.current = state.lyricsOffsetMs;
+
+      if (state.positionMs !== prev.positionMs) {
+        const now = performance.now();
+        const predicted = playingRef.current
+          ? baseRef.current.pos + (now - baseRef.current.at)
+          : baseRef.current.pos;
+        const drift = state.positionMs - predicted;
+        if (Math.abs(drift) > 1200) {
+          baseRef.current = { pos: state.positionMs, at: now }; // seek / track change
+        } else {
+          baseRef.current = { pos: predicted + drift * 0.2, at: now }; // gentle pull
+        }
+      }
+
+      // Match the original effects: correct position using the previous play
+      // state before rebasing a simultaneous pause/resume update.
+      if (state.isPlaying !== prev.isPlaying) {
+        const now = performance.now();
+        baseRef.current = {
+          pos: playingRef.current
+            ? baseRef.current.pos + (now - baseRef.current.at)
+            : baseRef.current.pos,
+          at: now,
+        };
+        playingRef.current = state.isPlaying;
+      }
+    });
+  }, []);
 
   const getClock = useCallback(() => {
     const c = playingRef.current
@@ -104,7 +111,6 @@ export function useActiveRow(rowStarts: number[], getClock: () => number, synced
   const [active, setActive] = useState(-1);
   const activeRef = useRef(-1);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const positionMs = usePlayerStore((s) => s.positionMs);
 
   useEffect(() => {
     if (!synced || !rowStarts.length) {
@@ -132,14 +138,27 @@ export function useActiveRow(rowStarts: number[], getClock: () => number, synced
         activeRef.current = idx;
         setActive(idx);
       }
-      if (!isPlaying) return;
+      if (!usePlayerStore.getState().isPlaying) return;
       const next = rowStarts[idx + 1];
       timer = window.setTimeout(run, next === undefined ? 1000 : Math.min(1000, Math.max(16, next - t)));
     };
 
     run();
-    return () => window.clearTimeout(timer);
-  }, [synced, rowStarts, getClock, isPlaying, positionMs]);
+
+    // Re-arm on every reported position, including small seeks while paused,
+    // without making unchanged active rows render on each tick.
+    const unsub = usePlayerStore.subscribe((state, prev) => {
+      if (state.positionMs !== prev.positionMs || state.currentId !== prev.currentId) {
+        window.clearTimeout(timer);
+        run();
+      }
+    });
+
+    return () => {
+      window.clearTimeout(timer);
+      unsub();
+    };
+  }, [synced, rowStarts, getClock, isPlaying]);
 
   return active;
 }
@@ -424,7 +443,7 @@ const CHASE_MS = 80;
  * changes. The line wraps once, when it is laid out, and every state after that
  * is colour. It also makes the handoff a style change rather than a remount, so
  * the row's transitions carry across it instead of cutting. */
-export function LyricRowText({
+export const LyricRowText = memo(function LyricRowText({
   words,
   active,
   getClock,
@@ -570,4 +589,4 @@ export function LyricRowText({
       ))}
     </p>
   );
-}
+});

@@ -51,20 +51,33 @@ export interface Lyrics {
   has_roman:       boolean;
 }
 
+const inflightLyrics = new Map<string, Promise<Lyrics>>();
+
 /* grab synced lyrics. cached in sqlite so repeat calls are instant and work
 offline. returns the line-level result immediately - one request on the
 critical path - and upgrades to word-by-word later over the event.
 force=true skips the cache and refetches. */
 export function getLyrics(track: TrackItem, force = false): Promise<Lyrics> {
-  return invoke<Lyrics>("get_lyrics", {
+  const args = {
     trackId:    track.id,
     name:       track.name,
     artist:     track.artists[0]?.name ?? "",
     album:      track.album?.name ?? null,
     durationMs: track.duration_ms,
-    // the only identifier that matches across providers - without it matching
-    // falls back to fuzzy title/artist, which is where wrong lyrics come from
+    // ISRC distinguishes provider matches when richer metadata arrives.
     isrc:       track.external_ids?.isrc ?? null,
     force,
+  };
+  const key = force ? "" : JSON.stringify(args);
+  if (!force) {
+    const existing = inflightLyrics.get(key);
+    if (existing) return existing;
+  }
+
+  const promise = invoke<Lyrics>("get_lyrics", args).finally(() => {
+    if (!force) inflightLyrics.delete(key);
   });
+
+  if (!force) inflightLyrics.set(key, promise);
+  return promise;
 }

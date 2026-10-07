@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef, useState } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { usePlayerStore } from "../store/player.store";
 import {
@@ -15,9 +15,39 @@ import { errMsg } from "../lib/err";
 /* the backend forwards spotify's connect-cluster pushes as
 "connect:cluster-changed". once one has arrived we know pushes work, so the
 polling below backs off to a slow safety net. several components mount this
-hook; the shared timestamp keeps one push from refetching once per instance. */
+hook; the shared timestamp and listeners keep pushes and polls coalesced. */
 let pushSeen = false;
 let lastPushRefresh = 0;
+
+let inflightDevices: Promise<void> | null = null;
+let inflightPlayback: Promise<void> | null = null;
+
+const clusterListeners = new Set<() => void>();
+let clusterUnlisten: (() => void) | null = null;
+let clusterPending = false;
+
+function setupClusterListener() {
+  if (clusterPending || clusterUnlisten) return;
+  clusterPending = true;
+  listen("connect:cluster-changed", () => {
+    pushSeen = true;
+    const now = Date.now();
+    if (now - lastPushRefresh < 500) return;
+    lastPushRefresh = now;
+    clusterListeners.forEach((l) => l());
+  })
+    .then((unlisten) => {
+      clusterPending = false;
+      if (clusterListeners.size === 0) {
+        unlisten();
+      } else {
+        clusterUnlisten = unlisten;
+      }
+    })
+    .catch(() => {
+      clusterPending = false;
+    });
+}
 
 export function useDevices() {
   const devices = usePlayerStore((s) => s.devices);
@@ -33,7 +63,6 @@ export function useDevices() {
   const syncRemotePlayback = usePlayerStore((s) => s.syncRemotePlayback);
 
   const [transferringId, setTransferringId] = useState<string | null>(null);
-  const isPollingPlaybackRef = useRef(false);
 
   // Initialize Musique device ID once
   useEffect(() => {
@@ -47,34 +76,42 @@ export function useDevices() {
   }, [musiqueDeviceId, setMusiqueDeviceId]);
 
   const refreshDevices = useCallback(async () => {
-    try {
-      const payload = await getDevices();
-      if (payload) {
-        if (payload.musique_device_id && !usePlayerStore.getState().musiqueDeviceId) {
-          setMusiqueDeviceId(payload.musique_device_id);
+    if (inflightDevices) return inflightDevices;
+    inflightDevices = (async () => {
+      try {
+        const payload = await getDevices();
+        if (payload) {
+          if (payload.musique_device_id && !usePlayerStore.getState().musiqueDeviceId) {
+            setMusiqueDeviceId(payload.musique_device_id);
+          }
+          setDevices(payload.devices ?? []);
+          const currentActive = payload.devices?.find((d) => d.is_active) ?? null;
+          if (currentActive) {
+            setActiveDevice(currentActive);
+          }
         }
-        setDevices(payload.devices ?? []);
-        const currentActive = payload.devices?.find((d) => d.is_active) ?? null;
-        if (currentActive) {
-          setActiveDevice(currentActive);
-        }
+      } catch {
+        // Quietly ignore network/auth errors in background poll
+      } finally {
+        inflightDevices = null;
       }
-    } catch {
-      // Quietly ignore network/auth errors in background poll
-    }
+    })();
+    return inflightDevices;
   }, [setDevices, setActiveDevice, setMusiqueDeviceId]);
 
   const refreshPlayback = useCallback(async () => {
-    if (isPollingPlaybackRef.current) return;
-    isPollingPlaybackRef.current = true;
-    try {
-      const state = await getPlaybackState();
-      syncRemotePlayback(state);
-    } catch {
-      // Quietly ignore
-    } finally {
-      isPollingPlaybackRef.current = false;
-    }
+    if (inflightPlayback) return inflightPlayback;
+    inflightPlayback = (async () => {
+      try {
+        const state = await getPlaybackState();
+        syncRemotePlayback(state);
+      } catch {
+        // Quietly ignore
+      } finally {
+        inflightPlayback = null;
+      }
+    })();
+    return inflightPlayback;
   }, [syncRemotePlayback]);
 
   // Initial load on mount
@@ -86,25 +123,20 @@ export function useDevices() {
   // live device/playback changes pushed over the dealer
   const [pushLive, setPushLive] = useState(pushSeen);
   useEffect(() => {
-    let off: (() => void) | null = null;
-    let gone = false;
-    listen("connect:cluster-changed", () => {
-      pushSeen = true;
+    const onCluster = () => {
       setPushLive(true);
-      const now = Date.now();
-      if (now - lastPushRefresh < 500) return;
-      lastPushRefresh = now;
       refreshDevices();
       refreshPlayback();
-    })
-      .then((u) => {
-        if (gone) u();
-        else off = u;
-      })
-      .catch(() => {});
+    };
+    clusterListeners.add(onCluster);
+    setupClusterListener();
+
     return () => {
-      gone = true;
-      off?.();
+      clusterListeners.delete(onCluster);
+      if (clusterListeners.size === 0 && clusterUnlisten) {
+        clusterUnlisten();
+        clusterUnlisten = null;
+      }
     };
   }, [refreshDevices, refreshPlayback]);
 
