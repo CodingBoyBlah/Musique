@@ -1,8 +1,8 @@
 import { isEpisodeId } from "../utils/episode";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getLyrics, type Lyrics } from "../api/lyrics";
+import { subscribeLyricsUpgrades } from "../lib/lyricsUpgrades";
 import type { TrackItem } from "../types/spotify";
 
 // lyrics for a track. cached hard (backend also caches in sqlite), so reopening the panel or replaying a song is instant + works offline.
@@ -39,28 +39,10 @@ export function useLyrics(track: TrackItem | null) {
      for a word-level source behind it; when one passes the sync check it lands
      here. written into the cache in place - refetching would drop the query
      back through its loading state and flash the panel, and the whole point is
-     that the reader never sees the swap happen. */
-  useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    let gone = false;
-
-    listen<Lyrics>("lyrics:upgraded", (e) => {
-      const next = e.payload;
-      // a late upgrade for a track we have already skipped past must not
-      // overwrite what is on screen now
-      if (!next || next.track_id !== trackIdRef.current) return;
-      queryClient.setQueryData(["lyrics", next.track_id], next);
-    }).then((fn) => {
-      // unmounted before listen() resolved - drop the subscription immediately
-      if (gone) fn();
-      else unlisten = fn;
-    });
-
-    return () => {
-      gone = true;
-      unlisten?.();
-    };
-  }, [queryClient]);
+     that the reader never sees the swap happen.
+     Coalesced: multiple mounted surfaces (e.g. lyrics panel + immersive view)
+     share a single Tauri listener instead of duplicating IPC registrations. */
+  useEffect(() => subscribeLyricsUpgrades(queryClient, () => trackIdRef.current), [queryClient]);
 
   return { data, isLoading, isError, isFetching, refetch };
 }

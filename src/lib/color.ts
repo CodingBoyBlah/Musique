@@ -61,8 +61,8 @@ const MIN_S = 0.5;
 const MAX_S = 0.9;
 
 export function normalizeBrightness(rgb: RGB): RGB {
-  const { h } = rgbToHsl(rgb);
-  const s = clamp(rgbToHsl(rgb).s, MIN_S, MAX_S);
+  const { h, s: saturation } = rgbToHsl(rgb);
+  const s = clamp(saturation, MIN_S, MAX_S);
   let lo = 0.18, hi = 0.72, l = 0.45;
   for (let i = 0; i < 18; i++) {
     l = (lo + hi) / 2;

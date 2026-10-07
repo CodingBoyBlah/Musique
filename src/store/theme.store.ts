@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { dedupedStorage } from "../lib/persistStorage";
 
 
 export type ThemeSource = "default" | "wallpaper" | "system";
@@ -35,6 +36,7 @@ export const useThemeStore = create<ThemeStore>()(
     
     {
       name: "musique-theme",
+      storage: dedupedStorage(),
       
       partialize: (s) => ({ source: s.source, albumColors: s.albumColors }),
     },

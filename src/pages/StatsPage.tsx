@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useEvenColumns } from "../hooks/useEvenColumns";
 import { Link, Navigate } from "react-router-dom";
 import { usePrefsStore } from "../store/prefs.store";
@@ -45,9 +45,9 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
 /* when you listen: weekday rows x hour columns, one accent hue light -> dark.
 each cell names its own value on hover (and to screen readers). */
 function Heatmap({ grid }: { grid: number[][] }) {
-  const max = heatMax(grid);
+  const max = useMemo(() => heatMax(grid), [grid]);
   const [hover, setHover] = useState<{ day: number; hour: number } | null>(null);
-  const peak = peakSlot(grid);
+  const peak = useMemo(() => peakSlot(grid), [grid]);
   return (
     <section aria-labelledby="stats-when">
       <SectionTitle id="stats-when">When you listen</SectionTitle>

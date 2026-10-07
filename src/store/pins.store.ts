@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { dedupedStorage } from "../lib/persistStorage";
 
 export interface PinnedItem {
   id:        string;
@@ -35,6 +36,6 @@ export const usePinsStore = create<PinsStore>()(
 
       clear: () => set({ pins: [] }),
     }),
-    { name: "spotify-pins" },
+    { name: "spotify-pins", storage: dedupedStorage() },
   ),
 );

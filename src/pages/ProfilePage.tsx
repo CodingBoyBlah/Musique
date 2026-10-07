@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -90,9 +90,10 @@ export default function ProfilePage() {
   // your own page gets your listening too
   const { data: topArtists = [] } = useTopArtists("short_term");
   const { data: topTracks = [] } = useTopTracks("short_term");
-  const shownTop = isMe ? topTracks.slice(0, 5) : [];
-  const { data: savedIds = [] } = useSavedTrackIds(shownTop.map((t) => t.id));
-  const liked = new Set(savedIds);
+  const shownTop = useMemo(() => (isMe ? topTracks.slice(0, 5) : []), [isMe, topTracks]);
+  const shownTrackIds = useMemo(() => shownTop.map((t) => t.id), [shownTop]);
+  const { data: savedIds = [] } = useSavedTrackIds(shownTrackIds);
+  const liked = useMemo(() => new Set(savedIds), [savedIds]);
   const toggleLike = useToggleLike();
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext = useQueueStore((s) => s.playContext);

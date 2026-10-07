@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, animate, useMotionValue, useTransform, useReducedMotion, type MotionValue } from "framer-motion";
@@ -325,30 +325,52 @@ export default function Sidebar() {
       return next;
     });
   }, []);
-  const syncedById = new Map(myPlaylists.map((pl) => [pl.id, pl]));
-  const rootNames = new Map<string, { name: string | null; image_url: string | null }>();
-  (function walk(items: RootItem[]) {
-    for (const it of items) {
-      if (it.kind === "playlist") rootNames.set(it.id, { name: it.name, image_url: it.image_url });
-      else walk(it.children);
-    }
-  })(rootTree ?? []);
+  const syncedById = useMemo(() => new Map(myPlaylists.map((pl) => [pl.id, pl])), [myPlaylists]);
+  const rootNames = useMemo(() => {
+    const m = new Map<string, { name: string | null; image_url: string | null }>();
+    (function walk(items: RootItem[]) {
+      for (const it of items) {
+        if (it.kind === "playlist") m.set(it.id, { name: it.name, image_url: it.image_url });
+        else walk(it.children);
+      }
+    })(rootTree ?? []);
+    return m;
+  }, [rootTree]);
+
   const useTree = showAllPlaylists && !!rootTree && rootTree.length > 0;
   // every playlist (what "is the open page in the sidebar" checks against),
   // and the rows actually shown with closed folders folded away
-  const allRows: SidebarRow[] = useTree ? flattenRows(rootTree!, new Set()) : [];
-  const openRows: SidebarRow[] = useTree ? flattenRows(rootTree!, closedFolders) : [];
-  const asEntry = (id: string): PinnedItem => {
+  const allRows: SidebarRow[] = useMemo(
+    () => (useTree ? flattenRows(rootTree!, new Set()) : []),
+    [useTree, rootTree],
+  );
+  const openRows: SidebarRow[] = useMemo(
+    () => (useTree ? flattenRows(rootTree!, closedFolders) : []),
+    [useTree, rootTree, closedFolders],
+  );
+
+  const asEntry = useCallback((id: string): PinnedItem => {
     const pl = syncedById.get(id);
     const meta = rootNames.get(id);
     return { id, name: pl?.name ?? meta?.name ?? "Playlist", image_url: pl?.image_url ?? meta?.image_url ?? null, type: "playlist" };
-  };
-  const entries: PinnedItem[] = useTree
-    ? allRows.filter((r) => r.kind === "playlist").map((r) => asEntry(r.id))
-    : showAllPlaylists
-    ? myPlaylists.map((pl) => ({ id: pl.id, name: pl.name, image_url: pl.image_url, type: "playlist" as const }))
-    : pins;
-  const depthOf = new Map(allRows.filter((r) => r.kind === "playlist").map((r) => [r.id, r.depth]));
+  }, [syncedById, rootNames]);
+
+  const entries: PinnedItem[] = useMemo(() => {
+    if (useTree) {
+      return allRows
+        .filter((r) => r.kind === "playlist")
+        .map((r) => asEntry(r.id));
+    }
+    if (showAllPlaylists) {
+      return myPlaylists.map((pl) => ({ id: pl.id, name: pl.name, image_url: pl.image_url, type: "playlist" as const }));
+    }
+    return pins;
+  }, [useTree, allRows, asEntry, showAllPlaylists, myPlaylists, pins]);
+
+  const depthOf = useMemo(
+    () => new Map(allRows.filter((r) => r.kind === "playlist").map((r) => [r.id, r.depth])),
+    [allRows],
+  );
 
   /* which library item (if any) is open + is it in that list. lets the
    sidebar light up the specific row when it's open, and only fall back to

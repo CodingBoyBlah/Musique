@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   getLikedSongs,
@@ -138,8 +138,9 @@ export function useInvalidateLibrary() {
 
 // liked-state for a set of track ids (local cache, fast + offline)
 export function useSavedTrackIds(ids: string[]) {
+  const sortedKey = useMemo(() => [...ids].sort().join(","), [ids]);
   return useQuery({
-    queryKey: ["library", "saved-ids", [...ids].sort().join(",")],
+    queryKey: ["library", "saved-ids", sortedKey],
     queryFn:  () => getSavedTrackIds(ids),
     enabled:  ids.length > 0,
   });

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { dedupedStorage } from "../lib/persistStorage";
 import type { WindowEffect } from "../api/window";
 
 interface UIState {
@@ -55,6 +56,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "spotify-ui",
+      storage: dedupedStorage(),
      
       partialize: (s) => ({
         windowEffect:     s.windowEffect,
