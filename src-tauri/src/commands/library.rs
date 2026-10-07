@@ -40,6 +40,12 @@ pub async fn sync_library(app: AppHandle) -> Result<SyncResult, AppError> {
     sync_all(&pool, &token).await
 }
 
+fn make_placeholders(count: usize) -> String {
+    let mut value = "?,".repeat(count);
+    value.pop();
+    value
+}
+
 pub(crate) async fn fetch_artists_for_tracks(
     pool: &SqlitePool,
     track_ids: &[&str],
@@ -59,7 +65,7 @@ pub(crate) async fn fetch_artists_for_tracks(
     }
 
     for chunk in deduped.chunks(200) {
-        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = make_placeholders(chunk.len());
         let sql = format!(
             "SELECT ta.track_id, a.id, a.name, a.image_url, a.popularity
              FROM track_artists ta
@@ -104,7 +110,7 @@ pub(crate) async fn fetch_artists_for_albums(
     }
 
     for chunk in deduped.chunks(200) {
-        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = make_placeholders(chunk.len());
         let sql = format!(
             "SELECT aa.album_id, a.id, a.name, a.image_url, a.popularity
              FROM album_artists aa
@@ -436,7 +442,7 @@ pub async fn is_album_saved(app: AppHandle, id: String) -> Result<bool, AppError
     let auth = s.auth.clone();
     drop(s);
 
-    let local = sqlx::query_as::<_, (String,)>("SELECT album_id FROM saved_albums WHERE album_id = ?")
+    let local = sqlx::query_as::<_, (i32,)>("SELECT 1 FROM saved_albums WHERE album_id = ?")
         .bind(&id)
         .fetch_optional(&pool)
         .await?
@@ -470,8 +476,8 @@ pub async fn is_album_saved(app: AppHandle, id: String) -> Result<bool, AppError
 #[tauri::command]
 pub async fn is_artist_followed(app: AppHandle, id: String) -> Result<bool, AppError> {
     let pool = app.state::<AppState>().db.clone();
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT artist_id FROM followed_artists WHERE artist_id = ?")
+    let row: Option<(i32,)> =
+        sqlx::query_as("SELECT 1 FROM followed_artists WHERE artist_id = ?")
             .bind(&id)
             .fetch_optional(&pool)
             .await?;
@@ -489,10 +495,7 @@ pub async fn get_saved_track_ids(
         return Ok(vec![]);
     }
 
-    let placeholders = std::iter::repeat("?")
-        .take(ids.len())
-        .collect::<Vec<_>>()
-        .join(",");
+    let placeholders = make_placeholders(ids.len());
     let sql = format!("SELECT track_id FROM saved_tracks WHERE track_id IN ({placeholders})");
     let mut q = sqlx::query_as::<_, (String,)>(&sql);
     for id in &ids {
@@ -1165,5 +1168,6 @@ mod tests {
         assert_eq!(playlist.tracks.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["t2", "t1"]);
         assert_eq!(playlist.tracks[0].artists[0].name, "Artist 2");
         assert_eq!(playlist.tracks[1].artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), vec!["Artist 1", "Artist 2"]);
+
     }
 }

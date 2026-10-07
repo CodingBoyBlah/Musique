@@ -141,12 +141,10 @@ pub async fn artist_proto(app: &AppHandle, id: &str, ttl_ms: i64) -> Result<meta
 /// hydrate bare track ids (or uris) into full rows, keeping the input order.
 /// ids spotify has nothing for are dropped rather than failing the batch.
 pub async fn tracks(app: &AppHandle, ids: &[String]) -> Result<Vec<TrackItem>, AppError> {
-    let ids: Vec<String> = ids.iter().map(|i| spclient::uri_id(i).to_string()).collect();
-    let protos = track_protos(app, &ids).await?;
-    Ok(ids
-        .iter()
-        .filter_map(|id| protos.get(&to_uri("track", id)).and_then(track_item))
-        .collect())
+    let uris: Vec<String> = ids.iter().map(|id| to_uri("track", spclient::uri_id(id))).collect();
+    let raw = fetch_batch(app, ExtensionKind::TRACK_V4, &uris, TTL).await?;
+    let protos: HashMap<String, metadata::Track> = decode_all(raw);
+    Ok(uris.iter().filter_map(|u| protos.get(u).and_then(track_item)).collect())
 }
 
 /// batch-hydrate album ids into cards, order kept
