@@ -428,33 +428,108 @@ fn similarity(a: &str, b: &str) -> f64 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
     }
-    let dist = levenshtein(a, b);
-    let longest = a.chars().count().max(b.chars().count());
-    1.0 - (dist as f64 / longest as f64)
-}
-
-/// Two-row Levenshtein. Inputs here are titles and artist names, so the O(n*m)
-/// cost is irrelevant and the simple version is the right one.
-fn levenshtein(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut curr = vec![0usize; b.len() + 1];
-
-    for (i, ca) in a.iter().enumerate() {
-        curr[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let cost = usize::from(ca != cb);
-            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
-        }
-        std::mem::swap(&mut prev, &mut curr);
+    if a.is_ascii() && b.is_ascii() {
+        let a_bytes = a.as_bytes();
+        let b_bytes = b.as_bytes();
+        let longest = a_bytes.len().max(b_bytes.len());
+        let dist = levenshtein_slice(a_bytes, b_bytes);
+        1.0 - (dist as f64 / longest as f64)
+    } else {
+        let a_chars: Vec<char> = a.chars().collect();
+        let b_chars: Vec<char> = b.chars().collect();
+        let longest = a_chars.len().max(b_chars.len());
+        let dist = levenshtein_slice(&a_chars, &b_chars);
+        1.0 - (dist as f64 / longest as f64)
     }
-    prev[b.len()]
 }
+
+/// Two-row Levenshtein over generic slices.
+/// Uses a stack array for common title/artist lengths (<= 63 items) to avoid heap allocation.
+fn levenshtein_slice<T: PartialEq>(a: &[T], b: &[T]) -> usize {
+    if a.len() < b.len() {
+        return levenshtein_slice(b, a);
+    }
+    let b_len = b.len();
+    if b_len == 0 {
+        return a.len();
+    }
+    if b_len + 1 <= 64 {
+        let mut previous = [0usize; 64];
+        let mut current = [0usize; 64];
+        let mut prev = &mut previous[..=b_len];
+        let mut curr = &mut current[..=b_len];
+        for j in 0..=b_len {
+            prev[j] = j;
+        }
+        for (i, ca) in a.iter().enumerate() {
+            curr[0] = i + 1;
+            for (j, cb) in b.iter().enumerate() {
+                let cost = usize::from(ca != cb);
+                curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+            }
+            std::mem::swap(&mut prev, &mut curr);
+        }
+        prev[b_len]
+    } else {
+        let mut prev: Vec<usize> = (0..=b_len).collect();
+        let mut curr = vec![0usize; b_len + 1];
+        for (i, ca) in a.iter().enumerate() {
+            curr[0] = i + 1;
+            for (j, cb) in b.iter().enumerate() {
+                let cost = usize::from(ca != cb);
+                curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+            }
+            std::mem::swap(&mut prev, &mut curr);
+        }
+        prev[b_len]
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn reference_levenshtein(a: &str, b: &str) -> usize {
+        let a: Vec<char> = a.chars().collect();
+        let b: Vec<char> = b.chars().collect();
+        let mut prev: Vec<usize> = (0..=b.len()).collect();
+        let mut curr = vec![0usize; b.len() + 1];
+        for (i, ca) in a.iter().enumerate() {
+            curr[0] = i + 1;
+            for (j, cb) in b.iter().enumerate() {
+                let cost = usize::from(ca != cb);
+                curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+            }
+            std::mem::swap(&mut prev, &mut curr);
+        }
+        prev[b.len()]
+    }
+
+    #[test]
+    fn levenshtein_slice_matches_reference() {
+        let cases = [
+            ("", ""),
+            ("a", ""),
+            ("", "abc"),
+            ("kitten", "sitting"),
+            ("flaw", "lawn"),
+            ("blinding lights", "blinding light"),
+            ("the weeknd", "weeknd"),
+            ("beyoncé", "beyonce"),
+            ("longer string that tests stack buffer capacity", "longer string that tests stack buffer cap"),
+        ];
+        for (s1, s2) in cases {
+            let ref_dist = reference_levenshtein(s1, s2);
+            let s1_c: Vec<char> = s1.chars().collect();
+            let s2_c: Vec<char> = s2.chars().collect();
+            assert_eq!(levenshtein_slice(&s1_c, &s2_c), ref_dist, "failed on ({s1}, {s2})");
+            if s1.is_ascii() && s2.is_ascii() {
+                assert_eq!(levenshtein_slice(s1.as_bytes(), s2.as_bytes()), ref_dist, "failed on bytes ({s1}, {s2})");
+            }
+        }
+    }
+
 
     fn song(title: &str, artists: &[&str], album: &str, dur_ms: u64) -> SongResult {
         SongResult {
@@ -636,5 +711,11 @@ mod tests {
         assert_eq!(similarity("abc", "abc"), 1.0);
         assert_eq!(similarity("", "abc"), 0.0);
         assert!(similarity("blinding lights", "blinding light") > 0.9);
+        // Non-ASCII unicode path
+        assert!(similarity("beyoncé", "beyonce") > 0.8);
+        // Long string exceeding stack buffer (> 64 chars) to exercise heap branch
+        let long_a = "this is a very long track title that exceeds the sixty four characters stack buffer limit";
+        let long_b = "this is a very long track title that exceeds the sixty four characters stack buffer limit!";
+        assert!(similarity(long_a, long_b) > 0.95);
     }
 }

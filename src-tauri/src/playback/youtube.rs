@@ -422,7 +422,6 @@ fn spawn_watcher(
 
             let gen = generation.load(Ordering::SeqCst);
             let queued = !sink.empty();
-            let track = current.lock().unwrap().clone();
 
             if queued {
                 watching_gen = Some(gen);
@@ -432,8 +431,9 @@ fn spawn_watcher(
                 watching_gen = None;
                 is_ended.store(true, Ordering::Relaxed);
                 is_playing.store(false, Ordering::Relaxed);
+                let track = current.lock().unwrap().clone();
                 let _ = media_tx.try_send(MediaMsg::Stopped);
-                emit(&app, PlayerMsg::EndOfTrack { track_id: track.clone() });
+                emit(&app, PlayerMsg::EndOfTrack { track_id: track });
                 continue;
             }
 
@@ -449,6 +449,7 @@ fn spawn_watcher(
             if due || moved {
                 last_emit = std::time::Instant::now();
                 last_pos_ms = position_ms;
+                let track = current.lock().unwrap().clone();
                 let _ = media_tx.try_send(MediaMsg::Playing { position_ms: position_ms as u64 });
                 emit(&app, PlayerMsg::PositionChanged { track_id: track, position_ms });
             }

@@ -268,6 +268,7 @@ async fn prepare_locked(
     let prepared = std::sync::Arc::new(PreparedTrack { stream, audio });
 
     let mut cache = PREPARED.write().await;
+    cache.retain(|(id, _)| id != track_id);
     cache.push((track_id.to_string(), std::sync::Arc::clone(&prepared)));
     while cache.len() > PREPARED_CAPACITY {
         cache.remove(0);

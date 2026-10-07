@@ -567,7 +567,13 @@ fn random_id() -> [u8; 16] {
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push(DIGITS[(b >> 4) as usize] as char);
+        s.push(DIGITS[(b & 0x0f) as usize] as char);
+    }
+    s
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
@@ -811,5 +817,9 @@ mod tests {
         assert_eq!(hex_encode(&[0x0a, 0xff]), "0aff");
         assert_eq!(hex_decode("65b708").unwrap(), vec![0x65, 0xb7, 0x08]);
         assert!(hex_decode("abc").is_none());
+        let bytes: Vec<u8> = (0..=255).collect();
+        let expected: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex_encode(&bytes), expected);
+        assert_eq!(hex_decode(&expected), Some(bytes));
     }
 }

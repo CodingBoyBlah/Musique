@@ -403,15 +403,23 @@ async fn yt_play_episode(
 /// thread doesn't sit waiting on the network mid-seek.
 async fn yt_seek(app: &AppHandle, position_ms: u32) -> Result<(), AppError> {
     let yt = app.state::<AppState>().yt.clone();
-    let episode = yt.lock().await.as_ref().and_then(|p| p.episode_stream());
-    if let Some(episode) = episode {
+    let maybe_episode = {
+        let guard = yt.lock().await;
+        let Some(player) = guard.as_ref() else { return Ok(()); };
+        let ep = player.episode_stream();
+        if ep.is_none() {
+            return player.seek(position_ms);
+        }
+        ep
+    };
+    if let Some(episode) = maybe_episode {
         if let Some(byte) = episode.byte_for(position_ms) {
             episode.handle.prefetch(byte, std::time::Duration::from_secs(6)).await;
         }
-    }
-    let guard = yt.lock().await;
-    if let Some(player) = guard.as_ref() {
-        player.seek(position_ms)?;
+        let guard = yt.lock().await;
+        if let Some(player) = guard.as_ref() {
+            player.seek(position_ms)?;
+        }
     }
     Ok(())
 }
