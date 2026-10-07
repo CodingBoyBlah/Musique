@@ -40,6 +40,96 @@ pub async fn sync_library(app: AppHandle) -> Result<SyncResult, AppError> {
     sync_all(&pool, &token).await
 }
 
+pub(crate) async fn fetch_artists_for_tracks(
+    pool: &SqlitePool,
+    track_ids: &[&str],
+) -> Result<std::collections::HashMap<String, Vec<ArtistItem>>, AppError> {
+    let mut artists_by_track: std::collections::HashMap<String, Vec<ArtistItem>> =
+        std::collections::HashMap::new();
+    if track_ids.is_empty() {
+        return Ok(artists_by_track);
+    }
+
+    let mut deduped: Vec<&str> = Vec::with_capacity(track_ids.len());
+    let mut seen = std::collections::HashSet::new();
+    for &id in track_ids {
+        if seen.insert(id) {
+            deduped.push(id);
+        }
+    }
+
+    for chunk in deduped.chunks(200) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT ta.track_id, a.id, a.name, a.image_url, a.popularity
+             FROM track_artists ta
+             JOIN artists a ON a.id = ta.artist_id
+             WHERE ta.track_id IN ({placeholders})
+             ORDER BY ta.position"
+        );
+        let mut query = sqlx::query_as::<_, (String, String, String, Option<String>, Option<i64>)>(&sql);
+        for id in chunk {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(pool).await?;
+        for (track_id, aid, aname, aimage, apop) in rows {
+            artists_by_track.entry(track_id).or_default().push(ArtistItem {
+                id: aid,
+                name: aname,
+                image_url: aimage,
+                popularity: apop,
+            });
+        }
+    }
+
+    Ok(artists_by_track)
+}
+
+pub(crate) async fn fetch_artists_for_albums(
+    pool: &SqlitePool,
+    album_ids: &[&str],
+) -> Result<std::collections::HashMap<String, Vec<ArtistItem>>, AppError> {
+    let mut artists_by_album: std::collections::HashMap<String, Vec<ArtistItem>> =
+        std::collections::HashMap::new();
+    if album_ids.is_empty() {
+        return Ok(artists_by_album);
+    }
+
+    let mut deduped: Vec<&str> = Vec::with_capacity(album_ids.len());
+    let mut seen = std::collections::HashSet::new();
+    for &id in album_ids {
+        if seen.insert(id) {
+            deduped.push(id);
+        }
+    }
+
+    for chunk in deduped.chunks(200) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT aa.album_id, a.id, a.name, a.image_url, a.popularity
+             FROM album_artists aa
+             JOIN artists a ON a.id = aa.artist_id
+             WHERE aa.album_id IN ({placeholders})
+             ORDER BY aa.position"
+        );
+        let mut query = sqlx::query_as::<_, (String, String, String, Option<String>, Option<i64>)>(&sql);
+        for id in chunk {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(pool).await?;
+        for (album_id, aid, aname, aimage, apop) in rows {
+            artists_by_album.entry(album_id).or_default().push(ArtistItem {
+                id: aid,
+                name: aname,
+                image_url: aimage,
+                popularity: apop,
+            });
+        }
+    }
+
+    Ok(artists_by_album)
+}
+
 #[tauri::command]
 pub async fn get_liked_songs(
     app: AppHandle,
@@ -66,30 +156,8 @@ pub async fn get_liked_songs(
         return Ok(Vec::new());
     }
 
-    let artist_rows: Vec<(String, String, String, Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT ta.track_id, a.id, a.name, a.image_url, a.popularity
-         FROM track_artists ta
-         JOIN artists a ON a.id = ta.artist_id
-         WHERE ta.track_id IN (
-             SELECT st.track_id FROM saved_tracks st
-             ORDER BY st.added_at DESC LIMIT ? OFFSET ?
-         )
-         ORDER BY ta.position",
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&pool)
-    .await?;
-
-    let mut artists_by_track: std::collections::HashMap<String, Vec<ArtistItem>> = std::collections::HashMap::new();
-    for (track_id, aid, aname, aimage, apop) in artist_rows {
-        artists_by_track.entry(track_id).or_default().push(ArtistItem {
-            id: aid,
-            name: aname,
-            image_url: aimage,
-            popularity: apop,
-        });
-    }
+    let track_ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    let mut artists_by_track = fetch_artists_for_tracks(&pool, &track_ids).await?;
 
     let result = rows
         .into_iter()
@@ -783,32 +851,13 @@ pub(crate) async fn load_cached_playlist(
         return Ok(None);
     }
 
-    let artist_rows: Vec<(String, String, String, Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT ta.track_id, a.id, a.name, a.image_url, a.popularity
-         FROM playlist_tracks pt
-         JOIN track_artists ta ON ta.track_id = pt.track_id
-         JOIN artists a ON a.id = ta.artist_id
-         WHERE pt.playlist_id = ?
-         ORDER BY pt.position, ta.position",
-    )
-    .bind(id)
-    .fetch_all(pool)
-    .await?;
-
-    let mut artists_by_track: std::collections::HashMap<String, Vec<ArtistItem>> = std::collections::HashMap::new();
-    for (track_id, aid, aname, aimage, apop) in artist_rows {
-        artists_by_track.entry(track_id).or_default().push(ArtistItem {
-            id: aid,
-            name: aname,
-            image_url: aimage,
-            popularity: apop,
-        });
-    }
+    let track_ids: Vec<&str> = track_rows.iter().map(|r| r.id.as_str()).collect();
+    let artists_by_track = fetch_artists_for_tracks(pool, &track_ids).await?;
 
     let tracks: Vec<TrackItem> = track_rows
         .into_iter()
         .map(|row| TrackItem {
-            artists: artists_by_track.remove(&row.id).unwrap_or_default(),
+            artists: artists_by_track.get(&row.id).cloned().unwrap_or_default(),
             album: row.album_id.map(|aid| AlbumItem {
                 id: aid,
                 name: row.album_name.unwrap_or_default(),
@@ -869,27 +918,8 @@ pub async fn get_top_tracks(
         return Ok(Vec::new());
     }
 
-    let artist_rows: Vec<(String, String, String, Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT ta.track_id, a.id, a.name, a.image_url, a.popularity
-         FROM top_tracks tt
-         JOIN track_artists ta ON ta.track_id = tt.track_id
-         JOIN artists a ON a.id = ta.artist_id
-         WHERE tt.time_range = ?
-         ORDER BY tt.position, ta.position",
-    )
-    .bind(&range)
-    .fetch_all(&pool)
-    .await?;
-
-    let mut artists_by_track: std::collections::HashMap<String, Vec<ArtistItem>> = std::collections::HashMap::new();
-    for (track_id, aid, aname, aimage, apop) in artist_rows {
-        artists_by_track.entry(track_id).or_default().push(ArtistItem {
-            id: aid,
-            name: aname,
-            image_url: aimage,
-            popularity: apop,
-        });
-    }
+    let track_ids: Vec<&str> = track_rows.iter().map(|r| r.id.as_str()).collect();
+    let mut artists_by_track = fetch_artists_for_tracks(&pool, &track_ids).await?;
 
     let out = track_rows
         .into_iter()
@@ -969,31 +999,8 @@ pub async fn get_recently_played(app: AppHandle) -> Result<Vec<TrackItem>, AppEr
         return Ok(Vec::new());
     }
 
-    let artist_rows: Vec<(String, String, String, Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT ta.track_id, a.id, a.name, a.image_url, a.popularity
-         FROM (
-             SELECT track_id, MAX(played_at) as max_played
-             FROM recently_played
-             GROUP BY track_id
-             ORDER BY max_played DESC
-             LIMIT 50
-         ) rp
-         JOIN track_artists ta ON ta.track_id = rp.track_id
-         JOIN artists a ON a.id = ta.artist_id
-         ORDER BY rp.max_played DESC, ta.position",
-    )
-    .fetch_all(&pool)
-    .await?;
-
-    let mut artists_by_track: std::collections::HashMap<String, Vec<ArtistItem>> = std::collections::HashMap::new();
-    for (track_id, aid, aname, aimage, apop) in artist_rows {
-        artists_by_track.entry(track_id).or_default().push(ArtistItem {
-            id: aid,
-            name: aname,
-            image_url: aimage,
-            popularity: apop,
-        });
-    }
+    let track_ids: Vec<&str> = track_rows.iter().map(|r| r.id.as_str()).collect();
+    let mut artists_by_track = fetch_artists_for_tracks(&pool, &track_ids).await?;
 
     let out = track_rows
         .into_iter()
@@ -1031,25 +1038,8 @@ pub async fn get_new_releases(app: AppHandle) -> Result<Vec<AlbumItem>, AppError
     .fetch_all(&pool)
     .await?;
 
-    let artist_rows: Vec<(String, String, String, Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT aa.album_id, a.id, a.name, a.image_url, a.popularity
-         FROM album_artists aa
-         JOIN artists a ON a.id = aa.artist_id
-         WHERE aa.album_id IN (SELECT nr.album_id FROM new_releases nr)
-         ORDER BY aa.position",
-    )
-    .fetch_all(&pool)
-    .await?;
-
-    let mut artists_by_album: std::collections::HashMap<String, Vec<ArtistItem>> = std::collections::HashMap::new();
-    for (album_id, aid, aname, aimage, apop) in artist_rows {
-        artists_by_album.entry(album_id).or_default().push(ArtistItem {
-            id: aid,
-            name: aname,
-            image_url: aimage,
-            popularity: apop,
-        });
-    }
+    let album_ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    let mut artists_by_album = fetch_artists_for_albums(&pool, &album_ids).await?;
 
     let out = rows
         .into_iter()
@@ -1121,4 +1111,50 @@ struct PlaylistRow {
     image_url: Option<String>,
     total_tracks: i64,
     snapshot_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[sqlx::test]
+    async fn test_fetch_artists_for_tracks_empty(pool: SqlitePool) {
+        let res = fetch_artists_for_tracks(&pool, &[]).await.unwrap();
+        assert!(res.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn test_fetch_artists_for_albums_empty(pool: SqlitePool) {
+        let res = fetch_artists_for_albums(&pool, &[]).await.unwrap();
+        assert!(res.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn test_fetch_artists_for_tracks_batched(pool: SqlitePool) {
+        sqlx::query("INSERT INTO artists (id, name, updated_at) VALUES ('a1', 'Artist 1', 0), ('a2', 'Artist 2', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("INSERT INTO tracks (id, name, duration_ms, track_number, disc_number, explicit, is_local, updated_at) VALUES ('t1', 'Track 1', 1000, 1, 1, 0, 0, 0), ('t2', 'Track 2', 2000, 2, 1, 0, 0, 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("INSERT INTO track_artists (track_id, artist_id, position) VALUES ('t1', 'a1', 0), ('t1', 'a2', 1), ('t2', 'a2', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let map = fetch_artists_for_tracks(&pool, &["t1", "t2"]).await.unwrap();
+        assert_eq!(map.len(), 2);
+        let t1_artists = map.get("t1").unwrap();
+        assert_eq!(t1_artists.len(), 2);
+        assert_eq!(t1_artists[0].name, "Artist 1");
+        assert_eq!(t1_artists[1].name, "Artist 2");
+
+        let t2_artists = map.get("t2").unwrap();
+        assert_eq!(t2_artists.len(), 1);
+        assert_eq!(t2_artists[0].name, "Artist 2");
+    }
 }
