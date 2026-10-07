@@ -120,15 +120,16 @@ struct State {
 }
 
 struct Shared {
-    state:  Mutex<State>,
-    ready:  Condvar,
-    len:    u64,
+    state:        Mutex<State>,
+    ready:        Condvar,
+    ready_notify: tokio::sync::Notify,
+    len:          u64,
     /// where the decoder is reading; the downloader fetches from here onwards
-    head:   AtomicU64,
+    head:         AtomicU64,
     /// readers (decoders) still alive; the last one going stops the download
-    readers: AtomicUsize,
+    readers:      AtomicUsize,
     /// every reader was dropped - stop downloading
-    closed: AtomicBool,
+    closed:       AtomicBool,
 }
 
 impl Shared {
@@ -149,6 +150,7 @@ impl Shared {
         self.evict(&mut st, offset / BLOCK);
         drop(st);
         self.ready.notify_all();
+        self.ready_notify.notify_waiters();
     }
 
     /// over budget: drop the blocks furthest from the playhead. the first
@@ -158,10 +160,21 @@ impl Shared {
         if st.blocks.len() <= MAX_BLOCKS {
             return;
         }
+        let excess = st.blocks.len() - MAX_BLOCKS;
         let head = self.head.load(Ordering::Relaxed) / BLOCK;
+        if excess == 1 {
+            // Retain the original stable sort's first winner on distance ties.
+            let victim = st.blocks.keys().copied().filter(|&i| i != 0 && i != keep)
+                .reduce(|first, next| if next.abs_diff(head) > first.abs_diff(head) { next } else { first });
+            if let Some(victim) = victim {
+                st.blocks.remove(&victim);
+                st.have.remove(victim * BLOCK, (victim + 1) * BLOCK);
+            }
+            return;
+        }
         let mut indices: Vec<u64> = st.blocks.keys().copied().filter(|&i| i != 0 && i != keep).collect();
         indices.sort_by_key(|&i| std::cmp::Reverse(i.abs_diff(head)));
-        for i in indices.into_iter().take(st.blocks.len() - MAX_BLOCKS) {
+        for i in indices.into_iter().take(excess) {
             st.blocks.remove(&i);
             st.have.remove(i * BLOCK, (i + 1) * BLOCK);
         }
@@ -170,6 +183,7 @@ impl Shared {
     fn fail(&self, why: String) {
         self.state.lock().unwrap().failed = Some(why);
         self.ready.notify_all();
+        self.ready_notify.notify_waiters();
     }
 
     fn covered(&self, pos: u64) -> bool {
@@ -298,11 +312,23 @@ impl RemoteHandle {
         }
         self.0.head.store(byte, Ordering::Relaxed);
         let deadline = tokio::time::Instant::now() + wait;
-        while !self.0.covered(byte) && tokio::time::Instant::now() < deadline {
+        loop {
+            // notify_waiters covers a Notified future as soon as it is
+            // created. Subscribe before checking coverage to avoid a lost wake.
+            let notified = self.0.ready_notify.notified();
+            if self.0.covered(byte) {
+                return;
+            }
             if self.0.state.lock().unwrap().failed.is_some() {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(25)).await;
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            if tokio::time::timeout(deadline - now, notified).await.is_err() {
+                break;
+            }
         }
     }
 }
@@ -361,6 +387,7 @@ pub async fn open(url: &str, user_agent: Option<&'static str>) -> Result<Opened,
     let shared = Arc::new(Shared {
         state: Mutex::new(State { blocks: HashMap::new(), have: Ranges::default(), failed: None }),
         ready: Condvar::new(),
+        ready_notify: tokio::sync::Notify::new(),
         len,
         head: AtomicU64::new(0),
         readers: AtomicUsize::new(0),
@@ -545,5 +572,86 @@ mod tests {
     fn content_range_total() {
         assert_eq!(total_from_content_range("bytes 0-262143/293600446"), Some(293_600_446));
         assert_eq!(total_from_content_range("bytes 0-1/*"), None);
+    }
+
+    #[tokio::test]
+    async fn prefetch_wakes_immediately_on_write() {
+        let shared = Arc::new(Shared {
+            state: Mutex::new(State { blocks: HashMap::new(), have: Ranges::default(), failed: None }),
+            ready: Condvar::new(),
+            ready_notify: tokio::sync::Notify::new(),
+            len: 1_000_000,
+            head: AtomicU64::new(0),
+            readers: AtomicUsize::new(1),
+            closed: AtomicBool::new(false),
+        });
+        let handle = RemoteHandle(Arc::clone(&shared));
+
+        let waiting = handle.prefetch(50_000, Duration::from_secs(2));
+        tokio::pin!(waiting);
+        assert!(futures_util::poll!(waiting.as_mut()).is_pending());
+        shared.write_at(50_000, &[1u8; 100]);
+        assert!(futures_util::poll!(waiting.as_mut()).is_ready());
+        assert!(shared.covered(50_000));
+    }
+
+    #[tokio::test]
+    async fn prefetch_wakes_on_failure_and_honors_its_deadline() {
+        let shared = Arc::new(Shared {
+            state: Mutex::new(State { blocks: HashMap::new(), have: Ranges::default(), failed: None }),
+            ready: Condvar::new(),
+            ready_notify: tokio::sync::Notify::new(),
+            len: 1_000_000,
+            head: AtomicU64::new(0),
+            readers: AtomicUsize::new(1),
+            closed: AtomicBool::new(false),
+        });
+        let handle = RemoteHandle(shared.clone());
+        tokio::time::timeout(Duration::from_secs(1), handle.prefetch(50_000, Duration::from_millis(5)))
+            .await.unwrap();
+        assert!(!shared.covered(50_000));
+
+        let waiting = handle.prefetch(50_000, Duration::from_secs(2));
+        tokio::pin!(waiting);
+        assert!(futures_util::poll!(waiting.as_mut()).is_pending());
+        shared.fail("download failed".into());
+        assert!(futures_util::poll!(waiting.as_mut()).is_ready());
+    }
+
+    #[test]
+    fn eviction_matches_original_stable_sort_including_distance_ties() {
+        let shared = Shared {
+            state: Mutex::new(State { blocks: HashMap::new(), have: Ranges::default(), failed: None }),
+            ready: Condvar::new(),
+            ready_notify: tokio::sync::Notify::new(),
+            len: (MAX_BLOCKS as u64 + 10) * BLOCK,
+            head: AtomicU64::new(0),
+            readers: AtomicUsize::new(1),
+            closed: AtomicBool::new(false),
+        };
+        for excess in [1, 2, 8] {
+            for head in [1, MAX_BLOCKS as u64 / 2, MAX_BLOCKS as u64] {
+                for keep in [0, 1, MAX_BLOCKS as u64 + excess as u64 - 1] {
+                    shared.head.store(head * BLOCK, Ordering::Relaxed);
+                    let mut state = State {
+                        blocks: (0..(MAX_BLOCKS + excess) as u64)
+                            .map(|i| (i, Vec::<u8>::new().into_boxed_slice())).collect(),
+                        have: Ranges(vec![(0, (MAX_BLOCKS + excess) as u64 * BLOCK)]),
+                        failed: None,
+                    };
+                    let mut original: Vec<u64> = state.blocks.keys().copied()
+                        .filter(|&i| i != 0 && i != keep).collect();
+                    original.sort_by_key(|&i| std::cmp::Reverse(i.abs_diff(head)));
+                    shared.evict(&mut state, keep);
+                    assert_eq!(state.blocks.len(), MAX_BLOCKS);
+                    assert!(state.blocks.contains_key(&0));
+                    assert!(state.blocks.contains_key(&keep));
+                    for victim in original.into_iter().take(excess) {
+                        assert!(!state.blocks.contains_key(&victim));
+                        assert_eq!(state.have.available_from(victim * BLOCK), 0);
+                    }
+                }
+            }
+        }
     }
 }

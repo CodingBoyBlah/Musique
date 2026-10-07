@@ -86,14 +86,23 @@ impl TimeStretch {
         let hi = nominal + SEEK;
         let mut best = nominal;
         let mut best_score = f32::MIN;
+
+        // The natural continuation is identical for every search offset.
+        let mut natural_mono = [0.0f32; HOP / 4];
+        let mut j = 0;
+        for item in &mut natural_mono {
+            *item = self.mono(natural + j);
+            j += 4;
+        }
+
         // every 2nd offset and every 4th sample: plenty for alignment, a
         // fraction of the cost
         let mut k = lo;
         while k <= hi {
             let mut score = 0.0f32;
             let mut j = 0;
-            while j < HOP {
-                score += self.mono(k + j) * self.mono(natural + j);
+            for &nat in &natural_mono {
+                score += self.mono(k + j) * nat;
                 j += 4;
             }
             if score > best_score {
@@ -124,16 +133,19 @@ impl TimeStretch {
                 break;
             }
             let start = self.align(nominal);
-            for f in 0..FRAME {
+            for f in 0..HOP {
                 let w = self.window[f];
-                for c in 0..CHANNELS {
-                    let v = self.input[(start + f) * CHANNELS + c] * w;
-                    if f < HOP {
-                        out.push(self.tail[f * CHANNELS + c] + v);
-                    } else {
-                        self.tail[(f - HOP) * CHANNELS + c] = v;
-                    }
-                }
+                let in_idx = (start + f) * CHANNELS;
+                let tail_idx = f * CHANNELS;
+                out.push(self.tail[tail_idx] + self.input[in_idx] * w);
+                out.push(self.tail[tail_idx + 1] + self.input[in_idx + 1] * w);
+            }
+            for f in HOP..FRAME {
+                let w = self.window[f];
+                let in_idx = (start + f) * CHANNELS;
+                let tail_idx = (f - HOP) * CHANNELS;
+                self.tail[tail_idx] = self.input[in_idx] * w;
+                self.tail[tail_idx + 1] = self.input[in_idx + 1] * w;
             }
             self.natural = Some(start + HOP);
             self.read_pos += analysis_hop;

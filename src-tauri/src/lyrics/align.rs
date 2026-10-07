@@ -259,12 +259,16 @@ fn measure(cand: &Candidate, refr: &Candidate, match_denom: usize, skew_denom: u
         }
     }
 
+    // Normalize each line once. Every coarse shift and admissible pair shares
+    // this text instead of allocating two strings for each comparison.
+    let texts = TextEvidence::new(cand, refr);
+
     // try a few coarse global shifts and keep whichever explains the most lines.
     // without this the pairing window would have to be as wide as the offset we
     // are trying to measure, which would let lines pair with their neighbours
     let mut best = Alignment::unknown();
-    for coarse in coarse_hypotheses(cand, refr) {
-        let deltas = pair_deltas(cand, refr, coarse);
+    for coarse in coarse_hypotheses(cand, refr, &texts) {
+        let deltas = pair_deltas(cand, refr, coarse, &texts);
         if deltas.is_empty() {
             continue;
         }
@@ -292,7 +296,7 @@ fn measure(cand: &Candidate, refr: &Candidate, match_denom: usize, skew_denom: u
 
 /// starting guesses for the global shift. cheap, and one of them is almost
 /// always within the pairing window of the truth.
-fn coarse_hypotheses(cand: &Candidate, refr: &Candidate) -> Vec<i64> {
+fn coarse_hypotheses(cand: &Candidate, refr: &Candidate, texts: &TextEvidence) -> Vec<i64> {
     let mut out = vec![0];
 
     // medians of the two onset lists: robust to missing lines at either end,
@@ -306,7 +310,7 @@ fn coarse_hypotheses(cand: &Candidate, refr: &Candidate) -> Vec<i64> {
 
     // densest delta among text-corroborated pairs. this is the one that survives
     // a document with extra lines bolted onto the front
-    if let Some(d) = densest_text_delta(cand, refr) {
+    if let Some(d) = densest_text_delta(cand, refr, texts) {
         out.push(d);
     }
 
@@ -318,17 +322,17 @@ fn coarse_hypotheses(cand: &Candidate, refr: &Candidate) -> Vec<i64> {
 /// look only at pairs whose TEXT matches, collect their deltas, and return the
 /// value with the most neighbours within one residual window - the mode of a
 /// histogram, without building one.
-fn densest_text_delta(cand: &Candidate, refr: &Candidate) -> Option<i64> {
+fn densest_text_delta(cand: &Candidate, refr: &Candidate, texts: &TextEvidence) -> Option<i64> {
     const MAX_SAMPLES: usize = 400;
     const INDEX_WINDOW: usize = 24; // documents never reorder by more than this
 
     let mut deltas: Vec<i64> = Vec::new();
     for (ri, r) in refr.lines.iter().enumerate() {
-        for (ci, c) in cand.lines.iter().enumerate() {
-            if ci.abs_diff(ri) > INDEX_WINDOW {
-                continue;
-            }
-            if !text_identifies(&c.text, &r.text) {
+        let start = ri.saturating_sub(INDEX_WINDOW);
+        let end = (ri + INDEX_WINDOW + 1).min(cand.lines.len());
+        for ci in start..end {
+            let c = &cand.lines[ci];
+            if !texts.candidate[ci].identifies(&texts.reference[ri]) {
                 continue;
             }
             deltas.push(c.time_ms - r.time_ms);
@@ -374,7 +378,7 @@ fn densest_text_delta(cand: &Candidate, refr: &Candidate) -> Option<i64> {
 ///
 /// One-to-one still matters on its own: without it a single candidate line could
 /// "explain" three reference lines and inflate `matched`.
-fn pair_deltas(cand: &Candidate, refr: &Candidate, coarse: i64) -> Vec<i64> {
+fn pair_deltas(cand: &Candidate, refr: &Candidate, coarse: i64, texts: &TextEvidence) -> Vec<i64> {
     // every admissible pair, then sort by quality and take greedily
     let mut pairs: Vec<(i64, bool, usize, usize)> = Vec::new(); // dist, text, ri, ci
     for (ri, r) in refr.lines.iter().enumerate() {
@@ -384,7 +388,7 @@ fn pair_deltas(cand: &Candidate, refr: &Candidate, coarse: i64) -> Vec<i64> {
             if dist > PAIR_WINDOW_MS {
                 continue;
             }
-            pairs.push((dist, text_identifies(&c.text, &r.text), ri, ci));
+            pairs.push((dist, texts.candidate[ci].identifies(&texts.reference[ri]), ri, ci));
         }
     }
 
@@ -411,6 +415,45 @@ fn pair_deltas(cand: &Candidate, refr: &Candidate, coarse: i64) -> Vec<i64> {
 
 // text corroboration
 
+struct TextEvidence {
+    candidate: Vec<NormalizedText>,
+    reference: Vec<NormalizedText>,
+}
+
+impl TextEvidence {
+    fn new(cand: &Candidate, refr: &Candidate) -> Self {
+        let lines = |c: &Candidate| c.lines.iter()
+            .map(|line| NormalizedText::new(&line.text)).collect();
+        Self { candidate: lines(cand), reference: lines(refr) }
+    }
+}
+
+struct NormalizedText {
+    text: String,
+    prefix_len: usize,
+}
+
+impl NormalizedText {
+    fn new(text: &str) -> Self {
+        let text = normalize(text);
+        let prefix_len = text.chars().take(TEXT_PREFIX_MAX).count();
+        Self { text, prefix_len }
+    }
+
+    /// Containment or a shared prefix corroborates a possible time pairing.
+    fn identifies(&self, other: &Self) -> bool {
+        let (a, b) = (&self.text, &other.text);
+        if a.is_empty() || b.is_empty() {
+            return false;
+        }
+        if a.contains(b.as_str()) || b.contains(a.as_str()) {
+            return true;
+        }
+        let n = self.prefix_len.min(other.prefix_len);
+        n >= TEXT_PREFIX_MIN && a.chars().take(n).eq(b.chars().take(n))
+    }
+}
+
 /// lowercase, drop everything that isn't alphanumeric. providers disagree about
 /// punctuation, capitalisation, apostrophes and spacing constantly; none of that
 /// tells us anything about whether it's the same line.
@@ -421,21 +464,9 @@ fn normalize(s: &str) -> String {
 /// cheap "is this plausibly the same line" test. containment or a shared prefix
 /// is enough - we only need it to break ties in the time pairing, so a real
 /// fuzzy-distance crate would be a dependency bought for nothing.
+#[cfg(test)]
 fn text_identifies(a: &str, b: &str) -> bool {
-    let (a, b) = (normalize(a), normalize(b));
-    // an empty side can't corroborate OR contradict (interlude markers, `♪`
-    // lines, word-level documents that only carry per-word text)
-    if a.is_empty() || b.is_empty() {
-        return false;
-    }
-    if a.contains(&b) || b.contains(&a) {
-        return true;
-    }
-    let n = TEXT_PREFIX_MAX.min(a.chars().count()).min(b.chars().count());
-    if n < TEXT_PREFIX_MIN {
-        return false;
-    }
-    a.chars().take(n).eq(b.chars().take(n))
+    NormalizedText::new(a).identifies(&NormalizedText::new(b))
 }
 
 // statistics

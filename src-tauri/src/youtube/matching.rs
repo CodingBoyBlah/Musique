@@ -435,11 +435,26 @@ fn similarity(a: &str, b: &str) -> f64 {
         let dist = levenshtein_slice(a_bytes, b_bytes);
         1.0 - (dist as f64 / longest as f64)
     } else {
-        let a_chars: Vec<char> = a.chars().collect();
-        let b_chars: Vec<char> = b.chars().collect();
-        let longest = a_chars.len().max(b_chars.len());
-        let dist = levenshtein_slice(&a_chars, &b_chars);
-        1.0 - (dist as f64 / longest as f64)
+        let a_count = a.chars().count();
+        let b_count = b.chars().count();
+        let longest = a_count.max(b_count);
+        if longest <= 64 {
+            let mut a_chars = ['\0'; 64];
+            let mut b_chars = ['\0'; 64];
+            for (dest, ch) in a_chars[..a_count].iter_mut().zip(a.chars()) {
+                *dest = ch;
+            }
+            for (dest, ch) in b_chars[..b_count].iter_mut().zip(b.chars()) {
+                *dest = ch;
+            }
+            let dist = levenshtein_slice(&a_chars[..a_count], &b_chars[..b_count]);
+            1.0 - (dist as f64 / longest as f64)
+        } else {
+            let a_chars: Vec<char> = a.chars().collect();
+            let b_chars: Vec<char> = b.chars().collect();
+            let dist = levenshtein_slice(&a_chars, &b_chars);
+            1.0 - (dist as f64 / longest as f64)
+        }
     }
 }
 
@@ -717,5 +732,36 @@ mod tests {
         let long_a = "this is a very long track title that exceeds the sixty four characters stack buffer limit";
         let long_b = "this is a very long track title that exceeds the sixty four characters stack buffer limit!";
         assert!(similarity(long_a, long_b) > 0.95);
+    }
+
+    #[test]
+    fn unicode_similarity_matches_reference() {
+        let cases = [
+            ("motomami", "motomami"),
+            ("björk", "bjork"),
+            ("dāvis", "davis"),
+            ("宇多田ヒカル", "宇多田ヒカル"),
+            ("a very long unicode title: 宇多田ヒカル - first love 2022 remastered edition with extra words exceeding 64 chars",
+             "a very long unicode title: 宇多田ヒカル - first love 2022 remastered edition with extra words exceeding 64 chars!"),
+        ];
+        for (s1, s2) in cases {
+            let s1_c: Vec<char> = s1.chars().collect();
+            let s2_c: Vec<char> = s2.chars().collect();
+            let longest = s1_c.len().max(s2_c.len());
+            let ref_dist = reference_levenshtein(s1, s2);
+            let expected_sim = if longest == 0 { 1.0 } else { 1.0 - (ref_dist as f64 / longest as f64) };
+            let actual_sim = similarity(s1, s2);
+            assert!((actual_sim - expected_sim).abs() < 1e-9, "failed on ({s1}, {s2})");
+        }
+        // Both the short Unicode buffers and the long-title fallback must
+        // keep the same scoring at their allocation boundary.
+        for len in [1, 2, 16, 63, 64, 65, 80, 128] {
+            let a = "é".repeat(len);
+            for b in [format!("{}🎵", "é".repeat(len - 1)), format!("{a}🎵")] {
+                let longest = a.chars().count().max(b.chars().count());
+                let expected = 1.0 - reference_levenshtein(&a, &b) as f64 / longest as f64;
+                assert_eq!(similarity(&a, &b), expected);
+            }
+        }
     }
 }
