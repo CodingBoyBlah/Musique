@@ -71,13 +71,25 @@ impl Resampler {
         while self.next + half < frames {
             let taps = &self.taps[self.phase * TAPS..(self.phase + 1) * TAPS];
             let start = (self.next + 1 - half) * self.channels;
-            for channel in 0..self.channels {
-                let sum: f32 = taps
-                    .iter()
-                    .enumerate()
-                    .map(|(k, tap)| self.input[start + k * self.channels + channel] * tap)
-                    .sum();
-                out.push(sum);
+            if self.channels == 2 {
+                // Stereo is the playback path. Read each coefficient and frame
+                // once, retaining the same addition order for each channel.
+                let input = &self.input[start..start + TAPS * 2];
+                let (mut left, mut right) = (-0.0f32, -0.0f32);
+                for (frame, &tap) in input.chunks_exact(2).zip(taps) {
+                    left += frame[0] * tap;
+                    right += frame[1] * tap;
+                }
+                out.extend_from_slice(&[left, right]);
+            } else {
+                for channel in 0..self.channels {
+                    let sum: f32 = taps
+                        .iter()
+                        .enumerate()
+                        .map(|(k, tap)| self.input[start + k * self.channels + channel] * tap)
+                        .sum();
+                    out.push(sum);
+                }
             }
             let position = self.phase + self.down;
             self.next += position / self.up;
@@ -139,6 +151,49 @@ fn gcd(mut a: u32, mut b: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stereo_matches_independent_mono_samples_exactly() {
+        let mut seed = 7u32;
+        let input: Vec<f32> = (0..8_192)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                seed as i32 as f32 / i32::MAX as f32
+            })
+            .collect();
+
+        for (from, to) in [(44_100, 48_000), (48_000, 44_100), (44_100, 96_000)] {
+            let mut stereo = Resampler::new(from, to, 2).unwrap();
+            let mut left = Resampler::new(from, to, 1).unwrap();
+            let mut right = Resampler::new(from, to, 1).unwrap();
+            for packet in input.chunks(254) {
+                let left_input: Vec<f32> = packet.iter().step_by(2).copied().collect();
+                let right_input: Vec<f32> = packet.iter().skip(1).step_by(2).copied().collect();
+                let expected_left = left.process(&left_input);
+                let expected_right = right.process(&right_input);
+                let actual = stereo.process(packet);
+                assert_eq!(actual.len(), expected_left.len() * 2);
+                assert_eq!(expected_left.len(), expected_right.len());
+                for ((frame, left), right) in actual.chunks_exact(2).zip(expected_left).zip(expected_right) {
+                    assert_eq!(frame[0].to_bits(), left.to_bits());
+                    assert_eq!(frame[1].to_bits(), right.to_bits());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stereo_output_is_unchanged_across_packet_boundaries() {
+        let input: Vec<f32> = (0..8_192).map(|n| (n % 137) as f32 / 137.0 - 0.5).collect();
+        for (from, to) in [(44_100, 48_000), (48_000, 44_100), (44_100, 96_000)] {
+            let expected = Resampler::new(from, to, 2).unwrap().process(&input);
+            for packet_samples in [2, 14, 254, 2_048] {
+                let mut stereo = Resampler::new(from, to, 2).unwrap();
+                let actual: Vec<f32> = input.chunks(packet_samples).flat_map(|p| stereo.process(p)).collect();
+                assert_eq!(actual, expected);
+            }
+        }
+    }
 
     /// Level of a stereo sine at `hz` after 44.1 kHz -> 48 kHz, in dB
     /// relative to the input, measured in chunks as the sink feeds it.

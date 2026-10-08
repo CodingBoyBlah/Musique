@@ -11,7 +11,6 @@ type Dir = "asc" | "desc";
 const firstArtist = (t: TrackItem) => t.artists[0]?.name ?? "";
 const albumName   = (t: TrackItem) => t.album?.name ?? "";
 
-
 export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
   view: TrackItem[];
   /* stable per-row keys aligned 1:1 with `view` so rows keep their identity
@@ -62,15 +61,15 @@ export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
 
   const keys = useMemo(() => view.map((t) => keyOf.get(t) ?? t.id), [view, keyOf]);
 
-  const orderOptions: DropdownOption<OrderKey>[] = [
+  const orderOptions = useMemo<DropdownOption<OrderKey>[]>(() => [
     { value: "default",  label: defaultOrderLabel },
     { value: "name",     label: "Name" },
     { value: "artist",   label: "Artist" },
     { value: "album",    label: "Album" },
     { value: "duration", label: "Duration" },
-  ];
+  ], [defaultOrderLabel]);
 
-  const toolbar = (
+  const toolbar = useMemo(() => (
     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, width: "100%", boxSizing: "border-box", padding: "0 2px 12px" }}>
       {/* filter box */}
       <div
@@ -114,7 +113,7 @@ export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
         <SortDirectionToggle dir={dir} onChange={setDir} />
       </div>
     </div>
-  );
+  ), [query, order, dir, orderOptions]);
 
   return { view, keys, toolbar };
 }

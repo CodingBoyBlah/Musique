@@ -41,7 +41,7 @@ pub mod types;
 pub mod voices;
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter};
@@ -69,14 +69,44 @@ fn sem() -> &'static Semaphore {
 /// per-track single-flight. panel-open and queue prefetch race each other
 /// constantly; without this the same track fetches twice and we pay every
 /// provider round trip twice
-fn inflight() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
-    static INFLIGHT: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
-    INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+fn inflight() -> &'static Inflight {
+    static INFLIGHT: OnceLock<Inflight> = OnceLock::new();
+    INFLIGHT.get_or_init(Inflight::default)
 }
 
-async fn track_lock(track_id: &str) -> Arc<Mutex<()>> {
-    let mut map = inflight().lock().await;
-    map.entry(track_id.to_string()).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
+#[derive(Default)]
+struct Inflight {
+    tracks: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
+}
+
+impl Inflight {
+    fn track_lock(&self, track_id: &str) -> TrackLock<'_> {
+        let mut tracks = self.tracks.lock().unwrap();
+        let mutex = tracks.entry(track_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        TrackLock { registry: self, track_id: track_id.to_string(), mutex }
+    }
+}
+
+/// Keep the registry entry only while a fetch owns or awaits its mutex.
+/// Synchronous cleanup also runs when an async fetch is cancelled.
+struct TrackLock<'a> {
+    registry: &'a Inflight,
+    track_id: String,
+    mutex: Arc<Mutex<()>>,
+}
+
+impl Drop for TrackLock<'_> {
+    fn drop(&mut self) {
+        let mut tracks = self.registry.tracks.lock().unwrap();
+        // The map and this handle are the last two owners. New handles can
+        // only be created under this same registry lock, so removing here
+        // cannot give a queued fetch a different mutex for the same track.
+        if Arc::strong_count(&self.mutex) == 2 {
+            tracks.remove(&self.track_id);
+        }
+    }
 }
 
 /// tracks whose background upgrade is already running, so a second panel open
@@ -266,8 +296,8 @@ pub async fn get_or_fetch(
 
     // single-flight: whoever gets here second waits, then reads the cache the
     // winner just wrote instead of repeating every provider round trip
-    let lock = track_lock(&track.id).await;
-    let _guard = lock.lock().await;
+    let lock = inflight().track_lock(&track.id);
+    let _guard = lock.mutex.lock().await;
     if !force {
         if let Some(mut hit) = cache::read(pool, &track.id).await {
             hit.alternates = cache::list_alts(pool, &track.id).await;
@@ -452,6 +482,58 @@ pub async fn switch_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completed_fetches_do_not_retain_track_locks() {
+        let registry = Inflight::default();
+        for i in 0..10_000 {
+            drop(registry.track_lock(&format!("track-{i}")));
+        }
+        assert!(registry.tracks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn queued_fetch_preserves_single_flight_after_first_fetch_finishes() {
+        let registry = Inflight::default();
+        let first = registry.track_lock("track");
+        let first_guard = first.mutex.lock().await;
+        let queued = registry.track_lock("track");
+        assert!(queued.mutex.try_lock().is_err());
+
+        drop(first_guard);
+        drop(first);
+        let queued_guard = queued.mutex.lock().await;
+        let arriving = registry.track_lock("track");
+        assert!(Arc::ptr_eq(&queued.mutex, &arriving.mutex));
+        assert!(arriving.mutex.try_lock().is_err());
+        drop(arriving);
+        drop(queued_guard);
+        drop(queued);
+        assert!(registry.tracks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_waiting_fetch_releases_only_its_handle() {
+        let registry = Arc::new(Inflight::default());
+        let active = registry.track_lock("track");
+        let active_guard = active.mutex.lock().await;
+        let waiting_registry = registry.clone();
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let waiter = tokio::spawn(async move {
+            let waiting = waiting_registry.track_lock("track");
+            ready.send(()).unwrap();
+            let _guard = waiting.mutex.lock().await;
+        });
+        started.await.unwrap();
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        assert_eq!(registry.tracks.lock().unwrap().len(), 1);
+        assert_eq!(Arc::strong_count(&active.mutex), 2);
+
+        drop(active_guard);
+        drop(active);
+        assert!(registry.tracks.lock().unwrap().is_empty());
+    }
 
     fn cand(source: &'static str, lines: Vec<LyricLine>) -> Candidate {
         Candidate::new(source, lines)

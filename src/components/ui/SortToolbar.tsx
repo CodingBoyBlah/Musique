@@ -12,6 +12,11 @@ interface NamedPop {
 }
 
 
+const sortOptions: DropdownOption<SortKey>[] = [
+  { value: "name",       label: "Name" },
+  { value: "popularity", label: "Popularity" },
+];
+
 export function useSortTools<T extends NamedPop>(
   items: T[],
   placeholder = "Find",
@@ -33,12 +38,7 @@ export function useSortTools<T extends NamedPop>(
     return arr;
   }, [items, query, sort, dir]);
 
-  const sortOptions: DropdownOption<SortKey>[] = [
-    { value: "name",       label: "Name" },
-    { value: "popularity", label: "Popularity" },
-  ];
-
-  const toolbar = (
+  const toolbar = useMemo(() => (
     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, width: "100%", boxSizing: "border-box", padding: "0 2px 14px" }}>
       <div
         className="focus-within-ring"
@@ -80,7 +80,7 @@ export function useSortTools<T extends NamedPop>(
         <SortDirectionToggle dir={dir} onChange={setDir} />
       </div>
     </div>
-  );
+  ), [query, sort, dir, placeholder]);
 
   return { view, toolbar };
 }

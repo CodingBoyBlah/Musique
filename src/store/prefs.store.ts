@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { dedupedStorage } from "../lib/persistStorage";
 import {
   type AudioQuality,
   getAudioQuality,
@@ -116,7 +117,7 @@ export const usePrefsStore = create<PrefsStore>()(
       sidebarMode: "pins",
       setSidebarMode: (v) => set({ sidebarMode: v }),
     }),
-    { name: "spotify-prefs" },
+    { name: "spotify-prefs", storage: dedupedStorage() },
   ),
 );
 

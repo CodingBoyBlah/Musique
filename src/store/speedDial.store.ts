@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { dedupedStorage } from "../lib/persistStorage";
 import type { TrackItem } from "../types/spotify";
 
 export type SpeedDialType = "liked-songs" | "playlist" | "album" | "artist" | "track";
@@ -167,6 +168,7 @@ export const useSpeedDialStore = create<SpeedDialStore>()(
     }),
     {
       name: "musique-speed-dial-v2",
+      storage: dedupedStorage(),
     },
   ),
 );

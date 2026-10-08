@@ -5,6 +5,7 @@ use crate::{
 };
 use serde::Serialize;
 use sqlx::SqlitePool;
+use futures_util::{FutureExt, StreamExt};
 
 const BASE: &str = "https://api.spotify.com/v1";
 
@@ -360,11 +361,16 @@ pub async fn sync_followed_artists(pool: &SqlitePool, token: &str) -> Result<usi
 const TIME_RANGES: [&str; 3] = ["short_term", "medium_term", "long_term"];
 
 pub async fn sync_top_tracks(pool: &SqlitePool, token: &str) -> Result<usize, AppError> {
-    let mut total = 0usize;
-    for range in TIME_RANGES {
-        let url  = format!("{BASE}/me/top/tracks?limit=50&time_range={range}");
-        let page: SpPage<SpTrack> = spotify::spotify_get(token, &url).await?;
+    let urls = TIME_RANGES.map(|range| format!("{BASE}/me/top/tracks?limit=50&time_range={range}"));
+    let results = tokio::join!(
+        spotify::spotify_get::<SpPage<SpTrack>>(token, &urls[0]),
+        spotify::spotify_get::<SpPage<SpTrack>>(token, &urls[1]),
+        spotify::spotify_get::<SpPage<SpTrack>>(token, &urls[2]),
+    );
 
+    let mut total = 0usize;
+    for (range, result) in TIME_RANGES.into_iter().zip([results.0, results.1, results.2]) {
+        let page = result?;
         // swap this ranges list all at once so removed entries actually disappear
         sqlx::query("DELETE FROM top_tracks WHERE time_range = ?")
             .bind(range)
@@ -389,11 +395,16 @@ pub async fn sync_top_tracks(pool: &SqlitePool, token: &str) -> Result<usize, Ap
 }
 
 pub async fn sync_top_artists(pool: &SqlitePool, token: &str) -> Result<usize, AppError> {
-    let mut total = 0usize;
-    for range in TIME_RANGES {
-        let url  = format!("{BASE}/me/top/artists?limit=50&time_range={range}");
-        let page: SpPage<SpArtist> = spotify::spotify_get(token, &url).await?;
+    let urls = TIME_RANGES.map(|range| format!("{BASE}/me/top/artists?limit=50&time_range={range}"));
+    let results = tokio::join!(
+        spotify::spotify_get::<SpPage<SpArtist>>(token, &urls[0]),
+        spotify::spotify_get::<SpPage<SpArtist>>(token, &urls[1]),
+        spotify::spotify_get::<SpPage<SpArtist>>(token, &urls[2]),
+    );
 
+    let mut total = 0usize;
+    for (range, result) in TIME_RANGES.into_iter().zip([results.0, results.1, results.2]) {
+        let page = result?;
         sqlx::query("DELETE FROM top_artists WHERE time_range = ?")
             .bind(range)
             .execute(pool)
@@ -449,7 +460,7 @@ pub async fn sync_recently_played(pool: &SqlitePool, token: &str) -> Result<usiz
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
-static KNOWN_ARTISTS_CACHE: RwLock<Option<(Instant, Vec<String>)>> = RwLock::new(None);
+static KNOWN_ARTISTS_CACHE: RwLock<Option<(u64, Instant, Vec<String>)>> = RwLock::new(None);
 
 pub fn clear_known_artists_cache() {
     if let Ok(mut guard) = KNOWN_ARTISTS_CACHE.write() {
@@ -464,10 +475,11 @@ pub fn clear_known_artists_cache() {
 pub(crate) async fn gather_known_artists(pool: &SqlitePool, token: &str) -> Vec<String> {
     use std::collections::HashSet;
 
-    // 1. Check in-memory cache (15 min TTL)
+    let current_epoch = crate::auth::auth_epoch();
+    // 1. Check in-memory cache (15 min TTL, strictly isolated to the current auth epoch)
     if let Ok(guard) = KNOWN_ARTISTS_CACHE.read() {
-        if let Some((ts, ref list)) = *guard {
-            if ts.elapsed() < Duration::from_secs(15 * 60) && !list.is_empty() {
+        if let Some((epoch, ts, ref list)) = *guard {
+            if epoch == current_epoch && ts.elapsed() < Duration::from_secs(15 * 60) && !list.is_empty() {
                 return list.clone();
             }
         }
@@ -536,7 +548,7 @@ pub(crate) async fn gather_known_artists(pool: &SqlitePool, token: &str) -> Vec<
     }
 
     if let Ok(mut guard) = KNOWN_ARTISTS_CACHE.write() {
-        *guard = Some((Instant::now(), out.clone()));
+        *guard = Some((current_epoch, Instant::now(), out.clone()));
     }
 
     out
@@ -578,14 +590,21 @@ pub async fn sync_new_releases(pool: &SqlitePool, token: &str) -> Result<usize, 
     artists.shuffle(&mut rand::thread_rng());
     artists.truncate(30);
 
-    // grab each artists latest albums/singles, kill dupes, sort newest first
+    // Keep at most eight artist requests/results resident, consuming in artist order.
     let mut seen: HashSet<String> = HashSet::new();
     let mut albums: Vec<(SpAlbumSimple, i64)> = Vec::new();
-    for aid in &artists {
+
+    let fetches = artists.into_iter().map(|aid| {
         let url = format!(
             "{BASE}/artists/{aid}/albums?include_groups=album,single&market=from_token&limit=10"
         );
-        if let Ok(page) = spotify::spotify_get::<SpPage<SpAlbumSimple>>(token, &url).await {
+        async move {
+            spotify::spotify_get::<SpPage<SpAlbumSimple>>(token, &url).await
+        }.boxed()
+    });
+    let mut results = futures_util::stream::iter(fetches).buffered(8);
+    while let Some(page_res) = results.next().await {
+        if let Ok(page) = page_res {
             for al in page.items {
                 if !seen.insert(al.id.clone()) { continue; }
                 let key = release_sort_key(al.release_date.as_deref());
@@ -598,14 +617,19 @@ pub async fn sync_new_releases(pool: &SqlitePool, token: &str) -> Result<usize, 
     albums.sort_by(|a, b| b.1.cmp(&a.1));
     albums.truncate(50);
 
-    sqlx::query("DELETE FROM new_releases").execute(pool).await?;
+    for (al, _) in &albums {
+        upsert_album_simple(pool, al).await?;
+    }
+
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM new_releases").execute(&mut *tx).await?;
     let mut n = 0usize;
     for (i, (al, _)) in albums.iter().enumerate() {
-        upsert_album_simple(pool, al).await?;
         sqlx::query("INSERT OR IGNORE INTO new_releases (album_id, position) VALUES (?, ?)")
-            .bind(&al.id).bind(i as i64).execute(pool).await?;
+            .bind(&al.id).bind(i as i64).execute(&mut *tx).await?;
         n += 1;
     }
+    tx.commit().await?;
     Ok(n)
 }
 

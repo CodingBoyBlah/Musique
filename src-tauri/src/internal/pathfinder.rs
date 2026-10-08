@@ -198,13 +198,18 @@ pub async fn query(app: &AppHandle, op: &str, variables: Value) -> Result<Value,
     let mut refreshed = false;
     loop {
         let mut last = None;
-        let attempts: Vec<(String, Option<String>)> = first_party
-            .iter()
-            .map(|(t, ct)| (t.clone(), Some(ct.clone())))
-            .chain(oauth.iter().map(|t| (t.clone(), None)))
-            .collect();
-        for (token, ct) in attempts {
-            let (status, v) = post(&token, ct.as_deref(), op, &hash, &variables).await?;
+        let mut attempts: [(&str, Option<&str>); 2] = [("", None), ("", None)];
+        let mut count = 0;
+        if let Some((t, ct)) = &first_party {
+            attempts[count] = (t.as_str(), Some(ct.as_str()));
+            count += 1;
+        }
+        if let Some(t) = &oauth {
+            attempts[count] = (t.as_str(), None);
+            count += 1;
+        }
+        for &(token, ct) in &attempts[..count] {
+            let (status, v) = post(token, ct, op, &hash, &variables).await?;
             if unknown_hash(&v) {
                 last = Some((status, v));
                 break;

@@ -45,19 +45,21 @@ pub async fn fetch_batch(
     let pool = app.state::<AppState>().db.clone();
     let tag = kind_name(kind);
 
-    let mut out: HashMap<String, Vec<u8>> = HashMap::new();
-    let mut misses: Vec<String> = Vec::new();
-    for uri in uris {
-        if out.contains_key(uri) || misses.contains(uri) {
-            continue;
-        }
-        match cache::get(&pool, uri, &tag, ttl_ms).await {
-            Some(bytes) => {
-                out.insert(uri.clone(), bytes);
-            }
-            None => misses.push(uri.clone()),
+    // Dedup input URIs while preserving relative order
+    let mut deduped_uris: Vec<String> = Vec::with_capacity(uris.len());
+    let mut seen_input = std::collections::HashSet::new();
+    for u in uris {
+        if seen_input.insert(u.as_str()) {
+            deduped_uris.push(u.clone());
         }
     }
+
+    let mut out = cache::get_batch(&pool, &deduped_uris, &tag, ttl_ms).await;
+    let misses: Vec<String> = deduped_uris
+        .into_iter()
+        .filter(|u| !out.contains_key(u))
+        .collect();
+
     if misses.is_empty() {
         return Ok(out);
     }
@@ -87,26 +89,26 @@ pub async fn fetch_batch(
 
         match live {
             Ok(res) => {
+                let mut puts: Vec<(String, Vec<u8>)> = Vec::new();
                 for arr in res.extended_metadata {
                     for data in arr.extension_data {
-                        let Some(any) = data.extension_data.as_ref() else { continue };
+                        let Some(any) = data.extension_data.into_option() else { continue };
                         if any.value.is_empty() {
                             continue;
                         }
-                        cache::put(&pool, &data.entity_uri, &tag, &any.value).await;
-                        out.insert(data.entity_uri.clone(), any.value.clone());
+                        puts.push((data.entity_uri, any.value));
                     }
+                }
+                if !puts.is_empty() {
+                    cache::put_batch(&pool, &tag, &puts).await;
+                    out.extend(puts);
                 }
             }
             Err(e) => {
                 // offline / endpoint hiccup: stale beats nothing
-                let mut any_stale = false;
-                for uri in chunk {
-                    if let Some(bytes) = cache::get_stale(&pool, uri, &tag).await {
-                        out.insert(uri.clone(), bytes);
-                        any_stale = true;
-                    }
-                }
+                let stale_hits = cache::get_stale_batch(&pool, chunk, &tag).await;
+                let any_stale = !stale_hits.is_empty();
+                out.extend(stale_hits);
                 if !any_stale && out.is_empty() {
                     return Err(e);
                 }
@@ -139,12 +141,10 @@ pub async fn artist_proto(app: &AppHandle, id: &str, ttl_ms: i64) -> Result<meta
 /// hydrate bare track ids (or uris) into full rows, keeping the input order.
 /// ids spotify has nothing for are dropped rather than failing the batch.
 pub async fn tracks(app: &AppHandle, ids: &[String]) -> Result<Vec<TrackItem>, AppError> {
-    let ids: Vec<String> = ids.iter().map(|i| spclient::uri_id(i).to_string()).collect();
-    let protos = track_protos(app, &ids).await?;
-    Ok(ids
-        .iter()
-        .filter_map(|id| protos.get(&to_uri("track", id)).and_then(track_item))
-        .collect())
+    let uris: Vec<String> = ids.iter().map(|id| to_uri("track", spclient::uri_id(id))).collect();
+    let raw = fetch_batch(app, ExtensionKind::TRACK_V4, &uris, TTL).await?;
+    let protos: HashMap<String, metadata::Track> = decode_all(raw);
+    Ok(uris.iter().filter_map(|u| protos.get(u).and_then(track_item)).collect())
 }
 
 /// batch-hydrate album ids into cards, order kept

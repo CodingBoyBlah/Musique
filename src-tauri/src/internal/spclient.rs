@@ -115,8 +115,15 @@ pub fn image_url(file_id: &[u8]) -> Option<String> {
     if file_id.is_empty() {
         return None;
     }
-    let hex: String = file_id.iter().map(|b| format!("{b:02x}")).collect();
-    Some(format!("https://i.scdn.co/image/{hex}"))
+    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+    const PREFIX: &str = "https://i.scdn.co/image/";
+    let mut s = String::with_capacity(PREFIX.len() + file_id.len() * 2);
+    s.push_str(PREFIX);
+    for &b in file_id {
+        s.push(HEX_CHARS[(b >> 4) as usize] as char);
+        s.push(HEX_CHARS[(b & 0x0f) as usize] as char);
+    }
+    Some(s)
 }
 
 /// `spotify:image:<hex>` / bare hex / full url -> https url
@@ -145,6 +152,11 @@ mod tests {
         assert_eq!(
             image_url(&[0xab, 0x67, 0x01]).as_deref(),
             Some("https://i.scdn.co/image/ab6701")
+        );
+        let id_20 = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc];
+        assert_eq!(
+            image_url(&id_20).as_deref(),
+            Some("https://i.scdn.co/image/123456789abcdef0112233445566778899aabbcc")
         );
         assert_eq!(image_url(&[]), None);
         assert_eq!(

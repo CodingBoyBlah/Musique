@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { X, GripVertical, Queue } from "@/lib/icons";
@@ -251,19 +251,23 @@ function JamQueue() {
   const session = useJamStore((s) => s.session);
   const canPick = !!session && (session.is_host || !session.queue_only_mode);
 
-  const byId = new Map((session?.members ?? []).map((m) => [m.id, m]));
-  const rows = (next ?? [])
-    .map((e, i) => {
-      const id = uriToId(e.uri);
-      const track = id ? meta[id] : undefined;
-      return track ? { track, key: `${e.uid || e.uri}-${i}`, queued: e.provider === "queue", by: e.queued_by ? byId.get(e.queued_by) ?? null : null } : null;
-    })
-    .filter((r): r is NonNullable<typeof r> => !!r)
-    .slice(0, 50);
-  const added = rows.filter((r) => r.queued);
-  const upNext = rows.filter((r) => !r.queued);
+  const { added, upNext } = useMemo(() => {
+    const byId = new Map((session?.members ?? []).map((m) => [m.id, m]));
+    const rows = (next ?? [])
+      .map((e, i) => {
+        const id = uriToId(e.uri);
+        const track = id ? meta[id] : undefined;
+        return track ? { track, key: `${e.uid || e.uri}-${i}`, queued: e.provider === "queue", by: e.queued_by ? byId.get(e.queued_by) ?? null : null } : null;
+      })
+      .filter((r): r is NonNullable<typeof r> => !!r)
+      .slice(0, 50);
+    return {
+      added: rows.filter((r) => r.queued),
+      upNext: rows.filter((r) => !r.queued),
+    };
+  }, [session?.members, next, meta]);
 
-  const row = (r: (typeof rows)[number]) => (
+  const row = (r: (typeof added)[number]) => (
     <QueueTrackRow
       key={r.key}
       track={r.track}
@@ -310,16 +314,16 @@ export function QueuePanel() {
   // the same object can legitimately appear twice (older persisted queues,
   // previous() pushing the current track back). give the repeat its own key
   // rather than letting two rows collide.
-  const seen = new Map<number, number>();
-  const keyed = queue.map((track) => {
-    const uid = entryUid(track);
-    const n = seen.get(uid) ?? 0;
-    seen.set(uid, n + 1);
-    return { track, key: n === 0 ? `q${uid}` : `q${uid}-${n}` };
-  });
-  // Reorder finds the dragged row by value identity, so it gets the per-row
-  // keys (unique even when a track repeats), not the track objects.
-  const keys = keyed.map((k) => k.key);
+  const { keyed, keys } = useMemo(() => {
+    const seen = new Map<number, number>();
+    const keyedList = queue.map((track) => {
+      const uid = entryUid(track);
+      const n = seen.get(uid) ?? 0;
+      seen.set(uid, n + 1);
+      return { track, key: n === 0 ? `q${uid}` : `q${uid}-${n}` };
+    });
+    return { keyed: keyedList, keys: keyedList.map((k) => k.key) };
+  }, [queue]);
   const onReorder = (order: string[]) => {
     const byKey = new Map(keyed.map((k) => [k.key, k.track]));
     setQueue(order.map((k) => byKey.get(k)!).filter(Boolean));

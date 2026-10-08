@@ -154,6 +154,7 @@ pub struct RodioSink {
     applied_volume: f32,
     /// Keeps asking which output the system calls its default.
     watch: Option<DefaultWatch>,
+    watch_version: u64,
     buffer_ms: u32,
     /// Output latency in milliseconds past the point positions are reported
     /// from: the device buffer. The queue in front of it is already accounted
@@ -218,6 +219,7 @@ impl RodioSink {
             volume,
             applied_volume: -1.0,
             watch: None,
+            watch_version: 0,
             buffer_ms,
             latency: Arc::new(AtomicI64::new(0)),
             playout,
@@ -327,7 +329,11 @@ impl RodioSink {
             return;
         };
         let watch = self.watch.get_or_insert_with(DefaultWatch::start);
-        let current = if at_once { watch.ask() } else { watch.name() };
+        if !at_once && watch.version() == self.watch_version {
+            return;
+        }
+        let (version, current) = if at_once { watch.ask() } else { watch.name() };
+        self.watch_version = version;
         if current.is_some() && current != output.device_name {
             log::info!(
                 "the default audio output is now {}; moving playback to it",
@@ -360,6 +366,8 @@ impl RodioSink {
             Ok((output, device_buffer_ms)) => {
                 self.latency.store(i64::from(device_buffer_ms), Ordering::Relaxed);
                 self.output = Some(output);
+                // Recheck a new stream even if the default name has not changed.
+                self.watch_version = 0;
                 self.applied_volume = -1.0;
                 Ok(())
             }
@@ -514,18 +522,44 @@ fn open_stream(
     builder(SAMPLE_RATE, false)?.open_stream_or_fallback()
 }
 
-struct DefaultWatch(Arc<Mutex<Option<String>>>);
+struct DefaultWatch(Arc<DefaultName>);
+
+struct DefaultName {
+    state: Mutex<(u64, Option<String>)>,
+    version: AtomicU64,
+}
+
+impl DefaultName {
+    fn new() -> Self {
+        Self { state: Mutex::new((1, None)), version: AtomicU64::new(1) }
+    }
+
+    fn update(&self, name: Option<String>) -> (u64, Option<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.1 != name {
+            state.0 += 1;
+            state.1 = name.clone();
+            self.version.store(state.0, Ordering::Release);
+        }
+        (state.0, name)
+    }
+
+    fn snapshot(&self) -> (u64, Option<String>) {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        (state.0, state.1.clone())
+    }
+}
 
 impl DefaultWatch {
     fn start() -> Self {
-        let shared = Arc::new(Mutex::new(None));
+        let shared = Arc::new(DefaultName::new());
         let weak = Arc::downgrade(&shared);
         let watching = thread::Builder::new()
             .name("audio-default-watch".into())
             .spawn(move || {
                 while let Some(shared) = weak.upgrade() {
-                    let name = default_output_name();
-                    *shared.lock().unwrap_or_else(PoisonError::into_inner) = name;
+                    shared.update(default_output_name());
+                    // The watcher must not keep the sink alive while sleeping.
                     drop(shared);
                     thread::sleep(DEFAULT_CHECK_INTERVAL);
                 }
@@ -536,17 +570,16 @@ impl DefaultWatch {
         Self(shared)
     }
 
-    fn name(&self) -> Option<String> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+    fn version(&self) -> u64 {
+        self.0.version.load(Ordering::Acquire)
     }
 
-    fn ask(&self) -> Option<String> {
-        let name = default_output_name();
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = name.clone();
-        name
+    fn name(&self) -> (u64, Option<String>) {
+        self.0.snapshot()
+    }
+
+    fn ask(&self) -> (u64, Option<String>) {
+        self.0.update(default_output_name())
     }
 }
 
@@ -697,5 +730,38 @@ mod tests {
     #[test]
     fn test_latency_ms_alias() {
         assert_eq!(latency_ms(2205, 44100, Some(50)), 100);
+    }
+
+    #[test]
+    fn unchanged_output_does_not_require_another_name_snapshot() {
+        let watch = DefaultWatch(Arc::new(DefaultName::new()));
+        assert_eq!(watch.version(), 1);
+        watch.0.update(Some("Speakers".into()));
+        assert_eq!(watch.version(), 2);
+        watch.0.update(Some("Speakers".into()));
+        assert_eq!(watch.version(), 2);
+        watch.0.update(Some("Headphones".into()));
+        assert_eq!(watch.name(), (3, Some("Headphones".into())));
+        watch.0.update(None);
+        assert_eq!(watch.name(), (4, None));
+    }
+
+    #[test]
+    fn output_name_and_version_are_one_snapshot_during_updates() {
+        let state = Arc::new(DefaultName::new());
+        let writer = state.clone();
+        let updates = thread::spawn(move || {
+            for version in 2..10_000 {
+                writer.update(Some(version.to_string()));
+            }
+        });
+        while !updates.is_finished() {
+            let (version, name) = state.snapshot();
+            if let Some(name) = name {
+                assert_eq!(name.parse::<u64>().unwrap(), version);
+            }
+        }
+        updates.join().unwrap();
+        assert_eq!(state.snapshot(), (9_999, Some("9999".into())));
     }
 }

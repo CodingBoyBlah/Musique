@@ -53,8 +53,7 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
   const qc = useQueryClient();
 
   const isCurrentAlbum = usePlayerStore((s) => Boolean(album.id && s.currentTrack?.album?.id === album.id));
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const isThisAlbumPlaying = isCurrentAlbum && isPlaying;
+  const isThisAlbumPlaying = usePlayerStore((s) => Boolean(s.isPlaying && album.id && s.currentTrack?.album?.id === album.id));
 
   async function handlePlayAlbum(e: React.MouseEvent) {
     e.preventDefault();
@@ -63,7 +62,7 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
       transportPause();
       return;
     }
-    if (isCurrentAlbum && !isPlaying) {
+    if (isCurrentAlbum && !isThisAlbumPlaying) {
       transportPlay();
       return;
     }

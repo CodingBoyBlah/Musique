@@ -23,6 +23,7 @@ import { AnimatedPlayPause, AnimatedHeart } from "../playground/AnimatedIcons";
 import { Tooltip } from "./Tooltip";
 import "../../styles/ui.css";
 import { isEpisodeId } from "../../utils/episode";
+import { queueHasTrack } from "./queueMembership";
 
 interface Props {
   track:         TrackItem;
@@ -92,8 +93,7 @@ function TrackRowImpl({
   const { open: openMenu, element: menuEl } = useContextMenu();
 
   const isThisCurrent = usePlayerStore((s) => s.currentTrack?.id === track.id);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const isThisPlaying = Boolean(isThisCurrent && isPlaying);
+  const isThisPlaying = usePlayerStore((s) => s.isPlaying && s.currentTrack?.id === track.id);
 
   function handlePlayToggle(e?: React.MouseEvent) {
     if (e) {
@@ -101,14 +101,14 @@ function TrackRowImpl({
     }
     if (isThisPlaying) {
       transportPause();
-    } else if (isThisCurrent && !isPlaying) {
+    } else if (isThisCurrent && !isThisPlaying) {
       transportPlay();
     } else if (onPlay) {
       onPlay(track);
     }
   }
 
-  const isQueued = useQueueStore((s) => s.queue.some((t) => t.id === track.id));
+  const isQueued = useQueueStore((s) => queueHasTrack(s.queue, track.id));
   const [justAdded, setJustAdded] = useState(false);
 
   function handleEnqueue(e?: React.MouseEvent) {

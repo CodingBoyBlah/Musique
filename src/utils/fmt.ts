@@ -46,6 +46,8 @@ export function fmtCountdown(ms: number): string {
   return `${sec}s`;
 }
 
+let cachedParser: DOMParser | null = null;
+
 // Strips raw HTML tags and decodes entities from Spotify playlist/album descriptions
 export function cleanDescription(raw: string | null | undefined): string {
   if (!raw) return "";
@@ -54,7 +56,7 @@ export function cleanDescription(raw: string | null | undefined): string {
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/(p|div|li)>/gi, "\n");
     if (typeof DOMParser !== "undefined") {
-      const doc = new DOMParser().parseFromString(withBreaks, "text/html");
+      const doc = (cachedParser ??= new DOMParser()).parseFromString(withBreaks, "text/html");
       const text = doc.body.textContent || "";
       return text
         .replace(/[ \t]+/g, " ")

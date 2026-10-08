@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { coverUrl } from "../lib/coverUrl";
 import { AMBIENT_FALLBACK, loadAmbient, peekAmbient, type Ambient } from "../lib/ambient";
 
@@ -41,5 +41,5 @@ export function useAmbient(url: string | null | undefined): AmbientState {
     return () => { live = false; };
   }, [src]);
 
-  return { ...state.ambient, ready: state.ready };
+  return useMemo(() => ({ ...state.ambient, ready: state.ready }), [state.ambient, state.ready]);
 }

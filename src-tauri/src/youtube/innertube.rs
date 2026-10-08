@@ -131,11 +131,29 @@ pub fn find_all<'a>(v: &'a Value, key: &str, out: &mut Vec<&'a Value>) {
     }
 }
 
-/// First match of [`find_all`].
+/// First match of a key anywhere in a JSON tree, short-circuiting on the first hit.
 pub fn find_first<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
-    let mut out = Vec::new();
-    find_all(v, key, &mut out);
-    out.into_iter().next()
+    match v {
+        Value::Object(map) => {
+            for (k, child) in map {
+                if k == key {
+                    return Some(child);
+                }
+                if let Some(found) = find_first(child, key) {
+                    return Some(found);
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for child in arr {
+                if let Some(found) = find_first(child, key) {
+                    return Some(found);
+                }
+            }
+        }
+        _ => {}
+    }
+    None
 }
 
 /// Concatenate a `{ "runs": [{ "text": ... }] }` text node.
@@ -148,4 +166,38 @@ pub fn runs_text(v: &Value) -> String {
                 .collect::<String>()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_first_preserves_depth_first_order() {
+        let tree = json!({
+            "first_group": {
+                "irrelevant": 1,
+                "nested": { "target": "from_nested" }
+            },
+            "direct": { "target": "from_direct" },
+            "array": [
+                { "target": "from_array" }
+            ]
+        });
+
+        let mut all = Vec::new();
+        find_all(&tree, "target", &mut all);
+        assert_eq!(all.len(), 3);
+        assert_eq!(find_first(&tree, "target"), all.first().copied());
+        assert_eq!(find_first(&tree, "nonexistent"), None);
+    }
+
+    #[test]
+    fn find_first_returns_a_matched_parent_before_its_descendants() {
+        let tree = json!([{ "target": { "target": "nested" } }, { "target": "later" }]);
+        let mut all = Vec::new();
+        find_all(&tree, "target", &mut all);
+        assert_eq!(find_first(&tree, "target"), all.first().copied());
+        assert_eq!(find_first(&tree, "target"), Some(&json!({ "target": "nested" })));
+    }
 }

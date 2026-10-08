@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 /* Is the user actually looking at this window?
  *
@@ -12,22 +12,42 @@ import { useEffect, useState } from "react";
  * merely unfocused - the common case on a desktop - is not hidden, and its
  * animations keep running at full rate. So we watch focus as well as
  * visibility, and the ambient parks itself when neither holds. */
+
+const listeners = new Set<() => void>();
+let isSubscribed = false;
+
+function onStateChange() {
+  listeners.forEach((l) => l());
+}
+
+function subscribe(callback: () => void) {
+  listeners.add(callback);
+  if (!isSubscribed && typeof window !== "undefined") {
+    isSubscribed = true;
+    window.addEventListener("focus", onStateChange);
+    window.addEventListener("blur", onStateChange);
+    document.addEventListener("visibilitychange", onStateChange);
+  }
+  return () => {
+    listeners.delete(callback);
+    if (listeners.size === 0 && isSubscribed && typeof window !== "undefined") {
+      isSubscribed = false;
+      window.removeEventListener("focus", onStateChange);
+      window.removeEventListener("blur", onStateChange);
+      document.removeEventListener("visibilitychange", onStateChange);
+    }
+  };
+}
+
+function getSnapshot(): boolean {
+  if (typeof document === "undefined") return true;
+  return !document.hidden && document.hasFocus();
+}
+
+function getServerSnapshot(): boolean {
+  return true;
+}
+
 export function useWindowActive(): boolean {
-  const [active, setActive] = useState(true);
-
-  useEffect(() => {
-    const read = () => setActive(!document.hidden && document.hasFocus());
-    read();
-
-    window.addEventListener("focus", read);
-    window.addEventListener("blur", read);
-    document.addEventListener("visibilitychange", read);
-    return () => {
-      window.removeEventListener("focus", read);
-      window.removeEventListener("blur", read);
-      document.removeEventListener("visibilitychange", read);
-    };
-  }, []);
-
-  return active;
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
