@@ -24,7 +24,7 @@ const tag = process.env.RELEASE_TAG || `v${version}`;
 if (tag !== `v${version}`) {
   throw new Error(`Release tag ${tag} does not match app version ${version}`);
 }
-const notesTag = tag === "v1.3.1" ? "v1.3.0" : tag;
+const notesTag = tag === "v1.3.1" || tag === "v1.3.2" ? "v1.3.0" : tag;
 const path = `changelogs/${notesTag}.md`;
 const body = (await read(path)).trim();
 if (!body) throw new Error(`Release notes are empty: ${path}`);
