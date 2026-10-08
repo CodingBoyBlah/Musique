@@ -55,6 +55,15 @@ pnpm tauri dev
 Login works out of the box. If you'd rather use your own Spotify app, copy
 `.env.example` to `.env` and fill it in, or set it in Settings.
 
+## Releasing
+
+Set the same version in `package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml` and the `spotify` package in `src-tauri/Cargo.lock`.
+Write the release notes in `changelogs/v<version>.md` and commit them before
+pushing the matching tag. The release workflow reads that file into the GitHub
+release body and rejects missing notes or mismatched versions. A manual workflow
+run uses the version from `package.json`.
+
 ## Security
 
 Tokens and the client secret live only in the OS keyring (Windows Credential

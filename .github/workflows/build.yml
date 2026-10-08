@@ -1,8 +1,8 @@
 name: Release
 
 # Cut a release + auto-updater feed by pushing a version tag, e.g.:
-#   git tag v0.1.1 && git push origin v0.1.1
-# (Keep the tag in sync with `version` in src-tauri/tauri.conf.json.)
+#   git tag v1.3.0 && git push origin v1.3.0
+# Keep app versions in sync and commit changelogs/<tag>.md before tagging.
 on:
   push:
     tags:
@@ -41,6 +41,12 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Load release notes
+        id: notes
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: node scripts/release-notes.mjs
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -75,9 +81,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Musique ${{ github.ref_name }}"
-          releaseBody: "Install once from the assets below - Musique auto-updates itself from here on."
+          tagName: ${{ steps.notes.outputs.tag }}
+          releaseName: "Musique ${{ steps.notes.outputs.tag }}"
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}

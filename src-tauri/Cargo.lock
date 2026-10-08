@@ -5382,7 +5382,7 @@ dependencies = [
 
 [[package]]
 name = "spotify"
-version = "0.1.0"
+version = "1.3.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
