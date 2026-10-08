@@ -161,6 +161,7 @@ pub async fn start_login(app: AppHandle) -> Result<auth::AuthStatus, AppError> {
         (s.db.clone(), s.auth.clone())
     };
 
+    let epoch = auth::auth_epoch();
     let client_id = auth::get_active_client_id(&db).await;
     let port = http::CALLBACK_PORT;
 
@@ -186,29 +187,51 @@ pub async fn start_login(app: AppHandle) -> Result<auth::AuthStatus, AppError> {
     open_browser(&app, &auth_url)?;
 
     let code = listener.wait(&state_token).await?;
-    let status = auth::complete_login(&client_id, &code, &verifier, &redirect, &db, &auth).await?;
+    let _cleanup = auth::account_cleanup().await;
+    auth::require_epoch(epoch)?;
+    let mut status = auth::complete_login(&client_id, &code, &verifier, &redirect, &db, &auth, epoch).await?;
+    let signed_in_epoch = epoch.wrapping_add(1);
 
     // A different account (or one we could not identify) signed in: everything
     // cached for the previous one has to go, even if the last logout only got
     // half way - or never happened at all.
-    let switched = match (&previous_user, &status.user_id) {
-        (Some(prev), Some(now)) => prev != now,
-        (Some(_), None) => true,
-        _ => false,
-    };
+    let switched = previous_user != status.user_id || status.user_id.is_none();
     if switched {
         eprintln!("[auth] account changed ({previous_user:?} -> {:?}); clearing previous account data", status.user_id);
         purge_account_data(&app, Purge::PreviousAccount).await;
     }
 
+    // A rate-limited Web API must not leave a fresh login without an identity
+    // until the user happens to play something. Complete the playback grant
+    // as part of this login, then recover details through its live session.
+    if status.user_id.is_none() || status.product.is_none() {
+        if let Err(e) = authorize_playback_token(&app).await {
+            eprintln!("[auth] account recovery authorization: {e}");
+        } else if let Err(e) = crate::commands::playback::warm_session(&app).await {
+            eprintln!("[auth] account recovery session: {e}");
+        } else {
+            if let Err(e) = get_profile(app.clone()).await {
+                eprintln!("[auth] account recovery profile: {e}");
+            }
+            status = get_auth_status(app.clone()).await?;
+        }
+    }
+    auth::require_epoch(signed_in_epoch)?;
+
     Ok(status)
 }
 
 pub async fn authorize_playback_token(app: &AppHandle) -> Result<String, AppError> {
+    let commit = auth::session_commit().await;
+    let epoch = auth::auth_epoch();
     let db = {
         let s = app.state::<AppState>();
         s.db.clone()
     };
+    if app.state::<AppState>().auth.read().await.access_token.is_none() {
+        return Err(AppError::Auth("Sign in before authorizing playback".into()));
+    }
+    drop(commit);
     let port = http::PLAYBACK_PORT;
     let client_id = auth::PLAYBACK_CLIENT_ID;
 
@@ -243,6 +266,16 @@ pub async fn authorize_playback_token(app: &AppHandle) -> Result<String, AppErro
     ])
     .await?;
 
+    let playback_profile = auth::profile::fetch_profile(&resp.access_token).await.ok();
+    let _commit = auth::session_commit().await;
+    auth::require_epoch(epoch)?;
+    if let Some(profile) = playback_profile {
+        let expected = auth::get_setting_value(&db, "spotify_user_id").await?;
+        if expected.as_deref().is_some_and(|id| !id.is_empty() && id != profile.id) {
+            return Err(AppError::Auth("Playback was authorized for a different Spotify account. Use the account signed in to Musique.".into()));
+        }
+        auth::profile::cache_profile(&db, &profile).await?;
+    }
     auth::upsert_setting(&db, "spotify_playback_token", &resp.access_token).await?;
     eprintln!("[playback auth] playback token acquired successfully");
     Ok(resp.access_token)
@@ -461,7 +494,12 @@ pub async fn logout(app: AppHandle) -> Result<(), AppError> {
     // the auth epoch or the (now empty) auth state, so background work - a
     // library sync in particular - stops before the purge instead of writing
     // the old account's playlists back in behind it.
+    let _commit = auth::session_commit().await;
     auth::bump_auth_epoch();
+    http::cancel_pending_flows();
+    let db = app.state::<AppState>().db.clone();
+    // Persist before slow cleanup, even when the OS credential store fails.
+    let signed_out = auth::upsert_setting(&db, "spotify_signed_out", "1").await;
     {
         let auth_state = {
             let s = app.state::<AppState>();
@@ -476,6 +514,11 @@ pub async fn logout(app: AppHandle) -> Result<(), AppError> {
         eprintln!("[logout] could not clear stored tokens: {e}");
     }
 
+    // Playback creation can be waiting to commit a grant while holding its
+    // own mutex. Release this lock before waiting for playback to stop.
+    drop(_commit);
+    let _cleanup = auth::account_cleanup().await;
+
     purge_account_data(&app, Purge::Everything).await;
 
     // The session had a moment to shut down while the tables were cleared, so
@@ -486,148 +529,87 @@ pub async fn logout(app: AppHandle) -> Result<(), AppError> {
     }
 
     eprintln!("[logout] signed out and cleared local account data");
-    Ok(())
+    signed_out
 }
 
 #[tauri::command]
 pub async fn get_auth_status(app: AppHandle) -> Result<auth::AuthStatus, AppError> {
+    let _commit = auth::session_commit().await;
     let db = app.state::<AppState>().db.clone();
     let auth = app.state::<AppState>().auth.clone();
     let logged_in = auth.read().await.access_token.is_some();
     auth::build_auth_status(&db, logged_in).await
 }
 
-#[derive(serde::Serialize)]
-pub struct Profile {
-    pub id: Option<String>,
-    pub display_name: Option<String>,
-    pub email: Option<String>,
-    pub country: Option<String>,
-    pub product: Option<String>,
-    pub followers: i64,
-    pub image_url: Option<String>,
-    pub spotify_url: Option<String>,
-    pub explicit_filter_enabled: bool,
-    pub explicit_filter_locked: bool,
-}
-
-#[derive(serde::Deserialize)]
-struct SpProfileFull {
-    id: Option<String>,
-    display_name: Option<String>,
-    email: Option<String>,
-    country: Option<String>,
-    product: Option<String>,
-    followers: Option<SpFollowers>,
-    images: Option<Vec<SpImg>>,
-    external_urls: Option<SpExtUrls>,
-    explicit_content: Option<SpExplicit>,
-}
-
-#[derive(serde::Deserialize)]
-struct SpFollowers {
-    total: i64,
-}
-#[derive(serde::Deserialize)]
-struct SpImg {
-    url: String,
-}
-#[derive(serde::Deserialize)]
-struct SpExtUrls {
-    spotify: Option<String>,
-}
-#[derive(serde::Deserialize)]
-struct SpExplicit {
-    filter_enabled: bool,
-    filter_locked: bool,
-}
-
-async fn cached_profile(db: &sqlx::SqlitePool) -> Result<Profile, AppError> {
-    let non_empty = |s: Option<String>| s.filter(|v| !v.is_empty());
-    let user_id = auth::get_setting_value(db, "spotify_user_id").await?;
-    let followers = auth::get_setting_value(db, "spotify_followers")
-        .await?
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    Ok(Profile {
-        id: user_id.clone(),
-        display_name: non_empty(auth::get_setting_value(db, "spotify_display_name").await?),
-        email: non_empty(auth::get_setting_value(db, "spotify_email").await?),
-        country: non_empty(auth::get_setting_value(db, "spotify_country").await?),
-        product: non_empty(auth::get_setting_value(db, "spotify_product").await?),
-        followers,
-        image_url: non_empty(auth::get_setting_value(db, "spotify_image_url").await?),
-        spotify_url: user_id.map(|id| format!("https://open.spotify.com/user/{id}")),
-        explicit_filter_enabled: false,
-        explicit_filter_locked: false,
-    })
-}
+pub use auth::profile::Profile;
 
 #[tauri::command]
 pub async fn get_profile(app: AppHandle) -> Result<Profile, AppError> {
     let db = app.state::<AppState>().db.clone();
     let auth_state = app.state::<AppState>().auth.clone();
-
+    let epoch = auth::auth_epoch();
     let token = auth::get_valid_token(&db, &auth_state).await?;
+    let mut result = auth::profile::fetch_profile(&token).await;
 
-    let resp = crate::http::client()
-        .get("https://api.spotify.com/v1/me")
-        .bearer_auth(&token)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        return cached_profile(&db).await;
+    // The playback grant already includes user-read-private. Its first-party
+    // profile can fill fields omitted for a custom/development Web API client.
+    // Never start another browser flow just to read a profile.
+    let needs_fallback = result.as_ref().map(|p| p.needs_details()).unwrap_or(true);
+    if needs_fallback {
+        // A live session refreshes its first-party token through login5. The
+        // stored playback grant is only a fallback because it can expire.
+        let playback = app.state::<AppState>().playback.clone();
+        let session = playback.try_lock().ok().and_then(|guard| guard.as_ref()
+            .filter(|inner| !inner.session_invalid()).map(|inner| inner.session()));
+        let fresh_token = if let Some(session) = session.as_ref() {
+            tokio::time::timeout(std::time::Duration::from_secs(8), session.login5().auth_token())
+                .await.ok().and_then(Result::ok).map(|t| t.access_token)
+        } else { None };
+        let playback_token = fresh_token.or(auth::get_setting_value(&db, "spotify_playback_token").await?);
+        if let Some(token) = playback_token.filter(|t| !t.is_empty()) {
+            if let Ok(extra) = auth::profile::fetch_profile(&token).await {
+                let expected = result.as_ref().ok().map(|p| p.id.clone())
+                    .or(auth::get_setting_value(&db, "spotify_user_id").await?)
+                    .or_else(|| session.as_ref().map(|s| s.username()));
+                if expected.as_deref() == Some(extra.id.as_str()) {
+                    match &mut result {
+                        Ok(p) => p.fill_missing(extra),
+                        Err(_) => result = Ok(extra),
+                    }
+                }
+            }
+        }
+        if let (Ok(p), Some(session)) = (&mut result, session.as_ref()) {
+            p.fill_session_plan(&session.username(), session.get_user_attribute("type").as_deref());
+        }
+        if let Some(session) = session.as_ref() {
+            let username = session.username();
+            let expected = result.as_ref().ok().map(|p| p.id.clone())
+                .or(auth::get_setting_value(&db, "spotify_user_id").await?);
+            let matching = expected.as_deref().map(|id| id == username).unwrap_or(true);
+            if matching && result.as_ref().map(|p| p.images.is_none()).unwrap_or(true) {
+                let endpoint = format!("/user-profile-view/v3/profile/{username}?playlist_limit=0&artist_limit=0");
+                let view = tokio::time::timeout(std::time::Duration::from_secs(8),
+                    session.spclient().request_as_json(&reqwest::Method::GET, &endpoint, None, None))
+                    .await.ok().and_then(Result::ok)
+                    .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+                if let Some(view) = view.filter(|v| v.is_object()) {
+                    let mut extra = auth::profile::SpotifyProfile::from_session_view(&username, &view);
+                    extra.fill_session_plan(&username, session.get_user_attribute("type").as_deref());
+                    match &mut result {
+                        Ok(p) => p.fill_missing(extra),
+                        Err(_) => result = Ok(extra),
+                    }
+                }
+            }
+        }
     }
-
-    let p: SpProfileFull = resp
-        .json()
-        .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
-
-    let followers = p.followers.as_ref().map(|f| f.total).unwrap_or(0);
-
-    if let Some(c) = p.country.as_deref() {
-        let _ = auth::upsert_setting(&db, "spotify_country", c).await;
+    let profile = result?;
+    let _commit = auth::session_commit().await;
+    auth::require_epoch(epoch)?;
+    if auth_state.read().await.access_token.is_none() {
+        return Err(AppError::Auth("Not logged in".into()));
     }
-    let _ = auth::upsert_setting(&db, "spotify_followers", &followers.to_string()).await;
-    let _ = auth::upsert_setting(
-        &db,
-        "spotify_explicit_filter",
-        if p.explicit_content
-            .as_ref()
-            .map(|e| e.filter_enabled)
-            .unwrap_or(false)
-        {
-            "1"
-        } else {
-            "0"
-        },
-    )
-    .await;
-
-    Ok(Profile {
-        id: p.id,
-        display_name: p.display_name.filter(|s| !s.is_empty()),
-        email: p.email.filter(|s| !s.is_empty()),
-        country: p.country.filter(|s| !s.is_empty()),
-        product: p.product.filter(|s| !s.is_empty()),
-        followers,
-        image_url: p
-            .images
-            .as_ref()
-            .and_then(|v| v.first())
-            .map(|i| i.url.clone()),
-        spotify_url: p.external_urls.and_then(|u| u.spotify),
-        explicit_filter_enabled: p
-            .explicit_content
-            .as_ref()
-            .map(|e| e.filter_enabled)
-            .unwrap_or(false),
-        explicit_filter_locked: p
-            .explicit_content
-            .as_ref()
-            .map(|e| e.filter_locked)
-            .unwrap_or(false),
-    })
+    auth::profile::cache_profile(&db, &profile).await?;
+    auth::profile::cached_profile(&db).await
 }

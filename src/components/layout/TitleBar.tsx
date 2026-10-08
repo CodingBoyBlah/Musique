@@ -147,13 +147,14 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
 };
 
 function AccountMenuItem({
-  icon, label, onClick, danger,
+  icon, label, onClick, danger, disabled,
 }: {
-  icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean;
+  icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean; disabled?: boolean;
 }) {
   return (
     <button
       role="menuitem"
+      disabled={disabled}
       onClick={onClick}
       className="row-btn acct-item"
       data-danger={danger || undefined}
@@ -180,8 +181,9 @@ function AccountMenu() {
   const displayName = useAuthStore((s) => s.displayName);
   const imageUrl    = useAuthStore((s) => s.imageUrl);
   const loggedIn    = useAuthStore((s) => s.loggedIn);
+  const product     = useAuthStore((s) => s.product);
   const status      = useCredentialsStore((s) => s.status);
-  const { login, logout } = useAuth();
+  const { login, logout, loggingIn, loggingOut } = useAuth();
 
   const trigger = () => ref.current?.querySelector<HTMLButtonElement>(".tb-btn") ?? null;
 
@@ -312,9 +314,9 @@ function AccountMenu() {
                   {loggedIn ? (displayName ?? "Your account") : "Not signed in"}
                 </p>
                 <span style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
-                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: STATUS_DOT[status], flexShrink: 0 }} />
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: loggedIn ? STATUS_DOT[status] : "var(--color-text-dim)", flexShrink: 0 }} />
                   <span className="t-caption" style={{ fontSize: 11.5, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {STATUS_LABEL[status]}
+                    {!loggedIn ? "Signed out" : status === "valid" && product === "premium" ? "Spotify Premium" : STATUS_LABEL[status]}
                   </span>
                 </span>
               </div>
@@ -330,7 +332,7 @@ function AccountMenu() {
             {loggedIn ? (
               <AccountMenuItem icon={<LogOut size={16} strokeWidth={2} />} label="Log out" danger onClick={() => { setOpen(false); logout(); }} />
             ) : (
-              <AccountMenuItem icon={<LogIn size={16} strokeWidth={2} />} label="Log in" onClick={() => { setOpen(false); login(); }} />
+              <AccountMenuItem icon={<LogIn size={16} strokeWidth={2} />} label={loggingOut ? "Signing out..." : loggingIn ? "Signing in..." : "Log in"} disabled={loggingIn || loggingOut} onClick={() => { setOpen(false); login(); }} />
             )}
           </motion.div>
         )}

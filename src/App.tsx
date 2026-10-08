@@ -23,7 +23,7 @@ const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 const ShowPage = lazy(() => import("./pages/ShowPage"));
 const StatsPage = lazy(() => import("./pages/StatsPage"));
 import { getCredentials, validateCredentials } from "./api/credentials";
-import { getAuthStatus } from "./api/auth";
+import { useAuth } from "./hooks/useAuth";
 import {
   setVolume,
   setMuted,
@@ -72,7 +72,7 @@ import { cleanupAsyncListeners } from "./lib/asyncListeners";
 function AppInit() {
   const setFromCredentials = useCredentialsStore((s) => s.setFromCredentials);
   const setCredStatus = useCredentialsStore((s) => s.setStatus);
-  const setFromStatus = useAuthStore((s) => s.setFromStatus);
+  useAuth();
   const isLoggedIn = useAuthStore((s) => s.loggedIn);
   const onEvent = usePlayerStore((s) => s.onEvent);
 
@@ -180,14 +180,10 @@ native backdrop but blows away react state, so sync hereto keep the os material 
         }
       })
       .catch(() => {});
-    getAuthStatus()
-      .then(setFromStatus)
-      .catch(() => {});
-
     const { volume, muted } = usePlayerStore.getState();
     setVolume(volume).catch(() => {});
     setMuted(muted).catch(() => {});
-  }, [setFromCredentials, setCredStatus, setFromStatus]);
+  }, [setFromCredentials, setCredStatus]);
 
   /* pewarm the librespot session after login so the first play is instant, and prefetch
 Home recs so they're cached before the user gets there
@@ -244,6 +240,7 @@ Home recs so they're cached before the user gets there
   // player events: update os control when track changed -+ fire notification
   const handlePlayerEvent = useCallback(
     (payload: unknown) => {
+      if (!useAuthStore.getState().loggedIn) return;
       onEvent(payload);
       const isRemote = usePlayerStore.getState().isRemotePlayback;
       const msg = payload as { type: string; track_id?: string | null };

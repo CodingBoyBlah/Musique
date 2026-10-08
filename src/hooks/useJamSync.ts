@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getJam, type JamSession, type JamUpdate } from "../api/social";
 import type { ConnectState } from "../api/playback";
 import { useJamStore } from "../store/jam.store";
+import { useAuthStore } from "../store/auth.store";
 import { toast } from "../store/toast.store";
 import { applyConnectState, leftJam, refreshConnectState } from "../lib/jam";
 
@@ -24,7 +25,9 @@ function adopt(next: JamSession | null) {
 }
 
 export async function refreshJam(): Promise<JamSession | null> {
+  const generation = useAuthStore.getState().generation;
   const jam = await getJam().catch(() => undefined);
+  if (!useAuthStore.getState().loggedIn || useAuthStore.getState().generation !== generation) return null;
   if (jam === undefined) return useJamStore.getState().session; // offline: keep what we know
   const prev = useJamStore.getState().session;
   if (!jam && prev) {
@@ -52,6 +55,7 @@ export function useJamSync(enabled: boolean) {
 
     keep(
       listen<JamUpdate | null>("social:jam-updated", async (e) => {
+        if (gone || !useAuthStore.getState().loggedIn) return;
         const update = e.payload;
         const prev = useJamStore.getState().session;
         const reason = update?.reason ?? "UNKNOWN_UPDATE_TYPE";
@@ -85,7 +89,9 @@ export function useJamSync(enabled: boolean) {
       }),
     );
 
-    keep(listen<ConnectState>("connect:state", (e) => applyConnectState(e.payload)));
+    keep(listen<ConnectState>("connect:state", (e) => {
+      if (!gone && useAuthStore.getState().loggedIn) applyConnectState(e.payload);
+    }));
 
     // pushes can be missed across a reconnect; a slow poll catches up
     const poll = setInterval(() => {

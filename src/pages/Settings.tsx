@@ -561,6 +561,8 @@ function PlaybackCard() {
         hint={
           backend && !backend.spotify_available
             ? "Your Spotify plan can't stream audio, so playback uses YouTube Music. Metadata, artwork and lyrics still come from Spotify."
+            : backend && !backend.product
+            ? "Spotify hasn't reported your plan. You can try Spotify playback if you have Premium, or choose YouTube Music."
             : "Where audio is streamed from. Metadata, artwork and lyrics always come from Spotify."
         }
         control={

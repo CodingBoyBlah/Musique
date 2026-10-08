@@ -1,6 +1,9 @@
 pub mod http;
 pub mod pkce;
 pub mod token;
+pub mod profile;
+
+use profile::{cache_profile, fetch_profile_retrying};
 
 use crate::errors::AppError;
 use crate::state::AuthState;
@@ -21,22 +24,6 @@ pub struct AuthStatus {
     pub image_url:    Option<String>,
 }
 
-// private spotify api types dont touch
-
-#[derive(Deserialize)]
-struct SpotifyImage {
-    url: String,
-}
-
-#[derive(Deserialize)]
-struct SpotifyProfile {
-    id:           String,
-    display_name: Option<String>,
-    email:        Option<String>,
-    product:      Option<String>,
-    images:       Option<Vec<SpotifyImage>>,
-}
-
 // public shared client ID (ncspot / spotify-player public Web API application)
 pub const SHARED_CLIENT_ID: &str = "d420a117a32841c2b3474932e49fb54b";
 // official Spotify desktop client ID (playback grant with full streaming capabilities)
@@ -54,6 +41,23 @@ pub const PLAYBACK_SCOPES: &str = "app-remote-control streaming user-modify-play
 // as soon as it changes. Without this, a sync that was already in flight when
 // you signed out happily re-inserted the old account's playlists *after*
 // logout had purged them, which is why signing out looked like it did nothing.
+static SESSION_COMMIT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static TOKEN_REFRESH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static ACCOUNT_CLEANUP: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+pub(crate) async fn account_cleanup() -> tokio::sync::MutexGuard<'static, ()> {
+    ACCOUNT_CLEANUP.lock().await
+}
+
+pub(crate) async fn session_commit() -> tokio::sync::MutexGuard<'static, ()> {
+    SESSION_COMMIT.lock().await
+}
+
+pub(crate) fn require_epoch(epoch: u64) -> Result<(), AppError> {
+    if epoch_is_current(epoch) { Ok(()) }
+    else { Err(AppError::Auth("Account changed; request cancelled".into())) }
+}
+
 static AUTH_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub fn auth_epoch() -> u64 {
@@ -88,6 +92,8 @@ pub const ACCOUNT_SETTING_KEYS: &[&str] = &[
     "spotify_country",
     "spotify_followers",
     "spotify_explicit_filter",
+    "spotify_explicit_filter_locked",
+    "spotify_profile_url",
     "spotify_token_expires_at",
     "spotify_playback_token",
     "spotify_auth_client_id",
@@ -110,6 +116,8 @@ pub const SESSION_SETTING_KEYS: &[&str] = &[
     "spotify_country",
     "spotify_followers",
     "spotify_explicit_filter",
+    "spotify_explicit_filter_locked",
+    "spotify_profile_url",
     "spotify_token_expires_at",
     "spotify_auth_client_id",
 ];
@@ -189,6 +197,10 @@ pub async fn init_auth_state_with(
     pool: &SqlitePool,
     tokens: Option<(String, String)>,
 ) -> AuthState {
+    // A failed credential-store delete must not resurrect a signed-out session.
+    if get_setting_value(pool, "spotify_signed_out").await.ok().flatten().as_deref() == Some("1") {
+        return AuthState::default();
+    }
     let (access_token, refresh_token) = match tokens {
         Some(pair) => (Some(pair.0), Some(pair.1)),
         None => return AuthState::default(),
@@ -209,6 +221,7 @@ pub async fn get_valid_token(
     pool: &SqlitePool,
     auth: &RwLock<AuthState>,
 ) -> Result<String, AppError> {
+    let _refresh = TOKEN_REFRESH.lock().await;
     {
         let g = auth.read().await;
         if let (Some(tok), Some(exp)) = (&g.access_token, g.expires_at) {
@@ -222,17 +235,17 @@ pub async fn get_valid_token(
 }
 
 async fn do_refresh(pool: &SqlitePool, auth: &RwLock<AuthState>) -> Result<String, AppError> {
-    let client_id = match get_setting_value(pool, "spotify_auth_client_id").await? {
-        Some(cid) if !cid.trim().is_empty() && cid.trim() != PLAYBACK_CLIENT_ID => cid,
-        _ => get_active_client_id(pool).await,
+    let (epoch, client_id, refresh_token) = {
+        let _commit = session_commit().await;
+        let epoch = auth_epoch();
+        let refresh_token = auth.read().await.refresh_token.clone()
+            .ok_or_else(|| AppError::Auth("Not logged in".into()))?;
+        let client_id = match get_setting_value(pool, "spotify_auth_client_id").await? {
+            Some(cid) if !cid.trim().is_empty() && cid.trim() != PLAYBACK_CLIENT_ID => cid,
+            _ => get_active_client_id(pool).await,
+        };
+        (epoch, client_id, refresh_token)
     };
-
-    let refresh_token = auth
-        .read()
-        .await
-        .refresh_token
-        .clone()
-        .ok_or_else(|| AppError::Auth("Not logged in".into()))?;
 
     let resp = match call_token_endpoint(&[
         ("grant_type",    "refresh_token"),
@@ -245,6 +258,9 @@ async fn do_refresh(pool: &SqlitePool, auth: &RwLock<AuthState>) -> Result<Strin
         Err(e) => {
             let err_str = e.to_string();
             if err_str.contains("invalid_grant") || err_str.contains("invalid_client") {
+                let _commit = session_commit().await;
+                require_epoch(epoch)?;
+                upsert_setting(pool, "spotify_signed_out", "1").await?;
                 bump_auth_epoch();
                 let _ = token::clear_tokens();
                 *auth.write().await = AuthState::default();
@@ -256,6 +272,14 @@ async fn do_refresh(pool: &SqlitePool, auth: &RwLock<AuthState>) -> Result<Strin
         }
     };
 
+    commit_refresh(pool, auth, epoch, resp).await
+}
+
+async fn commit_refresh(
+    pool: &SqlitePool, auth: &RwLock<AuthState>, epoch: u64, resp: token::TokenResponse,
+) -> Result<String, AppError> {
+    let _commit = session_commit().await;
+    require_epoch(epoch)?;
     let expires_at = now_ms() + resp.expires_in as i64 * 1_000;
     token::store_token("access_token", &resp.access_token)?;
     if let Some(ref rt) = resp.refresh_token {
@@ -313,117 +337,51 @@ pub(crate) async fn call_token_endpoint(
         .map_err(|e| AppError::Network(e.to_string()))
 }
 
-async fn fetch_profile(access_token: &str) -> Result<SpotifyProfile, AppError> {
-    let resp = crate::http::client()
-        .get("https://api.spotify.com/v1/me")
-        .bearer_auth(access_token)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        return Err(AppError::Auth(format!(
-            "Profile fetch failed: {}",
-            resp.status()
-        )));
-    }
-    resp.json::<SpotifyProfile>()
-        .await
-        .map_err(|e| AppError::Network(e.to_string()))
-}
-
-/// `fetch_profile` with one retry. A flaky first call here used to fail the
-/// whole login *after* the tokens had already been stored, leaving the app
-/// half-signed-in: an error on screen, a live session underneath.
-async fn fetch_profile_retrying(access_token: &str) -> Result<SpotifyProfile, AppError> {
-    match fetch_profile(access_token).await {
-        Ok(p) => Ok(p),
-        Err(first) => {
-            eprintln!("[auth] profile fetch failed ({first}); retrying once");
-            tokio::time::sleep(std::time::Duration::from_millis(600)).await;
-            fetch_profile(access_token).await
-        }
-    }
-}
-
 // full login, swap the code for tokens then grab the profile then save it all
 
 pub async fn complete_login(
-    client_id:    &str,
-    code:         &str,
-    verifier:     &str,
+    client_id: &str,
+    code: &str,
+    verifier: &str,
     redirect_uri: &str,
-    pool:         &SqlitePool,
-    auth:         &RwLock<AuthState>,
+    pool: &SqlitePool,
+    auth: &RwLock<AuthState>,
+    epoch: u64,
 ) -> Result<AuthStatus, AppError> {
+    require_epoch(epoch)?;
     let resp = call_token_endpoint(&[
-        ("grant_type",    "authorization_code"),
-        ("code",          code),
-        ("redirect_uri",  redirect_uri),
-        ("client_id",     client_id),
+        ("grant_type", "authorization_code"), ("code", code),
+        ("redirect_uri", redirect_uri), ("client_id", client_id),
         ("code_verifier", verifier),
-    ])
-    .await?;
-
-    let refresh_token = resp
-        .refresh_token
+    ]).await?;
+    let refresh_token = resp.refresh_token
         .ok_or_else(|| AppError::Auth("Spotify did not return a refresh token".into()))?;
+    let profile = fetch_profile_retrying(&resp.access_token).await;
 
-    // A new identity is taking over from here on: anything still running for the
-    // previous one must stop writing.
-    bump_auth_epoch();
-
-    token::store_token("access_token",  &resp.access_token)?;
+    // Network work runs outside the commit lock. Logout can invalidate it at
+    // any point, and its response may only be stored for the original session.
+    let _commit = session_commit().await;
+    require_epoch(epoch)?;
+    token::store_token("access_token", &resp.access_token)?;
     token::store_token("refresh_token", &refresh_token)?;
-
     let expires_at = now_ms() + resp.expires_in as i64 * 1_000;
     upsert_setting(pool, "spotify_token_expires_at", &expires_at.to_string()).await?;
-
-    {
-        let mut g    = auth.write().await;
-        g.access_token  = Some(resp.access_token.clone());
-        g.refresh_token = Some(refresh_token);
-        g.expires_at    = Some(expires_at);
-    }
-
-    // The session is live and stored at this point. If the profile call fails
-    // anyway, stay signed in with whatever the caller can refresh later rather
-    // than reporting a failed login over a working session.
-    let profile = match fetch_profile_retrying(&resp.access_token).await {
-        Ok(p) => p,
+    upsert_setting(pool, "spotify_auth_client_id", client_id).await?;
+    match profile {
+        Ok(p) => cache_profile(pool, &p).await?,
         Err(e) => {
-            eprintln!("[auth] signed in but could not read the profile: {e}");
-            // We cannot confirm *whose* session this now is, so the previous
-            // account's cached identity must not be left on screen next to it.
-            for key in ["spotify_user_id", "spotify_display_name", "spotify_email",
-                        "spotify_product", "spotify_image_url", "spotify_country",
-                        "spotify_followers"] {
-                let _ = sqlx::query("DELETE FROM settings WHERE key = ?")
-                    .bind(key)
-                    .execute(pool)
-                    .await;
+            eprintln!("[auth] signed in but could not read profile: {e}");
+            for key in profile::PROFILE_KEYS {
+                sqlx::query("DELETE FROM settings WHERE key = ?").bind(key).execute(pool).await?;
             }
-            upsert_setting(pool, "spotify_auth_client_id", client_id).await?;
-            return build_auth_status(pool, true).await;
         }
-    };
-
-    let image_url = profile
-        .images
-        .as_ref()
-        .and_then(|v| v.first())
-        .map(|i| i.url.clone());
-
-    for (key, val) in [
-        ("spotify_auth_client_id", client_id),
-        ("spotify_user_id",      profile.id.as_str()),
-        ("spotify_display_name", profile.display_name.as_deref().unwrap_or("")),
-        ("spotify_email",        profile.email.as_deref().unwrap_or("")),
-        ("spotify_product",      profile.product.as_deref().unwrap_or("")),
-        ("spotify_image_url",    image_url.as_deref().unwrap_or("")),
-    ] {
-        upsert_setting(pool, key, val).await?;
     }
-
+    upsert_setting(pool, "spotify_signed_out", "0").await?;
+    bump_auth_epoch();
+    *auth.write().await = AuthState {
+        access_token: Some(resp.access_token), refresh_token: Some(refresh_token),
+        expires_at: Some(expires_at),
+    };
     build_auth_status(pool, true).await
 }
 
@@ -458,4 +416,28 @@ pub async fn build_auth_status(
         product:      product     .filter(|s| !s.is_empty()),
         image_url:    image_url   .filter(|s| !s.is_empty()),
     })
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn late_refresh_and_login_cannot_restore_a_logged_out_session() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1)
+            .connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+            .execute(&pool).await.unwrap();
+        let auth = RwLock::new(AuthState::default());
+        let epoch = auth_epoch();
+        bump_auth_epoch();
+        let response: token::TokenResponse = serde_json::from_str(
+            r#"{"access_token":"late-token","refresh_token":"late-refresh","expires_in":3600}"#
+        ).unwrap();
+        assert!(commit_refresh(&pool, &auth, epoch, response).await.is_err());
+        assert!(auth.read().await.access_token.is_none());
+        assert!(get_setting_value(&pool, "spotify_token_expires_at").await.unwrap().is_none());
+        assert!(complete_login("client", "code", "verifier", "redirect", &pool, &auth, epoch).await.is_err());
+        assert!(auth.read().await.access_token.is_none());
+    }
 }

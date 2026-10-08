@@ -2,6 +2,10 @@ import { create } from "zustand";
 import type { AuthStatus } from "../types/ipc";
 
 interface AuthStore {
+  phase: "idle" | "login" | "logout";
+  generation: number;
+  begin: (phase: "login" | "logout") => number | null;
+  finish: (generation: number) => void;
   loggedIn:    boolean;
   userId:      string | null;
   displayName: string | null;
@@ -13,6 +17,18 @@ interface AuthStore {
 }
 
 export const useAuthStore = create<AuthStore>((set) => ({
+  phase: "idle",
+  generation: 0,
+  begin: (phase) => {
+    let generation: number | null = null;
+    set((s) => {
+      if (s.phase === "logout" || (phase === "login" && s.phase !== "idle")) return s;
+      generation = s.generation + 1;
+      return { phase, generation };
+    });
+    return generation;
+  },
+  finish: (generation) => set((s) => s.generation === generation ? { phase: "idle" } : s),
   loggedIn:    false,
   userId:      null,
   displayName: null,

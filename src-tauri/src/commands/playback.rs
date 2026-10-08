@@ -86,6 +86,7 @@ pub(crate) async fn warm_session(app: &AppHandle) -> Result<(), AppError> {
 
 /// `interactive = false` never opens a browser authorization; see `create_inner`.
 async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), AppError> {
+    let epoch = crate::auth::auth_epoch();
     let s        = app.state::<AppState>();
     let db       = s.db.clone();
     let auth     = s.auth.clone();
@@ -104,9 +105,12 @@ async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), App
     if rebuild {
         let vol   = read_vol(&db).await;
         let muted = read_muted(&db).await;
-        *guard = Some(
-            crate::playback::create_inner(app.clone(), db, auth, vol, muted, media_tx, interactive).await?
-        );
+        let inner = crate::playback::create_inner(app.clone(), db, auth, vol, muted, media_tx, interactive).await?;
+        if !crate::auth::epoch_is_current(epoch) {
+            inner.shutdown().await;
+            return Err(AppError::Auth("Account changed; playback cancelled".into()));
+        }
+        *guard = Some(inner);
     }
     Ok(())
 }
@@ -144,12 +148,11 @@ async fn setting_value(pool: &sqlx::SqlitePool, key: &str) -> Option<String> {
 /// Whether the signed-in account can stream through Spotify at all.
 ///
 /// Spotify only delivers audio to Premium, so this is what makes the Spotify
-/// backend available rather than a setting. Treating an unknown product as
-/// non-premium is the safe direction: guessing "premium" wrong gives silent
-/// playback that looks like a bug, while guessing "free" wrong merely routes a
-/// Premium user through a path that works.
+/// backend available rather than a setting. A missing subscription field is
+/// unknown, since Spotify can omit it. Only a confirmed Free plan disables
+/// the choice; Spotify still enforces streaming entitlement on the server.
 pub(crate) async fn spotify_available(pool: &sqlx::SqlitePool) -> bool {
-    setting_value(pool, "spotify_product").await.as_deref() == Some("premium")
+    !matches!(setting_value(pool, "spotify_product").await.as_deref(), Some("free" | "open"))
 }
 
 /// Decide which audio backend supplies audio.
@@ -655,7 +658,7 @@ pub async fn warmup_playback(app: AppHandle) -> Result<(), AppError> {
             eprintln!("[playback] youtube warmup failed: {e}");
         }
     }
-    ensure_inner(&app).await
+    ensure_inner_with(&app, false).await
 }
 
 /// Startup warm-up, fired from `setup()` the moment app state exists.

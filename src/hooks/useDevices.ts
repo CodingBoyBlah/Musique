@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { usePlayerStore } from "../store/player.store";
+import { useAuthStore } from "../store/auth.store";
 import {
   getDevices,
   getPlaybackState,
@@ -50,6 +51,7 @@ function setupClusterListener() {
 }
 
 export function useDevices() {
+  const loggedIn = useAuthStore((s) => s.loggedIn);
   const devices = usePlayerStore((s) => s.devices);
   const setDevices = usePlayerStore((s) => s.setDevices);
   const activeDevice = usePlayerStore((s) => s.activeDevice);
@@ -76,10 +78,13 @@ export function useDevices() {
   }, [musiqueDeviceId, setMusiqueDeviceId]);
 
   const refreshDevices = useCallback(async () => {
+    if (!useAuthStore.getState().loggedIn) return;
+    const generation = useAuthStore.getState().generation;
     if (inflightDevices) return inflightDevices;
     inflightDevices = (async () => {
       try {
         const payload = await getDevices();
+        if (!useAuthStore.getState().loggedIn || useAuthStore.getState().generation !== generation) return;
         if (payload) {
           if (payload.musique_device_id && !usePlayerStore.getState().musiqueDeviceId) {
             setMusiqueDeviceId(payload.musique_device_id);
@@ -100,10 +105,13 @@ export function useDevices() {
   }, [setDevices, setActiveDevice, setMusiqueDeviceId]);
 
   const refreshPlayback = useCallback(async () => {
+    if (!useAuthStore.getState().loggedIn) return;
+    const generation = useAuthStore.getState().generation;
     if (inflightPlayback) return inflightPlayback;
     inflightPlayback = (async () => {
       try {
         const state = await getPlaybackState();
+        if (!useAuthStore.getState().loggedIn || useAuthStore.getState().generation !== generation) return;
         syncRemotePlayback(state);
       } catch {
         // Quietly ignore
@@ -118,7 +126,7 @@ export function useDevices() {
   useEffect(() => {
     refreshDevices();
     refreshPlayback();
-  }, [refreshDevices, refreshPlayback]);
+  }, [loggedIn, refreshDevices, refreshPlayback]);
 
   // live device/playback changes pushed over the dealer
   const [pushLive, setPushLive] = useState(pushSeen);
