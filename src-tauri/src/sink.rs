@@ -683,6 +683,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn audio_output_and_app_state_are_thread_safe() {
+        fn assert_send<T: Send>() {}
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send::<rodio::OutputStream>();
+        assert_send::<RodioSink>();
+        assert_send_sync::<crate::state::AppState>();
+    }
+
+    #[test]
     fn test_latency_arithmetic_standard() {
         // 4410 frames at 44.1 kHz is exactly 100ms in the sink queue.
         // With a 100ms device buffer, total latency is 200ms.

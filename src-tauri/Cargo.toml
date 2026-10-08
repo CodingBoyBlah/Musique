@@ -104,6 +104,10 @@ libc = "0.2"
 # a generic Web API client_id, taking the app down on launch (warmupPlayback).
 # Same 0.8.0 source, one function patched. See vendor/librespot-core/src/session.rs.
 [patch.crates-io]
+# CPAL 0.16.0's CoreAudio listener erases the callback's Send bound, making
+# macOS output streams fail the Send requirement for Tauri state and sinks.
+# Same source with only the listener callback bounds corrected.
+cpal = { path = "vendor/cpal" }
 librespot-core = { path = "vendor/librespot-core" }
 # Vendored librespot-audio with the CDN fetch loop patched to fall through to the
 # next mirror on a non-206 response. Upstream 0.8.0 broke on the FIRST CDN URL
