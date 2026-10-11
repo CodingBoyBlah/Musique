@@ -32,13 +32,15 @@ function clearLocalAccountState() {
   }
 }
 
-export async function loginSession(qc: QueryClient) {
+export async function loginSession(qc: QueryClient, openBrowser = true) {
   const generation = useAuthStore.getState().begin("login");
   if (generation === null) return;
   const previousId = useAuthStore.getState().userId;
   try {
     await qc.cancelQueries();
-    const data = await startLogin();
+    const data = await startLogin((links) => {
+      useAuthStore.getState().setLoginLinks(generation, links);
+    }, openBrowser);
     if (useAuthStore.getState().generation !== generation) return;
     if (previousId !== data.user_id) clearLocalAccountState();
     qc.clear();

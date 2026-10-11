@@ -81,6 +81,33 @@ it("ignores a login response arriving after logout", async () => {
   expect(syncLibrary).not.toHaveBeenCalled();
 });
 
+it("publishes manual login links and discards callbacks from a signed-out session", async () => {
+  const pending = deferred<AuthStatus>();
+  vi.mocked(startLogin).mockReturnValue(pending.promise);
+  vi.mocked(logout).mockResolvedValue(undefined);
+  const task = loginSession(qc, false);
+  await vi.waitFor(() => expect(startLogin).toHaveBeenCalledOnce());
+  const [onLinks, openBrowser] = vi.mocked(startLogin).mock.calls[0];
+  expect(openBrowser).toBe(false);
+  const links = { ncspot: "https://accounts.spotify.com/authorize?state=first", desktop: "https://accounts.spotify.com/authorize?state=second" };
+  onLinks(links);
+  expect(useAuthStore.getState().loginLinks).toEqual(links);
+  await logoutSession(qc);
+  onLinks(links);
+  expect(useAuthStore.getState().loginLinks).toBeNull();
+  pending.resolve(ACCOUNT);
+  await task;
+});
+
+it("clears expired login links so a retry cannot reuse them", async () => {
+  vi.mocked(startLogin).mockImplementation(async (onLinks) => {
+    onLinks({ ncspot: "expired-first", desktop: "expired-second" });
+    throw new Error("Sign-in timed out");
+  });
+  await expect(loginSession(qc)).rejects.toThrow("Sign-in timed out");
+  expect(useAuthStore.getState()).toMatchObject({ phase: "idle", loginLinks: null });
+});
+
 it("guards operations across different hook callers and rejects stale profile requests", async () => {
   const pending = deferred<void>();
   vi.mocked(logout).mockReturnValue(pending.promise);

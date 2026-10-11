@@ -47,7 +47,7 @@ export function useAuth() {
   });
 
   const { mutate: login } = useMutation({
-    mutationFn: () => loginSession(qc),
+    mutationFn: (openBrowser: boolean) => loginSession(qc, openBrowser),
     onError: (err) => { console.error("[auth] login failed:", err); toast.error(errMsg(err)); },
   });
   const { mutate: logout } = useMutation({
@@ -59,7 +59,7 @@ export function useAuth() {
   });
   return {
     ...store, isLoading,
-    login: () => login(), logout: () => logout(),
+    login: (openBrowser = true) => login(openBrowser), logout: () => logout(),
     loggingIn: store.phase === "login", loggingOut: store.phase === "logout",
   };
 }

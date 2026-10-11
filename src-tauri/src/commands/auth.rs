@@ -154,8 +154,18 @@ fn open_browser(app: &AppHandle, auth_url: &str) -> Result<(), AppError> {
     }
 }
 
+#[derive(Clone, serde::Serialize)]
+pub struct LoginLinks {
+    ncspot: String,
+    desktop: String,
+}
+
 #[tauri::command]
-pub async fn start_login(app: AppHandle) -> Result<auth::AuthStatus, AppError> {
+pub async fn start_login(
+    app: AppHandle,
+    on_links: tauri::ipc::Channel<LoginLinks>,
+    open_browser: bool,
+) -> Result<auth::AuthStatus, AppError> {
     let (db, auth) = {
         let s = app.state::<AppState>();
         (s.db.clone(), s.auth.clone())
@@ -180,13 +190,36 @@ pub async fn start_login(app: AppHandle) -> Result<auth::AuthStatus, AppError> {
     // Bind the redirect port BEFORE opening the browser: if the port is taken
     // (another copy of the app, an abandoned sign-in) the user finds out now
     // instead of after filling in their password.
-    let listener = http::open_redirect(port).await?;
+    let (listener, playback_listener) = http::open_login_redirects().await?;
+    let playback_verifier = pkce::generate_verifier();
+    let playback_state = gen_state();
+    let playback_redirect = format!("http://127.0.0.1:{}/login", http::PLAYBACK_PORT);
+    let playback_url = build_auth_url(
+        auth::PLAYBACK_CLIENT_ID,
+        &pkce::derive_challenge(&playback_verifier),
+        &playback_state,
+        &playback_redirect,
+        auth::PLAYBACK_SCOPES,
+        true,
+    );
 
     let auth_url = build_auth_url(&client_id, &challenge, &state_token, &redirect, SCOPES, true);
     eprintln!("[auth] starting login with client_id={client_id} port={port}");
-    open_browser(&app, &auth_url)?;
+    on_links.send(LoginLinks { ncspot: auth_url.clone(), desktop: playback_url.clone() })
+        .map_err(|e| AppError::Auth(format!("Could not show sign-in links: {e}")))?;
+    if open_browser {
+        // Keep the callbacks alive if a browser launcher fails. The user can
+        // still copy these exact links or open each tab from the app.
+        for url in [&auth_url, &playback_url] {
+            if let Err(e) = self::open_browser(&app, url) {
+                eprintln!("[auth] browser launch failed; manual links remain available: {e}");
+            }
+        }
+    }
 
-    let code = listener.wait(&state_token).await?;
+    let (code, playback_code) = tokio::try_join!(
+        listener.wait(&state_token), playback_listener.wait(&playback_state)
+    )?;
     let _cleanup = auth::account_cleanup().await;
     auth::require_epoch(epoch)?;
     let mut status = auth::complete_login(&client_id, &code, &verifier, &redirect, &db, &auth, epoch).await?;
@@ -200,14 +233,13 @@ pub async fn start_login(app: AppHandle) -> Result<auth::AuthStatus, AppError> {
         eprintln!("[auth] account changed ({previous_user:?} -> {:?}); clearing previous account data", status.user_id);
         purge_account_data(&app, Purge::PreviousAccount).await;
     }
+    complete_playback_grant(&db, signed_in_epoch, &playback_code, &playback_verifier, &playback_redirect).await?;
 
     // A rate-limited Web API must not leave a fresh login without an identity
     // until the user happens to play something. Complete the playback grant
     // as part of this login, then recover details through its live session.
     if status.user_id.is_none() || status.product.is_none() {
-        if let Err(e) = authorize_playback_token(&app).await {
-            eprintln!("[auth] account recovery authorization: {e}");
-        } else if let Err(e) = crate::commands::playback::warm_session(&app).await {
+        if let Err(e) = crate::commands::playback::warm_session(&app).await {
             eprintln!("[auth] account recovery session: {e}");
         } else {
             if let Err(e) = get_profile(app.clone()).await {
@@ -257,12 +289,22 @@ pub async fn authorize_playback_token(app: &AppHandle) -> Result<String, AppErro
     open_browser(app, &auth_url)?;
 
     let code = listener.wait(&state_token).await?;
+    complete_playback_grant(&db, epoch, &code, &verifier, &redirect).await
+}
+
+async fn complete_playback_grant(
+    db: &sqlx::SqlitePool,
+    epoch: u64,
+    code: &str,
+    verifier: &str,
+    redirect: &str,
+) -> Result<String, AppError> {
     let resp = auth::call_token_endpoint(&[
         ("grant_type", "authorization_code"),
-        ("code", &code),
-        ("redirect_uri", &redirect),
-        ("client_id", client_id),
-        ("code_verifier", &verifier),
+        ("code", code),
+        ("redirect_uri", redirect),
+        ("client_id", auth::PLAYBACK_CLIENT_ID),
+        ("code_verifier", verifier),
     ])
     .await?;
 
@@ -270,13 +312,13 @@ pub async fn authorize_playback_token(app: &AppHandle) -> Result<String, AppErro
     let _commit = auth::session_commit().await;
     auth::require_epoch(epoch)?;
     if let Some(profile) = playback_profile {
-        let expected = auth::get_setting_value(&db, "spotify_user_id").await?;
+        let expected = auth::get_setting_value(db, "spotify_user_id").await?;
         if expected.as_deref().is_some_and(|id| !id.is_empty() && id != profile.id) {
             return Err(AppError::Auth("Playback was authorized for a different Spotify account. Use the account signed in to Musique.".into()));
         }
-        auth::profile::cache_profile(&db, &profile).await?;
+        auth::profile::cache_profile(db, &profile).await?;
     }
-    auth::upsert_setting(&db, "spotify_playback_token", &resp.access_token).await?;
+    auth::upsert_setting(db, "spotify_playback_token", &resp.access_token).await?;
     eprintln!("[playback auth] playback token acquired successfully");
     Ok(resp.access_token)
 }

@@ -24,7 +24,7 @@ const SUPERSEDE_POLL: Duration = Duration::from_millis(200);
 // listener bound for the whole login timeout, so *every* retry failed until it
 // expired.
 //
-// So: one browser tab at a time (`flow_lock`), and a newer attempt at the SAME
+// So: one interactive attempt at a time (`flow_lock`), and a newer attempt at the SAME
 // flow always wins (the per-port generation). A flow that is waiting for its
 // redirect notices within SUPERSEDE_POLL that its generation is stale, drops
 // its listener and releases the lock for the newcomer.
@@ -64,7 +64,7 @@ pub struct Redirect {
     listener:   TcpListener,
     port:       u16,
     generation: u64,
-    _guard:     OwnedMutexGuard<()>,
+    _guard:     Arc<OwnedMutexGuard<()>>,
 }
 
 /// Claim the interactive-auth slot and bind the redirect port.
@@ -88,7 +88,26 @@ pub async fn open_redirect(port: u16) -> Result<Redirect, AppError> {
     }
 
     let listener = bind_redirect(port).await?;
-    Ok(Redirect { listener, port, generation, _guard: guard })
+    Ok(Redirect { listener, port, generation, _guard: Arc::new(guard) })
+}
+
+/// Keep both onboarding callbacks ready, sharing the interactive-auth slot.
+pub async fn open_login_redirects() -> Result<(Redirect, Redirect), AppError> {
+    let login = LOGIN_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let playback = PLAYBACK_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let guard = tokio::time::timeout(Duration::from_secs(10), flow_lock().clone().lock_owned())
+        .await
+        .map_err(|_| AppError::Auth("Another Spotify sign-in is still open. Try again in a moment.".into()))?;
+    if LOGIN_GEN.load(Ordering::SeqCst) != login || PLAYBACK_GEN.load(Ordering::SeqCst) != playback {
+        return Err(AppError::Auth("Sign-in restarted".into()));
+    }
+    let login_listener = bind_redirect(CALLBACK_PORT).await?;
+    let playback_listener = bind_redirect(PLAYBACK_PORT).await?;
+    let guard = Arc::new(guard);
+    Ok((
+        Redirect { listener: login_listener, port: CALLBACK_PORT, generation: login, _guard: guard.clone() },
+        Redirect { listener: playback_listener, port: PLAYBACK_PORT, generation: playback, _guard: guard },
+    ))
 }
 
 /// Bind 127.0.0.1:port, retrying briefly while the OS releases a just-closed
@@ -264,5 +283,46 @@ fn classify_request_line(line: &str, expected_state: &str) -> Callback {
     match code {
         Some(code) => Callback::Code(code),
         None => Callback::Refused("Spotify did not return an authorization code".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpStream;
+
+    async fn send_callback(port: u16, state: &str, code: &str) {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        stream.write_all(format!("GET /login?state={state}&code={code} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes()).await.unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+    }
+
+    #[tokio::test]
+    async fn onboarding_callbacks_accept_either_order_and_release_on_cancel() {
+        for desktop_first in [true, false] {
+            let (login, desktop) = open_login_redirects().await.unwrap();
+            let callbacks = async {
+                if desktop_first {
+                    send_callback(PLAYBACK_PORT, "desktop-state", "desktop-code").await;
+                    send_callback(CALLBACK_PORT, "login-state", "login-code").await;
+                } else {
+                    send_callback(CALLBACK_PORT, "login-state", "login-code").await;
+                    send_callback(PLAYBACK_PORT, "desktop-state", "desktop-code").await;
+                }
+            };
+            let (codes, _) = tokio::join!(async {
+                tokio::try_join!(login.wait("login-state"), desktop.wait("desktop-state"))
+            }, callbacks);
+            assert_eq!(codes.unwrap(), ("login-code".into(), "desktop-code".into()));
+        }
+        let (login, desktop) = open_login_redirects().await.unwrap();
+        cancel_pending_flows();
+        let (first, second) = tokio::join!(login.wait("a"), desktop.wait("b"));
+        assert!(first.is_err() && second.is_err());
+        let next = open_login_redirects().await.unwrap();
+        drop(next);
     }
 }
