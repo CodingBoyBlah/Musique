@@ -21,7 +21,7 @@ pub struct Track {
     pub isrc:         Option<String>,
 }
 
-pub async fn upsert(pool: &SqlitePool, t: &Track) -> Result<(), AppError> {
+pub async fn upsert<'e>(pool: impl sqlx::SqliteExecutor<'e>, t: &Track) -> Result<(), AppError> {
     sqlx::query(
         "INSERT INTO tracks
              (id, name, album_id, duration_ms, track_number, disc_number,

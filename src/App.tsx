@@ -403,20 +403,14 @@ Home recs so they're cached before the user gets there
     handlePlayerEvent({ type: "playing", track_id: nowPlayingId });
   }, [nowPlayingId, handlePlayerEvent]);
 
-  // library sync event
+  // library sync events. `library:updated` fires as each part of a sync lands
+  // (liked, playlists, ...), so a first sync fills the library in piece by
+  // piece instead of showing nothing until the slowest endpoint is done
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let gone = false;
-    listen("library:synced", () => invalidateLibrary())
-      .then((u) => {
-        if (gone) u();
-        else unlisten = u;
-      })
-      .catch(() => {});
-    return () => {
-      gone = true;
-      unlisten?.();
-    };
+    return cleanupAsyncListeners([
+      listen("library:synced", () => invalidateLibrary()),
+      listen("library:updated", () => invalidateLibrary()),
+    ]);
   }, [invalidateLibrary]);
 
   // os media control events (tray menu for now)

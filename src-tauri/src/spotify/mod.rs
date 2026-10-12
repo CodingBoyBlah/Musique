@@ -2,13 +2,60 @@ pub mod types;
 
 use crate::errors::AppError;
 
-static API_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
+use futures_util::{StreamExt, TryStreamExt};
+use tokio::sync::Semaphore;
+
+// Two lanes. Library sync pulls dozens of pages at once; if it shared one pool
+// of permits with the UI, a search or an album open typed during a first sync
+// queued behind every one of those pages. Background work runs inside
+// `background(..)` and only ever takes the background lane.
+static API_SEMAPHORE: Semaphore = Semaphore::const_new(8);
+static BG_SEMAPHORE:  Semaphore = Semaphore::const_new(6);
+
+tokio::task_local! {
+    static BACKGROUND: ();
+}
+
+/// Run `fut` with every Spotify request inside it on the background lane.
+pub(crate) async fn background<F: std::future::Future>(fut: F) -> F::Output {
+    BACKGROUND.scope((), fut).await
+}
+
+fn lane() -> &'static Semaphore {
+    if BACKGROUND.try_with(|_| ()).is_ok() { &BG_SEMAPHORE } else { &API_SEMAPHORE }
+}
+
+/// Every page of an offset-paginated endpoint, in order. The first page comes
+/// alone to learn `total`; the rest go out together instead of one round trip
+/// after another (a 3000-song library is 60 pages). The lane semaphore still
+/// caps how many are actually in flight.
+pub(crate) async fn get_all_pages<P: serde::de::DeserializeOwned>(
+    token:   &str,
+    limit:   i64,
+    url_for: impl Fn(i64) -> String,
+    total:   impl Fn(&P) -> i64,
+) -> Result<Vec<P>, AppError> {
+    let first: P = spotify_get(token, &url_for(0)).await?;
+    let total = total(&first);
+    let rest: Vec<P> = futures_util::stream::iter((limit..total).step_by(limit.max(1) as usize))
+        .map(|offset| {
+            let url = url_for(offset);
+            async move { spotify_get::<P>(token, &url).await }
+        })
+        .buffered(8)
+        .try_collect()
+        .await?;
+    let mut pages = Vec::with_capacity(rest.len() + 1);
+    pages.push(first);
+    pages.extend(rest);
+    Ok(pages)
+}
 
 async fn send_request(builder: reqwest::RequestBuilder) -> Result<reqwest::Response, AppError> {
     let mut attempt = 0;
     loop {
         attempt += 1;
-        let _permit = API_SEMAPHORE
+        let _permit = lane()
             .acquire()
             .await
             .map_err(|e| AppError::Network(e.to_string()))?;

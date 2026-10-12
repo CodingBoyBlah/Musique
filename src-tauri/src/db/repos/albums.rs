@@ -15,7 +15,7 @@ pub struct Album {
     pub updated_at:   i64,
 }
 
-pub async fn upsert(pool: &SqlitePool, a: &Album) -> Result<(), AppError> {
+pub async fn upsert<'e>(pool: impl sqlx::SqliteExecutor<'e>, a: &Album) -> Result<(), AppError> {
     sqlx::query(
         "INSERT INTO albums
              (id, name, album_type, image_url, release_date, total_tracks, genres, popularity, updated_at)
@@ -67,8 +67,8 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> Result<bool, AppError> {
 }
 
 /// hook an artist up to an album. just ignores dupes quietly
-pub async fn add_artist(
-    pool:      &SqlitePool,
+pub async fn add_artist<'e>(
+    pool:      impl sqlx::SqliteExecutor<'e>,
     album_id:  &str,
     artist_id: &str,
     position:  i64,

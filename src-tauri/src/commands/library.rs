@@ -37,7 +37,7 @@ pub async fn sync_library(app: AppHandle) -> Result<SyncResult, AppError> {
     // held for the whole sync so a sign-out waits for it instead of purging
     // underneath it - see `AppState::sync_gate`
     let _syncing = gate.read().await;
-    sync_all(&pool, &token).await
+    sync_all(&pool, &token, &crate::library::emit_steps(&app)).await
 }
 
 fn make_placeholders(count: usize) -> String {

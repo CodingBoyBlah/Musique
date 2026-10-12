@@ -20,10 +20,16 @@ static COOKIE_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 fn base() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
-        // keep connections hot between requests - this is the whole point
-        .pool_idle_timeout(Duration::from_secs(90))
+        // keep connections hot between requests - this is the whole point.
+        // a 90s idle timeout meant the first search after a short pause paid
+        // the full DNS+TCP+TLS setup again; h2 pings keep the connection open
+        // (and the server from dropping it) through idle stretches
+        .pool_idle_timeout(Duration::from_secs(600))
         .pool_max_idle_per_host(8)
         .tcp_keepalive(Duration::from_secs(60))
+        .http2_keep_alive_interval(Duration::from_secs(30))
+        .http2_keep_alive_timeout(Duration::from_secs(10))
+        .http2_keep_alive_while_idle(true)
         // Nagle off: our requests are small and latency-sensitive
         .tcp_nodelay(true)
         // Spotify JSON pages (liked songs, playlists, search) compress ~5-8x.

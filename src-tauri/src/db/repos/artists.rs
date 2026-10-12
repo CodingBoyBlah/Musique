@@ -12,7 +12,7 @@ pub struct Artist {
     pub updated_at: i64,
 }
 
-pub async fn upsert(pool: &SqlitePool, a: &Artist) -> Result<(), AppError> {
+pub async fn upsert<'e>(pool: impl sqlx::SqliteExecutor<'e>, a: &Artist) -> Result<(), AppError> {
     sqlx::query(
         "INSERT INTO artists (id, name, image_url, genres, popularity, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)

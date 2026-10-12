@@ -266,7 +266,10 @@ async fn cache_track(
     pool: &sqlx::SqlitePool,
     track: &crate::spotify::types::SpTrack,
 ) -> Result<(), AppError> {
-    crate::library::upsert_track_with_deps(pool, track).await
+    let mut tx = pool.begin().await?;
+    crate::library::upsert_track_with_deps(&mut tx, track).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Latest YouTube transport request. `yt_play` downloads before it takes the

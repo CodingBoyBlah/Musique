@@ -4,8 +4,9 @@ use crate::{
     spotify::{self, types::*},
 };
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 use futures_util::{FutureExt, StreamExt};
+use std::collections::HashSet;
 
 const BASE: &str = "https://api.spotify.com/v1";
 
@@ -61,9 +62,20 @@ pub(crate) fn parse_iso8601(s: &str) -> i64 {
 }
 
 // ─── db upsert helpers ────────────────────────────────────────────────────────
+//
+// Everything here writes through one connection so a sync step can put its
+// whole batch in a single transaction. Autocommitting each row (what this used
+// to do) meant a WAL commit per statement - ~6 per liked song - and held the
+// sqlite write lock in thousands of tiny slices that every other writer,
+// search included, had to queue between.
 
-async fn upsert_artist(pool: &SqlitePool, a: &SpArtist) -> Result<(), AppError> {
-    artists::upsert(pool, &artists::Artist {
+// One sync step writes at a time. The steps fetch concurrently, but sqlite
+// only has one writer, and two long transactions racing for it would just sit
+// in busy_timeout (or fail past it).
+static SYNC_WRITE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn upsert_artist(conn: &mut SqliteConnection, a: &SpArtist) -> Result<(), AppError> {
+    artists::upsert(&mut *conn, &artists::Artist {
         id:         a.id.clone(),
         name:       a.name.clone(),
         image_url:  a.images.as_ref().and_then(|v| v.first()).map(|i| i.url.clone()),
@@ -76,70 +88,83 @@ async fn upsert_artist(pool: &SqlitePool, a: &SpArtist) -> Result<(), AppError> 
     .await
 }
 
-pub(crate) async fn upsert_track_with_deps(pool: &SqlitePool, t: &SpTrack) -> Result<(), AppError> {
-    // upsert the album if theres one
-    if let Some(al) = &t.album {
-        albums::upsert(pool, &albums::Album {
-            id:           al.id.clone(),
-            name:         al.name.clone(),
-            album_type:   al.album_type.clone(),
-            image_url:    al.images.as_ref().and_then(|v| v.first()).map(|i| i.url.clone()),
-            release_date: al.release_date.clone(),
-            total_tracks: 0,
-            genres:       None,
-            popularity:   None,
-            updated_at:   0,
-        })
-        .await?;
-    }
-
-    // upsert every artist
-    for a in &t.artists {
-        let _ = artists::upsert(pool, &artists::Artist {
-            id:         a.id.clone(),
-            name:       a.name.clone(),
-            image_url:  None,
-            genres:     None,
-            popularity: None,
-            updated_at: 0,
-        })
-        .await;
-    }
-
-    // upsert the track itself
-    tracks::upsert(pool, &tracks::Track {
-        id:           t.id.clone(),
-        name:         t.name.clone(),
-        album_id:     t.album.as_ref().map(|a| a.id.clone()),
-        duration_ms:  t.duration_ms,
-        track_number: t.track_number.unwrap_or(0),
-        disc_number:  t.disc_number.unwrap_or(1),
-        explicit:     t.explicit,
-        popularity:   t.popularity,
-        preview_url:  t.preview_url.clone(),
-        is_local:     t.is_local.unwrap_or(false),
-        updated_at:   0,
-        isrc:         t.external_ids.as_ref().and_then(|e| e.isrc.clone()),
-    })
-    .await?;
-
-    // upsert the track_artists join rows
-    for (i, a) in t.artists.iter().enumerate() {
-        let _ = sqlx::query(
-            "INSERT OR IGNORE INTO track_artists (track_id, artist_id, position) VALUES (?, ?, ?)",
-        )
-        .bind(&t.id)
-        .bind(&a.id)
-        .bind(i as i64)
-        .execute(pool)
-        .await;
-    }
-
-    Ok(())
+/// Writes tracks with their album/artist rows. A library repeats the same
+/// albums and artists constantly, so each one is written once per batch.
+#[derive(Default)]
+pub(crate) struct DepWriter {
+    albums:  HashSet<String>,
+    artists: HashSet<String>,
 }
 
-async fn upsert_album_simple(pool: &SqlitePool, al: &SpAlbumSimple) -> Result<(), AppError> {
-    albums::upsert(pool, &albums::Album {
+impl DepWriter {
+    pub(crate) async fn track(&mut self, conn: &mut SqliteConnection, t: &SpTrack) -> Result<(), AppError> {
+        if let Some(al) = &t.album {
+            if self.albums.insert(al.id.clone()) {
+                albums::upsert(&mut *conn, &albums::Album {
+                    id:           al.id.clone(),
+                    name:         al.name.clone(),
+                    album_type:   al.album_type.clone(),
+                    image_url:    al.images.as_ref().and_then(|v| v.first()).map(|i| i.url.clone()),
+                    release_date: al.release_date.clone(),
+                    total_tracks: 0,
+                    genres:       None,
+                    popularity:   None,
+                    updated_at:   0,
+                })
+                .await?;
+            }
+        }
+
+        for a in &t.artists {
+            if !self.artists.insert(a.id.clone()) { continue; }
+            let _ = artists::upsert(&mut *conn, &artists::Artist {
+                id:         a.id.clone(),
+                name:       a.name.clone(),
+                image_url:  None,
+                genres:     None,
+                popularity: None,
+                updated_at: 0,
+            })
+            .await;
+        }
+
+        tracks::upsert(&mut *conn, &tracks::Track {
+            id:           t.id.clone(),
+            name:         t.name.clone(),
+            album_id:     t.album.as_ref().map(|a| a.id.clone()),
+            duration_ms:  t.duration_ms,
+            track_number: t.track_number.unwrap_or(0),
+            disc_number:  t.disc_number.unwrap_or(1),
+            explicit:     t.explicit,
+            popularity:   t.popularity,
+            preview_url:  t.preview_url.clone(),
+            is_local:     t.is_local.unwrap_or(false),
+            updated_at:   0,
+            isrc:         t.external_ids.as_ref().and_then(|e| e.isrc.clone()),
+        })
+        .await?;
+
+        for (i, a) in t.artists.iter().enumerate() {
+            let _ = sqlx::query(
+                "INSERT OR IGNORE INTO track_artists (track_id, artist_id, position) VALUES (?, ?, ?)",
+            )
+            .bind(&t.id)
+            .bind(&a.id)
+            .bind(i as i64)
+            .execute(&mut *conn)
+            .await;
+        }
+
+        Ok(())
+    }
+}
+
+pub(crate) async fn upsert_track_with_deps(conn: &mut SqliteConnection, t: &SpTrack) -> Result<(), AppError> {
+    DepWriter::default().track(conn, t).await
+}
+
+async fn upsert_album_simple(conn: &mut SqliteConnection, al: &SpAlbumSimple) -> Result<(), AppError> {
+    albums::upsert(&mut *conn, &albums::Album {
         id:           al.id.clone(),
         name:         al.name.clone(),
         album_type:   al.album_type.clone(),
@@ -151,54 +176,49 @@ async fn upsert_album_simple(pool: &SqlitePool, al: &SpAlbumSimple) -> Result<()
         updated_at:   0,
     })
     .await?;
+    album_artists(conn, &al.id, al.artists.as_deref().unwrap_or(&[])).await;
+    Ok(())
+}
 
-    for (i, a) in al.artists.as_ref().map(|v| v.as_slice()).unwrap_or(&[]).iter().enumerate() {
+async fn album_artists(conn: &mut SqliteConnection, album_id: &str, list: &[SpArtistSimple]) {
+    for (i, a) in list.iter().enumerate() {
         let _ = sqlx::query("INSERT OR IGNORE INTO artists (id, name, updated_at) VALUES (?, ?, 0)")
             .bind(&a.id)
             .bind(&a.name)
-            .execute(pool)
+            .execute(&mut *conn)
             .await;
-        let _ = albums::add_artist(pool, &al.id, &a.id, i as i64).await;
+        let _ = albums::add_artist(&mut *conn, album_id, &a.id, i as i64).await;
     }
-    Ok(())
 }
 
 // ─── sync liked songs ─────────────────────────────────────────────────────────
 
 pub async fn sync_liked_songs(pool: &SqlitePool, token: &str) -> Result<usize, AppError> {
-    let mut liked: Vec<(String, i64)> = Vec::new();
-    let mut offset = 0i64;
-    let limit      = 50i64;
-
-    loop {
-        let url = format!("{BASE}/me/tracks?limit={limit}&offset={offset}");
-        let page: SpSavedTrackPage = spotify::spotify_get(token, &url).await?;
-
-        for item in &page.items {
-            if let Some(track) = &item.track {
-                if track.is_local.unwrap_or(false) { continue; }
-                upsert_track_with_deps(pool, track).await?;
-                liked.push((track.id.clone(), parse_iso8601(&item.added_at)));
-            }
-        }
-
-        if page.next.is_none() || (page.items.len() as i64) < limit { break; }
-        offset += limit;
-    }
-
-    let count = liked.len();
+    const LIMIT: i64 = 50;
+    let pages: Vec<SpSavedTrackPage> = spotify::get_all_pages(
+        token,
+        LIMIT,
+        |offset| format!("{BASE}/me/tracks?limit={LIMIT}&offset={offset}"),
+        |p: &SpSavedTrackPage| p.total,
+    )
+    .await?;
 
     // wipe and replace the whole thing in a txn so unlikes actually show up
+    let _write = SYNC_WRITE.lock().await;
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM saved_tracks").execute(&mut *tx).await?;
-    for (track_id, added_at) in &liked {
-        sqlx::query(
-            "INSERT OR IGNORE INTO saved_tracks (track_id, added_at) VALUES (?, ?)",
-        )
-        .bind(track_id)
-        .bind(added_at)
-        .execute(&mut *tx)
-        .await?;
+    let mut deps = DepWriter::default();
+    let mut count = 0usize;
+    for item in pages.iter().flat_map(|p| &p.items) {
+        let Some(track) = &item.track else { continue };
+        if track.is_local.unwrap_or(false) { continue; }
+        deps.track(&mut tx, track).await?;
+        sqlx::query("INSERT OR IGNORE INTO saved_tracks (track_id, added_at) VALUES (?, ?)")
+            .bind(&track.id)
+            .bind(parse_iso8601(&item.added_at))
+            .execute(&mut *tx)
+            .await?;
+        count += 1;
     }
     tx.commit().await?;
 
@@ -208,104 +228,90 @@ pub async fn sync_liked_songs(pool: &SqlitePool, token: &str) -> Result<usize, A
 // ─── sync playlists ───────────────────────────────────────────────────────────
 
 pub async fn sync_playlists(pool: &SqlitePool, token: &str) -> Result<usize, AppError> {
-    let mut synced_ids: Vec<String> = Vec::new();
-    let mut offset = 0i64;
-    let limit      = 50i64;
+    const LIMIT: i64 = 50;
+    let pages: Vec<SpUserPlaylistPage> = spotify::get_all_pages(
+        token,
+        LIMIT,
+        |offset| format!("{BASE}/me/playlists?limit={LIMIT}&offset={offset}"),
+        |p: &SpUserPlaylistPage| p.total,
+    )
+    .await?;
 
-    loop {
-        let url = format!("{BASE}/me/playlists?limit={limit}&offset={offset}");
-        let page: SpUserPlaylistPage = spotify::spotify_get(token, &url).await?;
-
-        for item in &page.items {
-            let owner_id = item.owner.as_ref().and_then(|o| o.display_name.as_deref()).map(str::to_string);
-            sqlx::query(
-                "INSERT INTO playlists
-                     (id, name, description, owner_id, image_url, total_tracks,
-                      is_public, is_local, snapshot_id, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
-                 ON CONFLICT(id) DO UPDATE SET
-                     name         = excluded.name,
-                     description  = excluded.description,
-                     owner_id     = excluded.owner_id,
-                     image_url    = excluded.image_url,
-                     total_tracks = excluded.total_tracks,
-                     snapshot_id  = excluded.snapshot_id,
-                     updated_at   = excluded.updated_at",
-            )
-            .bind(&item.id)
-            .bind(&item.name)
-            .bind(&item.description)
-            .bind(&owner_id)
-            .bind(item.images.as_ref().and_then(|v| v.first()).map(|i| i.url.as_str()))
-            .bind(item.tracks.as_ref().map(|t| t.total).unwrap_or(0))
-            .bind(&item.snapshot_id)
-            .bind(now_ms())
-            .execute(pool)
-            .await?;
-
-            synced_ids.push(item.id.clone());
-        }
-
-        if page.next.is_none() || (page.items.len() as i64) < limit { break; }
-        offset += limit;
+    let _write = SYNC_WRITE.lock().await;
+    let mut tx = pool.begin().await?;
+    let now = now_ms();
+    let mut count = 0usize;
+    for item in pages.iter().flat_map(|p| &p.items) {
+        let owner_id = item.owner.as_ref().and_then(|o| o.display_name.as_deref()).map(str::to_string);
+        sqlx::query(
+            "INSERT INTO playlists
+                 (id, name, description, owner_id, image_url, total_tracks,
+                  is_public, is_local, snapshot_id, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                 name         = excluded.name,
+                 description  = excluded.description,
+                 owner_id     = excluded.owner_id,
+                 image_url    = excluded.image_url,
+                 total_tracks = excluded.total_tracks,
+                 snapshot_id  = excluded.snapshot_id,
+                 updated_at   = excluded.updated_at",
+        )
+        .bind(&item.id)
+        .bind(&item.name)
+        .bind(&item.description)
+        .bind(&owner_id)
+        .bind(item.images.as_ref().and_then(|v| v.first()).map(|i| i.url.as_str()))
+        .bind(item.tracks.as_ref().map(|t| t.total).unwrap_or(0))
+        .bind(&item.snapshot_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        count += 1;
     }
+    tx.commit().await?;
 
-    Ok(synced_ids.len())
+    Ok(count)
 }
 
 // ─── sync saved albums ────────────────────────────────────────────────────────
 
 pub async fn sync_saved_albums(pool: &SqlitePool, token: &str) -> Result<usize, AppError> {
-    let mut saved: Vec<(String, i64)> = Vec::new();
-    let mut offset = 0i64;
-    let limit      = 50i64;
+    const LIMIT: i64 = 50;
+    let pages: Vec<SpSavedAlbumPage> = spotify::get_all_pages(
+        token,
+        LIMIT,
+        |offset| format!("{BASE}/me/albums?limit={LIMIT}&offset={offset}"),
+        |p: &SpSavedAlbumPage| p.total,
+    )
+    .await?;
 
-    loop {
-        let url = format!("{BASE}/me/albums?limit={limit}&offset={offset}");
-        let page: SpSavedAlbumPage = spotify::spotify_get(token, &url).await?;
-
-        let page_len = page.items.len() as i64;
-        for item in page.items.iter().flatten() {
-            let al = &item.album;
-            albums::upsert(pool, &albums::Album {
-                id:           al.id.clone(),
-                name:         al.name.clone(),
-                album_type:   al.album_type.clone(),
-                image_url:    al.images.as_ref().and_then(|v| v.first()).map(|i| i.url.clone()),
-                release_date: al.release_date.clone(),
-                total_tracks: al.total_tracks.unwrap_or(0),
-                genres:       None,
-                popularity:   al.popularity,
-                updated_at:   0,
-            })
-            .await?;
-
-            for (i, a) in al.artists.as_ref().map(|v| v.as_slice()).unwrap_or(&[]).iter().enumerate() {
-                let _ = sqlx::query("INSERT OR IGNORE INTO artists (id, name, updated_at) VALUES (?, ?, 0)")
-                    .bind(&a.id)
-                    .bind(&a.name)
-                    .execute(pool)
-                    .await;
-                let _ = albums::add_artist(pool, &al.id, &a.id, i as i64).await;
-            }
-
-            saved.push((al.id.clone(), parse_iso8601(&item.added_at)));
-        }
-
-        if page.next.is_none() || page_len < limit { break; }
-        offset += limit;
-    }
-
-    let count = saved.len();
-
+    let _write = SYNC_WRITE.lock().await;
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM saved_albums").execute(&mut *tx).await?;
-    for (album_id, added_at) in &saved {
+    let mut count = 0usize;
+    for item in pages.iter().flat_map(|p| p.items.iter().flatten()) {
+        let al = &item.album;
+        albums::upsert(&mut *tx, &albums::Album {
+            id:           al.id.clone(),
+            name:         al.name.clone(),
+            album_type:   al.album_type.clone(),
+            image_url:    al.images.as_ref().and_then(|v| v.first()).map(|i| i.url.clone()),
+            release_date: al.release_date.clone(),
+            total_tracks: al.total_tracks.unwrap_or(0),
+            genres:       None,
+            popularity:   al.popularity,
+            updated_at:   0,
+        })
+        .await?;
+        album_artists(&mut tx, &al.id, al.artists.as_deref().unwrap_or(&[])).await;
+
         sqlx::query("INSERT OR IGNORE INTO saved_albums (album_id, added_at) VALUES (?, ?)")
-            .bind(album_id)
-            .bind(added_at)
+            .bind(&al.id)
+            .bind(parse_iso8601(&item.added_at))
             .execute(&mut *tx)
             .await?;
+        count += 1;
     }
     tx.commit().await?;
 
@@ -315,7 +321,8 @@ pub async fn sync_saved_albums(pool: &SqlitePool, token: &str) -> Result<usize, 
 // ─── sync followed artists ────────────────────────────────────────────────────
 
 pub async fn sync_followed_artists(pool: &SqlitePool, token: &str) -> Result<usize, AppError> {
-    let mut followed: Vec<String> = Vec::new();
+    // cursor paging, so this one has to walk page by page
+    let mut followed: Vec<SpArtist> = Vec::new();
     let mut cursor: Option<String> = None;
     let limit = 50;
 
@@ -327,33 +334,29 @@ pub async fn sync_followed_artists(pool: &SqlitePool, token: &str) -> Result<usi
 
         let resp: SpFollowedArtistsResponse = spotify::spotify_get(token, &url).await?;
         let page = resp.artists;
-
-        for artist in &page.items {
-            upsert_artist(pool, artist).await?;
-            followed.push(artist.id.clone());
-        }
-
+        let done = page.next.is_none() || page.items.len() < limit;
         cursor = page.cursors.as_ref().and_then(|c| c.after.clone());
-        if page.next.is_none() || page.items.len() < limit { break; }
+        followed.extend(page.items);
+        if done { break; }
     }
 
-    let count = followed.len();
-
+    let _write = SYNC_WRITE.lock().await;
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM followed_artists").execute(&mut *tx).await?;
     let now = now_ms();
-    for artist_id in &followed {
+    for artist in &followed {
+        upsert_artist(&mut tx, artist).await?;
         sqlx::query(
             "INSERT OR IGNORE INTO followed_artists (artist_id, followed_at) VALUES (?, ?)",
         )
-        .bind(artist_id)
+        .bind(&artist.id)
         .bind(now)
         .execute(&mut *tx)
         .await?;
     }
     tx.commit().await?;
 
-    Ok(count)
+    Ok(followed.len())
 }
 
 // ─── sync top tracks / artists, all three time ranges ────────────────────────
@@ -367,30 +370,34 @@ pub async fn sync_top_tracks(pool: &SqlitePool, token: &str) -> Result<usize, Ap
         spotify::spotify_get::<SpPage<SpTrack>>(token, &urls[1]),
         spotify::spotify_get::<SpPage<SpTrack>>(token, &urls[2]),
     );
+    let pages = [results.0?, results.1?, results.2?];
 
+    let _write = SYNC_WRITE.lock().await;
+    let mut tx = pool.begin().await?;
+    let mut deps = DepWriter::default();
     let mut total = 0usize;
-    for (range, result) in TIME_RANGES.into_iter().zip([results.0, results.1, results.2]) {
-        let page = result?;
+    for (range, page) in TIME_RANGES.into_iter().zip(&pages) {
         // swap this ranges list all at once so removed entries actually disappear
         sqlx::query("DELETE FROM top_tracks WHERE time_range = ?")
             .bind(range)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
         for (i, t) in page.items.iter().enumerate() {
             if t.is_local.unwrap_or(false) { continue; }
-            upsert_track_with_deps(pool, t).await?;
+            deps.track(&mut tx, t).await?;
             sqlx::query(
                 "INSERT OR IGNORE INTO top_tracks (time_range, track_id, position) VALUES (?, ?, ?)",
             )
             .bind(range)
             .bind(&t.id)
             .bind(i as i64)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
             total += 1;
         }
     }
+    tx.commit().await?;
     Ok(total)
 }
 
@@ -401,28 +408,31 @@ pub async fn sync_top_artists(pool: &SqlitePool, token: &str) -> Result<usize, A
         spotify::spotify_get::<SpPage<SpArtist>>(token, &urls[1]),
         spotify::spotify_get::<SpPage<SpArtist>>(token, &urls[2]),
     );
+    let pages = [results.0?, results.1?, results.2?];
 
+    let _write = SYNC_WRITE.lock().await;
+    let mut tx = pool.begin().await?;
     let mut total = 0usize;
-    for (range, result) in TIME_RANGES.into_iter().zip([results.0, results.1, results.2]) {
-        let page = result?;
+    for (range, page) in TIME_RANGES.into_iter().zip(&pages) {
         sqlx::query("DELETE FROM top_artists WHERE time_range = ?")
             .bind(range)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
         for (i, a) in page.items.iter().enumerate() {
-            upsert_artist(pool, a).await?;
+            upsert_artist(&mut tx, a).await?;
             sqlx::query(
                 "INSERT OR IGNORE INTO top_artists (time_range, artist_id, position) VALUES (?, ?, ?)",
             )
             .bind(range)
             .bind(&a.id)
             .bind(i as i64)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
             total += 1;
         }
     }
+    tx.commit().await?;
     Ok(total)
 }
 
@@ -432,14 +442,17 @@ pub async fn sync_recently_played(pool: &SqlitePool, token: &str) -> Result<usiz
     let url = format!("{BASE}/me/player/recently-played?limit=50");
     let page: SpRecentlyPlayedPage = spotify::spotify_get(token, &url).await?;
 
+    let _write = SYNC_WRITE.lock().await;
+    let mut tx = pool.begin().await?;
+    let mut deps = DepWriter::default();
     let mut n = 0usize;
     for item in &page.items {
         if item.track.is_local.unwrap_or(false) { continue; }
-        upsert_track_with_deps(pool, &item.track).await?;
+        deps.track(&mut tx, &item.track).await?;
         sqlx::query("INSERT OR IGNORE INTO recently_played (track_id, played_at) VALUES (?, ?)")
             .bind(&item.track.id)
             .bind(parse_iso8601(&item.played_at))
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
         n += 1;
     }
@@ -449,8 +462,9 @@ pub async fn sync_recently_played(pool: &SqlitePool, token: &str) -> Result<usiz
         "DELETE FROM recently_played
          WHERE played_at NOT IN (SELECT played_at FROM recently_played ORDER BY played_at DESC LIMIT 200)",
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await;
+    tx.commit().await?;
 
     Ok(n)
 }
@@ -473,8 +487,6 @@ pub fn clear_known_artists_cache() {
 /// and "new releases" stay inside the music the user actually listens to
 /// instead of random global catalog stuff in languages they dont speak
 pub(crate) async fn gather_known_artists(pool: &SqlitePool, token: &str) -> Vec<String> {
-    use std::collections::HashSet;
-
     let current_epoch = crate::auth::auth_epoch();
     // 1. Check in-memory cache (15 min TTL, strictly isolated to the current auth epoch)
     if let Ok(guard) = KNOWN_ARTISTS_CACHE.read() {
@@ -568,7 +580,6 @@ fn release_sort_key(d: Option<&str>) -> i64 {
 
 pub async fn sync_new_releases(pool: &SqlitePool, token: &str) -> Result<usize, AppError> {
     use rand::seq::SliceRandom;
-    use std::collections::HashSet;
 
     let mut artists = gather_known_artists(pool, token).await;
 
@@ -576,15 +587,8 @@ pub async fn sync_new_releases(pool: &SqlitePool, token: &str) -> Result<usize, 
     if artists.is_empty() {
         let url = format!("{BASE}/browse/new-releases?limit=50");
         let resp: SpNewReleases = spotify::spotify_get(token, &url).await?;
-        sqlx::query("DELETE FROM new_releases").execute(pool).await?;
-        let mut n = 0usize;
-        for (i, al) in resp.albums.items.iter().enumerate() {
-            upsert_album_simple(pool, al).await?;
-            sqlx::query("INSERT OR IGNORE INTO new_releases (album_id, position) VALUES (?, ?)")
-                .bind(&al.id).bind(i as i64).execute(pool).await?;
-            n += 1;
-        }
-        return Ok(n);
+        let list: Vec<&SpAlbumSimple> = resp.albums.items.iter().collect();
+        return write_new_releases(pool, &list).await;
     }
 
     artists.shuffle(&mut rand::thread_rng());
@@ -617,58 +621,104 @@ pub async fn sync_new_releases(pool: &SqlitePool, token: &str) -> Result<usize, 
     albums.sort_by(|a, b| b.1.cmp(&a.1));
     albums.truncate(50);
 
-    for (al, _) in &albums {
-        upsert_album_simple(pool, al).await?;
-    }
+    let list: Vec<&SpAlbumSimple> = albums.iter().map(|(al, _)| al).collect();
+    write_new_releases(pool, &list).await
+}
 
+async fn write_new_releases(pool: &SqlitePool, list: &[&SpAlbumSimple]) -> Result<usize, AppError> {
+    let _write = SYNC_WRITE.lock().await;
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM new_releases").execute(&mut *tx).await?;
-    let mut n = 0usize;
-    for (i, (al, _)) in albums.iter().enumerate() {
+    for (i, al) in list.iter().enumerate() {
+        upsert_album_simple(&mut tx, al).await?;
         sqlx::query("INSERT OR IGNORE INTO new_releases (album_id, position) VALUES (?, ?)")
             .bind(&al.id).bind(i as i64).execute(&mut *tx).await?;
-        n += 1;
     }
     tx.commit().await?;
-    Ok(n)
+    Ok(list.len())
 }
 
 // ─── sync_all ─────────────────────────────────────────────────────────────────
 
-pub async fn sync_all(pool: &SqlitePool, token: &str) -> Result<SyncResult, AppError> {
-    // run these one after another NOT with tokio::join!. sqlite even in wal only
-    // lets one writer go at a time so concurrent sync txns fight over the write lock
-    // and thats what was killing the saved albums sync. each step is also
-    // made fault tolerant, one failing endpoint just logs and returns 0 instead of
-    // nuking the whole sync (and the "last synced" timestamp below)
+// One sync at a time. Sign-in kicks one off while the background loop may be
+// starting its own; the second caller waits and takes the first one's result
+// instead of pulling the whole library again.
+static SYNC_RUN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static LAST_SYNC: std::sync::Mutex<Option<(u64, Instant, SyncResult)>> = std::sync::Mutex::new(None);
+
+/// Pull the whole library. `on_step` fires as each part lands in the db
+/// (`"liked"`, `"playlists"`, ...) so the UI can fill in piece by piece
+/// instead of waiting on the slowest endpoint.
+pub async fn sync_all(
+    pool:    &SqlitePool,
+    token:   &str,
+    on_step: &(dyn Fn(&'static str) + Sync),
+) -> Result<SyncResult, AppError> {
+    let epoch = crate::auth::auth_epoch();
+    let asked = Instant::now();
+    let _run = SYNC_RUN.lock().await;
+    if let Ok(last) = LAST_SYNC.lock() {
+        if let Some((e, finished, result)) = last.as_ref() {
+            if *e == epoch && *finished > asked {
+                return Ok(result.clone());
+            }
+        }
+    }
+
+    let result = spotify::background(sync_steps(pool, token, epoch, on_step)).await?;
+    if let Ok(mut last) = LAST_SYNC.lock() {
+        *last = Some((epoch, Instant::now(), result.clone()));
+    }
+    Ok(result)
+}
+
+async fn sync_steps(
+    pool:    &SqlitePool,
+    token:   &str,
+    epoch:   u64,
+    on_step: &(dyn Fn(&'static str) + Sync),
+) -> Result<SyncResult, AppError> {
+    // The steps fetch concurrently and take turns writing (SYNC_WRITE): the
+    // network is the slow part, and sqlite only has one writer anyway. Each
+    // step is fault tolerant, one failing endpoint just logs and returns 0
+    // instead of nuking the whole sync (and the "last synced" timestamp below)
     //
     // Each step is also gated on the auth epoch. A sync is long and chatty, so
     // a sign-out (or an account switch) lands in the middle of one often enough
     // to matter - and every step that ran on afterwards wrote the *old*
     // account's library straight back into the tables logout had just emptied.
-    let epoch = crate::auth::auth_epoch();
     async fn step(
-        label: &str,
-        epoch: u64,
-        fut: impl std::future::Future<Output = Result<usize, AppError>>,
+        label:   &'static str,
+        epoch:   u64,
+        on_step: &(dyn Fn(&'static str) + Sync),
+        fut:     impl std::future::Future<Output = Result<usize, AppError>>,
     ) -> usize {
         if !crate::auth::epoch_is_current(epoch) {
             return 0;
         }
         match fut.await {
-            Ok(n) => n,
+            Ok(n) => { on_step(label); n }
             Err(e) => { eprintln!("[library] {label} sync failed: {e}"); 0 }
         }
     }
 
-    let liked       = step("liked",           epoch, sync_liked_songs(pool, token)).await;
-    let playlists   = step("playlists",       epoch, sync_playlists(pool, token)).await;
-    let artists     = step("artists",         epoch, sync_followed_artists(pool, token)).await;
-    let albums_n    = step("albums",          epoch, sync_saved_albums(pool, token)).await;
-    let top_tracks  = step("top_tracks",      epoch, sync_top_tracks(pool, token)).await;
-    let top_artists = step("top_artists",     epoch, sync_top_artists(pool, token)).await;
-    let recent      = step("recently_played", epoch, sync_recently_played(pool, token)).await;
-    let new_rel     = step("new_releases",    epoch, sync_new_releases(pool, token)).await;
+    // new releases are picked from the artists the other steps just stored, so
+    // they go after followed + top artists
+    let (liked, playlists, albums_n, top_tracks, recent, (artists, top_artists, new_rel)) = tokio::join!(
+        step("liked",           epoch, on_step, sync_liked_songs(pool, token)),
+        step("playlists",       epoch, on_step, sync_playlists(pool, token)),
+        step("albums",          epoch, on_step, sync_saved_albums(pool, token)),
+        step("top_tracks",      epoch, on_step, sync_top_tracks(pool, token)),
+        step("recently_played", epoch, on_step, sync_recently_played(pool, token)),
+        async {
+            let (artists, top_artists) = tokio::join!(
+                step("artists",     epoch, on_step, sync_followed_artists(pool, token)),
+                step("top_artists", epoch, on_step, sync_top_artists(pool, token)),
+            );
+            let new_rel = step("new_releases", epoch, on_step, sync_new_releases(pool, token)).await;
+            (artists, top_artists, new_rel)
+        },
+    );
 
     if !crate::auth::epoch_is_current(epoch) {
         eprintln!("[library] sync abandoned: the signed-in account changed while it ran");
@@ -701,6 +751,13 @@ pub async fn sync_all(pool: &SqlitePool, token: &str) -> Result<SyncResult, AppE
     Ok(result)
 }
 
+/// `on_step` for a sync whose progress should reach the UI: each finished
+/// step emits `library:updated` so the matching views refetch from sqlite.
+pub fn emit_steps(app: &tauri::AppHandle) -> impl Fn(&'static str) + Sync + '_ {
+    use tauri::Emitter;
+    move |step| { let _ = app.emit("library:updated", step); }
+}
+
 // ─── background sync loop ─────────────────────────────────────────────────────
 
 pub async fn library_sync_loop(app: tauri::AppHandle) {
@@ -717,7 +774,7 @@ pub async fn library_sync_loop(app: tauri::AppHandle) {
 
         if let Ok(token) = crate::auth::get_valid_token(&pool, &auth).await {
             let _syncing = gate.read().await;
-            match sync_all(&pool, &token).await {
+            match sync_all(&pool, &token, &emit_steps(&app)).await {
                 Ok(result) => {
                     let _ = app.emit("library:synced", result);
                 }

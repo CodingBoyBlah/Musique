@@ -2,7 +2,8 @@ use crate::db::repos::{albums, artists, tracks};
 use crate::errors::AppError;
 use crate::spotify::{self, types::*};
 use crate::state::AppState;
-use sqlx::SqlitePool;
+use futures_util::{StreamExt, TryStreamExt};
+use sqlx::SqliteConnection;
 use std::collections::HashSet;
 use tauri::{AppHandle, Manager};
 
@@ -79,8 +80,8 @@ pub(crate) fn item_from_album_track(t: &SpAlbumTrack) -> TrackItem {
 
 // db upsert helper stuff
 
-async fn upsert_artist_full(pool: &SqlitePool, a: &SpArtist) -> Result<(), AppError> {
-    artists::upsert(pool, &artists::Artist {
+async fn upsert_artist_full(conn: &mut SqliteConnection, a: &SpArtist) -> Result<(), AppError> {
+    artists::upsert(&mut *conn, &artists::Artist {
         id:         a.id.clone(),
         name:       a.name.clone(),
         image_url:  a.images.as_ref().and_then(|v| v.first()).map(|i| i.url.clone()),
@@ -93,8 +94,8 @@ async fn upsert_artist_full(pool: &SqlitePool, a: &SpArtist) -> Result<(), AppEr
     .await
 }
 
-async fn upsert_album_simple(pool: &SqlitePool, al: &SpAlbumSimple) -> Result<(), AppError> {
-    albums::upsert(pool, &albums::Album {
+async fn upsert_album_simple(conn: &mut SqliteConnection, al: &SpAlbumSimple) -> Result<(), AppError> {
+    albums::upsert(&mut *conn, &albums::Album {
         id:           al.id.clone(),
         name:         al.name.clone(),
         album_type:   al.album_type.clone(),
@@ -108,8 +109,8 @@ async fn upsert_album_simple(pool: &SqlitePool, al: &SpAlbumSimple) -> Result<()
     .await
 }
 
-async fn upsert_album_full(pool: &SqlitePool, al: &SpAlbum) -> Result<(), AppError> {
-    albums::upsert(pool, &albums::Album {
+async fn upsert_album_full(conn: &mut SqliteConnection, al: &SpAlbum) -> Result<(), AppError> {
+    albums::upsert(&mut *conn, &albums::Album {
         id:           al.id.clone(),
         name:         al.name.clone(),
         album_type:   al.album_type.clone(),
@@ -130,14 +131,14 @@ async fn upsert_album_full(pool: &SqlitePool, al: &SpAlbum) -> Result<(), AppErr
         )
         .bind(&artist.id)
         .bind(&artist.name)
-        .execute(pool)
+        .execute(&mut *conn)
         .await;
-        let _ = albums::add_artist(pool, &al.id, &artist.id, i as i64).await;
+        let _ = albums::add_artist(&mut *conn, &al.id, &artist.id, i as i64).await;
     }
 
     if let Some(track_page) = &al.tracks {
         for t in &track_page.items {
-            let _ = tracks::upsert(pool, &tracks::Track {
+            let _ = tracks::upsert(&mut *conn, &tracks::Track {
                 id:           t.id.clone(),
                 name:         t.name.clone(),
                 album_id:     Some(al.id.clone()),
@@ -158,24 +159,6 @@ async fn upsert_album_full(pool: &SqlitePool, al: &SpAlbum) -> Result<(), AppErr
     }
 
     Ok(())
-}
-
-pub(crate) async fn upsert_track(pool: &SqlitePool, t: &SpTrack) -> Result<(), AppError> {
-    tracks::upsert(pool, &tracks::Track {
-        id:           t.id.clone(),
-        name:         t.name.clone(),
-        album_id:     t.album.as_ref().map(|a| a.id.clone()),
-        duration_ms:  t.duration_ms,
-        track_number: t.track_number.unwrap_or(0),
-        disc_number:  t.disc_number.unwrap_or(1),
-        explicit:     t.explicit,
-        popularity:   t.popularity,
-        preview_url:  t.preview_url.clone(),
-        is_local:     t.is_local.unwrap_or(false),
-        updated_at:   0,
-        isrc:         t.external_ids.as_ref().and_then(|e| e.isrc.clone()),
-    })
-    .await
 }
 
 // ipc commands
@@ -229,11 +212,15 @@ pub async fn search(
             .unwrap_or_default(),
     };
 
-    let pool = &app.state::<AppState>().db.clone();
-    for a  in raw.artists.as_ref().map(|p| p.items.as_slice()).unwrap_or(&[]) { let _ = upsert_artist_full(pool, a).await; }
-    for al in raw.albums.as_ref().map(|p|  p.items.as_slice()).unwrap_or(&[]) { let _ = upsert_album_simple(pool, al).await; }
-    for tr in raw.tracks.as_ref().map(|p|  p.items.as_slice()).unwrap_or(&[]) { let _ = upsert_track(pool, tr).await; }
-    let _ = crate::db::repos::search_history::push(pool, &query, None, None).await;
+    // cache the hits after answering. awaiting ~60 row writes here put every
+    // keystroke's results behind sqlite - and behind a running sync's writes
+    persist_later(&app, move |conn| Box::pin(async move {
+        for a  in raw.artists.as_ref().map(|p| p.items.as_slice()).unwrap_or(&[]) { let _ = upsert_artist_full(conn, a).await; }
+        for al in raw.albums.as_ref().map(|p|  p.items.as_slice()).unwrap_or(&[]) { let _ = upsert_album_simple(conn, al).await; }
+        let mut deps = crate::library::DepWriter::default();
+        for tr in raw.tracks.as_ref().map(|p|  p.items.as_slice()).unwrap_or(&[]) { let _ = deps.track(conn, tr).await; }
+        let _ = crate::db::repos::search_history::push(&mut *conn, &query, None, None).await;
+    }));
 
     Ok(result)
 }
@@ -242,27 +229,25 @@ pub async fn search(
 pub async fn get_artist(app: AppHandle, id: String) -> Result<ArtistDetail, AppError> {
     let token = tok(&app).await?;
 
-    let artist: SpArtist = spotify::spotify_get(&token, &format!("{BASE}/artists/{id}")).await?;
-
     let mut alb_url = url::Url::parse(&format!("{BASE}/artists/{id}/albums")).unwrap();
     alb_url.query_pairs_mut()
         .append_pair("limit",         "50")
         .append_pair("include_groups", "album,single,compilation");
-    let album_page: SpPage<SpAlbumSimple> =
-        spotify::spotify_get(&token, alb_url.as_str()).await?;
+    let artist_url = format!("{BASE}/artists/{id}");
+    let top_url    = format!("{BASE}/artists/{id}/top-tracks?market=from_token");
 
-    // top tracks (best effort, an artist with none still renders the page fine)
-    let top_tracks: Vec<TrackItem> = match spotify::spotify_get::<SpTopTracks>(
-        &token,
-        &format!("{BASE}/artists/{id}/top-tracks?market=from_token"),
-    ).await {
-        Ok(t)  => t.tracks.iter().map(item_from_track).collect(),
-        Err(_) => Vec::new(),
-    };
-
-    let pool = &app.state::<AppState>().db.clone();
-    let _ = upsert_artist_full(pool, &artist).await;
-    for al in &album_page.items { let _ = upsert_album_simple(pool, al).await; }
+    // independent requests, so they go out together instead of back to back
+    let (artist, album_page, top) = tokio::join!(
+        spotify::spotify_get::<SpArtist>(&token, &artist_url),
+        spotify::spotify_get::<SpPage<SpAlbumSimple>>(&token, alb_url.as_str()),
+        spotify::spotify_get::<SpTopTracks>(&token, &top_url),
+    );
+    let artist     = artist?;
+    let album_page = album_page?;
+    // top tracks are best effort, an artist with none still renders the page fine
+    let top_tracks: Vec<TrackItem> = top
+        .map(|t| t.tracks.iter().map(item_from_track).collect())
+        .unwrap_or_default();
 
     // split up the discography, full albums (incl compilations) vs singles/eps
     let mut albums:  Vec<AlbumItem> = Vec::new();
@@ -272,7 +257,7 @@ pub async fn get_artist(app: AppHandle, id: String) -> Result<ArtistDetail, AppE
         if al.album_type == "single" { singles.push(item); } else { albums.push(item); }
     }
 
-    Ok(ArtistDetail {
+    let detail = ArtistDetail {
         id:         artist.id.clone(),
         name:       artist.name.clone(),
         image_url:  artist.images.as_ref().and_then(|v| v.first()).map(|i| i.url.clone()),
@@ -281,7 +266,14 @@ pub async fn get_artist(app: AppHandle, id: String) -> Result<ArtistDetail, AppE
         albums,
         singles,
         top_tracks,
-    })
+    };
+
+    persist_later(&app, move |conn| Box::pin(async move {
+        let _ = upsert_artist_full(conn, &artist).await;
+        for al in &album_page.items { let _ = upsert_album_simple(conn, al).await; }
+    }));
+
+    Ok(detail)
 }
 
 #[tauri::command]
@@ -291,9 +283,6 @@ pub async fn get_album(app: AppHandle, id: String) -> Result<AlbumDetail, AppErr
     let mut url = url::Url::parse(&format!("{BASE}/albums/{id}")).unwrap();
     url.query_pairs_mut().append_pair("market", "from_token");
     let album: SpAlbum = spotify::spotify_get(&token, url.as_str()).await?;
-
-    let pool = &app.state::<AppState>().db.clone();
-    let _ = upsert_album_full(pool, &album).await;
 
     // album tracks dont embed their own album object so we stamp the parent
     // album onto each one so the player strip / rows have cover art + album name
@@ -317,7 +306,7 @@ pub async fn get_album(app: AppHandle, id: String) -> Result<AlbumDetail, AppErr
         }).collect())
         .unwrap_or_default();
 
-    Ok(AlbumDetail {
+    let detail = AlbumDetail {
         id:           album.id.clone(),
         name:         album.name.clone(),
         album_type:   album.album_type.clone(),
@@ -327,7 +316,13 @@ pub async fn get_album(app: AppHandle, id: String) -> Result<AlbumDetail, AppErr
         popularity:   album.popularity,
         artists:      album_item.artists.clone(),
         tracks,
-    })
+    };
+
+    persist_later(&app, move |conn| Box::pin(async move {
+        let _ = upsert_album_full(conn, &album).await;
+    }));
+
+    Ok(detail)
 }
 
 #[tauri::command]
@@ -335,8 +330,13 @@ pub async fn get_track(app: AppHandle, id: String) -> Result<TrackDetail, AppErr
     let token = tok(&app).await?;
     let track: SpTrack = spotify::spotify_get(&token, &format!("{BASE}/tracks/{id}")).await?;
 
-    let pool = &app.state::<AppState>().db.clone();
-    let _ = upsert_track(pool, &track).await;
+    // awaited, not deferred: the lyrics lookup reads the isrc this stores
+    let pool = app.state::<AppState>().db.clone();
+    if let Ok(mut tx) = pool.begin().await {
+        if crate::library::upsert_track_with_deps(&mut tx, &track).await.is_ok() {
+            let _ = tx.commit().await;
+        }
+    }
 
     Ok(TrackDetail {
         id:          track.id.clone(),
@@ -475,15 +475,29 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
         next = page.next.clone();
     }
 
-    while let Some(url) = next.take() {
-        let page: SpPlaylistTrackPage = spotify::spotify_get(&token, &url).await?;
-        for i in &page.items {
-            if let Some(t) = i.track.as_ref() {
-                let added = i.added_at.as_deref().map(crate::library::parse_iso8601).unwrap_or(0);
-                items.push((clone_track(t), added));
+    // the rest of the pages all at once. `next` is the template (it carries
+    // whatever params spotify wants); only its offset changes per page
+    if let Some(next) = next.as_deref().and_then(|u| url::Url::parse(u).ok()) {
+        let param = |k: &str| next.query_pairs().find(|(n, _)| n == k).and_then(|(_, v)| v.parse::<i64>().ok());
+        let limit = param("limit").unwrap_or(100).max(1);
+        let first = param("offset").unwrap_or(limit);
+        let token = token.as_str();
+        let pages: Vec<SpPlaylistTrackPage> = futures_util::stream::iter((first..total).step_by(limit as usize))
+            .map(|offset| {
+                let url = with_offset(&next, offset);
+                async move { spotify::spotify_get::<SpPlaylistTrackPage>(token, &url).await }
+            })
+            .buffered(8)
+            .try_collect()
+            .await?;
+        for page in &pages {
+            for i in &page.items {
+                if let Some(t) = i.track.as_ref() {
+                    let added = i.added_at.as_deref().map(crate::library::parse_iso8601).unwrap_or(0);
+                    items.push((clone_track(t), added));
+                }
             }
         }
-        next = page.next;
     }
 
     let tracks: Vec<TrackItem> = items.iter().map(|(t, _)| item_from_track(t)).collect();
@@ -501,8 +515,7 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
         followers:     pl.followers.as_ref().and_then(|f| f.total),
     };
 
-    // persist to SQLite asynchronously in the background so the UI doesn't block on 300+ disk writes
-    let pool_clone = pool.clone();
+    // persist in the background (one transaction) so the UI doesn't wait on 300+ row writes
     let pl_id = pl.id.clone();
     let pl_name = pl.name.clone();
     let pl_desc = pl.description.clone();
@@ -510,7 +523,7 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
     let pl_img = pl.images.as_ref().and_then(|v| v.first()).map(|i| i.url.clone());
     let pl_snap = pl.snapshot_id.clone();
 
-    tokio::spawn(async move {
+    persist_later(&app, move |conn| Box::pin(async move {
         let _ = sqlx::query(
             "INSERT INTO playlists
                  (id, name, description, owner_id, image_url, total_tracks,
@@ -533,16 +546,17 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
         .bind(total)
         .bind(&pl_snap)
         .bind(now_ms())
-        .execute(&pool_clone)
+        .execute(&mut *conn)
         .await;
 
         let _ = sqlx::query("DELETE FROM playlist_tracks WHERE playlist_id = ?")
             .bind(&pl_id)
-            .execute(&pool_clone)
+            .execute(&mut *conn)
             .await;
 
+        let mut deps = crate::library::DepWriter::default();
         for (pos, (t, added_at)) in items.iter().enumerate() {
-            let _ = crate::library::upsert_track_with_deps(&pool_clone, t).await;
+            let _ = deps.track(conn, t).await;
             let _ = sqlx::query(
                 "INSERT OR IGNORE INTO playlist_tracks
                      (playlist_id, track_id, position, added_at, added_by)
@@ -552,10 +566,10 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
             .bind(&t.id)
             .bind(pos as i64)
             .bind(added_at)
-            .execute(&pool_clone)
+            .execute(&mut *conn)
             .await;
         }
-    });
+    }));
 
     Ok(detail)
 }
@@ -584,4 +598,29 @@ fn clone_track(t: &SpTrack) -> SpTrack {
         disc_number:  t.disc_number,
         is_local:     t.is_local,
     }
+}
+
+fn with_offset(base: &url::Url, offset: i64) -> String {
+    let pairs: Vec<(String, String)> = base.query_pairs()
+        .filter(|(k, _)| k != "offset")
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let mut url = base.clone();
+    url.query_pairs_mut().clear().extend_pairs(pairs).append_pair("offset", &offset.to_string());
+    url.into()
+}
+
+/// Cache what a command fetched without making its caller wait. The writes go
+/// in one transaction (one commit instead of one per row); a failure only
+/// costs a cache entry, so it is dropped.
+fn persist_later<F>(app: &AppHandle, write: F)
+where
+    F: for<'c> FnOnce(&'c mut SqliteConnection) -> futures_util::future::BoxFuture<'c, ()> + Send + 'static,
+{
+    let pool = app.state::<AppState>().db.clone();
+    tokio::spawn(async move {
+        let Ok(mut tx) = pool.begin().await else { return };
+        write(&mut tx).await;
+        let _ = tx.commit().await;
+    });
 }

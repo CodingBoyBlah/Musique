@@ -11,8 +11,8 @@ pub struct SearchEntry {
     pub searched_at: i64,
 }
 
-pub async fn push(
-    pool:        &SqlitePool,
+pub async fn push<'e>(
+    pool:        impl sqlx::SqliteExecutor<'e>,
     query:       &str,
     result_type: Option<&str>,
     result_id:   Option<&str>,

@@ -186,6 +186,8 @@ pub(crate) struct SpSavedAlbumPage {
     // spotify returns `null` entries here for albums that went unavailable so
     // just treat em as None instead of blowing up the whole page decode
     pub items: Vec<Option<SpSavedAlbumItem>>,
+    #[serde(default)]
+    pub total: i64,
     pub next:  Option<String>,
 }
 
