@@ -121,7 +121,8 @@ screen from the line it belongs to. */
 export function voiceLayout(row: Row): { side: VoiceSide; secondary: boolean }[] {
   let owner: VoiceSide = "left";
   return row.voices.map((v, i) => {
-    const secondary = i > 0 && v.role !== "duet";
+    const primary = i === 0 || v.role === "duet" || !!v.agent || (v.role === "main" && owner === "right");
+    const secondary = v.role === "bg" || !primary;
     if (secondary) return { side: owner, secondary };
     owner = v.role === "duet" ? "right" : "left";
     return { side: owner, secondary };

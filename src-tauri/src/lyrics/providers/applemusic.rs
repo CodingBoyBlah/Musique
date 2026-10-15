@@ -54,21 +54,18 @@ pub(crate) struct Hit {
 }
 
 pub async fn fetch(track: &TrackRef) -> Option<Candidate> {
-    // only the ISRC route identifies the exact recording; the title/artist
-    // fallback is an ordinary fuzzy match and must stay subject to being shifted
-    // onto the sync reference like any other
-    let mut exact = false;
-    let hit = match track.isrc.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(isrc) => match by_isrc(isrc).await {
-            Some(hit) => {
-                exact = true;
-                Some(hit)
+    if let Some(isrc) = track.isrc.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(hit) = by_isrc(isrc).await {
+            if let Some(candidate) = fetch_hit(hit, true).await {
+                return Some(candidate);
             }
-            None => by_search(track).await,
-        },
-        None => by_search(track).await,
-    }?;
+        }
+    }
+    // A stale ISRC document must not prevent a metadata lookup from succeeding.
+    by_search(track).await
+}
 
+async fn fetch_hit(hit: Hit, exact: bool) -> Option<Candidate> {
     if hit.lyrics_url.is_empty() {
         return None;
     }
@@ -120,25 +117,31 @@ async fn by_isrc(isrc: &str) -> Option<Hit> {
 }
 
 /// fallback title/artist/album/duration search when isrc is missing or unindexed
-async fn by_search(track: &TrackRef) -> Option<Hit> {
+async fn by_search(track: &TrackRef) -> Option<Candidate> {
     let clean = track.clean_name();
     let title = if clean.is_empty() { &track.name } else { &clean };
     if title.trim().is_empty() {
         return None;
     }
 
-    // try first with album for tighter search results; fall back to bare
-    // title/artist if album search returns no results
-    if !track.album.trim().is_empty() {
-        if let Some(hits) = search_request(title, &track.artist, &track.album, track.duration_sec()).await {
-            if let Some(hit) = pick_search(hits, track) {
-                return Some(hit);
+    // Album editions and rounded duration keys can hide valid recordings.
+    // Broaden the query, but keep the same local recording checks on every hit.
+    let albums = if track.album.trim().is_empty() { vec![""] } else { vec![track.album.trim(), ""] };
+    for duration in [track.duration_sec(), 0] {
+        for album in &albums {
+            if let Some(hits) = search_request(title, &track.artist, album, duration).await {
+                if let Some(hit) = pick_search(hits, track) {
+                    if let Some(candidate) = fetch_hit(hit, false).await {
+                        return Some(candidate);
+                    }
+                }
             }
         }
+        if track.duration_sec() <= 0 {
+            break;
+        }
     }
-
-    let hits = search_request(title, &track.artist, "", track.duration_sec()).await?;
-    pick_search(hits, track)
+    None
 }
 
 async fn search_request(title: &str, artist: &str, album: &str, dur_sec: i64) -> Option<Vec<Hit>> {
@@ -200,6 +203,9 @@ pub(crate) fn pick_search(results: Vec<Hit>, track: &TrackRef) -> Option<Hit> {
 
         // title must match either raw or cleaned track name
         if !text_matches(&hit.track_name, &track.name) && !text_matches(&hit.track_name, &clean) {
+            continue;
+        }
+        if !text_matches(&hit.artist_name, &track.artist) {
             continue;
         }
 
@@ -312,6 +318,21 @@ mod tests {
         }];
         let chosen = pick_search(good, &track).expect("should match valid hit");
         assert_eq!(chosen.id, "good");
+    }
+
+    #[test]
+    fn metadata_fallback_rejects_another_artists_recording() {
+        let hit = Hit {
+            id: "cover".into(),
+            track_name: "Blinding Lights".into(),
+            artist_name: "Cover Band".into(),
+            album_name: String::new(),
+            duration: 200.0,
+            isrc: None,
+            timing_type: "word".into(),
+            lyrics_url: "https://example.com/cover.ttml".into(),
+        };
+        assert!(pick_search(vec![hit], &sample_track()).is_none());
     }
 
     #[test]

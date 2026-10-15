@@ -9,9 +9,9 @@ use sqlx::SqlitePool;
 use crate::errors::AppError;
 use super::types::{Alternate, Lyrics};
 
-/// parser revision: bumping this invalidates older cached payloads automatically
-/// without needing a database migration
-pub const SCHEMA_VERSION: i32 = 1;
+/// Parser/selection revision. Revision 1 is repaired on read and rechecked in
+/// the background; incompatible payload revisions are treated as misses.
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// whole-track miss TTL: 7 days. a track might have lyrics added later,
 /// but we should avoid hammering providers repeatedly in the short term
@@ -52,7 +52,7 @@ struct AltLinesOnly {
 }
 
 /// fetch cached lyrics for a track. returns None on row absence, missing payload,
-/// schema version mismatch, deserialization failure, or an expired negative cache entry
+/// incompatible schema version, deserialization failure, or an expired negative cache entry
 pub async fn read(pool: &SqlitePool, track_id: &str) -> Option<Lyrics> {
     let row = sqlx::query_as::<_, CacheRow>(
         "SELECT payload, schema_version, found, fetched_at
@@ -64,8 +64,7 @@ pub async fn read(pool: &SqlitePool, track_id: &str) -> Option<Lyrics> {
     .await
     .ok()??;
 
-    // parser changes invalidate older cached payloads automatically
-    if row.schema_version != SCHEMA_VERSION {
+    if !(1..=SCHEMA_VERSION).contains(&row.schema_version) {
         return None;
     }
 
@@ -75,7 +74,17 @@ pub async fn read(pool: &SqlitePool, track_id: &str) -> Option<Lyrics> {
     }
 
     let payload = row.payload?;
-    let lyrics = serde_json::from_str::<Lyrics>(&payload).ok()?;
+    let mut lyrics = serde_json::from_str::<Lyrics>(&payload).ok()?;
+    super::voices::assign_sides(&mut lyrics.lines);
+
+    // Keep old lyrics usable offline while checking the new Apple Music lookup
+    // once in the background. Settling that check writes the current revision.
+    if row.schema_version < SCHEMA_VERSION {
+        if !lyrics.found {
+            return None;
+        }
+        lyrics.upgrading = lyrics.source != "applemusic";
+    }
 
     if !lyrics.found && age >= WHOLE_TRACK_MISS_TTL_SECS {
         return None;
@@ -142,7 +151,9 @@ pub async fn read_alt(pool: &SqlitePool, track_id: &str, source: &str) -> Option
     .flatten();
 
     let (payload,) = row?;
-    serde_json::from_str::<Lyrics>(&payload).ok()
+    let mut lyrics = serde_json::from_str::<Lyrics>(&payload).ok()?;
+    super::voices::assign_sides(&mut lyrics.lines);
+    Some(lyrics)
 }
 
 /// store a parsed candidate as an alternate source for offline switching
@@ -204,10 +215,11 @@ pub async fn list_alts(pool: &SqlitePool, track_id: &str) -> Vec<Alternate> {
 
 /// check whether a specific provider has recorded a negative result within its TTL
 pub async fn source_missed(pool: &SqlitePool, track_id: &str, source: &str) -> bool {
-    let row: Option<(i64,)> = sqlx::query_as(
-        "SELECT fetched_at
-         FROM lyrics_miss
-         WHERE track_id = ? AND source = ?",
+    let row: Option<(i64, Option<i32>)> = sqlx::query_as(
+        "SELECT m.fetched_at, l.schema_version
+         FROM lyrics_miss m
+         LEFT JOIN lyrics l ON l.track_id = m.track_id
+         WHERE m.track_id = ? AND m.source = ?",
     )
     .bind(track_id)
     .bind(source)
@@ -216,9 +228,15 @@ pub async fn source_missed(pool: &SqlitePool, track_id: &str, source: &str) -> b
     .ok()
     .flatten();
 
-    let Some((fetched_at,)) = row else {
+    let Some((fetched_at, revision)) = row else {
         return false;
     };
+
+    // A miss from the previous lookup must not suppress the migration's Apple
+    // check, which now has broader searches and can recover missing ISRCs.
+    if source == "applemusic" && revision.is_some_and(|v| v < SCHEMA_VERSION) {
+        return false;
+    }
 
     now_sec().saturating_sub(fetched_at) < SOURCE_MISS_TTL_SECS
 }
@@ -308,6 +326,40 @@ mod tests {
             .unwrap();
 
         assert!(read(&pool, "t1").await.is_none());
+    }
+
+    #[sqlx::test]
+    async fn old_word_level_cache_checks_apple_once_and_stays_available(pool: SqlitePool) {
+        let mut lyrics = sample_lyrics("t1");
+        lyrics.source = "musixmatch".into();
+        lyrics.lines[0].text = "hey".into();
+        lyrics.lines[1].role = super::super::types::LineRole::Duet;
+        write(&pool, &lyrics).await.unwrap();
+        sqlx::query("UPDATE lyrics SET schema_version = 1 WHERE track_id = 't1'")
+            .execute(&pool).await.unwrap();
+
+        mark_source_miss(&pool, "t1", "applemusic").await.unwrap();
+        assert!(!source_missed(&pool, "t1", "applemusic").await);
+
+        let mut hit = read(&pool, "t1").await.expect("old lyrics remain usable offline");
+        assert!(hit.word_level);
+        assert!(hit.upgrading);
+        assert_eq!(hit.source, "musixmatch");
+        assert_eq!(hit.lines[1].role, super::super::types::LineRole::Main);
+
+        hit.upgrading = false;
+        write(&pool, &hit).await.unwrap();
+        assert!(!read(&pool, "t1").await.unwrap().upgrading);
+    }
+
+    #[sqlx::test]
+    async fn old_apple_cache_does_not_repeat_the_provider_hunt(pool: SqlitePool) {
+        let mut lyrics = sample_lyrics("t1");
+        lyrics.source = "applemusic".into();
+        write(&pool, &lyrics).await.unwrap();
+        sqlx::query("UPDATE lyrics SET schema_version = 1 WHERE track_id = 't1'")
+            .execute(&pool).await.unwrap();
+        assert!(!read(&pool, "t1").await.unwrap().upgrading);
     }
 
     #[sqlx::test]

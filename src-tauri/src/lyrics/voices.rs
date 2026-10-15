@@ -122,13 +122,14 @@ fn is_backing(lead: &LyricLine, next: &LyricLine) -> bool {
 /// reaches `align.rs` or the frontend, `lines` holds lead lines only and each
 /// carries its simultaneous voice in `bg`.
 pub fn structure(cand: &mut Candidate) {
+    assign_sides(&mut cand.lines);
     if cand.lines.len() < 2 {
         return;
     }
 
     // a source that already nests its backing vocals (AMLL TTML) is authoritative
     // and must not be second-guessed by heuristics
-    if cand.lines.iter().any(|l| l.bg.is_some()) {
+    if cand.lines.iter().any(|l| l.bg.is_some() || l.agent.is_some()) {
         return;
     }
 
@@ -151,6 +152,45 @@ pub fn structure(cand: &mut Candidate) {
     }
 
     cand.lines = out;
+}
+
+/// Put the voice with the most sung text on the left. Counting text rather
+/// than spans or lines also works with syllable timing and uneven line breaks.
+/// Older cached documents have only main/duet roles, so use those as identities.
+pub fn assign_sides(lines: &mut [LyricLine]) {
+    let has_agents = lines.iter().any(|l| l.agent.is_some());
+    let identity = |line: &LyricLine| -> Option<String> {
+        if line.role == LineRole::Bg {
+            None
+        } else if has_agents {
+            line.agent.clone()
+        } else {
+            Some(if line.role == LineRole::Duet { "duet" } else { "main" }.into())
+        }
+    };
+    let mut totals: Vec<(String, usize)> = Vec::new();
+    for line in lines.iter() {
+        let Some(agent) = identity(line) else { continue };
+        let count = line.text.chars().filter(|c| c.is_alphanumeric()).count();
+        if let Some((_, total)) = totals.iter_mut().find(|(a, _)| *a == agent) {
+            *total += count;
+        } else {
+            totals.push((agent, count));
+        }
+    }
+    // Keep the first voice in a tie, so equal duets retain a stable layout.
+    let Some((mut lead, mut most)) = totals.first().cloned() else { return };
+    for (agent, count) in totals.into_iter().skip(1) {
+        if count > most {
+            lead = agent;
+            most = count;
+        }
+    }
+    for line in lines {
+        if let Some(agent) = identity(line) {
+            line.role = if agent == lead { LineRole::Main } else { LineRole::Duet };
+        }
+    }
 }
 
 #[cfg(test)]
@@ -266,5 +306,34 @@ mod tests {
         // overwriting the first
         assert_eq!(c.lines.len(), 2);
         assert_eq!(c.lines[0].bg.as_ref().unwrap().text, "(one)");
+    }
+
+    #[test]
+    fn explicit_singers_are_not_folded_into_background_vocals() {
+        let mut guest = worded(0, "hey", 4_000);
+        guest.agent = Some("guest".into());
+        let mut lead = worded(40, "the majority of the lyrics", 4_000);
+        lead.agent = Some("lead".into());
+        let mut c = cand(vec![guest, lead]);
+        structure(&mut c);
+        assert_eq!(c.lines.len(), 2);
+        assert_eq!(c.lines[0].role, LineRole::Duet);
+        assert_eq!(c.lines[1].role, LineRole::Main);
+        assert!(c.lines.iter().all(|l| l.bg.is_none()));
+    }
+
+    #[test]
+    fn legacy_cached_roles_are_corrected_without_changing_backing_vocals() {
+        let mut lines = vec![LyricLine::line(0, "hey"), LyricLine::line(4_000, "most of the lyrics")];
+        lines[1].role = LineRole::Duet;
+        let mut bg = LyricLine::line(4_100, "oh");
+        bg.role = LineRole::Bg;
+        lines[1].bg = Some(Box::new(bg));
+        for _ in 0..2 {
+            assign_sides(&mut lines);
+            assert_eq!(lines[0].role, LineRole::Duet);
+            assert_eq!(lines[1].role, LineRole::Main);
+            assert_eq!(lines[1].bg.as_ref().unwrap().role, LineRole::Bg);
+        }
     }
 }

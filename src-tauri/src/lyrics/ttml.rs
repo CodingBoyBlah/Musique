@@ -24,9 +24,6 @@ use super::types::{LineRole, LyricLine, LyricWord};
 /// exporter can't break us
 pub fn parse_ttml(raw: &str) -> Vec<LyricLine> {
     let mut out: Vec<LyricLine> = Vec::new();
-    // the first agent seen is the lead voice; anything else is the other half
-    // of a duet. the ids aren't stable ("v1"/"v2", sometimes "singer1")
-    let mut lead: Option<String> = None;
     let mut i = 0usize;
 
     while let Some(rel) = raw[i..].find("<p") {
@@ -65,13 +62,7 @@ pub fn parse_ttml(raw: &str) -> Vec<LyricLine> {
             (true, None) => continue,
         };
 
-        if let Some(agent) = attr(tag, "agent") {
-            match &lead {
-                None => lead = Some(agent),
-                Some(first) if *first != agent => line.role = LineRole::Duet,
-                Some(_) => {}
-            }
-        }
+        line.agent = attr(tag, "agent").filter(|a| !a.trim().is_empty());
         line.translation = parsed.translation;
         line.roman = parsed.roman;
         line.bg = parsed.bg.map(Box::new);
@@ -79,6 +70,7 @@ pub fn parse_ttml(raw: &str) -> Vec<LyricLine> {
     }
 
     out.sort_by_key(|l| l.time_ms);
+    super::voices::assign_sides(&mut out);
     out
 }
 
@@ -495,6 +487,55 @@ mod tests {
         );
         let roles: Vec<LineRole> = parse_ttml(raw).iter().map(|l| l.role).collect();
         assert_eq!(roles, vec![LineRole::Main, LineRole::Duet, LineRole::Main]);
+    }
+
+    #[test]
+    fn guest_intro_does_not_put_the_majority_singer_on_the_right() {
+        let raw = concat!(
+            r#"<p begin="1" ttm:agent="guest">Hey</p>"#,
+            r#"<p begin="3" ttm:agent="lead"><span begin="3" end="4">Most of the lyrics belong to this singer</span><span ttm:role="x-bg" begin="3">oh</span></p>"#,
+            r#"<p begin="6" ttm:agent="lead">And this singer carries on through the song</p>"#,
+        );
+        let lines = parse_ttml(raw);
+        assert_eq!(lines[0].agent.as_deref(), Some("guest"));
+        assert_eq!(lines.iter().map(|l| l.role).collect::<Vec<_>>(),
+            vec![LineRole::Duet, LineRole::Main, LineRole::Main]);
+        assert_eq!(lines[1].bg.as_ref().unwrap().role, LineRole::Bg);
+    }
+
+    #[test]
+    fn majority_is_measured_by_text_not_line_or_syllable_count() {
+        let raw = concat!(
+            r#"<p begin="1" ttm:agent="guest"><span begin="1" end="1.1">H</span><span begin="1.1" end="1.2">e</span><span begin="1.2" end="2">y</span></p>"#,
+            r#"<p begin="3" ttm:agent="guest">Hi</p>"#,
+            r#"<p begin="5" ttm:agent="lead">This singer has much more of the actual lyrics</p>"#,
+        );
+        let lines = parse_ttml(raw);
+        assert_eq!(lines.iter().map(|l| l.role).collect::<Vec<_>>(),
+            vec![LineRole::Duet, LineRole::Duet, LineRole::Main]);
+    }
+
+    #[test]
+    fn three_singers_are_counted_individually_and_background_is_excluded() {
+        let raw = concat!(
+            r#"<p begin="1" ttm:agent="first">aaaa<span ttm:role="x-bg" begin="1">a very long backing vocal is not lead lyrics</span></p>"#,
+            r#"<p begin="3" ttm:agent="second">bbbbbb</p>"#,
+            r#"<p begin="5" ttm:agent="third">ccccc</p>"#,
+        );
+        let lines = parse_ttml(raw);
+        assert_eq!(lines.iter().map(|l| l.role).collect::<Vec<_>>(),
+            vec![LineRole::Duet, LineRole::Main, LineRole::Duet]);
+    }
+
+    #[test]
+    fn tied_singers_keep_the_first_chronological_voice_on_the_left() {
+        let raw = concat!(
+            r#"<p begin="3" ttm:agent="later">Hey</p>"#,
+            r#"<p begin="1" ttm:agent="first">Hey</p>"#,
+        );
+        let lines = parse_ttml(raw);
+        assert_eq!(lines[0].role, LineRole::Main);
+        assert_eq!(lines[1].role, LineRole::Duet);
     }
 
     #[test]

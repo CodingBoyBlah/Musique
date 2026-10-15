@@ -93,9 +93,33 @@ interface PlayerStore {
   playbackRate:    number;
   setPlaybackRate: (r: number) => void;
   setPosition:     (ms: number) => void;
+  // a local seek is on its way to the player: see acceptedPosition
+  seekFence:       { target: number; at: number } | null;
+  fenceSeek:       (ms: number) => void;
   setVolume:       (v: number) => void;
   setMuted:        (m: boolean) => void;
   setSessionReady: () => void;
+}
+
+/* How long after a local seek a position report that disagrees with it is
+   taken to predate it, and how far it may disagree. A report already on its
+   way when the user let go of the scrubber still says where playback was;
+   taken at face value it snaps the playhead back until the next one. */
+const SEEK_FENCE_MS = 3000;
+const SEEK_FENCE_SLACK_MS = 1500;
+
+function acceptedPosition(
+  s: Pick<PlayerStore, "seekFence" | "currentId" | "isPlaying" | "playbackRate">,
+  trackId: string | null | undefined,
+  positionMs: number,
+): boolean {
+  if (!s.seekFence) return true;
+  const age = Date.now() - s.seekFence.at;
+  // another track, or long enough that the player must have got there
+  if (age >= SEEK_FENCE_MS || (trackId && trackId !== s.currentId)) return true;
+  const { target } = s.seekFence;
+  const latest = target + (s.isPlaying ? age * (s.playbackRate || 1) : 0);
+  return positionMs >= target - SEEK_FENCE_SLACK_MS && positionMs <= latest + SEEK_FENCE_SLACK_MS;
 }
 
 export const usePlayerStore = create<PlayerStore>()(
@@ -226,6 +250,7 @@ export const usePlayerStore = create<PlayerStore>()(
       currentTrack: null,
       positionMs:   0,
       durationMs:   0,
+      seekFence:    null,
 
       volume: 80,
       muted:  false,
@@ -294,6 +319,11 @@ export const usePlayerStore = create<PlayerStore>()(
         if (msg.track_id) {
           const cur = get().currentId;
           if (cur && cur !== msg.track_id && cur.endsWith(`:${msg.track_id}`)) msg.track_id = cur;
+        }
+        if (msg.position_ms != null && get().seekFence) {
+          const accepted = acceptedPosition(get(), msg.track_id, msg.position_ms);
+          if (accepted) set({ seekFence: null });
+          else msg.position_ms = undefined;
         }
         switch (msg.type) {
           case "playing":
@@ -376,6 +406,8 @@ export const usePlayerStore = create<PlayerStore>()(
       // instead of waiting for the next librespot position event
       setPosition: (ms) =>
         set((s) => ({ positionMs: Math.max(0, s.durationMs > 0 ? Math.min(ms, s.durationMs) : ms) })),
+
+      fenceSeek: (ms) => set({ seekFence: { target: ms, at: Date.now() } }),
 
       setVolume: (v) => set({ volume: Math.max(0, Math.min(100, Math.round(v))) }),
       setMuted:  (m) => set({ muted: m }),

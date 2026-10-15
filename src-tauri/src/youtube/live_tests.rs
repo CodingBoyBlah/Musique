@@ -415,3 +415,46 @@ async fn real_stream_decodes_to_audio_samples() {
         taken.len()
     );
 }
+
+/// Dragging the playhead back must land there and keep playing. rodio opens
+/// the stream forward-only unless told otherwise; the mp4 demuxer then failed
+/// the packet after a backward seek, and that read as the end of the track.
+#[tokio::test]
+#[ignore = "network"]
+async fn real_stream_seeks_backwards() {
+    use rodio::Source;
+
+    let stream = player::extract("dQw4w9WgXcQ").await.unwrap();
+    let bytes: std::sync::Arc<[u8]> = stream::download(&stream).await.unwrap().into();
+    let mut decoder = crate::playback::youtube::open_decoder(bytes, &stream.format.mime_type).unwrap();
+    let per_sec = decoder.sample_rate() as usize * decoder.channels() as usize;
+
+    decoder.try_seek(std::time::Duration::from_secs(120)).expect("forward seek");
+    assert_eq!(decoder.by_ref().take(per_sec).count(), per_sec);
+    decoder.try_seek(std::time::Duration::from_secs(10)).expect("backward seek");
+    let after: Vec<f32> = decoder.by_ref().take(per_sec * 5).collect();
+    assert_eq!(after.len(), per_sec * 5, "the decoder ended after seeking back");
+    assert!(after.iter().any(|s| s.abs() > 0.001), "silence after seeking back");
+
+    // and through the queue in front of the speaker, as it actually plays
+    let decoder = crate::playback::youtube::open_decoder(
+        stream::download(&stream).await.unwrap().into(),
+        &stream.format.mime_type,
+    )
+    .unwrap();
+    let (mut source, ring) = crate::playout::prebuffer(decoder, std::time::Duration::from_secs(120), true, None);
+    let _ = source.by_ref().take(per_sec).count();
+    source.try_seek(std::time::Duration::from_secs(10)).unwrap();
+    assert_eq!(ring.heard_ms(), 10_000);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut heard = 0;
+    while heard < per_sec * 3 {
+        assert!(std::time::Instant::now() < deadline, "nothing played after seeking back");
+        match source.next() {
+            Some(s) if s != 0.0 => heard += 1,
+            Some(_) => {}
+            None => panic!("the track ended after seeking back"),
+        }
+    }
+    assert!((10_000..14_000).contains(&ring.heard_ms()), "heard {}ms", ring.heard_ms());
+}

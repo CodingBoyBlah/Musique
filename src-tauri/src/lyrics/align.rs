@@ -506,6 +506,11 @@ fn mad(deltas: &[i64], center: i64) -> i64 {
 /// does alignment `a` (from source `a_src`) beat `b`? both have already passed
 /// the gates, so this is purely a preference order.
 fn beats(a: &Alignment, a_src: &str, b: &Alignment, b_src: &str) -> bool {
+    // Both passed the sync gates. Prefer Apple's document even when another
+    // source happens to follow Spotify's line onsets a little more closely.
+    if (a_src == "applemusic") != (b_src == "applemusic") {
+        return a_src == "applemusic";
+    }
     let (ba, bb) = (a.residual_ms / RESIDUAL_BUCKET_MS, b.residual_ms / RESIDUAL_BUCKET_MS);
     if ba != bb {
         return ba < bb;
@@ -587,6 +592,37 @@ fn cluster_pick(pool: &mut Vec<Candidate>) -> Option<(Candidate, Alignment)> {
 mod tests {
     use super::*;
     use crate::lyrics::types::{LyricLine, LyricWord};
+
+    #[test]
+    fn apple_wins_after_passing_sync_gates_even_with_a_larger_residual() {
+        let reference = doc("spotify", 20, 5_000, 4_000);
+        let other = worded_doc("amll", 20, 5_000, 4_000);
+        let mut apple = worded_doc("applemusic", 20, 5_000, 4_000);
+        for (i, line) in apple.lines.iter_mut().enumerate() {
+            let delta = if i % 2 == 0 { 450 } else { -450 };
+            line.time_ms += delta;
+            for word in &mut line.words {
+                word.time_ms += delta;
+                word.end_ms += delta;
+            }
+        }
+        assert!(align_to_reference(&apple, &reference).aligned);
+        assert_eq!(align_to_reference(&apple, &reference).residual_ms, 450);
+        for pool in [vec![other.clone(), apple.clone()], vec![apple.clone(), other.clone()]] {
+            assert_eq!(choose(Some(&reference), pool).unwrap().0.source, "applemusic");
+        }
+
+        for (i, line) in apple.lines.iter_mut().enumerate() {
+            let delta = i as i64 * 2_000;
+            line.time_ms += delta;
+            for word in &mut line.words {
+                word.time_ms += delta;
+                word.end_ms += delta;
+            }
+        }
+        assert!(!align_to_reference(&apple, &reference).aligned);
+        assert_eq!(choose(Some(&reference), vec![apple, other]).unwrap().0.source, "amll");
+    }
 
     /// a document whose lines sit `step` apart starting at `start`, each with
     /// distinct text so the pairing has something real to corroborate with

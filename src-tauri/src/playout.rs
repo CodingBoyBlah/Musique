@@ -177,16 +177,31 @@ impl Ring {
         buffer
     }
 
-    /// Throw away everything queued.
+    /// Throw away everything queued, including what the device is partway
+    /// through.
     pub fn flush(&self) {
         let mut state = self.lock();
-        Self::clear(&mut state);
+        self.clear(&mut state);
         drop(state);
-        self.flushes.fetch_add(1, Ordering::SeqCst);
         self.changed.notify_all();
     }
 
-    fn clear(state: &mut State) {
+    /// Flush for a jump to `ms` into play `tag` that the producer has yet to
+    /// make. What is heard is `ms` from now until its audio arrives, so
+    /// positions reported meanwhile don't drift back to where it was.
+    pub fn flush_at(&self, tag: u64, ms: u64) {
+        let mut state = self.lock();
+        self.clear(&mut state);
+        self.set_heard(tag, ms);
+        drop(state);
+        // silence until the producer catches up is expected, not an underrun
+        self.set_streaming(false);
+        self.changed.notify_all();
+    }
+
+    /// Bumps the flush count under the lock, so a chunk popped after it is
+    /// never mistaken for one from before.
+    fn clear(&self, state: &mut State) {
         while let Some(chunk) = state.chunks.pop_front() {
             if state.spare.len() < 8 {
                 state.spare.push(chunk.samples);
@@ -195,17 +210,17 @@ impl Ring {
         state.frames = 0;
         state.finished = false;
         state.epoch += 1;
+        self.flushes.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Flush and have the producer seek to `pos`. What is heard is `pos` from
     /// here on, even before the producer gets there.
     pub fn request_seek(&self, pos: Duration) {
         let mut state = self.lock();
-        Self::clear(&mut state);
+        self.clear(&mut state);
         state.seek = Some(pos);
         self.heard_ms.store(pos.as_millis() as u64, Ordering::Relaxed);
         drop(state);
-        self.flushes.fetch_add(1, Ordering::SeqCst);
         self.changed.notify_all();
     }
 
@@ -306,12 +321,13 @@ impl Ring {
             let Some(chunk) = state.chunks.pop_front() else {
                 return if state.finished { Pop::Finished } else { Pop::Empty };
             };
+            let flushes = self.flushes.load(Ordering::SeqCst);
             state.frames = state.frames.saturating_sub(chunk.samples.len() / self.channels);
             self.changed.notify_all();
             // made for an output that has since been replaced by one at
             // another rate; playing it would come out at the wrong pitch
             if chunk.rate == rate {
-                return Pop::Chunk(chunk);
+                return Pop::Chunk(chunk, flushes);
             }
             if state.spare.len() < 8 {
                 state.spare.push(chunk.samples);
@@ -321,7 +337,8 @@ impl Ring {
 }
 
 enum Pop {
-    Chunk(Chunk),
+    /// With the flush count it was taken at.
+    Chunk(Chunk, u64),
     Empty,
     Finished,
 }
@@ -343,6 +360,9 @@ pub struct RingSource {
     /// Silent samples left to hand out before looking again.
     silence:  usize,
     starving: bool,
+    /// The ring's flush count when `cur` was taken. Once it moves on, the rest
+    /// of `cur` is from before a seek or a skip and is dropped.
+    flushes:  u64,
     /// Plays forever and leaves the ring open when dropped (the librespot
     /// output, which outlives any one device). Otherwise it ends with its
     /// source and closes the ring behind it.
@@ -368,6 +388,7 @@ impl RingSource {
             end_ms: 0.0,
             silence: 0,
             starving: false,
+            flushes: 0,
             endless,
         }
     }
@@ -392,6 +413,10 @@ impl Iterator for RingSource {
             if self.idx < self.cur.len() {
                 // only between frames, so left and right never trade places
                 if self.idx % channels == 0 {
+                    if self.ring.flushes() != self.flushes {
+                        self.idx = self.cur.len();
+                        continue;
+                    }
                     if self.ring.held() {
                         self.silence = GAP * channels;
                         continue;
@@ -410,7 +435,8 @@ impl Iterator for RingSource {
             }
             let used = std::mem::take(&mut self.cur);
             match self.ring.pop(self.rate, used) {
-                Pop::Chunk(chunk) => {
+                Pop::Chunk(chunk, flushes) => {
+                    self.flushes = flushes;
                     self.cur = chunk.samples;
                     self.idx = 0;
                     self.tag = chunk.tag;
@@ -781,6 +807,25 @@ mod tests {
         assert!(ring.push(new, None, 10_000, &|| false));
         let mut source = RingSource::endless(Arc::clone(&ring), 2, 48_000);
         assert!((0..20).all(|_| source.next() == Some(2.0)));
+    }
+
+    #[test]
+    fn a_flush_cuts_off_the_chunk_being_played() {
+        let ring = Ring::new(2);
+        let chunk = Chunk { samples: vec![1.0; 2000], rate: 1000, tag: 3, start_ms: 0.0, end_ms: 1000.0 };
+        assert!(ring.push(chunk, None, 10_000, &|| false));
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000);
+        ring.set_streaming(true);
+        assert!((0..10).all(|_| source.next() == Some(1.0)));
+        ring.flush_at(3, 60_000);
+        // not one more sample of what was playing, and the position holds at
+        // the target while the producer gets there
+        assert!((0..1000).all(|_| source.next() == Some(0.0)));
+        assert_eq!(ring.heard(3), Some(60_000));
+        assert_eq!(ring.underruns(), 0);
+        let after = Chunk { samples: vec![2.0; 20], rate: 1000, tag: 3, start_ms: 60_000.0, end_ms: 60_010.0 };
+        assert!(ring.push(after, None, 10_000, &|| false));
+        assert!((0..100).any(|_| source.next() == Some(2.0)));
     }
 
     #[test]

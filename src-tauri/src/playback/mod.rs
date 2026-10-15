@@ -363,6 +363,23 @@ impl PlaybackInner {
 
     pub fn seek(&self, position_ms: u32) -> Result<(), AppError> {
         eprintln!("[playback] seek pos={position_ms}");
+        let state = self.connect_state();
+        if self.playout.only_tail_left() {
+            // the player has decoded this track to the end and let it go, so
+            // it has nothing to seek in; left alone the tail would play out
+            // and the queue move on. play it again from there instead. (not
+            // in a jam, whose queue is spirc's and would be replaced)
+            if !state.jam_mode {
+                if let Some(uri) = self.current_uri() {
+                    self.playout.user_load();
+                    return self.play_uri(uri, position_ms);
+                }
+            }
+        } else if i64::from(position_ms) <= state.duration_ms {
+            // (spirc drops a seek past the duration it knows, without telling
+            // the player, so only then is one on its way)
+            self.playout.seek_requested(position_ms);
+        }
         self.spirc.set_position_ms(position_ms).map_err(spirc_err)?;
         Ok(())
     }
@@ -914,6 +931,7 @@ pub async fn create_inner(
             // tail has nearly played, so the interface moves on with the
             // music and the next track loads just in time to follow it
             if let PlayerEvent::EndOfTrack { play_request_id, .. } = &event {
+                playout.decoded_to_end(*play_request_id);
                 if !hold_end_of_track(&playout, *play_request_id, &mut event_rx, &mut held).await {
                     // the user moved on while the tail played; the queue
                     // mustn't also advance

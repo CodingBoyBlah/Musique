@@ -117,7 +117,11 @@ export const resumeOrPlay    = (id: string, positionMs: number): Promise<void> =
   return invoke<void>("resume_or_play", { id, positionMs: safePos, contextUri: contextUriFor(id) }).catch(failPlayback);
 };
 export const stopPlayback    = (): Promise<void>                     => invoke("stop_playback");
-export const seekPlayback    = (positionMs: number): Promise<void>   => invoke("seek_playback", { positionMs });
+export const seekPlayback    = (positionMs: number): Promise<void>   => {
+  const ms = Math.max(0, Math.round(positionMs));
+  usePlayerStore.getState().fenceSeek(ms);
+  return invoke("seek_playback", { positionMs: ms });
+};
 export const preloadTrack    = (id: string): Promise<void>           => invoke("preload_track", { id });
 export const setVolume       = (level: number): Promise<void>        => invoke("set_volume", { level });
 export const setMuted        = (muted: boolean): Promise<void>       => invoke("set_muted", { muted });

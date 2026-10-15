@@ -191,6 +191,23 @@ describe("voiceLayout", () => {
     ).toEqual(["left", "left", "right", "right"]);
   });
 
+  it("keeps a majority singer primary when a guest starts the shared row", () => {
+    const guest = { ...L(0, "hey", "duet"), agent: "guest" };
+    const main = { ...L(40, "most of the lyrics", "main"), agent: "lead", bg: L(50, "oh", "bg") };
+    const [r] = buildRows([guest, main]);
+    expect(voiceLayout(r)).toEqual([
+      { side: "right", secondary: false },
+      { side: "left", secondary: false },
+      { side: "left", secondary: true },
+    ]);
+    // Old cached documents have roles but no retained agent IDs.
+    expect(voiceLayout({ ...r, voices: r.voices.map(({ agent, ...v }) => v) })).toEqual([
+      { side: "right", secondary: false },
+      { side: "left", secondary: false },
+      { side: "left", secondary: true },
+    ]);
+  });
+
   it("works from the row buildRows makes for a duet line with a nested backing vocal", () => {
     const duet: LyricLine = { ...L(0, "Could you be mine?", "duet"), bg: L(0, "(my love)", "bg") };
     const [r] = buildRows([duet]);

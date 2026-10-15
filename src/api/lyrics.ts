@@ -21,6 +21,7 @@ export interface LyricLine {
   translation?: string | null; // only when the source itself ships one
   roman?:       string | null; // provider romanization (pinyin / romaji)
   role?:        LineRole;      // absent means "main"
+  agent?:       string | null; // provider voice identity
   bg?:          LyricLine | null; // backing vocal sung under this line
 }
 

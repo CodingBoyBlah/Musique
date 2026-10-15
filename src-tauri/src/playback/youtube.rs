@@ -206,16 +206,7 @@ impl YtPlayback {
         *self.clock.lock().unwrap() = None;
         *self.episode.lock().unwrap() = None;
 
-        let cursor = Cursor::new(audio);
-        // itag 140 is AAC in an MP4 container. Naming the container skips
-        // sniffing and, more usefully, produces a clear error if we are ever
-        // handed something else by a future format change.
-        let decoder = if stream.format.mime_type.contains("mp4") {
-            rodio::Decoder::new_mp4(cursor)
-        } else {
-            rodio::Decoder::new(cursor)
-        }
-        .map_err(|e| {
+        let decoder = open_decoder(audio, &stream.format.mime_type).map_err(|e| {
             AppError::Playback(format!(
                 "decode {} (itag {}, {}): {e}",
                 stream.video_id, stream.format.itag, stream.format.mime_type
@@ -377,6 +368,31 @@ impl YtPlayback {
         let level = if self.volume.is_muted() { 0.0 } else { self.volume.level() };
         let gain = *self.gain.lock().unwrap();
         self.sink.set_volume((level as f32 * gain).clamp(0.0, 4.0));
+    }
+}
+
+/// A decoder over a whole downloaded track that can seek both ways.
+///
+/// Seekable, with its length: rodio's `new`/`new_mp4` open a stream as
+/// forward-only, and the mp4 demuxer then fails the first packet after a seek
+/// backwards. The decoder took that for the end of the track, so dragging back
+/// skipped to the next song.
+pub(crate) fn open_decoder(
+    audio: Arc<[u8]>,
+    mime_type: &str,
+) -> Result<rodio::Decoder<Cursor<Arc<[u8]>>>, rodio::decoder::DecoderError> {
+    let len = audio.len() as u64;
+    let builder = rodio::Decoder::builder()
+        .with_data(Cursor::new(audio))
+        .with_byte_len(len)
+        .with_seekable(true);
+    // itag 140 is AAC in an MP4 container. Naming the container skips sniffing
+    // and, more usefully, produces a clear error if we are ever handed
+    // something else by a future format change.
+    if mime_type.contains("mp4") {
+        builder.with_mime_type("audio/mp4").build()
+    } else {
+        builder.build()
     }
 }
 

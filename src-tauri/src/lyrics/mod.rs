@@ -148,6 +148,9 @@ fn is_upgrade(new: &Lyrics, old: &Lyrics) -> bool {
     if new.word_level && !old.word_level {
         return true;
     }
+    if new.word_level && old.word_level && new.source == "applemusic" && old.source != "applemusic" {
+        return true;
+    }
     if new.word_level == old.word_level {
         return (new.has_translation && !old.has_translation)
             || (new.has_roman && !old.has_roman);
@@ -208,12 +211,42 @@ fn looks_cjk(track: &TrackRef) -> bool {
 ///
 /// `amll` is the same format keyed by Spotify track id, hand-corrected to
 /// ~100ms - the community answer for whatever Apple doesn't cover.
-async fn stage_exact(pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
+async fn stage_exact(app: &AppHandle, pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
     let (apple, amll) = tokio::join!(
-        async { try_provider!(pool, track, "applemusic", providers::applemusic::fetch(track)) },
+        async { try_provider!(pool, track, "applemusic", async {
+            let enriched = with_recording_isrc(app, pool, track).await;
+            providers::applemusic::fetch(&enriched).await
+        }) },
         async { try_provider!(pool, track, "amll", providers::amll::fetch(track)) },
     );
     apple.into_iter().chain(amll).collect()
+}
+
+fn recording_isrc(track: &librespot_protocol::metadata::Track) -> Option<String> {
+    track.external_id.iter()
+        .filter(|id| id.type_().eq_ignore_ascii_case("isrc"))
+        .map(|id| id.id().trim())
+        .find(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
+/// Album/search rows often omit ISRC. Reuse Spotify's cached metadata lookup
+/// in the background, with a deadline so missing metadata cannot stall lyrics.
+async fn with_recording_isrc(app: &AppHandle, pool: &SqlitePool, track: &TrackRef) -> TrackRef {
+    let mut enriched = track.clone();
+    if track.isrc.as_deref().is_some_and(|id| !id.trim().is_empty()) {
+        return enriched;
+    }
+    let lookup = crate::internal::metadata::track_protos(app, std::slice::from_ref(&track.id));
+    if let Ok(Ok(metadata)) = tokio::time::timeout(std::time::Duration::from_secs(3), lookup).await {
+        let uri = crate::internal::metadata::to_uri("track", &track.id);
+        enriched.isrc = metadata.get(&uri).and_then(recording_isrc);
+        if let Some(isrc) = &enriched.isrc {
+            let _ = sqlx::query("UPDATE tracks SET isrc = ? WHERE id = ? AND (isrc IS NULL OR TRIM(isrc) = '')")
+                .bind(isrc).bind(&track.id).execute(pool).await;
+        }
+    }
+    enriched
 }
 
 /// stage 2: Apple Music TTML again, but found by fuzzy search rather than by
@@ -282,7 +315,7 @@ pub async fn get_or_fetch(
             // mid-race). a finished race writes upgrading=false, and so does a
             // manual source pick - re-racing those would repeat every provider
             // round trip on each open and could overwrite the user's choice
-            if !hit.word_level && hit.found && hit.upgrading {
+            if hit.found && hit.upgrading {
                 spawn_upgrade(app, pool, track.clone(), hit.clone());
                 hit.upgrading = true;
             }
@@ -329,7 +362,7 @@ pub async fn get_or_fetch(
     // against the exact recording any more, so fall back to cross-source
     // consensus: two independent providers agreeing on the timing is decent
     // evidence they're both describing the same master.
-    let mut candidates = stage_exact(pool, &track).await;
+    let mut candidates = stage_exact(app, pool, &track).await;
     if candidates.is_empty() {
         candidates.extend(stage_betterlyrics(pool, &track).await);
     }
@@ -390,15 +423,20 @@ async fn run_upgrade(
 ) -> Option<Lyrics> {
     // rebuild the reference candidate from what we're currently showing, so the
     // alignment check compares against the exact timings on screen
-    let reference = Candidate {
-        source:       "spotify",
-        lines:        current.lines.clone(),
-        plain:        current.plain.clone(),
-        instrumental: current.instrumental,
-        exact:        true, // it came from the by-track-id fetch
+    let cached_spotify = if current.source != "spotify" {
+        cache::read_alt(pool, &track.id, "spotify").await
+    } else {
+        None
     };
-    let reference = (current.source == "spotify" && !reference.lines.is_empty())
-        .then_some(reference);
+    let reference_lyrics = cached_spotify.as_ref().unwrap_or(current);
+    let reference = Candidate {
+        source:       "cached",
+        lines:        reference_lyrics.lines.clone(),
+        plain:        reference_lyrics.plain.clone(),
+        instrumental: reference_lyrics.instrumental,
+        exact:        reference_lyrics.source == "spotify",
+    };
+    let reference = (!reference.lines.is_empty()).then_some(reference);
 
     let mut seen: Vec<Candidate> = Vec::new();
 
@@ -407,7 +445,7 @@ async fn run_upgrade(
     // this from costing six round trips per track
     for stage in 0..4 {
         let batch = match stage {
-            0 => stage_exact(pool, track).await,
+            0 => stage_exact(app, pool, track).await,
             1 => stage_betterlyrics(pool, track).await,
             2 => stage_major(pool, track).await,
             _ => stage_cjk(pool, track).await,
@@ -482,6 +520,27 @@ pub async fn switch_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recording_identifier_comes_from_isrc_metadata_only() {
+        use librespot_protocol::metadata::{ExternalId, Track};
+        let mut track = Track::new();
+        let mut upc = ExternalId::new();
+        upc.set_type("upc".into());
+        upc.set_id("album-code".into());
+        track.external_id.push(upc);
+        let mut blank = ExternalId::new();
+        blank.set_type("isrc".into());
+        blank.set_id(" ".into());
+        track.external_id.push(blank);
+        assert!(recording_isrc(&track).is_none());
+
+        let mut isrc = ExternalId::new();
+        isrc.set_type("ISRC".into());
+        isrc.set_id(" USUG11904206 ".into());
+        track.external_id.push(isrc);
+        assert_eq!(recording_isrc(&track).as_deref(), Some("USUG11904206"));
+    }
 
     #[test]
     fn completed_fetches_do_not_retain_track_locks() {
@@ -572,5 +631,17 @@ mod tests {
         let new = finalize("t", &cand("netease", lines), 0, false);
 
         assert!(is_upgrade(&new, &old));
+    }
+
+    #[test]
+    fn apple_can_replace_existing_word_timing_but_other_sources_cannot() {
+        let w = || vec![LyricLine::worded(0, None, vec![LyricWord { time_ms: 0, end_ms: 100, text: "hi".into() }])];
+        let old = finalize("t", &cand("musixmatch", w()), 0, true);
+        let apple = finalize("t", &cand("applemusic", w()), 0, false);
+        let amll = finalize("t", &cand("amll", w()), 0, false);
+        assert!(is_upgrade(&apple, &old));
+        assert!(!is_upgrade(&apple, &apple));
+        assert!(!is_upgrade(&amll, &old));
+        assert!(!is_upgrade(&amll, &apple));
     }
 }

@@ -39,6 +39,9 @@ pub struct LyricLine {
     pub roman: Option<String>,
     #[serde(default)]
     pub role: LineRole,
+    /// Provider voice identity, retained so sides can be assigned across the song.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     /// a concurrent backing-vocal line attached to this one (ttml bg spans).
     /// boxed so `LyricLine` stays a fixed size
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -55,6 +58,7 @@ impl LyricLine {
             translation: None,
             roman: None,
             role: LineRole::Main,
+            agent: None,
             bg: None,
         }
     }
@@ -64,7 +68,7 @@ impl LyricLine {
         let text = text.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| {
             words.iter().map(|w| w.text.as_str()).collect::<String>().trim().to_string()
         });
-        Self { time_ms, text, words, translation: None, roman: None, role: LineRole::Main, bg: None }
+        Self { time_ms, text, words, translation: None, roman: None, role: LineRole::Main, agent: None, bg: None }
     }
 
     /// absolute ms this line stops being sung, when the source knows

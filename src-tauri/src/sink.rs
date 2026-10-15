@@ -19,7 +19,7 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait};
 use librespot_playback::audio_backend::{Sink, SinkError, SinkResult};
@@ -52,7 +52,19 @@ pub struct Playout {
     told_end:   AtomicBool,
     /// The play request the player is on.
     current:    AtomicU64,
+    /// A seek the app asked for and the player hasn't carried out yet, and
+    /// when. Audio written meanwhile is from before it.
+    seeking:    Mutex<Option<Instant>>,
+    /// The play the player has decoded to the end of, so all that is left of
+    /// it is the tail in the ring.
+    decoded_end: AtomicU64,
 }
+
+/// How long audio is dropped waiting for the player to confirm a seek. It
+/// usually takes milliseconds; a long wait on the network for the new spot
+/// holds the player up rather than letting it write, so this only matters
+/// when the seek failed and the player carried on from where it was.
+const SEEK_GRACE: Duration = Duration::from_secs(2);
 
 impl Playout {
     pub fn new() -> Arc<Self> {
@@ -61,7 +73,47 @@ impl Playout {
             user_loads: AtomicU64::new(0),
             told_end:   AtomicBool::new(false),
             current:    AtomicU64::new(u64::MAX),
+            seeking:    Mutex::new(None),
+            decoded_end: AtomicU64::new(u64::MAX),
         })
+    }
+
+    /// The app asked the player to seek to `position_ms`. What is queued goes
+    /// now, rather than playing on until the player gets there (which can
+    /// take a trip to the CDN), and what is heard is the new spot.
+    pub fn seek_requested(&self, position_ms: u32) {
+        *self.seeking.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+        self.ring.flush_at(self.current.load(Ordering::Relaxed), u64::from(position_ms));
+    }
+
+    /// Whether audio written now predates a seek the player hasn't made yet.
+    fn awaiting_seek(&self) -> bool {
+        let mut seeking = self.seeking.lock().unwrap_or_else(PoisonError::into_inner);
+        match *seeking {
+            Some(at) if at.elapsed() < SEEK_GRACE => true,
+            Some(_) => {
+                log::warn!("the player never confirmed a seek; playing on from where it is");
+                *seeking = None;
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn seek_done(&self) {
+        *self.seeking.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    /// The player has decoded play `tag` to its end.
+    pub fn decoded_to_end(&self, tag: u64) {
+        self.decoded_end.store(tag, Ordering::Relaxed);
+    }
+
+    /// Whether the player is done with what is playing, leaving only its tail
+    /// in the ring and nothing for it to seek in.
+    pub fn only_tail_left(&self) -> bool {
+        let current = self.current.load(Ordering::Relaxed);
+        current != u64::MAX && self.decoded_end.load(Ordering::Relaxed) == current
     }
 
     /// A load is coming. Unless it is the queue moving on after the end of
@@ -273,10 +325,13 @@ impl RodioSink {
                     self.track.at_end = false;
                     self.track.fresh = true;
                     self.playout.current.store(play_request_id, Ordering::Relaxed);
+                    // a seek during a load restarts the load from there
+                    self.playout.seek_done();
                 }
                 PlayerEvent::Seeked { position_ms, .. } => {
                     flush = true;
                     self.track.pos_ms = position_ms as f64;
+                    self.playout.seek_done();
                 }
                 // where a load starts. (on a resume these carry the start of
                 // the last packet already written, so they're left alone)
@@ -426,6 +481,11 @@ impl Sink for RodioSink {
         self.track.pos_ms += frames as f64 * 1000.0 / SAMPLE_RATE as f64;
         self.track.at_end = false;
         self.track.fresh = false;
+        if self.playout.awaiting_seek() {
+            // decoded before the player got to the seek; the ring was
+            // already flushed for it
+            return Ok(());
+        }
         self.playout.ring.set_streaming(true);
 
         let samples = match &mut output.resampler {
