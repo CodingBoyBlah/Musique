@@ -409,6 +409,8 @@ function AppearanceCard() {
   const setAmbientMotion = usePrefsStore((s) => s.setAmbientMotion);
   const showCanvas = usePrefsStore((s) => s.showCanvas);
   const setShowCanvas = usePrefsStore((s) => s.setShowCanvas);
+  const autoHideSublyrics = usePrefsStore((s) => s.autoHideSublyrics);
+  const setAutoHideSublyrics = usePrefsStore((s) => s.setAutoHideSublyrics);
 
   return (
     <Card title="Appearance">
@@ -464,6 +466,12 @@ function AppearanceCard() {
         label="Animated artwork"
         hint="Play the looping video (Spotify Canvas) some artists attach to their tracks in the full-screen player. The background takes its colours from the video."
         control={<Switch checked={showCanvas} onChange={setShowCanvas} />}
+      />
+      <Divider />
+      <SettingRow
+        label="Hide inactive sublyrics"
+        hint="Show backing vocals when their main lyric is active, and keep them visible until they finish."
+        control={<Switch label="Hide inactive sublyrics" checked={autoHideSublyrics} onChange={setAutoHideSublyrics} />}
       />
     </Card>
   );

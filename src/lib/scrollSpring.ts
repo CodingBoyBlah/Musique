@@ -30,7 +30,7 @@ export interface ScrollSpring {
   readonly running: boolean;
 }
 
-export const LYRIC_SCROLL_RESPONSE = 0.45;
+export const LYRIC_SCROLL_RESPONSE = 0.6;
 
 export function createScrollSpring(
   el: HTMLElement,

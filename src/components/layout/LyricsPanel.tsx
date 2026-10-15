@@ -7,6 +7,7 @@ import {
   RefreshCw,
 } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
+import { usePrefsStore } from "../../store/prefs.store";
 import { useLyrics } from "../../hooks/useLyrics";
 import { sourceLabel } from "../../lib/lyricsSource";
 import { useAmbient } from "../../hooks/useAmbient";
@@ -79,6 +80,7 @@ function SongLyricsPanel() {
   const track = usePlayerStore((s) => s.currentTrack);
   const setPosition = usePlayerStore((s) => s.setPosition);
   const reduceMotion = useReducedMotion();
+  const autoHideSublyrics = usePrefsStore((s) => s.autoHideSublyrics);
 
   const { data, isLoading, isError, isFetching, refetch } = useLyrics(track);
   const { glow, ink } = useAmbient(track?.album?.image_url);
@@ -164,7 +166,7 @@ function SongLyricsPanel() {
     [],
   );
   const { detached, recenter } = useLyricFollow({
-    scrollRef, rowRefs, active, overlapping, resetKey: rows, trackKey: followTrackId, targetFor, reduceMotion,
+    scrollRef, rowRefs, active, overlapping, resetKey: rows, trackKey: followTrackId, targetFor, reduceMotion, layoutKey: autoHideSublyrics,
   });
 
   function seekTo(i: number) {
@@ -285,6 +287,7 @@ function SongLyricsPanel() {
             zIndex: 1,
             flex: 1,
             overflowY: "auto",
+            overflowAnchor: "none",
             overflowX: "hidden",
             padding: "26px 18px 40vh",
             scrollbarWidth: "none",
@@ -323,7 +326,6 @@ function SongLyricsPanel() {
                 const tone = synced
                   ? lyricTone(Math.abs(ri - active), ri < active, moreContrast)
                   : { blur: 0, alpha: 0.92 };
-                const multi = row.voices.length > 1;
                 const layout = voiceLayout(row);
                 return (
                   <div
@@ -347,13 +349,13 @@ function SongLyricsPanel() {
                       position: "relative",
                       cursor: synced ? "pointer" : "default",
                       transition: reduceMotion
-                        ? "opacity 0.2s ease, background-color 0.16s ease"
-                        : "opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.16s ease, scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)",
+                        ? "background-color 0.16s ease"
+                        : "background-color 0.16s ease, scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)",
                       contentVisibility: isActive || overlapping.some((v) => v.row === ri) ? "visible" : "auto",
                       containIntrinsicSize: "0 40px",
                       display: "flex",
                       flexDirection: "column",
-                      gap: multi ? 3 : 0,
+                      ["--lyr-voice-gap" as string]: "3px",
                       width: "100%",
                       minWidth: 0,
                       boxSizing: "border-box",
@@ -366,6 +368,7 @@ function SongLyricsPanel() {
                       const { side: align, secondary: isSecondary } = layout[vi];
                       const voiceActive = isActive || overlapping.some((v) => v.row === ri && v.voice === vi);
                       const voiceTone = voiceActive ? lyricTone(0, false, moreContrast) : tone;
+                      const collapsed = synced && isSecondary && autoHideSublyrics && !voiceActive;
 
                       // Lead voice is primary; bg voice is visually subordinate (smaller, lower opacity, indented)
                       // rem (19 / 22 / 25px at the default size), so the user's text size carries through
@@ -376,52 +379,57 @@ function SongLyricsPanel() {
                       return (
                         <div
                           key={vi}
+                          className="lyr-voice"
+                          data-collapsed={collapsed}
+                          aria-hidden={collapsed || undefined}
                           data-lyric-voice={vi}
                           data-lyric-secondary={isSecondary}
                           data-active={voiceActive}
-                          style={{
-                            // a backing vocal hangs off its singer's side:
-                            // indented from that edge, with the rule on it.
-                            // no width: 100% - with the indent as a margin
-                            // that ran the box past the panel's edge
-                            ...(isSecondary
-                              ? align === "right"
-                                ? { marginRight: 16, borderRight: "2px solid rgba(255,255,255,0.18)", paddingRight: 8 }
-                                : { marginLeft: 16, borderLeft: "2px solid rgba(255,255,255,0.18)", paddingLeft: 8 }
-                              : null),
-                            opacity: voiceTone.alpha * (isSecondary ? 0.78 : 1),
-                            transition: reduceMotion ? "opacity 0.2s ease" : "opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1)",
-                            minWidth: 0,
-                            boxSizing: "border-box",
-                            textAlign: align,
-                          }}
+                          style={{ opacity: collapsed ? 0 : voiceTone.alpha * (isSecondary ? 0.78 : 1) }}
                         >
-                          <LyricRowText
-                            words={words}
-                            active={voiceActive}
-                            getClock={getClock}
-                            tone={voiceTone}
-                            size={size}
-                            weight={weight}
-                            glowRgb={glow}
-                            inkRgb={ink}
-                            align={align}
-                            tracking={isSecondary ? "-0.01em" : undefined}
-                          />
-                          {/* what the source itself shipped, in the same
-                              quiet key as the pronunciation line that was
-                              already here - they stack rather than compete */}
-                          {showRoman && voice.roman && (
-                            <p style={subText(voiceActive, align)}>{voice.roman}</p>
-                          )}
-                          {showTranslation && voice.translation && (
-                            <p style={subText(voiceActive, align)}>{voice.translation}</p>
-                          )}
-                          {pron && (
-                            <p style={subText(voiceActive, align)}>
-                              {romaji ? romaji[romIdx] : romanizing ? "…" : ""}
-                            </p>
-                          )}
+                          <div
+                            style={{
+                              // a backing vocal hangs off its singer's side:
+                              // indented from that edge, with the rule on it.
+                              // no width: 100% - with the indent as a margin
+                              // that ran the box past the panel's edge
+                              ...(isSecondary
+                                ? align === "right"
+                                  ? { marginRight: 16, borderRight: "2px solid rgba(255,255,255,0.18)", paddingRight: 8 }
+                                  : { marginLeft: 16, borderLeft: "2px solid rgba(255,255,255,0.18)", paddingLeft: 8 }
+                                : null),
+                              minWidth: 0,
+                              boxSizing: "border-box",
+                              textAlign: align,
+                            }}
+                          >
+                            <LyricRowText
+                              words={words}
+                              active={voiceActive}
+                              getClock={getClock}
+                              tone={voiceTone}
+                              size={size}
+                              weight={weight}
+                              glowRgb={glow}
+                              inkRgb={ink}
+                              align={align}
+                              tracking={isSecondary ? "-0.01em" : undefined}
+                            />
+                            {/* what the source itself shipped, in the same
+                                quiet key as the pronunciation line that was
+                                already here - they stack rather than compete */}
+                            {showRoman && voice.roman && (
+                              <p style={subText(voiceActive, align)}>{voice.roman}</p>
+                            )}
+                            {showTranslation && voice.translation && (
+                              <p style={subText(voiceActive, align)}>{voice.translation}</p>
+                            )}
+                            {pron && (
+                              <p style={subText(voiceActive, align)}>
+                                {romaji ? romaji[romIdx] : romanizing ? "…" : ""}
+                              </p>
+                            )}
+                          </div>
                         </div>
                       );
                     })}

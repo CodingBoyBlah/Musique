@@ -43,6 +43,10 @@ interface PrefsStore {
   showCanvas: boolean;
   setShowCanvas: (v: boolean) => void;
 
+  // reveal synced backing vocals with their main lyric, including overlaps
+  autoHideSublyrics: boolean;
+  setAutoHideSublyrics: (v: boolean) => void;
+
   // whole-app zoom factor (1 = 100%). applied to the webview by lib/zoom.ts
   uiZoom: number;
   setUiZoom: (v: number) => void;
@@ -103,6 +107,9 @@ export const usePrefsStore = create<PrefsStore>()(
 
       showCanvas: true,
       setShowCanvas: (v) => set({ showCanvas: v }),
+
+      autoHideSublyrics: true,
+      setAutoHideSublyrics: (v) => set({ autoHideSublyrics: v }),
 
       uiZoom: 1,
       setUiZoom: (v) => set({ uiZoom: v }),

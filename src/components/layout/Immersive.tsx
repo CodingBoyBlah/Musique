@@ -306,6 +306,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
   const track        = usePlayerStore((s) => s.currentTrack);
   const setPosition  = usePlayerStore((s) => s.setPosition);
   const reduceMotion = useReducedMotion();
+  const autoHideSublyrics = usePrefsStore((s) => s.autoHideSublyrics);
   const { data, isLoading } = useLyrics(track);
   const { seek } = usePlayerControls();
 
@@ -344,7 +345,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
 
   // first placement jumps, line-to-line springs, and the reader can take over
   const { detached, recenter } = useLyricFollow({
-    scrollRef, rowRefs, active, overlapping, resetKey: rows, trackKey: followTrackId, targetFor, reduceMotion,
+    scrollRef, rowRefs, active, overlapping, resetKey: rows, trackKey: followTrackId, targetFor, reduceMotion, layoutKey: autoHideSublyrics,
   });
 
   function seekTo(i: number) {
@@ -365,7 +366,6 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
       {rows.map((row, ri) => {
         const isActive = synced && ri === active;
         const tone = synced ? lyricTone(Math.abs(ri - active), ri < active, moreContrast) : { blur: 0, alpha: 0.9 };
-        const multi = row.voices.length > 1;
         const layout = voiceLayout(row);
         const ease = "0.45s cubic-bezier(0.22, 1, 0.36, 1)";
         return (
@@ -393,12 +393,9 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                  the thing the layout measured, and nothing can clip however
                  large the ratio gets. */
               padding: "5px 0",
-              /* On the scroll spring's clock (~0.45s to settle). The size
-                 step lives on each voice below; `scale` here is the press. */
-              transition: reduceMotion
-                ? "opacity 0.2s ease"
-                : `opacity ${ease}, scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)`,
-              display: "flex", flexDirection: "column", gap: multi ? 6 : 0,
+              // Voice emphasis animates below; `scale` here is only the press.
+              transition: reduceMotion ? undefined : "scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)",
+              display: "flex", flexDirection: "column", ["--lyr-voice-gap" as string]: "6px",
             }}
           >
             {row.voices.map((voice, vi) => {
@@ -408,6 +405,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
               const { side: align, secondary: isSecondary } = layout[vi];
               const voiceActive = isActive || overlapping.some((v) => v.row === ri && v.voice === vi);
               const voiceTone = voiceActive ? lyricTone(0, false, moreContrast) : tone;
+              const collapsed = synced && isSecondary && autoHideSublyrics && !voiceActive;
               /* Each voice shrinks toward its OWN side. The whole row used to
                  scale from one origin - left unless the row was a lone duet
                  line - so a right-aligned duet line with a backing vocal
@@ -432,32 +430,38 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
               return (
                 <div
                   key={vi}
+                  className="lyr-voice"
+                  data-collapsed={collapsed}
+                  aria-hidden={collapsed || undefined}
                   data-lyric-voice={vi}
                   data-lyric-secondary={isSecondary}
                   data-active={voiceActive}
-                  style={{
-                    // a backing vocal hangs off its singer's side: indented
-                    // from that edge, with the rule on that edge
-                    ...(isSecondary ? secondaryInset(align, 18, 12) : null),
-                    opacity: voiceTone.alpha * (isSecondary ? 0.78 : 1),
-                    textAlign: align,
-                    transform: voiceActive ? "scale(1)" : "scale(0.79)",
-                    transformOrigin: `${align} ${originY}`,
-                    transition: reduceMotion ? "opacity 0.2s ease" : `transform ${ease}, opacity ${ease}`,
-                  }}
+                  style={{ opacity: collapsed ? 0 : voiceTone.alpha * (isSecondary ? 0.78 : 1) }}
                 >
-                  <LyricRowText
-                    words={words}
-                    active={voiceActive}
-                    getClock={getClock}
-                    tone={voiceTone}
-                    size={size}
-                    weight={weight}
-                    glowRgb={glow}
-                    inkRgb={ink}
-                    align={align}
-                    tracking={isSecondary ? "-0.01em" : undefined}
-                  />
+                  <div
+                    style={{
+                      // a backing vocal hangs off its singer's side: indented
+                      // from that edge, with the rule on that edge
+                      ...(isSecondary ? secondaryInset(align, 18, 12) : null),
+                      textAlign: align,
+                      transform: voiceActive ? "scale(1)" : "scale(0.79)",
+                      transformOrigin: `${align} ${originY}`,
+                      transition: reduceMotion ? undefined : `transform ${ease}`,
+                    }}
+                  >
+                    <LyricRowText
+                      words={words}
+                      active={voiceActive}
+                      getClock={getClock}
+                      tone={voiceTone}
+                      size={size}
+                      weight={weight}
+                      glowRgb={glow}
+                      inkRgb={ink}
+                      align={align}
+                      tracking={isSecondary ? "-0.01em" : undefined}
+                    />
+                  </div>
                 </div>
               );
             })}

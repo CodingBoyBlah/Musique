@@ -35,6 +35,33 @@
     border-radius: 10px;
     transition: background-color 0.16s ease, scale 0.12s var(--ease-out);
 }
+
+/* Keep lyric reflow continuous as backing vocals enter and leave. A 0fr track
+   collapses the voice without swapping DOM or guessing its wrapped height. */
+.lyr-voice {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 0.42s cubic-bezier(0.2, 0, 0.2, 1),
+        margin-top 0.42s cubic-bezier(0.2, 0, 0.2, 1),
+        opacity 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.lyr-voice + .lyr-voice {
+    margin-top: var(--lyr-voice-gap, 0px);
+}
+.lyr-voice > div {
+    min-height: 0;
+}
+.lyr-voice[data-lyric-secondary="true"] > div {
+    overflow: hidden;
+}
+.lyr-voice[data-collapsed="true"] {
+    grid-template-rows: 0fr;
+    margin-top: 0;
+    pointer-events: none;
+}
+.lyr-scroll {
+    overflow-anchor: none;
+}
 .lyr-prow[data-seekable="true"]:active {
     scale: 0.985;
     background: rgba(255, 255, 255, 0.07);
@@ -81,6 +108,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .lyr-voice {
+        transition: none;
+    }
     .lyr-row[data-seekable="true"]:active,
     .lyr-prow[data-seekable="true"]:active {
         scale: none;
