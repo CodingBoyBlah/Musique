@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRows, voiceLayout, CONCURRENT_TOL_MS, type Row } from "./lyricsRows";
+import { buildRows, voiceLayout, timedSecondaryVoices, overlappingVoices, CONCURRENT_TOL_MS, type Row } from "./lyricsRows";
 import type { LyricLine } from "../api/lyrics";
 
 // line-level helper (no word timings, like LRCLIB)
@@ -212,5 +212,59 @@ describe("voiceLayout", () => {
     const duet: LyricLine = { ...L(0, "Could you be mine?", "duet"), bg: L(0, "(my love)", "bg") };
     const [r] = buildRows([duet]);
     expect(voiceLayout(r).map((v) => v.side)).toEqual(["right", "right"]);
+  });
+});
+
+describe("overlapping sublyrics", () => {
+  const rows = buildRows([
+    { ...W(1000, "first lead", 2000), bg: W(2000, "held backing", 5000) },
+    W(4000, "second lead", 1000),
+    W(6000, "third lead", 2000),
+  ]);
+  const voices = timedSecondaryVoices(rows);
+
+  it("keeps a nested sublyric singing across multiple main lines without extending the lead", () => {
+    expect(rows[0].endMs).toBe(3000);
+    expect(overlappingVoices(voices, 1, 4000)).toEqual([
+      { row: 0, voice: 1, startMs: 2000, endMs: 7000 },
+    ]);
+    expect(overlappingVoices(voices, 2, 6500)).toEqual(voices);
+  });
+
+  it.each([
+    [0, 2500, 0], // still in its own row
+    [1, 4000, 1], // next main starts
+    [2, 6999, 1],
+    [2, 7000, 0], // sublyric ends, with no new main line
+    [2, 9000, 0], // seek past the overlap
+    [1, 4500, 1], // seek back into it
+    [-1, 0, 0], // seek before the song
+  ])("at main row %i and %ims, retains %i old sublyrics", (active, timeMs, count) => {
+    expect(overlappingVoices(voices, active, timeMs)).toHaveLength(count);
+  });
+
+  it("waits for a delayed sublyric to begin even after its main row has passed", () => {
+    const timed = timedSecondaryVoices(buildRows([
+      { ...W(1000, "lead", 1500), bg: W(5000, "late backing", 2000, "bg") },
+      W(3000, "next", 5000),
+    ]));
+    expect(overlappingVoices(timed, 1, 4999)).toEqual([]);
+    expect(overlappingVoices(timed, 1, 5000)).toEqual(timed);
+  });
+
+  it("supports unnested backing vocals and simultaneous overlaps from older rows", () => {
+    const timed = timedSecondaryVoices(buildRows([
+      W(1000, "a", 1000), W(1500, "backing a", 7000, "bg"),
+      { ...W(3000, "b", 1000), bg: W(3500, "backing b", 5000) },
+      W(5000, "c", 1000),
+    ]));
+    expect(overlappingVoices(timed, 2, 6000).map((v) => v.row)).toEqual([0, 1]);
+  });
+
+  it("leaves untimed sublyrics, unsynced lyrics, and primary duets on normal row activity", () => {
+    const untimed = { ...L(1000, "a"), bg: L(1500, "backing") };
+    const unsynced = { ...L(-1, "plain"), bg: W(-1, "plain backing", 1000, "bg") };
+    const duet = { ...W(1000, "duet", 6000, "duet"), agent: "guest" };
+    expect(timedSecondaryVoices(buildRows([untimed, duet, unsynced]))).toEqual([]);
   });
 });

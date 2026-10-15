@@ -30,7 +30,7 @@ import {
   voiceLayout,
   lyricTone,
   lyricWords,
-  useActiveRow,
+  useActiveLyrics,
   useLyricClock,
   useMoreContrast,
 } from "../../lib/lyrics";
@@ -314,7 +314,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
   const synced = !!data?.lines.length;
 
   const { getClock, resync } = useLyricClock();
-  const active = useActiveRow(rowStarts, getClock, synced);
+  const { active, overlapping } = useActiveLyrics(rows, getClock, synced);
 
   const followTrackId = usePlayerStore((s) => s.currentTrack?.id);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -344,7 +344,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
 
   // first placement jumps, line-to-line springs, and the reader can take over
   const { detached, recenter } = useLyricFollow({
-    scrollRef, rowRefs, active, resetKey: rows, trackKey: followTrackId, targetFor, reduceMotion,
+    scrollRef, rowRefs, active, overlapping, resetKey: rows, trackKey: followTrackId, targetFor, reduceMotion,
   });
 
   function seekTo(i: number) {
@@ -393,7 +393,6 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                  the thing the layout measured, and nothing can clip however
                  large the ratio gets. */
               padding: "5px 0",
-              opacity: tone.alpha,
               /* On the scroll spring's clock (~0.45s to settle). The size
                  step lives on each voice below; `scale` here is the press. */
               transition: reduceMotion
@@ -407,6 +406,8 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
               // lead left, duet right, a backing vocal on the side of the
               // singer it's under (lib/lyricsRows voiceLayout)
               const { side: align, secondary: isSecondary } = layout[vi];
+              const voiceActive = isActive || overlapping.some((v) => v.row === ri && v.voice === vi);
+              const voiceTone = voiceActive ? lyricTone(0, false, moreContrast) : tone;
               /* Each voice shrinks toward its OWN side. The whole row used to
                  scale from one origin - left unless the row was a lone duet
                  line - so a right-aligned duet line with a backing vocal
@@ -431,22 +432,25 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
               return (
                 <div
                   key={vi}
+                  data-lyric-voice={vi}
+                  data-lyric-secondary={isSecondary}
+                  data-active={voiceActive}
                   style={{
                     // a backing vocal hangs off its singer's side: indented
                     // from that edge, with the rule on that edge
                     ...(isSecondary ? secondaryInset(align, 18, 12) : null),
-                    opacity: isSecondary ? 0.78 : 1,
+                    opacity: voiceTone.alpha * (isSecondary ? 0.78 : 1),
                     textAlign: align,
-                    transform: isActive ? "scale(1)" : "scale(0.79)",
+                    transform: voiceActive ? "scale(1)" : "scale(0.79)",
                     transformOrigin: `${align} ${originY}`,
-                    transition: reduceMotion ? undefined : `transform ${ease}`,
+                    transition: reduceMotion ? "opacity 0.2s ease" : `transform ${ease}, opacity ${ease}`,
                   }}
                 >
                   <LyricRowText
                     words={words}
-                    active={isActive}
+                    active={voiceActive}
                     getClock={getClock}
-                    tone={tone}
+                    tone={voiceTone}
                     size={size}
                     weight={weight}
                     glowRgb={glow}

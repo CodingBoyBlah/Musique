@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { createScrollSpring, type ScrollSpring } from "../lib/scrollSpring";
+import type { OverlappingVoice } from "../lib/lyricsRows";
 
 /* Keep the sung line in view - until the reader takes the column.
  *
@@ -28,6 +29,7 @@ export function useLyricFollow({
   scrollRef,
   rowRefs,
   active,
+  overlapping,
   resetKey,
   trackKey,
   targetFor,
@@ -36,6 +38,7 @@ export function useLyricFollow({
   scrollRef: RefObject<HTMLDivElement | null>;
   rowRefs: RefObject<(HTMLDivElement | null)[]>;
   active: number;
+  overlapping: OverlappingVoice[];
   /** changes whenever the column's rows are rebuilt (loaded, upgraded) */
   resetKey: unknown;
   /** changes only when the song changes. a mid-song rebuild (word timings
@@ -89,7 +92,30 @@ export function useLyricFollow({
     if (!el || !cont) return;
 
     const spring = springFor(cont);
-    const target = targetForRef.current(el, cont);
+    let target = targetForRef.current(el, cont);
+    if (overlapping.length) {
+      // Center only the singing voices, leaving the previous main line out.
+      const voices = [
+        ...el.querySelectorAll<HTMLElement>('[data-lyric-secondary="false"]'),
+        ...overlapping.flatMap((v) => {
+          const voice = rowRefs.current[v.row]?.querySelector<HTMLElement>(`[data-lyric-voice="${v.voice}"]`);
+          return voice ? [voice] : [];
+        }),
+      ];
+      if (voices.length) {
+        // Voice transforms animate independently. Measure their fixed layout
+        // boxes so the target does not drift while a main line grows to 1x.
+        const bounds = voices.map((v) => {
+          const row = v.offsetParent as HTMLElement;
+          const top = row.getBoundingClientRect().top + row.clientTop + v.offsetTop;
+          return { top, bottom: top + v.offsetHeight };
+        });
+        const top = Math.min(...bounds.map((b) => b.top));
+        const bottom = Math.max(...bounds.map((b) => b.bottom));
+        target = cont.scrollTop + (top + bottom) / 2
+          - cont.getBoundingClientRect().top - cont.clientTop - cont.clientHeight / 2;
+      }
+    }
     if (!placedRef.current || reduceMotion) {
       spring.jump(target);
       placedRef.current = true;
@@ -97,7 +123,7 @@ export function useLyricFollow({
     }
     spring.to(target);
     // the spring is left running on purpose: the next line re-targets it mid-flight
-  }, [active, resetKey, reduceMotion, detached, rowRefs, scrollRef]);
+  }, [active, overlapping, resetKey, reduceMotion, detached, rowRefs, scrollRef]);
 
   // the reader's hands on the column
   useEffect(() => {

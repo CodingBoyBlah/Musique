@@ -4,6 +4,7 @@ import type { LyricLine } from "../api/lyrics";
 import { usePlayerStore } from "../store/player.store";
 import { getOutputLatencyMs, startLatencyPolling } from "./outputLatency";
 import { useWindowActive } from "../hooks/useWindowActive";
+import { timedSecondaryVoices, overlappingVoices, type Row } from "./lyricsRows";
 
 
 export { CONCURRENT_TOL_MS, buildRows, voiceLayout, type Row, type VoiceSide } from "./lyricsRows";
@@ -161,6 +162,24 @@ export function useActiveRow(rowStarts: number[], getClock: () => number, synced
   }, [synced, rowStarts, getClock, isPlaying]);
 
   return active;
+}
+
+/** Reuse the boundary scheduler so sublyric starts/ends also wake the view. */
+export function useActiveLyrics(rows: Row[], getClock: () => number, synced: boolean) {
+  const voices = useMemo(() => timedSecondaryVoices(rows), [rows]);
+  const boundaries = useMemo(() => [...new Set([
+    ...rows.map((r) => r.startMs),
+    ...voices.flatMap((v) => [v.startMs, v.endMs]),
+  ])].sort((a, b) => a - b), [rows, voices]);
+  const boundary = useActiveRow(boundaries, getClock, synced);
+  return useMemo(() => {
+    const timeMs = boundaries[boundary] ?? -Infinity;
+    let active = -1;
+    if (synced) {
+      for (let i = 0; i < rows.length && rows[i].startMs <= timeMs; i++) active = i;
+    }
+    return { active, overlapping: overlappingVoices(voices, active, timeMs) };
+  }, [rows, voices, boundaries, boundary, synced]);
 }
 
 // distance falloff

@@ -3,8 +3,8 @@ import type { LyricLine, Lyrics } from "../api/lyrics";
 export const CONCURRENT_TOL_MS = 60;
 
 /* Row model: a display row contains one primary lead voice plus any concurrent
-voices (such as backing vocals or simultaneous duets). All voices in a row share
-the row's active/inactive state while animating on their own timings. */
+voices (such as backing vocals or simultaneous duets). Timed backing vocals can
+remain active after the lead advances to another row. */
 export type Row = {
   startMs: number;
   endMs: number;
@@ -127,4 +127,24 @@ export function voiceLayout(row: Row): { side: VoiceSide; secondary: boolean }[]
     owner = v.role === "duet" ? "right" : "left";
     return { side: owner, secondary };
   });
+}
+
+export type OverlappingVoice = { row: number; voice: number; startMs: number; endMs: number };
+
+/** Only measured word timings can extend a sublyric beyond its parent row. */
+export function timedSecondaryVoices(rows: Row[]): OverlappingVoice[] {
+  return rows.flatMap((row, ri) => {
+    const layout = voiceLayout(row);
+    return row.voices.flatMap((voice, vi) => {
+      if (!layout[vi].secondary || !voice.words.length || voice.time_ms < 0) return [];
+      const endMs = Math.max(...voice.words.map((w, wi) =>
+        w.end_ms > w.time_ms ? w.end_ms : (voice.words[wi + 1]?.time_ms ?? w.time_ms + 400),
+      ));
+      return [{ row: ri, voice: vi, startMs: voice.time_ms, endMs }];
+    });
+  });
+}
+
+export function overlappingVoices(voices: OverlappingVoice[], active: number, timeMs: number) {
+  return voices.filter((v) => v.row < active && v.startMs <= timeMs && timeMs < v.endMs);
 }

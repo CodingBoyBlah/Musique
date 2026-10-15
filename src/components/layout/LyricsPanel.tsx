@@ -29,7 +29,7 @@ import {
   voiceLayout,
   lyricTone,
   lyricWords,
-  useActiveRow,
+  useActiveLyrics,
   useLyricClock,
   useMoreContrast,
   type Row,
@@ -148,7 +148,7 @@ function SongLyricsPanel() {
 
   // interpolated clock AND active-row tracking shared with the Immersive view
   const { getClock, resync } = useLyricClock();
-  const active = useActiveRow(rowStarts, getClock, synced);
+  const { active, overlapping } = useActiveLyrics(rows, getClock, synced);
 
   /* keep the active row at about 40%. the same follower the immersive view
      uses: a jump for the first placement, one velocity-keeping spring line to
@@ -164,7 +164,7 @@ function SongLyricsPanel() {
     [],
   );
   const { detached, recenter } = useLyricFollow({
-    scrollRef, rowRefs, active, resetKey: rows, trackKey: followTrackId, targetFor, reduceMotion,
+    scrollRef, rowRefs, active, overlapping, resetKey: rows, trackKey: followTrackId, targetFor, reduceMotion,
   });
 
   function seekTo(i: number) {
@@ -344,12 +344,12 @@ function SongLyricsPanel() {
                          this panel. Emphasis is light only now, the same as the
                          immersive view. */
                       padding: "6px 10px",
+                      position: "relative",
                       cursor: synced ? "pointer" : "default",
                       transition: reduceMotion
                         ? "opacity 0.2s ease, background-color 0.16s ease"
                         : "opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.16s ease, scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)",
-                      opacity: synced ? tone.alpha : 0.92,
-                      contentVisibility: "auto",
+                      contentVisibility: isActive || overlapping.some((v) => v.row === ri) ? "visible" : "auto",
                       containIntrinsicSize: "0 40px",
                       display: "flex",
                       flexDirection: "column",
@@ -364,6 +364,8 @@ function SongLyricsPanel() {
                       // lead left, duet right, a backing vocal on the side of
                       // the singer it's under (lib/lyricsRows voiceLayout)
                       const { side: align, secondary: isSecondary } = layout[vi];
+                      const voiceActive = isActive || overlapping.some((v) => v.row === ri && v.voice === vi);
+                      const voiceTone = voiceActive ? lyricTone(0, false, moreContrast) : tone;
 
                       // Lead voice is primary; bg voice is visually subordinate (smaller, lower opacity, indented)
                       // rem (19 / 22 / 25px at the default size), so the user's text size carries through
@@ -374,6 +376,9 @@ function SongLyricsPanel() {
                       return (
                         <div
                           key={vi}
+                          data-lyric-voice={vi}
+                          data-lyric-secondary={isSecondary}
+                          data-active={voiceActive}
                           style={{
                             // a backing vocal hangs off its singer's side:
                             // indented from that edge, with the rule on it.
@@ -384,7 +389,8 @@ function SongLyricsPanel() {
                                 ? { marginRight: 16, borderRight: "2px solid rgba(255,255,255,0.18)", paddingRight: 8 }
                                 : { marginLeft: 16, borderLeft: "2px solid rgba(255,255,255,0.18)", paddingLeft: 8 }
                               : null),
-                            opacity: isSecondary ? 0.78 : 1,
+                            opacity: voiceTone.alpha * (isSecondary ? 0.78 : 1),
+                            transition: reduceMotion ? "opacity 0.2s ease" : "opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1)",
                             minWidth: 0,
                             boxSizing: "border-box",
                             textAlign: align,
@@ -392,9 +398,9 @@ function SongLyricsPanel() {
                         >
                           <LyricRowText
                             words={words}
-                            active={isActive}
+                            active={voiceActive}
                             getClock={getClock}
-                            tone={tone}
+                            tone={voiceTone}
                             size={size}
                             weight={weight}
                             glowRgb={glow}
@@ -406,13 +412,13 @@ function SongLyricsPanel() {
                               quiet key as the pronunciation line that was
                               already here - they stack rather than compete */}
                           {showRoman && voice.roman && (
-                            <p style={subText(isActive, align)}>{voice.roman}</p>
+                            <p style={subText(voiceActive, align)}>{voice.roman}</p>
                           )}
                           {showTranslation && voice.translation && (
-                            <p style={subText(isActive, align)}>{voice.translation}</p>
+                            <p style={subText(voiceActive, align)}>{voice.translation}</p>
                           )}
                           {pron && (
-                            <p style={subText(isActive, align)}>
+                            <p style={subText(voiceActive, align)}>
                               {romaji ? romaji[romIdx] : romanizing ? "…" : ""}
                             </p>
                           )}
