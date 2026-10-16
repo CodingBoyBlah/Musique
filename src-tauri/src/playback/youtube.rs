@@ -315,9 +315,12 @@ impl YtPlayback {
     }
 
     pub fn seek(&self, position_ms: u32) -> Result<(), AppError> {
-        self.sink
-            .try_seek(Duration::from_millis(position_ms as u64))
-            .map_err(|e| AppError::Playback(format!("seek: {e}")))
+        // The producer owns the decoder. This works while paused too, without
+        // waiting for rodio to pull another sample and acknowledge the seek.
+        if let Some(ring) = self.clock.lock().unwrap().as_ref() {
+            ring.request_seek(Duration::from_millis(position_ms as u64));
+        }
+        Ok(())
     }
 
     pub fn stop(&self) {

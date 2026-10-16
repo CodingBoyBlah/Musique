@@ -472,7 +472,7 @@ export default function Search() {
       const start = playContext(data?.tracks ?? [topResult.item], idx >= 0 ? idx : 0, "search");
       const trackToPlay = start || topResult.item;
       setCurrentTrack(trackToPlay);
-      playTrack(trackToPlay.id).then(() => usePlayerStore.getState().setPlaying(true)).catch(console.error);
+      playTrack(trackToPlay.id).catch(console.error);
       return;
     }
 
@@ -490,7 +490,7 @@ export default function Search() {
       const start = playContext(tracks, 0, topResult.item.id, `spotify:${topResult.type}:${topResult.item.id}`);
       if (start) {
         setCurrentTrack(start);
-        playTrack(start.id).then(() => usePlayerStore.getState().setPlaying(true)).catch(console.error);
+        playTrack(start.id).catch(console.error);
       }
     } catch (err) {
       toast.error(`Couldn't play ${topResult.item.name}: ${errMsg(err)}`);

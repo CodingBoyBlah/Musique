@@ -85,6 +85,9 @@ pub struct Ring {
     heard_ms:  AtomicU64,
     flushes:   AtomicU64,
     underruns: AtomicU64,
+    /// Audio actually pulled by the output, normalized to 44.1 kHz frames.
+    /// Queued, flushed, paused and underrun samples never enter this counter.
+    pub rendered_frames: Arc<AtomicU64>,
 }
 
 impl Ring {
@@ -107,6 +110,7 @@ impl Ring {
             heard_ms:  AtomicU64::new(0),
             flushes:   AtomicU64::new(0),
             underruns: AtomicU64::new(0),
+            rendered_frames: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -367,6 +371,9 @@ pub struct RingSource {
     /// output, which outlives any one device). Otherwise it ends with its
     /// source and closes the ring behind it.
     endless:  bool,
+    counted: usize,
+    rendered: u64,
+    reported: u64,
 }
 
 impl RingSource {
@@ -390,10 +397,24 @@ impl RingSource {
             starving: false,
             flushes: 0,
             endless,
+            counted: 0,
+            rendered: 0,
+            reported: 0,
         }
     }
 
-    fn note_heard(&self) {
+    fn count_rendered(&mut self) {
+        self.rendered += (self.idx.saturating_sub(self.counted) / self.channels as usize) as u64;
+        self.counted = self.idx;
+        let normalized = self.rendered * 44_100 / u64::from(self.rate.max(1));
+        if normalized > self.reported {
+            self.ring.rendered_frames.fetch_add(normalized - self.reported, Ordering::Relaxed);
+            self.reported = normalized;
+        }
+    }
+
+    fn note_heard(&mut self) {
+        self.count_rendered();
         let frac = if self.cur.is_empty() { 0.0 } else { self.idx as f64 / self.cur.len() as f64 };
         let ms = self.start_ms + (self.end_ms - self.start_ms) * frac;
         self.ring.set_heard(self.tag, ms.max(0.0) as u64);
@@ -414,10 +435,13 @@ impl Iterator for RingSource {
                 // only between frames, so left and right never trade places
                 if self.idx % channels == 0 {
                     if self.ring.flushes() != self.flushes {
+                        self.count_rendered();
                         self.idx = self.cur.len();
+                        self.counted = self.idx;
                         continue;
                     }
                     if self.ring.held() {
+                        self.count_rendered();
                         self.silence = GAP * channels;
                         continue;
                     }
@@ -429,6 +453,7 @@ impl Iterator for RingSource {
                 self.idx += 1;
                 return Some(sample);
             }
+            self.count_rendered();
             if self.ring.held() {
                 self.silence = GAP * channels;
                 continue;
@@ -439,6 +464,7 @@ impl Iterator for RingSource {
                     self.flushes = flushes;
                     self.cur = chunk.samples;
                     self.idx = 0;
+                    self.counted = 0;
                     self.tag = chunk.tag;
                     self.start_ms = chunk.start_ms;
                     self.end_ms = chunk.end_ms;
@@ -484,6 +510,7 @@ impl Source for RingSource {
             return Err(SeekError::NotSupported { underlying_source: "the librespot output" });
         }
         self.ring.request_seek(pos);
+        self.count_rendered();
         let used = std::mem::take(&mut self.cur);
         if used.capacity() > 0 {
             let mut state = self.ring.lock();
@@ -492,6 +519,7 @@ impl Source for RingSource {
             }
         }
         self.idx = 0;
+        self.counted = 0;
         self.starving = false;
         Ok(())
     }
@@ -499,6 +527,7 @@ impl Source for RingSource {
 
 impl Drop for RingSource {
     fn drop(&mut self) {
+        self.count_rendered();
         if !self.endless {
             self.ring.close();
         }
@@ -764,6 +793,22 @@ mod tests {
         source.next();
         source.try_seek(Duration::from_millis(3000)).unwrap();
         assert_eq!(ring.heard_ms(), 3000);
+        let out = drain(&mut source);
+        assert_eq!(out.first().copied(), Some(6001.0));
+        assert_eq!(out.last().copied(), Some(10_000.0));
+    }
+
+    #[test]
+    fn a_direct_seek_while_paused_drops_the_old_position() {
+        let (mut source, ring) = prebuffer(Counter { next: 0, len: 10_000 }, Duration::ZERO, false, None);
+        while source.next() == Some(0.0) {}
+        // Controls take effect between stereo frames, never between channels.
+        assert_eq!(source.next(), Some(2.0));
+        ring.set_held(true);
+        ring.request_seek(Duration::from_millis(3000));
+        assert_eq!(ring.heard_ms(), 3000);
+        assert!((0..100).all(|_| source.next() == Some(0.0)));
+        ring.set_held(false);
         let out = drain(&mut source);
         assert_eq!(out.first().copied(), Some(6001.0));
         assert_eq!(out.last().copied(), Some(10_000.0));

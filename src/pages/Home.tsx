@@ -121,7 +121,6 @@ const QuickActionCard = memo(function QuickActionCard({
   async function startPlayback() {
     const playContext = useQueueStore.getState().playContext;
     const setCurrentTrack = usePlayerStore.getState().setCurrentTrack;
-    const setPlaying = (val: boolean) => usePlayerStore.getState().setPlaying(val);
 
     // 1. Liked Songs
     if (item.isLikedSongs || item.id === "liked-songs") {
@@ -131,7 +130,7 @@ const QuickActionCard = memo(function QuickActionCard({
           const start = playContext(tracks, 0, "liked-songs", LIKED_SONGS_URI);
           if (start) {
             setCurrentTrack(start);
-            playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+            playTrack(start.id).catch(() => {});
           }
           return;
         }
@@ -170,7 +169,7 @@ const QuickActionCard = memo(function QuickActionCard({
         const start = playContext(contextTracks, 0, "quick-action");
         const trackToPlay = start || target;
         setCurrentTrack(trackToPlay);
-        playTrack(trackToPlay.id).then(() => setPlaying(true)).catch(() => {});
+        playTrack(trackToPlay.id).catch(() => {});
         return;
       }
     }
@@ -184,7 +183,7 @@ const QuickActionCard = memo(function QuickActionCard({
           const start = playContext(tracks, 0, item.playlistId, `spotify:playlist:${item.playlistId}`);
           if (start) {
             setCurrentTrack(start);
-            playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+            playTrack(start.id).catch(() => {});
           }
           return;
         }
@@ -204,7 +203,7 @@ const QuickActionCard = memo(function QuickActionCard({
           const start = playContext(tracks, 0, item.albumId, `spotify:album:${item.albumId}`);
           if (start) {
             setCurrentTrack(start);
-            playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+            playTrack(start.id).catch(() => {});
           }
           return;
         }
@@ -224,7 +223,7 @@ const QuickActionCard = memo(function QuickActionCard({
           const start = playContext(tracks, 0, item.artistId, `spotify:artist:${item.artistId}`);
           if (start) {
             setCurrentTrack(start);
-            playTrack(start.id).then(() => setPlaying(true)).catch(() => {});
+            playTrack(start.id).catch(() => {});
           }
           return;
         }

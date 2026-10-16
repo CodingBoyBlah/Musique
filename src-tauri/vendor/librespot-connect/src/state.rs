@@ -496,6 +496,10 @@ impl ConnectState {
     }
 
     /// Sends the connect state for the connect session to the remote server
+    pub fn state_request(&self) -> PutStateRequest {
+        self.request.clone()
+    }
+
     pub async fn send_state(&self, session: &Session) -> SpClientResult {
         session
             .spclient()

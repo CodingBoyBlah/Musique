@@ -296,10 +296,23 @@ async fn yt_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppE
     ensure_yt(app).await?;
     let pool = app.state::<AppState>().db.clone();
 
-    let query = match_query(app, &pool, id).await?;
+    {
+        let yt = app.state::<AppState>().yt.clone();
+        let guard = yt.lock().await;
+        if YT_REQUEST.load(Ordering::SeqCst) != ticket { return Ok(()); }
+        if let Some(player) = guard.as_ref() {
+            player.pause()?;
+        }
+    }
     // Uses the prefetched copy when `preload_track` already fetched this track,
     // which is the difference between an instant track change and a ~1s gap.
-    let prepared = crate::youtube::prepare(&pool, id, &query).await?;
+    let prepared = match crate::youtube::take_prepared(id).await {
+        Some(prepared) => prepared,
+        None => {
+            let query = match_query(app, &pool, id).await?;
+            crate::youtube::prepare(&pool, id, &query).await?
+        }
+    };
 
     let yt    = app.state::<AppState>().yt.clone();
     let guard = yt.lock().await;
@@ -335,6 +348,14 @@ async fn yt_play_episode(
     let ticket = yt_claim();
     let current = || YT_REQUEST.load(Ordering::SeqCst) == ticket;
     ensure_yt(app).await?;
+    {
+        let yt = app.state::<AppState>().yt.clone();
+        let guard = yt.lock().await;
+        if !current() { return Ok(()); }
+        if let Some(player) = guard.as_ref() {
+            player.pause()?;
+        }
+    }
     let pool = app.state::<AppState>().db.clone();
     let token = crate::commands::spotify::tok(app).await?;
 
@@ -412,19 +433,14 @@ async fn yt_seek(app: &AppHandle, position_ms: u32) -> Result<(), AppError> {
     let maybe_episode = {
         let guard = yt.lock().await;
         let Some(player) = guard.as_ref() else { return Ok(()); };
-        let ep = player.episode_stream();
-        if ep.is_none() {
-            return player.seek(position_ms);
-        }
-        ep
+        // Seek the same player whose stream we snapshot, before any network
+        // wait can let another track take its place.
+        player.seek(position_ms)?;
+        player.episode_stream()
     };
     if let Some(episode) = maybe_episode {
         if let Some(byte) = episode.byte_for(position_ms) {
             episode.handle.prefetch(byte, std::time::Duration::from_secs(6)).await;
-        }
-        let guard = yt.lock().await;
-        if let Some(player) = guard.as_ref() {
-            player.seek(position_ms)?;
         }
     }
     Ok(())
@@ -906,7 +922,14 @@ pub async fn resume_or_play(
         let ended = inner.is_ended();
         inner.set_play_context(&uri, context_uri);
 
-        if loaded && same_uri && !ended && position_ms == 0 {
+        // Ordinary resume carries the UI's current position. Reloading here
+        // discards buffered audio and waits for metadata/audio keys again.
+        if loaded && same_uri && !ended {
+            // A transfer back from another device may have moved the same
+            // track. Seek in place then, while normal resume keeps its buffer.
+            if position_ms > 0 && inner.position_ms().abs_diff(position_ms) > 2000 {
+                inner.seek(position_ms)?;
+            }
             if let Err(e) = inner.resume() {
                 eprintln!("[playback cmd] resume failed ({e}), falling back to play_uri");
                 inner.play_uri(uri, position_ms)?;

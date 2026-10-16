@@ -17,7 +17,7 @@ use crate::{
         player::{Player, PlayerEvent, PlayerEventChannel},
     },
     protocol::{
-        connect::{Cluster, ClusterUpdate, LogoutCommand, SetVolumeCommand},
+        connect::{Cluster, ClusterUpdate, LogoutCommand, PutStateRequest, SetVolumeCommand},
         context::Context,
         player::{PlayerState, ProvidedTrack},
         explicit_content_pubsub::UserAttributesUpdate,
@@ -37,6 +37,7 @@ use librespot_protocol::context_page::ContextPage;
 use protobuf::MessageField;
 use std::{
     future::Future,
+    pin::Pin,
     sync::Arc,
     sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -134,6 +135,11 @@ struct SpircTask {
     /// when set to true, it will update the volume after [UPDATE_STATE_DELAY],
     /// when no other future resolves, otherwise resets the delay
     update_state: bool,
+
+    // musique: one ordered state PUT at a time, with the latest unsent state
+    // coalesced. Network latency must not stall the transport command loop.
+    state_send: Option<Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>>,
+    pending_state: Option<PutStateRequest>,
 
     spirc_id: usize,
 
@@ -337,6 +343,8 @@ impl Spirc {
             transfer_state: None,
             update_volume: false,
             update_state: false,
+            state_send: None,
+            pending_state: None,
 
             spirc_id,
 
@@ -565,6 +573,14 @@ impl SpircTask {
         }
 
         while !self.session.is_invalid() && !self.shutdown {
+            if self.state_send.is_none() {
+                if let Some(request) = self.pending_state.take() {
+                    let session = self.session.clone();
+                    self.state_send = Some(Box::pin(async move {
+                        session.spclient().put_connect_state_request(&request).await.map(|_| ())
+                    }));
+                }
+            }
             let commands = self.commands.as_mut();
             let player_events = self.player_events.as_mut();
 
@@ -573,6 +589,12 @@ impl SpircTask {
             let allow_context_resolving = !self.update_state && !self.update_volume;
 
             tokio::select! {
+                result = async { self.state_send.as_mut().unwrap().await }, if self.state_send.is_some() => {
+                    self.state_send = None;
+                    if let Err(why) = result {
+                        error!("state update: {why}");
+                    }
+                },
                 // startup of the dealer requires a connection_id, which is retrieved at the very beginning
                 connection_id_update = self.connection_id_update.next() => unwrap! {
                     connection_id_update,
@@ -1562,6 +1584,16 @@ impl SpircTask {
             .update_position_in_relation(self.now_ms());
         self.notify().await?;
 
+        // Drain state PUTs before going inactive so an older active snapshot
+        // cannot arrive after the device's goodbye and reactivate it.
+        if let Some(send) = self.state_send.take() {
+            if let Err(why) = send.await {
+                warn!("state update before disconnect: {why}");
+            }
+        }
+        self.pending_state = None;
+        self.connect_state.send_state(&self.session).await?;
+
         self.connect_state.became_inactive(&self.session).await?;
         self.publish_state();
 
@@ -2153,13 +2185,9 @@ impl SpircTask {
 
         self.connect_state.set_now(self.now_ms() as u64);
 
-        let sent = self
-            .connect_state
-            .send_state(&self.session)
-            .await
-            .map(|_| ());
+        self.pending_state = Some(self.connect_state.state_request());
         self.publish_state();
-        sent
+        Ok(())
     }
 
     fn set_volume(&mut self, volume: u16) {

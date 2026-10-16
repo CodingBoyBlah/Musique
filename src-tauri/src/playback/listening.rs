@@ -8,12 +8,9 @@
 // (playlist / album / artist) it played from. librespot never sends those,
 // which is why nothing played here ever showed up in the spotify app.
 //
-// only audio that actually reached the output counts. `CountingSink` sits
-// around the real sink and adds up the frames it accepted, so pausing, seeking,
-// loading and buffering add nothing, and the silent fallback sink (used when
-// there's no usable audio device) is never wrapped. a listen is the frames
-// rendered between the player starting one play request and the next one
-// taking over / the track ending / a stop.
+// only samples pulled from the playout ring by the audio output count. Queued
+// audio that a skip flushes, pause silence, seeks and buffering add nothing.
+// The silent fallback never reads the ring, so it reports no listening time.
 //
 // field values + schema ids follow spotify desktop 1.2.96 and librespot PR
 // #1759, which confirmed against a real account that events shaped like this
@@ -29,12 +26,9 @@ use flate2::{write::GzEncoder, Compression};
 use librespot_core::{config, FileId, Session, SpotifyUri};
 use librespot_metadata::audio::{AudioFileFormat, AudioFiles};
 use librespot_playback::{
-    audio_backend::{Sink, SinkResult},
     config::Bitrate,
-    convert::Converter,
-    decoder::AudioPacket,
     player::PlayerEvent,
-    NUM_CHANNELS, SAMPLE_RATE,
+    SAMPLE_RATE,
 };
 use rand::RngCore;
 use sha1::{Digest, Sha1};
@@ -52,37 +46,6 @@ const REPORTING_SDK: &str =
 // what the frontend sends for Liked Songs. spotify's own context uri for it
 // embeds the username, which only the session knows
 const LIKED_SONGS: &str = "spotify:collection:tracks";
-
-// counting sink
-
-pub struct CountingSink {
-    inner:  Box<dyn Sink>,
-    frames: Arc<AtomicU64>,
-}
-
-impl CountingSink {
-    pub fn new(inner: Box<dyn Sink>, frames: Arc<AtomicU64>) -> Self {
-        CountingSink { inner, frames }
-    }
-}
-
-impl Sink for CountingSink {
-    fn start(&mut self) -> SinkResult<()> {
-        self.inner.start()
-    }
-
-    fn stop(&mut self) -> SinkResult<()> {
-        self.inner.stop()
-    }
-
-    fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
-        let frames = packet.samples().map_or(0, |s| s.len() / NUM_CHANNELS as usize);
-        self.inner.write(packet, converter)?;
-        // only counted once the output took it, a failed write played nothing
-        self.frames.fetch_add(frames as u64, Ordering::Relaxed);
-        Ok(())
-    }
-}
 
 // listen tracking
 
@@ -141,7 +104,7 @@ pub struct ListenTracker {
 }
 
 impl ListenTracker {
-    /// `frames` must be the counter the player's `CountingSink` writes to.
+    /// `frames` is the output ring's 44.1 kHz rendered-frame counter.
     pub fn new(session: Session, bitrate: Bitrate, frames: Arc<AtomicU64>) -> Arc<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
         tauri::async_runtime::spawn(run_reporter(session, rx));
@@ -351,7 +314,7 @@ async fn run_reporter(session: Session, mut rx: mpsc::UnboundedReceiver<Cmd>) {
                 let sent = tokio::time::timeout(Duration::from_secs(60), sender.send(&session, &report)).await;
                 match sent {
                     Ok(Ok(())) => eprintln!(
-                        "[listening] reported {} ({} ms) from {}",
+                        "[listening] submitted {} ({} ms) from {}",
                         report.uri,
                         report.ms_played,
                         report.context.as_deref().unwrap_or("no context"),
@@ -789,6 +752,31 @@ mod tests {
         t.close();
         let r = next_report(&mut rx).unwrap();
         assert_eq!((r.uri, r.context), (uri(B), None));
+    }
+
+    #[test]
+    fn history_counts_output_audio_and_excludes_discarded_buffer_and_pause() {
+        use crate::playout::{Chunk, Ring, RingSource};
+        let ring = Ring::new(2);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let t = ListenTracker::with_channel(tx, Bitrate::Bitrate320, Arc::clone(&ring.rendered_frames));
+        play(&t, 1, A);
+        // Four seconds decoded ahead, at a device rate different from Spotify.
+        assert!(ring.push(Chunk {
+            samples: vec![1.0; 48_000 * 2 * 4], rate: 48_000, tag: 1,
+            start_ms: 0.0, end_ms: 4000.0,
+        }, None, 48_000 * 4, &|| false));
+        assert_eq!(t.frames.load(Ordering::Relaxed), 0);
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 48_000);
+        for _ in 0..48_000 * 2 {
+            assert_eq!(source.next(), Some(1.0));
+        }
+        ring.set_held(true);
+        assert!((0..48_000 * 2).all(|_| source.next() == Some(0.0)));
+        ring.flush();
+        assert!((0..48_000 * 2).all(|_| source.next() == Some(0.0)));
+        t.close();
+        assert_eq!(next_report(&mut rx).unwrap().ms_played, 1000);
     }
 
     #[test]

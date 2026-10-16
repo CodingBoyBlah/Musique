@@ -228,31 +228,13 @@ pub async fn remote_play_track(
     let token = tok(&app).await?;
     let url = format!("{BASE}/me/player/play?device_id={device_id}");
 
-    let body = match (&track_id, position_ms) {
-        (Some(tid), Some(pos)) => {
-            let uri = if tid.starts_with("spotify:track:") {
-                tid.clone()
-            } else {
-                format!("spotify:track:{tid}")
-            };
-            serde_json::json!({
-                "uris": [uri],
-                "position_ms": pos
-            })
-        }
-        (Some(tid), None) => {
-            let uri = if tid.starts_with("spotify:track:") {
-                tid.clone()
-            } else {
-                format!("spotify:track:{tid}")
-            };
-            serde_json::json!({ "uris": [uri] })
-        }
-        (None, Some(pos)) => {
-            serde_json::json!({ "position_ms": pos })
-        }
-        (None, None) => serde_json::json!({}),
-    };
+    let mut body = serde_json::json!({});
+    if let Some(tid) = &track_id {
+        body["uris"] = serde_json::json!([crate::playback::track_uri(tid)?]);
+    }
+    if let Some(pos) = position_ms {
+        body["position_ms"] = serde_json::json!(pos);
+    }
 
     let client = client();
     let resp = client
@@ -270,21 +252,29 @@ pub async fn remote_play_track(
             "device_ids": [&device_id],
             "play": true
         });
-        let _ = client
+        let transfer = client
             .put(&transfer_url)
             .bearer_auth(&token)
             .json(&transfer_body)
             .send()
-            .await;
+            .await
+            .map_err(|e| AppError::Network(e.to_string()))?;
+        if !transfer.status().is_success() {
+            return Err(AppError::Playback(format!("playback transfer failed: {}", transfer.status())));
+        }
 
         if track_id.is_some() || position_ms.is_some() {
             tokio::time::sleep(tokio::time::Duration::from_millis(350)).await;
-            let _ = client
+            let retry = client
                 .put(&url)
                 .bearer_auth(&token)
                 .json(&body)
                 .send()
-                .await;
+                .await
+                .map_err(|e| AppError::Network(e.to_string()))?;
+            if !retry.status().is_success() {
+                return Err(AppError::Playback(format!("remote playback failed: {}", retry.status())));
+            }
         }
     }
 

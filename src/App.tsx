@@ -305,7 +305,7 @@ Home recs so they're cached before the user gets there
                 if (!jamRole() && playing?.id === currentTrack.id && useQueueStore.getState().peek(playing)?.id === next.id) {
                   preloadTrack(next.id).catch(() => {});
                 }
-              }, 1200);
+              }, 0);
             }
           }
         }

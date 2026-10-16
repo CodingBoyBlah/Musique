@@ -2,7 +2,7 @@ pub mod listening;
 pub mod youtube;
 
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, PlayingTrack, Spirc};
 use librespot_core::{
@@ -265,6 +265,12 @@ impl PlaybackInner {
 
     pub fn is_playing(&self) -> bool {
         self.is_playing_atomic.load(Ordering::Relaxed)
+    }
+
+    pub fn position_ms(&self) -> u32 {
+        self.playout.heard_now().unwrap_or_else(|| {
+            self.connect_state().position_ms.max(0).min(u32::MAX as i64) as u32
+        })
     }
 
     /// Tear the librespot session down for real.
@@ -677,9 +683,8 @@ pub async fn create_inner(
     let sink_playout = Arc::clone(&playout);
     let event_slot: crate::sink::EventSlot = Arc::new(Mutex::new(None));
     let sink_events = Arc::clone(&event_slot);
-    // frames the real output accepted, what listening history is measured from
-    let rendered_frames = Arc::new(AtomicU64::new(0));
-    let rendered_sink = Arc::clone(&rendered_frames);
+    // Count samples pulled by the output, not seconds waiting in its queue.
+    let rendered_frames = Arc::clone(&playout.ring.rendered_frames);
 
     #[cfg(target_os = "macos")]
     let force_null_sink = running_under_hypervisor() || !audio_device_safe();
@@ -706,7 +711,7 @@ pub async fn create_inner(
             Arc::clone(&sink_events),
         ).with_latency_tracker(Arc::clone(&latency_sink));
         // the silent fallback above is deliberately NOT counted: nobody heard it
-        Box::new(listening::CountingSink::new(Box::new(rodio), Arc::clone(&rendered_sink))) as Box<dyn Sink>
+        Box::new(rodio) as Box<dyn Sink>
     };
 
     let bitrate_setting: Option<(String,)> = sqlx::query_as(

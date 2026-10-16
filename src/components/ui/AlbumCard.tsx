@@ -75,7 +75,7 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
         const start = useQueueStore.getState().playContext(tracks, 0, album.id, `spotify:album:${album.id}`);
         if (start) {
           usePlayerStore.getState().setCurrentTrack(start);
-          playTrack(start.id).then(() => usePlayerStore.getState().setPlaying(true)).catch(() => {});
+          playTrack(start.id).catch(() => {});
         }
       }
     } catch (err) {

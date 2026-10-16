@@ -5,8 +5,16 @@ import { toast } from "../store/toast.store";
 import { errMsg } from "../lib/err";
 import { jamRole } from "../store/jam.store";
 import { jamPlay, jamSetPlaying } from "../lib/jam";
+import { remotePlayTrack } from "./connect";
 
 export interface VolumeState { level: number; muted: boolean; }
+
+let playbackRequest = 0;
+const playbackFailure = (request: number) => (e: unknown): never => {
+  // A cancelled download must not pause a newer song or undo a later pause.
+  if (request === playbackRequest) return failPlayback(e);
+  throw e;
+};
 
 /**
  * Roll back the optimistic "playing" state and tell the user why.
@@ -47,12 +55,18 @@ export const warmupPlayback  = (): Promise<void>                     => invoke("
 export const playTrack       = (id: string): Promise<void> => {
   // in a jam, what plays is the jam's call (see lib/jam.ts)
   if (jamRole()) return jamPlay(id);
+  const request = ++playbackRequest;
   const store = usePlayerStore.getState();
+  if (store.isRemotePlayback && store.activeDevice?.id) {
+    store.setTargetState("playing");
+    store.setPlaying(true);
+    return remotePlayTrack(store.activeDevice.id, id, 0).catch(playbackFailure(request));
+  }
   store.setIsRemotePlayback(false);
   store.setTargetState("playing");
   store.setPlaying(true);
   store.setLastPlayingAt(Date.now());
-  return invoke<void>("play_track", { id, contextUri: contextUriFor(id) }).catch(failPlayback);
+  return invoke<void>("play_track", { id, contextUri: contextUriFor(id) }).catch(playbackFailure(request));
 };
 export const retryPlayTrack  = (id: string): Promise<void>           =>
   invoke("retry_play_track", { id, contextUri: contextUriFor(id) });
@@ -96,7 +110,10 @@ export const connectSetShuffle = (on: boolean): Promise<void> => invoke("connect
 export const connectSetRepeat  = (context: boolean, track: boolean): Promise<void> => invoke("connect_set_repeat", { context, track });
 // a jam guest's pause is theirs alone; releasing it rejoins the jam where it is
 export const jamHold           = (hold: boolean): Promise<void> => invoke("jam_hold", { hold });
-export const pausePlayback   = (): Promise<void>                     => invoke("pause_playback");
+export const pausePlayback   = (): Promise<void> => {
+  ++playbackRequest;
+  return invoke("pause_playback");
+};
 export const resumePlayback  = (): Promise<void>                     => invoke("resume_playback");
 export const resumeOrPlay    = (id: string, positionMs: number): Promise<void> => {
   // in a jam: carry on the jam's song, or pick a new one through the jam
@@ -108,13 +125,20 @@ export const resumeOrPlay    = (id: string, positionMs: number): Promise<void> =
     return jamPlay(id);
   }
   const store = usePlayerStore.getState();
+  const request = ++playbackRequest;
   const safePos = Math.max(0, Math.floor(positionMs || 0));
+  if (store.isRemotePlayback && store.activeDevice?.id) {
+    store.setTargetState("playing");
+    store.setPlaying(true);
+    store.setPosition(safePos);
+    return remotePlayTrack(store.activeDevice.id, id, safePos).catch(playbackFailure(request));
+  }
   store.setIsRemotePlayback(false);
   store.setTargetState("playing");
   store.setPlaying(true);
   store.setPosition(safePos);
   store.setLastPlayingAt(Date.now());
-  return invoke<void>("resume_or_play", { id, positionMs: safePos, contextUri: contextUriFor(id) }).catch(failPlayback);
+  return invoke<void>("resume_or_play", { id, positionMs: safePos, contextUri: contextUriFor(id) }).catch(playbackFailure(request));
 };
 export const stopPlayback    = (): Promise<void>                     => invoke("stop_playback");
 export const seekPlayback    = (positionMs: number): Promise<void>   => {

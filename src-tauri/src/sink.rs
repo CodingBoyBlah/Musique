@@ -120,7 +120,7 @@ impl Playout {
     /// a track was reported, it's the user's, and what is queued goes.
     pub fn loading(&self) {
         if !self.told_end.swap(false, Ordering::SeqCst) {
-            self.user_loads.fetch_add(1, Ordering::SeqCst);
+            self.user_load();
         }
     }
 
@@ -128,6 +128,8 @@ impl Playout {
     pub fn user_load(&self) {
         self.told_end.store(false, Ordering::SeqCst);
         self.user_loads.fetch_add(1, Ordering::SeqCst);
+        self.ring.flush();
+        self.ring.set_streaming(false);
     }
 
     pub fn user_loads(&self) -> u64 {
@@ -468,6 +470,7 @@ impl Sink for RodioSink {
         self.ensure_open()?;
         self.apply_volume();
         self.report_underruns();
+        let epoch = self.playout.ring.epoch();
         let Some(output) = &mut self.output else {
             return Err(SinkError::NotConnected(
                 "the audio output is not open".into(),
@@ -522,7 +525,7 @@ impl Sink for RodioSink {
         let queued = self
             .playout
             .ring
-            .push(chunk, None, limit, &|| failed.load(Ordering::Relaxed));
+            .push(chunk, Some(epoch), limit, &|| failed.load(Ordering::Relaxed));
         if !queued && failed.load(Ordering::Relaxed) {
             let message = "The audio output stopped working".to_string();
             (self.on_error)(message.clone());
@@ -749,6 +752,67 @@ mod tests {
         assert_send::<rodio::OutputStream>();
         assert_send::<RodioSink>();
         assert_send_sync::<crate::state::AppState>();
+    }
+
+    #[test]
+    fn requested_load_flushes_audio_before_the_new_decoder_starts() {
+        let playout = Playout::new();
+        let epoch = playout.ring.epoch();
+        assert!(playout.ring.push(Chunk {
+            samples: vec![1.0; 200], rate: 1000, tag: 1, start_ms: 0.0, end_ms: 100.0,
+        }, Some(epoch), 1000, &|| false));
+        let mut source = RingSource::endless(Arc::clone(&playout.ring), 2, 1000);
+        assert_eq!(source.next(), Some(1.0));
+        assert_eq!(source.next(), Some(1.0));
+        playout.loading();
+        // Flushing a requested load must not disable future writes. Previous
+        // and invalid skips can keep the same play request alive.
+        assert!(!playout.awaiting_seek());
+        assert!((0..200).all(|_| source.next() == Some(0.0)));
+        // A producer already holding an old packet cannot reinsert it.
+        assert!(!playout.ring.push(Chunk {
+            samples: vec![1.0; 20], rate: 1000, tag: 1, start_ms: 100.0, end_ms: 110.0,
+        }, Some(epoch), 1000, &|| false));
+    }
+
+    #[test]
+    fn automatic_queue_advance_preserves_the_previous_tracks_tail() {
+        let playout = Playout::new();
+        let epoch = playout.ring.epoch();
+        playout.told_end();
+        playout.loading();
+        assert_eq!(playout.ring.epoch(), epoch);
+        assert!(!playout.awaiting_seek());
+        assert_eq!(playout.user_loads(), 0);
+    }
+
+    #[test]
+    fn previous_seeking_in_the_same_track_does_not_leave_output_disabled() {
+        let playout = Playout::new();
+        playout.current.store(7, Ordering::Relaxed);
+        playout.user_load();
+        playout.seek_requested(0);
+        // Previous after three seconds seeks without changing play request.
+        playout.seek_done();
+        assert!(!playout.awaiting_seek());
+        assert_eq!(playout.current.load(Ordering::Relaxed), 7);
+    }
+
+    #[test]
+    fn ignored_skip_keeps_current_audio_writable() {
+        let playout = Playout::new();
+        playout.current.store(7, Ordering::Relaxed);
+        playout.user_load();
+        // No event follows a skip to an entry that's no longer in the queue.
+        // This is the predicate write() uses before it queues each packet.
+        assert!(!playout.awaiting_seek());
+        let mut source = RingSource::endless(Arc::clone(&playout.ring), 2, 1000);
+        let epoch = playout.ring.epoch();
+        assert!(playout.ring.push(Chunk {
+            samples: vec![1.0; 200], rate: 1000, tag: 7,
+            start_ms: 10_000.0, end_ms: 10_100.0,
+        }, Some(epoch), 1000, &|| false));
+        assert!((0..200).all(|_| source.next() == Some(1.0)));
     }
 
     #[test]
