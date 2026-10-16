@@ -23,6 +23,7 @@
 - **Synced lyrics** from LRCLIB, Apple Music, Musixmatch, NetEase, QQ Music, Kugou, AMLL, BetterLyrics and Spotify. Line and word-by-word timing, with romanization for Japanese and Chinese.
 - **Podcasts**, including playback speed control.
 - **Spotify Connect and Jam.** Shows up as a Connect device in the official apps.
+- **Official-player control.** Keep an official Spotify device selected while choosing songs in Musique. See [playback and listening history](docs/spotify-playback.md) for Sound Capsule limits.
 - **Share links** for any platform via Odesli (song.link, album.link).
 - **Library sync + offline cache.** Playlists, saved tracks and new releases load from a local SQLite cache first.
 - **Native window chrome.** Mica/Acrylic on Windows 11, vibrancy on macOS.
