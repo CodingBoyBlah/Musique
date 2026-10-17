@@ -7,11 +7,11 @@ use serde::Deserialize;
 use sqlx::SqlitePool;
 
 use crate::errors::AppError;
-use super::types::{Alternate, Lyrics};
+use super::types::{is_apple_source, Alternate, Lyrics};
 
-/// Parser/selection revision. Revision 1 is repaired on read and rechecked in
-/// the background; incompatible payload revisions are treated as misses.
-pub const SCHEMA_VERSION: i32 = 2;
+/// Parser/selection revision. Older payloads remain usable offline while their
+/// provider preference is rechecked once in the background.
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// whole-track miss TTL: 7 days. a track might have lyrics added later,
 /// but we should avoid hammering providers repeatedly in the short term
@@ -234,7 +234,7 @@ pub async fn source_missed(pool: &SqlitePool, track_id: &str, source: &str) -> b
 
     // A miss from the previous lookup must not suppress the migration's Apple
     // check, which now has broader searches and can recover missing ISRCs.
-    if source == "applemusic" && revision.is_some_and(|v| v < SCHEMA_VERSION) {
+    if is_apple_source(source) && revision.is_some_and(|v| v < SCHEMA_VERSION) {
         return false;
     }
 
@@ -360,6 +360,24 @@ mod tests {
         sqlx::query("UPDATE lyrics SET schema_version = 1 WHERE track_id = 't1'")
             .execute(&pool).await.unwrap();
         assert!(!read(&pool, "t1").await.unwrap().upgrading);
+    }
+
+    #[sqlx::test]
+    async fn revision_two_cache_rechecks_both_apple_endpoints_once(pool: SqlitePool) {
+        let lyrics = sample_lyrics("t1");
+        write(&pool, &lyrics).await.unwrap();
+        sqlx::query("UPDATE lyrics SET schema_version = 2 WHERE track_id = 't1'")
+            .execute(&pool).await.unwrap();
+        for source in ["applemusic", "betterlyrics"] {
+            mark_source_miss(&pool, "t1", source).await.unwrap();
+            assert!(!source_missed(&pool, "t1", source).await);
+        }
+        let mut hit = read(&pool, "t1").await.unwrap();
+        assert!(hit.upgrading);
+        hit.upgrading = false;
+        write(&pool, &hit).await.unwrap();
+        assert!(!read(&pool, "t1").await.unwrap().upgrading);
+        assert!(source_missed(&pool, "t1", "betterlyrics").await);
     }
 
     #[sqlx::test]

@@ -18,7 +18,7 @@
 //! word-level result that drifts. word timing is a luxury, being in sync is not.
 //! when in doubt, reject.
 
-use super::types::Candidate;
+use super::types::{is_apple_source, Candidate};
 
 // tuning constants. the reasoning matters more than the numbers, so:
 //
@@ -124,9 +124,9 @@ pub fn source_rank(source: &str) -> usize {
         // syllable timings, background vocals and duet voices all marked up
         "applemusic"   => 0,
         // the same format, hand-corrected, keyed by spotify track id
-        "amll"         => 1,
+        "amll"         => 2,
         // the same format again, but found by fuzzy search
-        "betterlyrics" => 2,
+        "betterlyrics" => 1,
         "spotify"      => 3,
         "musixmatch"   => 4,
         "netease"      => 5,
@@ -164,11 +164,11 @@ pub fn choose(reference: Option<&Candidate>, candidates: Vec<Candidate>) -> Opti
 
     // path 1: we have ground truth for this exact recording
     if let Some(reference) = reference.filter(|r| !r.lines.is_empty()) {
-        // the jackpot: a word-level document that PROVES it belongs to this
-        // recording. word timing plus verified alignment, nothing else beats it
+        // Prefer Apple's document after verifying sync, even when it only has
+        // line timings. Other providers compete on verified word timing.
         let mut best: Option<(usize, Alignment)> = None;
         for (i, c) in pool.iter().enumerate() {
-            if !c.word_level() {
+            if !c.word_level() && !is_apple_source(c.source) {
                 continue;
             }
             let a = align_to_reference(c, reference);
@@ -508,8 +508,8 @@ fn mad(deltas: &[i64], center: i64) -> i64 {
 fn beats(a: &Alignment, a_src: &str, b: &Alignment, b_src: &str) -> bool {
     // Both passed the sync gates. Prefer Apple's document even when another
     // source happens to follow Spotify's line onsets a little more closely.
-    if (a_src == "applemusic") != (b_src == "applemusic") {
-        return a_src == "applemusic";
+    if is_apple_source(a_src) || is_apple_source(b_src) {
+        return source_rank(a_src) < source_rank(b_src);
     }
     let (ba, bb) = (a.residual_ms / RESIDUAL_BUCKET_MS, b.residual_ms / RESIDUAL_BUCKET_MS);
     if ba != bb {
@@ -755,6 +755,32 @@ mod tests {
         // returned already corrected: it now sits exactly on the reference
         assert_eq!(won.lines[0].time_ms, reference.lines[0].time_ms);
         assert_eq!(won.lines[0].words[0].time_ms, reference.lines[0].time_ms);
+    }
+
+    #[test]
+    fn apple_line_lyrics_beat_other_word_sources_and_use_reference_sync() {
+        let reference = doc("spotify", 20, 1_000, 3_000);
+        let apple = shifted(doc("applemusic", 20, 1_000, 3_000), 600);
+        let other = worded_doc("amll", 20, 1_000, 3_000);
+        let text = apple.lines[0].text.clone();
+        let (won, alignment) = choose(Some(&reference), vec![other, apple]).unwrap();
+        assert_eq!(won.source, "applemusic");
+        assert!(!won.word_level());
+        assert_eq!(won.lines[0].text, text);
+        assert_eq!(won.lines[0].time_ms, reference.lines[0].time_ms);
+        assert_eq!(alignment.applied_shift(), -600);
+    }
+
+    #[test]
+    fn second_apple_endpoint_precedes_community_lyrics_after_sync_check() {
+        let reference = doc("spotify", 20, 1_000, 3_000);
+        let apple = doc("betterlyrics", 20, 1_000, 3_000);
+        let other = worded_doc("amll", 20, 1_000, 3_000);
+        assert_eq!(choose(Some(&reference), vec![other, apple.clone()]).unwrap().0.source, "betterlyrics");
+        assert_eq!(choose(None, vec![reference.clone(), apple.clone()]).unwrap().0.source, "betterlyrics");
+
+        let primary = doc("applemusic", 20, 1_000, 3_000);
+        assert_eq!(choose(Some(&reference), vec![apple, primary]).unwrap().0.source, "applemusic");
     }
 
     #[test]

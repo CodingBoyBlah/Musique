@@ -41,7 +41,7 @@ export interface Lyrics {
   synced:       boolean;
   word_level:   boolean;       // lines carry real word timings
   instrumental: boolean;
-  source:       string;        // spotify/musixmatch/netease/amll/qq/kugou/lrclib/none
+  source:       string;        // applemusic/betterlyrics/spotify/amll/musixmatch/netease/qq/kugou/lrclib/none
   found:        boolean;
   offset_ms:    number;        // shift applied to line up with the sync reference
   alternates:   Alternate[];   // other cached sources, for the switcher
@@ -54,9 +54,8 @@ export interface Lyrics {
 
 const inflightLyrics = new Map<string, Promise<Lyrics>>();
 
-/* grab synced lyrics. cached in sqlite so repeat calls are instant and work
-offline. returns the line-level result immediately - one request on the
-critical path - and upgrades to word-by-word later over the event.
+/* grab Apple Music lyrics checked against the Spotify sync reference. Cached
+in sqlite so repeat calls work offline. Fallback sources may arrive over the event.
 force=true skips the cache and refetches. */
 export function getLyrics(track: TrackItem, force = false): Promise<Lyrics> {
   const args = {

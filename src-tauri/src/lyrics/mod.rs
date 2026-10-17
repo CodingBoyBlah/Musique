@@ -1,36 +1,11 @@
-//! lyrics: correctly-synced for every track, word-by-word wherever we can prove it.
+//! Apple Music supplies the preferred lyrics, including line-level documents.
+//! Spotify is fetched alongside it as the exact-track sync reference. Fuzzy
+//! matches are shifted onto that reference after passing the alignment gates;
+//! exact recording matches retain their native timing.
 //!
-//! The thing that makes lyrics feel broken is almost never a provider's timing
-//! quality - it's **version mismatch**. Nearly every lyrics provider matches by
-//! fuzzy search (name + artist + duration) and hands back the document for a
-//! *different master*: the radio edit, the remaster, the live cut. That
-//! document's timing is internally consistent and completely wrong for the audio
-//! actually playing.
-//!
-//! There is exactly one source keyed to the exact track we're playing: Spotify's
-//! own `color-lyrics` endpoint, reached through the librespot session we already
-//! hold open for playback. It's line-level only, but it has zero version
-//! ambiguity. So it isn't a fallback - it's the **sync reference** that every
-//! richer candidate has to agree with before we'll trust it.
-//!
-//! ```text
-//! HOT PATH (1 request, always):
-//!   spclient.get_lyrics(track_id)
-//!       -> render LINE-LEVEL, correctly synced, instantly
-//!       -> keep as the SYNC REFERENCE
-//!
-//! BACKGROUND (non-blocking, bounded, early-exit):
-//!   word-level candidates, staged by expected yield:
-//!     AMLL -> Musixmatch / NetEase -> QQ -> Kugou
-//!         |
-//!         +- aligns to the reference -> shift by the derived offset
-//!         |                          -> silently upgrade to WORD-BY-WORD
-//!         +- none align              -> stay on correctly-synced line-level
-//! ```
-//!
-//! The governing rule, everywhere in here: **a correctly-synced line-level
-//! result beats a word-level result that drifts.** Word timing is a bonus; sync
-//! is the product.
+//! Try both Apple TTML endpoints before AMLL, Musixmatch/NetEase, and QQ/Kugou.
+//! When Spotify has no reference, use cross-provider timing consensus. Other
+//! providers remain fallbacks when Apple's lyrics are missing or fail sync.
 
 pub mod align;
 pub mod cache;
@@ -48,6 +23,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::errors::AppError;
+use types::is_apple_source;
 // re-exported so the commands layer and the frontend contract have one import
 // path; not every name is used inside this module itself
 #[allow(unused_imports)]
@@ -142,13 +118,15 @@ fn finalize(track_id: &str, cand: &Candidate, offset_ms: i64, upgrading: bool) -
     }
 }
 
-/// a word-level result is only an upgrade over what we're already showing if it
-/// actually adds word timings (or provider translation/romanisation we lacked)
+/// Prefer Apple text, then additional timing or language data within a source.
 fn is_upgrade(new: &Lyrics, old: &Lyrics) -> bool {
-    if new.word_level && !old.word_level {
-        return true;
+    if is_apple_source(new.source.as_str()) != is_apple_source(old.source.as_str()) {
+        return is_apple_source(new.source.as_str());
     }
-    if new.word_level && old.word_level && new.source == "applemusic" && old.source != "applemusic" {
+    if is_apple_source(new.source.as_str()) && new.source != old.source {
+        return align::source_rank(&new.source) < align::source_rank(&old.source);
+    }
+    if new.word_level && !old.word_level {
         return true;
     }
     if new.word_level == old.word_level {
@@ -198,28 +176,22 @@ fn looks_cjk(track: &TrackRef) -> bool {
     })
 }
 
-/// stage 1: the Apple-Music-format word sources, keyed to the exact recording.
-///
-/// These are the best documents in the system and they're also the cheapest to
-/// verify, so they go first and usually end the race.
-///
-/// `applemusic` looks the track up by **ISRC** - the identifier for the exact
-/// *recording*, not the song - and hands back Apple's own TTML: real syllable
-/// timings, background vocals marked `x-bg`, duet voices separated by agent.
-/// There is no search and no version ambiguity in that path at all, which is
-/// precisely what makes word-by-word trustworthy rather than decorative.
-///
-/// `amll` is the same format keyed by Spotify track id, hand-corrected to
-/// ~100ms - the community answer for whatever Apple doesn't cover.
-async fn stage_exact(app: &AppHandle, pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
-    let (apple, amll) = tokio::join!(
-        async { try_provider!(pool, track, "applemusic", async {
-            let enriched = with_recording_isrc(app, pool, track).await;
-            providers::applemusic::fetch(&enriched).await
-        }) },
-        async { try_provider!(pool, track, "amll", providers::amll::fetch(track)) },
-    );
-    apple.into_iter().chain(amll).collect()
+/// Primary Apple lookup, falling back to the second Apple TTML endpoint.
+async fn stage_apple(app: &AppHandle, pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
+    let apple = try_provider!(pool, track, "applemusic", async {
+        let enriched = with_recording_isrc(app, pool, track).await;
+        providers::applemusic::fetch(&enriched).await
+    });
+    if let Some(apple) = apple {
+        vec![apple]
+    } else {
+        stage_betterlyrics(pool, track).await
+    }
+}
+
+async fn stage_amll(pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
+    try_provider!(pool, track, "amll", providers::amll::fetch(track))
+        .into_iter().collect()
 }
 
 fn recording_isrc(track: &librespot_protocol::metadata::Track) -> Option<String> {
@@ -230,8 +202,7 @@ fn recording_isrc(track: &librespot_protocol::metadata::Track) -> Option<String>
         .map(str::to_owned)
 }
 
-/// Album/search rows often omit ISRC. Reuse Spotify's cached metadata lookup
-/// in the background, with a deadline so missing metadata cannot stall lyrics.
+/// Album/search rows often omit ISRC. Bound the cached Spotify metadata lookup.
 async fn with_recording_isrc(app: &AppHandle, pool: &SqlitePool, track: &TrackRef) -> TrackRef {
     let mut enriched = track.clone();
     if track.isrc.as_deref().is_some_and(|id| !id.trim().is_empty()) {
@@ -299,9 +270,8 @@ async fn stage_lrclib(pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
 
 /// Fetch (or read from cache) the lyrics for a track.
 ///
-/// Returns as soon as there's something correctly synced to show - normally
-/// after a single request to Spotify. Any word-by-word upgrade happens in a
-/// background task and arrives later over [`UPGRADE_EVENT`].
+/// Fetch Apple lyrics alongside the Spotify sync reference. If Apple is missing
+/// or fails alignment, show the reference and try other sources in the background.
 pub async fn get_or_fetch(
     app: &AppHandle,
     pool: &SqlitePool,
@@ -338,8 +308,16 @@ pub async fn get_or_fetch(
         }
     }
 
-    // HOT PATH - one request, the exact track, no ambiguity
-    let mut reference = providers::spotify::fetch(app, &track).await;
+    // Apple supplies the text; Spotify supplies the recording's sync reference.
+    let (mut reference, mut candidates) = tokio::join!(
+        providers::spotify::fetch(app, &track),
+        async {
+            // Slow Apple searches can continue in the background while the
+            // reference is displayed, rather than holding the panel open.
+            tokio::time::timeout(std::time::Duration::from_secs(6), stage_apple(app, pool, &track))
+                .await.unwrap_or_default()
+        },
+    );
     // the reference defines the rows the user actually reads, so it gets the
     // same voice structuring as every other source - Spotify lists backing
     // vocals as ordinary lines too
@@ -348,13 +326,21 @@ pub async fn get_or_fetch(
     }
 
     if let Some(reference) = reference {
-        let mut out = finalize(&track.id, &reference, 0, true);
+        let reference_alt = finalize(&track.id, &reference, 0, false);
+        cache::write_alt(pool, &track.id, &reference_alt).await.ok();
+        for c in &candidates {
+            cache::write_alt(pool, &track.id, &finalize(&track.id, c, 0, false)).await.ok();
+        }
+        let (chosen, alignment) = align::choose(Some(&reference), candidates)
+            .expect("the sync reference is always a fallback");
+        let upgrading = !is_apple_source(chosen.source);
+        let mut out = finalize(&track.id, &chosen, alignment.applied_shift(), upgrading);
         out.alternates = cache::list_alts(pool, &track.id).await;
         cache::write(pool, &out).await.ok();
-        cache::write_alt(pool, &track.id, &out).await.ok();
 
-        // everything richer is earned in the background, against this reference
-        spawn_upgrade(app, pool, track.clone(), out.clone());
+        if upgrading {
+            spawn_upgrade(app, pool, track.clone(), out.clone());
+        }
         return Ok(out);
     }
 
@@ -362,9 +348,11 @@ pub async fn get_or_fetch(
     // against the exact recording any more, so fall back to cross-source
     // consensus: two independent providers agreeing on the timing is decent
     // evidence they're both describing the same master.
-    let mut candidates = stage_exact(app, pool, &track).await;
     if candidates.is_empty() {
-        candidates.extend(stage_betterlyrics(pool, &track).await);
+        candidates.extend(stage_apple(app, pool, &track).await);
+    }
+    if candidates.is_empty() {
+        candidates.extend(stage_amll(pool, &track).await);
     }
     candidates.extend(stage_major(pool, &track).await);
     if candidates.len() < 2 {
@@ -385,7 +373,7 @@ pub async fn get_or_fetch(
         return Ok(Lyrics::none(&track.id));
     };
 
-    let mut out = finalize(&track.id, &chosen, alignment.offset_ms, false);
+    let mut out = finalize(&track.id, &chosen, alignment.applied_shift(), false);
     out.alternates = cache::list_alts(pool, &track.id).await;
     cache::write(pool, &out).await.ok();
     Ok(out)
@@ -443,11 +431,12 @@ async fn run_upgrade(
     // staged by expected yield, cheapest and most trustworthy first. we stop
     // the moment something passes the check - that's the early exit that keeps
     // this from costing six round trips per track
-    for stage in 0..4 {
+    for stage in 0..5 {
         let batch = match stage {
-            0 => stage_exact(app, pool, track).await,
+            0 => stage_apple(app, pool, track).await,
             1 => stage_betterlyrics(pool, track).await,
-            2 => stage_major(pool, track).await,
+            2 => stage_amll(pool, track).await,
+            3 => stage_major(pool, track).await,
             _ => stage_cjk(pool, track).await,
         };
         if batch.is_empty() {
@@ -460,18 +449,19 @@ async fn run_upgrade(
         }
         seen.extend(batch);
 
-        // only word-level candidates can upgrade us; a line-level one is at
-        // best a sideways move and at worst a worse-synced one
-        let word_level: Vec<Candidate> = seen.iter().filter(|c| c.word_level()).cloned().collect();
-        if word_level.is_empty() {
+        // Apple text is preferred even without word timings. Other sources
+        // must add word timings to replace the line-level fallback.
+        let eligible: Vec<Candidate> = seen.iter()
+            .filter(|c| c.word_level() || is_apple_source(c.source)).cloned().collect();
+        if eligible.is_empty() {
             continue;
         }
 
-        if let Some((chosen, alignment)) = align::choose(reference.as_ref(), word_level) {
+        if let Some((chosen, alignment)) = align::choose(reference.as_ref(), eligible) {
             if !alignment.aligned {
                 continue;
             }
-            let mut upgraded = finalize(&track.id, &chosen, alignment.offset_ms, false);
+            let mut upgraded = finalize(&track.id, &chosen, alignment.applied_shift(), false);
             if !is_upgrade(&upgraded, current) {
                 continue;
             }
@@ -643,5 +633,20 @@ mod tests {
         assert!(!is_upgrade(&apple, &apple));
         assert!(!is_upgrade(&amll, &old));
         assert!(!is_upgrade(&amll, &apple));
+    }
+
+    #[test]
+    fn apple_text_is_preferred_over_word_timing_and_translations_from_other_sources() {
+        let apple = finalize("t", &cand("applemusic", vec![LyricLine::line(0, "Apple text")]), 0, false);
+        let secondary = finalize("t", &cand("betterlyrics", vec![LyricLine::line(0, "Apple text")]), 0, false);
+        let mut words = LyricLine::worded(0, None, vec![LyricWord { time_ms: 0, end_ms: 100, text: "other text".into() }]);
+        words.translation = Some("translation".into());
+        let other = finalize("t", &cand("netease", vec![words]), 0, false);
+        assert!(is_upgrade(&apple, &other));
+        assert!(is_upgrade(&secondary, &other));
+        assert!(is_upgrade(&apple, &secondary));
+        assert!(!is_upgrade(&secondary, &apple));
+        assert!(!is_upgrade(&other, &apple));
+        assert!(!is_upgrade(&other, &secondary));
     }
 }

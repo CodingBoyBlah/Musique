@@ -2,6 +2,8 @@
 and more than one screen has to print it, so the spelling lives here rather
 than in a ternary that drifts every time a provider is added. */
 const LABELS: Record<string, string> = {
+  applemusic: "Apple Music",
+  betterlyrics: "Apple Music (BetterLyrics)",
   spotify:    "Spotify",
   musixmatch: "Musixmatch",
   netease:    "NetEase",

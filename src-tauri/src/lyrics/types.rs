@@ -3,6 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Both endpoints return Apple Music TTML; AMLL is a separate community source.
+pub fn is_apple_source(source: &str) -> bool {
+    matches!(source, "applemusic" | "betterlyrics")
+}
+
 /// which voice a line belongs to. lets the ui style backing vocals / duet parts
 /// differently instead of flattening everything into one column
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -90,7 +95,7 @@ pub struct Lyrics {
     pub synced:       bool,
     pub word_level:   bool, // the lines carry real word timings
     pub instrumental: bool,
-    pub source:       String, // spotify | musixmatch | netease | amll | qq | kugou | lrclib | none
+    pub source:       String, // applemusic | betterlyrics | spotify | amll | musixmatch | netease | qq | kugou | lrclib | none
     pub found:        bool,
     /// ms the chosen candidate was shifted by to line up with the sync reference
     #[serde(default)]

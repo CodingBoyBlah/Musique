@@ -35,8 +35,8 @@ export function useLyrics(track: TrackItem | null) {
   trackIdRef.current = trackId;
 
   /* the word-by-word upgrade.
-     the backend answers with line-level lyrics straight away and keeps hunting
-     for a word-level source behind it; when one passes the sync check it lands
+     the backend prefers Apple Music text and may keep hunting for a fallback
+     or a preferred source behind it; when one passes the sync check it lands
      here. written into the cache in place - refetching would drop the query
      back through its loading state and flash the panel, and the whole point is
      that the reader never sees the swap happen.

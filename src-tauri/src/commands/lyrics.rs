@@ -8,10 +8,9 @@ use crate::{
 
 /// Grab the lyrics for a track (or read them from cache).
 ///
-/// Returns as soon as there is something *correctly synced* to render - usually
-/// after a single request against the exact Spotify track id. If a word-by-word
-/// source later proves it agrees with that timing, it arrives separately on the
-/// `lyrics:upgraded` event and the panel swaps it in silently.
+/// Prefers Apple Music text, checked against Spotify's exact-track timing.
+/// Other sources provide sync evidence and fallbacks. Background replacements
+/// arrive on `lyrics:upgraded` without restarting the panel's loading state.
 ///
 /// The frontend hands us the metadata it already has so we don't need a Spotify
 /// round trip just to learn the track's own name. `isrc` is the strongest
