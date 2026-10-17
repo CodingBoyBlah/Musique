@@ -3,6 +3,8 @@ pub mod types;
 use crate::errors::AppError;
 
 use futures_util::{StreamExt, TryStreamExt};
+use std::collections::HashMap;
+use std::sync::Mutex;
 use tokio::sync::Semaphore;
 
 // Two lanes. Library sync pulls dozens of pages at once; if it shared one pool
@@ -37,7 +39,9 @@ pub(crate) async fn get_all_pages<P: serde::de::DeserializeOwned>(
 ) -> Result<Vec<P>, AppError> {
     let first: P = spotify_get(token, &url_for(0)).await?;
     let total = total(&first);
-    let rest: Vec<P> = futures_util::stream::iter((limit..total).step_by(limit.max(1) as usize))
+    // the first page may have taught us this client gets smaller pages
+    let limit = limit_cap(&url_for(0)).map_or(limit, |cap| limit.min(cap)).max(1);
+    let rest: Vec<P> = futures_util::stream::iter((limit..total).step_by(limit as usize))
         .map(|offset| {
             let url = url_for(offset);
             async move { spotify_get::<P>(token, &url).await }
@@ -91,17 +95,70 @@ async fn send_request(builder: reqwest::RequestBuilder) -> Result<reqwest::Respo
     }
 }
 
+// Largest `limit` each endpoint accepted, learned from "Invalid limit" 400s.
+// Spotify caps page sizes per client (search on some client ids rejects
+// anything over 10), and which caps apply differs between client ids.
+static LIMIT_CAPS: Mutex<Option<HashMap<String, i64>>> = Mutex::new(None);
+
+fn endpoint_key(url: &url::Url) -> String {
+    format!("{}{}", url.host_str().unwrap_or_default(), url.path())
+}
+
+fn limit_cap(url: &str) -> Option<i64> {
+    let url = url::Url::parse(url).ok()?;
+    LIMIT_CAPS.lock().ok()?.as_ref()?.get(&endpoint_key(&url)).copied()
+}
+
+fn set_limit(url: &url::Url, limit: i64) -> String {
+    let pairs: Vec<(String, String)> = url.query_pairs()
+        .map(|(k, v)| if k == "limit" { (k.into_owned(), limit.to_string()) } else { (k.into_owned(), v.into_owned()) })
+        .collect();
+    let mut out = url.clone();
+    out.query_pairs_mut().clear().extend_pairs(pairs);
+    out.to_string()
+}
+
+fn url_limit(url: &url::Url) -> Option<i64> {
+    url.query_pairs().find(|(k, _)| k == "limit").and_then(|(_, v)| v.parse().ok())
+}
+
+/// Next page size to try after `limit` was rejected.
+fn smaller_limit(limit: i64) -> Option<i64> {
+    [50, 20, 10, 5, 1].into_iter().find(|&l| l < limit)
+}
+
 pub(crate) async fn spotify_get<T: serde::de::DeserializeOwned>(
     token: &str,
     url:   &str,
 ) -> Result<T, AppError> {
-    let resp = send_request(crate::http::client().get(url).bearer_auth(token)).await?;
+    let mut url = url.to_string();
+    if let Ok(parsed) = url::Url::parse(&url) {
+        if let (Some(limit), Some(cap)) = (url_limit(&parsed), limit_cap(&url)) {
+            if limit > cap { url = set_limit(&parsed, cap); }
+        }
+    }
 
-    if !resp.status().is_success() {
+    let resp = loop {
+        let resp = send_request(crate::http::client().get(&url).bearer_auth(token)).await?;
+        if resp.status().is_success() { break resp; }
+
         let status = resp.status().as_u16();
         let body   = resp.text().await.unwrap_or_default();
+        if status == 400 && body.contains("Invalid limit") {
+            if let Ok(parsed) = url::Url::parse(&url) {
+                if let Some(lower) = url_limit(&parsed).and_then(smaller_limit) {
+                    eprintln!("[spotify-api] limit rejected on {}, retrying with {lower}", parsed.path());
+                    if let Ok(mut caps) = LIMIT_CAPS.lock() {
+                        caps.get_or_insert_with(HashMap::new).insert(endpoint_key(&parsed), lower);
+                    }
+                    url = set_limit(&parsed, lower);
+                    continue;
+                }
+            }
+        }
         return Err(AppError::Network(format!("Spotify {status}: {body}")));
-    }
+    };
+    let url = url.as_str();
 
     // Deserialize straight off the raw bytes. `text()` would allocate a String
     // and UTF-8 validate the whole payload first (liked-songs/playlist pages run
@@ -164,4 +221,24 @@ pub(crate) async fn spotify_write_json(
         return Ok(serde_json::Value::Null);
     }
     serde_json::from_str(&text).map_err(|e| AppError::Network(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_limit_keeps_other_params() {
+        let url = url::Url::parse("https://api.spotify.com/v1/search?q=eric+nam&type=track&limit=20").unwrap();
+        let out = url::Url::parse(&set_limit(&url, 10)).unwrap();
+        assert_eq!(url_limit(&out), Some(10));
+        assert_eq!(out.query_pairs().find(|(k, _)| k == "q").unwrap().1, "eric nam");
+    }
+
+    #[test]
+    fn smaller_limit_steps_down() {
+        assert_eq!(smaller_limit(20), Some(10));
+        assert_eq!(smaller_limit(50), Some(20));
+        assert_eq!(smaller_limit(1), None);
+    }
 }

@@ -49,7 +49,7 @@ export const useUIStore = create<UIState>()(
       quitConfirmOpen: false,
       setQuitConfirmOpen: (v) => set({ quitConfirmOpen: v }),
       macSimulated: false,
-      toggleMacSimulated: () => set((s) => ({ macSimulated: !s.macSimulated })),
+      toggleMacSimulated: () => { if (import.meta.env.DEV) set((s) => ({ macSimulated: !s.macSimulated })); },
       setMacSimulated: (v) => set({ macSimulated: v }),
       immersiveCovered: false,
       setImmersiveCovered: (v) => set({ immersiveCovered: v }),

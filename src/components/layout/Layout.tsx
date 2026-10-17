@@ -194,8 +194,10 @@ export default function Layout() {
 
   const toggleMacSimulated = useUIStore((s) => s.toggleMacSimulated);
 
-  // Ctrl+K lives with the search field in the top bar (TopSearch)
+  // Ctrl+K lives with the search field in the top bar (TopSearch).
+  // Ctrl+Shift+M (fake mac chrome) is a dev-only layout aid
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     function onGlobalKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "m") {
         e.preventDefault();

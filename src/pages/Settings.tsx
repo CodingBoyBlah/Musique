@@ -1248,11 +1248,28 @@ export default function Settings() {
               }}
             >
               Spotify developer app
+              {!isCustom && (
+                <span
+                  style={{
+                    marginLeft: 8,
+                    padding: "2px 7px",
+                    borderRadius: 6,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: 0,
+                    verticalAlign: "middle",
+                    color: "var(--color-text-dim)",
+                    background: "rgba(255,255,255,0.06)",
+                  }}
+                >
+                  Recommended
+                </span>
+              )}
             </span>
             <span className="t-caption" style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
               {isCustom
                 ? "Using your own Spotify developer app."
-                : "Using Musique's built-in access. Nothing to set up."}
+                : "Using Musique's built-in access. Your own app makes search and sync more reliable."}
             </span>
           </span>
 
@@ -1301,8 +1318,9 @@ export default function Settings() {
                   color: "var(--color-text-dim)",
                 }}
               >
-                Musique works out of the box. If you keep hitting Spotify's rate limits,
-                you can connect your own Spotify developer app instead. In your app's
+                Musique works out of the box, but the built-in access is shared by everyone
+                and Spotify limits it, so search, sync and some playlists can be slow or fail.
+                Your own Spotify developer app avoids that and takes a minute. In your app's
                 dashboard, set the redirect URI to{" "}
                 <code
                   style={{

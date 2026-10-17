@@ -24,6 +24,7 @@ const ShowPage = lazy(() => import("./pages/ShowPage"));
 const StatsPage = lazy(() => import("./pages/StatsPage"));
 import { getCredentials, validateCredentials } from "./api/credentials";
 import { useAuth } from "./hooks/useAuth";
+import { useOwnKeysNudge } from "./hooks/useOwnKeysNudge";
 import {
   setVolume,
   setMuted,
@@ -80,6 +81,7 @@ function AppInit() {
 
   // spotify jam: session + the connect state spotify drives it with
   useJamSync(isLoggedIn);
+  useOwnKeysNudge(isLoggedIn);
 
   // podcasts play at the chosen speed, music always at 1x. re-applied on every
   // track change so a song after an episode never comes out sped up

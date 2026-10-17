@@ -459,15 +459,30 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
         }
     }
 
-    let total = pl.tracks.as_ref().map(|p| p.total).unwrap_or(0);
+    // apps on spotify's 2026 api schema only get the contents of playlists the
+    // user owns or collaborates on; anything else comes back with no tracks.
+    // spclient still serves those
+    if pl.track_page().map_or(true, |p| p.items.is_empty() && p.total > 0) {
+        if let Ok(mut detail) = crate::commands::internal::internal_playlist(&app, &id).await {
+            if !detail.tracks.is_empty() {
+                detail.owner_id      = pl.owner.as_ref().and_then(|o| o.id.clone());
+                detail.public        = pl.public;
+                detail.collaborative = pl.collaborative;
+                detail.followers     = pl.followers.as_ref().and_then(|f| f.total);
+                return Ok(detail);
+            }
+        }
+    }
+
+    let total = pl.track_page().map(|p| p.total).unwrap_or(0);
 
     // grab every track (spotify caps each page at 100). save em as we go
     let mut items: Vec<(crate::spotify::types::SpTrack, i64)> = Vec::new();
     let mut next: Option<String> = None;
 
-    if let Some(page) = &pl.tracks {
+    if let Some(page) = pl.track_page() {
         for i in &page.items {
-            if let Some(t) = i.track.as_ref() {
+            if let Some(t) = i.track() {
                 let added = i.added_at.as_deref().map(crate::library::parse_iso8601).unwrap_or(0);
                 items.push((clone_track(t), added));
             }
@@ -492,7 +507,7 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
             .await?;
         for page in &pages {
             for i in &page.items {
-                if let Some(t) = i.track.as_ref() {
+                if let Some(t) = i.track() {
                     let added = i.added_at.as_deref().map(crate::library::parse_iso8601).unwrap_or(0);
                     items.push((clone_track(t), added));
                 }

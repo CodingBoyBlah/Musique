@@ -112,9 +112,20 @@ pub(crate) struct SpPlaylistTrackPage {
 
 #[derive(Deserialize)]
 pub(crate) struct SpPlaylistTrackItem {
-    pub track:    Option<SpTrack>,
+    #[serde(default)]
+    track:        Option<SpTrack>,
+    // spotify's 2026 web api renamed playlist `track` to `item`; apps on the
+    // new schema only send this one
+    #[serde(default)]
+    item:         Option<SpTrack>,
     #[serde(default)]
     pub added_at: Option<String>,
+}
+
+impl SpPlaylistTrackItem {
+    pub(crate) fn track(&self) -> Option<&SpTrack> {
+        self.item.as_ref().or(self.track.as_ref())
+    }
 }
 
 // ─── discovery surfaces ───────────────────────────────────────────────────────
@@ -211,8 +222,18 @@ pub(crate) struct SpUserPlaylistItem {
     pub description: Option<String>,
     pub images:      Option<Vec<SpImage>>,
     pub owner:       Option<SpOwner>,
-    pub tracks:      Option<SpTracksTotal>,
+    #[serde(default)]
+    tracks:          Option<SpTracksTotal>,
+    // newer api schema calls the track summary `items`
+    #[serde(default)]
+    items:           Option<SpTracksTotal>,
     pub snapshot_id: Option<String>,
+}
+
+impl SpUserPlaylistItem {
+    pub(crate) fn total_tracks(&self) -> i64 {
+        self.items.as_ref().or(self.tracks.as_ref()).map(|t| t.total).unwrap_or(0)
+    }
 }
 
 #[derive(Deserialize)]
@@ -244,7 +265,11 @@ pub(crate) struct SpPlaylist {
     pub description: Option<String>,
     pub images:      Option<Vec<SpImage>>,
     pub owner:       Option<SpOwner>,
-    pub tracks:      Option<SpPlaylistTrackPage>,
+    #[serde(default)]
+    tracks:          Option<SpPlaylistTrackPage>,
+    // newer api schema calls the track page `items`
+    #[serde(default)]
+    items:           Option<SpPlaylistTrackPage>,
     #[serde(default)]
     pub snapshot_id: Option<String>,
     #[serde(default)]
@@ -253,6 +278,12 @@ pub(crate) struct SpPlaylist {
     pub collaborative: Option<bool>,
     #[serde(default)]
     pub followers:     Option<SpFollowers>,
+}
+
+impl SpPlaylist {
+    pub(crate) fn track_page(&self) -> Option<&SpPlaylistTrackPage> {
+        self.items.as_ref().or(self.tracks.as_ref())
+    }
 }
 
 #[derive(Clone, Deserialize)]

@@ -262,7 +262,7 @@ pub async fn sync_playlists(pool: &SqlitePool, token: &str) -> Result<usize, App
         .bind(&item.description)
         .bind(&owner_id)
         .bind(item.images.as_ref().and_then(|v| v.first()).map(|i| i.url.as_str()))
-        .bind(item.tracks.as_ref().map(|t| t.total).unwrap_or(0))
+        .bind(item.total_tracks())
         .bind(&item.snapshot_id)
         .bind(now)
         .execute(&mut *tx)

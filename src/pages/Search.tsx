@@ -619,6 +619,7 @@ export default function Search() {
         <EmptyState
           title="Search didn't go through"
           description={errMsg(error)}
+          hint="If this keeps happening, connecting your own Spotify developer app in Settings usually fixes it."
           action={
             <button type="button" className="btn-pill" onClick={() => refetch()}>
               Try again
