@@ -63,6 +63,7 @@ pub fn parse_ttml(raw: &str) -> Vec<LyricLine> {
         };
 
         line.agent = attr(tag, "agent").filter(|a| !a.trim().is_empty());
+        line.end_ms = attr(tag, "end").and_then(|v| parse_time(&v));
         line.translation = parsed.translation;
         line.roman = parsed.roman;
         line.bg = parsed.bg.map(Box::new);
@@ -72,6 +73,21 @@ pub fn parse_ttml(raw: &str) -> Vec<LyricLine> {
     out.sort_by_key(|l| l.time_ms);
     super::voices::assign_sides(&mut out);
     out
+}
+
+/// Apple also serves untimed documents. Keep their main text rather than
+/// treating the absence of timestamps as the absence of Apple lyrics.
+pub fn parse_plain_ttml(raw: &str) -> Option<String> {
+    let doc = roxmltree::Document::parse(raw).ok()?;
+    let lines: Vec<_> = doc.descendants().filter(|n| n.is_element() && n.tag_name().name() == "p")
+        .filter_map(|p| {
+            let text: String = p.descendants().filter(|n| n.is_text())
+                .filter(|n| !n.ancestors().any(|a| a.attributes().any(|attr|
+                    attr.name() == "role" && matches!(attr.value(), "x-bg" | "x-translation" | "x-roman"))))
+                .filter_map(|n| n.text()).collect();
+            non_empty(collapse_ws(&scrub_spaces(&text)).trim().to_string())
+        }).collect();
+    non_empty(lines.join("\n"))
 }
 
 #[derive(Default)]
@@ -212,6 +228,7 @@ fn bg_line(tag: &str, content: &str) -> Option<LyricLine> {
     };
 
     line.role = LineRole::Bg;
+    line.end_ms = attr(tag, "end").and_then(|v| parse_time(&v));
     line.translation = parsed.translation;
     line.roman = parsed.roman;
     unwrap_parens(&mut line);
@@ -430,6 +447,24 @@ fn non_empty(s: String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn line_synced_main_duets_keep_their_overlapping_ends() {
+        let raw = r#"<tt><body><p begin="1" end="5" ttm:agent="v1">First main singer</p><p begin="2" end="6" ttm:agent="v2">Second main singer</p></body></tt>"#;
+        let lines = parse_ttml(raw);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].end_ms(), Some(5000));
+        assert_eq!(lines[1].end_ms(), Some(6000));
+        assert!(lines.iter().all(|l| l.bg.is_none() && l.role != LineRole::Bg));
+        assert_ne!(lines[0].role, lines[1].role);
+    }
+
+    #[test]
+    fn untimed_apple_document_keeps_main_text_without_auxiliary_tracks() {
+        let raw = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"><body><p>First &amp; <span>second</span><span ttm:role="x-bg">backing</span><span ttm:role="x-translation">translation</span></p><p>Next line</p></body></tt>"#;
+        assert!(parse_ttml(raw).is_empty());
+        assert_eq!(parse_plain_ttml(raw).as_deref(), Some("First & second\nNext line"));
+    }
 
     #[test]
     fn parses_word_level_line() {

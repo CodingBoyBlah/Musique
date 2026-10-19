@@ -315,7 +315,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
   const synced = !!data?.lines.length;
 
   const { getClock, resync } = useLyricClock();
-  const { active, overlapping } = useActiveLyrics(rows, getClock, synced);
+  const { active, overlapping, singing } = useActiveLyrics(rows, getClock, synced);
 
   const followTrackId = usePlayerStore((s) => s.currentTrack?.id);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -399,11 +399,12 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
             }}
           >
             {row.voices.map((voice, vi) => {
-              const isDuet = voice.role === "duet";
               // lead left, duet right, a backing vocal on the side of the
               // singer it's under (lib/lyricsRows voiceLayout)
               const { side: align, secondary: isSecondary } = layout[vi];
-              const voiceActive = isActive || overlapping.some((v) => v.row === ri && v.voice === vi);
+              const voiceActive = voice.words.length || voice.end_ms != null
+                ? singing.some((v) => v.row === ri && v.voice === vi)
+                : isActive;
               const voiceTone = voiceActive ? lyricTone(0, false, moreContrast) : tone;
               const collapsed = synced && isSecondary && autoHideSublyrics && !voiceActive;
               /* Each voice shrinks toward its OWN side. The whole row used to
@@ -420,8 +421,6 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                  21-34 / 24-40 / 28-46px range as before at the default size. */
               const size = isSecondary
                 ? "clamp(1.5rem, 0.5rem + 1.66vw, 2.43rem)"
-                : isDuet && vi > 0
-                ? "clamp(1.714rem, 0.55rem + 1.95vw, 2.857rem)"
                 : "clamp(2rem, 0.6rem + 2.3vw, 3.286rem)";
               const weight = isSecondary ? 700 : 800;
               // built for every row, not just the lit one: both states render

@@ -11,7 +11,7 @@ use super::types::{is_apple_source, Alternate, Lyrics};
 
 /// Parser/selection revision. Older payloads remain usable offline while their
 /// provider preference is rechecked once in the background.
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// whole-track miss TTL: 7 days. a track might have lyrics added later,
 /// but we should avoid hammering providers repeatedly in the short term
@@ -77,6 +77,16 @@ pub async fn read(pool: &SqlitePool, track_id: &str) -> Option<Lyrics> {
     let mut lyrics = serde_json::from_str::<Lyrics>(&payload).ok()?;
     super::voices::assign_sides(&mut lyrics.lines);
 
+    if !is_apple_source(&lyrics.source) {
+        for source in ["applemusic", "betterlyrics"] {
+            if let Some(mut apple) = read_alt(pool, track_id, source).await.filter(|c| c.found) {
+                apple.upgrading = apple.lines.iter().any(|l| l.words.is_empty());
+                write(pool, &apple).await.ok();
+                return Some(apple);
+            }
+        }
+    }
+
     // Keep old lyrics usable offline while checking the new Apple Music lookup
     // once in the background. Settling that check writes the current revision.
     if row.schema_version < SCHEMA_VERSION {
@@ -84,6 +94,11 @@ pub async fn read(pool: &SqlitePool, track_id: &str) -> Option<Lyrics> {
             return None;
         }
         lyrics.upgrading = lyrics.source != "applemusic";
+    }
+    // A completed fallback is evidence of a past miss, not permanent evidence
+    // that Apple has no lyrics. Recheck after the provider miss TTL expires.
+    if lyrics.found && !is_apple_source(&lyrics.source) && age >= SOURCE_MISS_TTL_SECS {
+        lyrics.upgrading = true;
     }
 
     if !lyrics.found && age >= WHOLE_TRACK_MISS_TTL_SECS {
@@ -378,6 +393,28 @@ mod tests {
         write(&pool, &hit).await.unwrap();
         assert!(!read(&pool, "t1").await.unwrap().upgrading);
         assert!(source_missed(&pool, "t1", "betterlyrics").await);
+    }
+
+    #[sqlx::test]
+    async fn revision_three_spotify_result_rechecks_rejected_apple(pool: SqlitePool) {
+        write(&pool, &sample_lyrics("t1")).await.unwrap();
+        sqlx::query("UPDATE lyrics SET schema_version = 3 WHERE track_id = 't1'")
+            .execute(&pool).await.unwrap();
+        mark_source_miss(&pool, "t1", "applemusic").await.unwrap();
+        assert!(read(&pool, "t1").await.unwrap().upgrading);
+        assert!(!source_missed(&pool, "t1", "applemusic").await);
+    }
+
+    #[sqlx::test]
+    async fn cached_apple_alternate_replaces_a_settled_spotify_choice_offline(pool: SqlitePool) {
+        write(&pool, &sample_lyrics("t1")).await.unwrap();
+        let mut apple = sample_lyrics("t1");
+        apple.source = "applemusic".into();
+        apple.lines[0].text = "Apple wording".into();
+        write_alt(&pool, "t1", &apple).await.unwrap();
+        let hit = read(&pool, "t1").await.unwrap();
+        assert_eq!(hit.source, "applemusic");
+        assert_eq!(hit.lines[0].text, "Apple wording");
     }
 
     #[sqlx::test]

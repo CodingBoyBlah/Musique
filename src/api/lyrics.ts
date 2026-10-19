@@ -14,6 +14,7 @@ export interface LyricWord {
 
 export interface LyricLine {
   time_ms: number;
+  end_ms?: number | null; // source-provided line end, also for line-synced duets
   text:    string;
   /* per-word timings. genuinely empty for line-level sources - the renderer
      paces those across the line itself rather than asking for them again. */

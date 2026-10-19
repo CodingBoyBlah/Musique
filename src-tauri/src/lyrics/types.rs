@@ -31,6 +31,9 @@ pub struct LyricWord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LyricLine {
     pub time_ms: i64,
+    /// Explicit TTML line end, including line-synced duet phrases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_ms: Option<i64>,
     pub text:    String,
     /// real per-word timings when the source has them (yrc / richsync / ttml /
     /// qrc / krc). empty for line-level sources, so the ui has no word data then
@@ -58,6 +61,7 @@ impl LyricLine {
     pub fn line(time_ms: i64, text: impl Into<String>) -> Self {
         Self {
             time_ms,
+            end_ms: None,
             text: text.into(),
             words: Vec::new(),
             translation: None,
@@ -73,12 +77,12 @@ impl LyricLine {
         let text = text.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| {
             words.iter().map(|w| w.text.as_str()).collect::<String>().trim().to_string()
         });
-        Self { time_ms, text, words, translation: None, roman: None, role: LineRole::Main, agent: None, bg: None }
+        Self { time_ms, end_ms: None, text, words, translation: None, roman: None, role: LineRole::Main, agent: None, bg: None }
     }
 
     /// absolute ms this line stops being sung, when the source knows
     pub fn end_ms(&self) -> Option<i64> {
-        self.words.iter().map(|w| w.end_ms).max()
+        self.words.iter().map(|w| w.end_ms).max().or(self.end_ms)
     }
 
     pub fn is_word_level(&self) -> bool {
@@ -245,12 +249,14 @@ impl Candidate {
         }
         for l in &mut self.lines {
             l.time_ms += offset_ms;
+            l.end_ms = l.end_ms.map(|end| end + offset_ms);
             for w in &mut l.words {
                 w.time_ms += offset_ms;
                 w.end_ms += offset_ms;
             }
             if let Some(bg) = l.bg.as_mut() {
                 bg.time_ms += offset_ms;
+                bg.end_ms = bg.end_ms.map(|end| end + offset_ms);
                 for w in &mut bg.words {
                     w.time_ms += offset_ms;
                     w.end_ms += offset_ms;

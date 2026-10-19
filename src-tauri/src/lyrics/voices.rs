@@ -129,7 +129,8 @@ pub fn structure(cand: &mut Candidate) {
 
     // a source that already nests its backing vocals (AMLL TTML) is authoritative
     // and must not be second-guessed by heuristics
-    if cand.lines.iter().any(|l| l.bg.is_some() || l.agent.is_some()) {
+    if matches!(cand.source, "applemusic" | "betterlyrics" | "amll")
+        || cand.lines.iter().any(|l| l.bg.is_some() || l.agent.is_some() || l.role == LineRole::Duet) {
         return;
     }
 
@@ -320,6 +321,19 @@ mod tests {
         assert_eq!(c.lines[0].role, LineRole::Duet);
         assert_eq!(c.lines[1].role, LineRole::Main);
         assert!(c.lines.iter().all(|l| l.bg.is_none()));
+    }
+
+    #[test]
+    fn unmarked_apple_main_lines_are_never_guessed_to_be_backing() {
+        for source in ["applemusic", "betterlyrics"] {
+            let mut c = Candidate::new(source, vec![
+                worded(1000, "first main singer", 4000),
+                worded(1040, "second main singer", 3500),
+            ]);
+            structure(&mut c);
+            assert_eq!(c.lines.len(), 2);
+            assert!(c.lines.iter().all(|l| l.bg.is_none() && l.role == LineRole::Main));
+        }
     }
 
     #[test]

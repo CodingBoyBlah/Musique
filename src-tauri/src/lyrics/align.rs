@@ -1,22 +1,5 @@
-//! sync-correctness engine.
-//!
-//! the biggest cause of "these lyrics are out of sync" is not a sloppy provider,
-//! it's a VERSION MISMATCH: the provider found a lyric document for a different
-//! master (radio edit, remaster, live, a re-recording) and that document's
-//! timings are internally perfect and completely wrong for the track we're
-//! playing. no amount of provider ranking fixes that, because the provider did
-//! nothing wrong.
-//!
-//! spotify's own lyrics are keyed to the exact track id, so when we have them
-//! they are the sync reference - the ground truth for THIS recording. every
-//! other candidate has to prove it agrees with that reference before we're
-//! allowed to show it. when there's no reference we fall back to consensus: two
-//! independent providers agreeing on the timing is decent evidence they're both
-//! describing the same master.
-//!
-//! governing rule: a correctly-synced line-level result always beats a
-//! word-level result that drifts. word timing is a luxury, being in sync is not.
-//! when in doubt, reject.
+//! Apple Music owns lyric content. Other providers donate matching timings.
+//! When Apple is absent, fallbacks still use recording alignment and consensus.
 
 use super::types::{is_apple_source, Candidate};
 
@@ -90,10 +73,9 @@ const RESIDUAL_BUCKET_MS: i64 = 250;
 
 /// the verdict on whether a candidate can be trusted for this exact recording.
 ///
-/// `offset_ms` is a MEASUREMENT, not an instruction: it is `median(candidate -
-/// reference)`, i.e. how far AHEAD of the reference the candidate sits. to line
-/// the candidate up you add [`Alignment::applied_shift`] (the negation) to it.
-/// [`choose`] has already done that to the candidate it returns.
+/// `offset_ms` measures candidate minus reference. For Apple it summarizes
+/// per-line corrections; for fallbacks it describes one global shift.
+/// [`choose`] already applies all corrections to the returned candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Alignment {
     pub offset_ms:   i64,
@@ -157,18 +139,28 @@ pub fn cross_agrees(a: &Candidate, b: &Candidate) -> Alignment {
 
 /// pick the winner from a set of candidates given an optional reference.
 ///
-/// the returned candidate has ALREADY been shifted by `alignment.applied_shift()`
-/// - store that value (not `alignment.offset_ms`) in `Lyrics::offset_ms`.
+/// The returned candidate already includes timing corrections. Store the
+/// representative applied shift in `Lyrics::offset_ms`; do not apply it again.
 pub fn choose(reference: Option<&Candidate>, candidates: Vec<Candidate>) -> Option<(Candidate, Alignment)> {
     let mut pool: Vec<Candidate> = candidates.into_iter().filter(|c| !c.is_empty()).collect();
 
+    // Timing disagreement must never turn an available Apple document into
+    // Spotify text. Match lines individually, retaining Apple's words/voices.
+    if let Some(i) = (0..pool.len()).filter(|&i| is_apple_source(pool[i].source))
+        .min_by_key(|&i| source_rank(pool[i].source)) {
+        let mut apple = pool.remove(i);
+        let mut donors: Vec<&Candidate> = reference.into_iter().chain(pool.iter()).collect();
+        donors.sort_by_key(|c| (c.source != "spotify", !c.exact, source_rank(c.source)));
+        let alignment = sync_apple(&mut apple, &donors);
+        return Some((apple, alignment));
+    }
+
     // path 1: we have ground truth for this exact recording
     if let Some(reference) = reference.filter(|r| !r.lines.is_empty()) {
-        // Prefer Apple's document after verifying sync, even when it only has
-        // line timings. Other providers compete on verified word timing.
+        // Apple was handled above. Fallbacks compete on verified word timing.
         let mut best: Option<(usize, Alignment)> = None;
         for (i, c) in pool.iter().enumerate() {
-            if !c.word_level() && !is_apple_source(c.source) {
+            if !c.word_level() {
                 continue;
             }
             let a = align_to_reference(c, reference);
@@ -226,6 +218,95 @@ pub fn choose(reference: Option<&Candidate>, candidates: Vec<Candidate>) -> Opti
     // upgrade instead of treating this as settled
     let best = (0..pool.len()).min_by_key(|&i| fallback_key(&pool[i]))?;
     Some((pool.swap_remove(best), Alignment::unknown()))
+}
+
+/// Ordered, one-to-one text matches. Unlike the fallback alignment heuristic,
+/// a shared prefix or a nearby timestamp cannot donate another line's timing.
+fn matching_lines(apple: &Candidate, donor: &Candidate) -> Vec<(usize, usize)> {
+    let a: Vec<_> = apple.lines.iter().map(|l| normalize(&l.text)).collect();
+    let b: Vec<_> = donor.lines.iter().map(|l| normalize(&l.text)).collect();
+    // Prefer the closest occurrence when a repeated chorus has equally many
+    // ordered matches. A missing repeat must not steal the next chorus's timing.
+    let mut lengths = vec![vec![(0usize, 0i64); b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            let mut best = lengths[i + 1][j].max(lengths[i][j + 1]);
+            if !a[i].is_empty() && a[i] == b[j] {
+                let (count, cost) = lengths[i + 1][j + 1];
+                best = best.max((count + 1, cost - (apple.lines[i].time_ms - donor.lines[j].time_ms).abs()));
+            }
+            lengths[i][j] = best;
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let mut pairs = Vec::new();
+    while i < a.len() && j < b.len() {
+        let (count, cost) = lengths[i + 1][j + 1];
+        let matched = (count + 1, cost - (apple.lines[i].time_ms - donor.lines[j].time_ms).abs());
+        if !a[i].is_empty() && a[i] == b[j] && lengths[i][j] == matched {
+            pairs.push((i, j));
+            i += 1;
+            j += 1;
+        } else if lengths[i + 1][j] > lengths[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    pairs
+}
+
+fn shift_line(line: &mut super::types::LyricLine, delta: i64) {
+    line.time_ms += delta;
+    line.end_ms = line.end_ms.map(|end| end + delta);
+    for word in &mut line.words {
+        word.time_ms += delta;
+        word.end_ms += delta;
+    }
+    if let Some(bg) = line.bg.as_mut() {
+        shift_line(bg, delta);
+    }
+}
+
+fn sync_apple(apple: &mut Candidate, donors: &[&Candidate]) -> Alignment {
+    let mut synced = vec![false; apple.lines.len()];
+    let mut deltas = Vec::new();
+    for donor in donors {
+        for (ai, di) in matching_lines(apple, donor) {
+            let line = &mut apple.lines[ai];
+            let timing = &donor.lines[di];
+            if !synced[ai] {
+                // ISRC-matched Apple already has this recording's clock.
+                // A fuzzy lookup needs per-line correction, not a median shift.
+                let delta = if apple.exact { 0 } else { timing.time_ms - line.time_ms };
+                shift_line(line, delta);
+                deltas.push(delta);
+                synced[ai] = true;
+            }
+            if line.words.is_empty() && !timing.words.is_empty() {
+                // Borrow real word timings only when every word corresponds.
+                // Keep Apple's spelling, punctuation and whitespace verbatim.
+                let tokens: Vec<_> = line.text.split_inclusive(char::is_whitespace).collect();
+                let tokens: Vec<_> = tokens.into_iter().fold(Vec::<String>::new(), |mut out, t| {
+                    if t.trim().is_empty() {
+                        if let Some(last) = out.last_mut() { last.push_str(t); }
+                    } else { out.push(t.to_string()); }
+                    out
+                });
+                if tokens.len() == timing.words.len() && tokens.iter().zip(&timing.words)
+                    .all(|(a, b)| normalize(a) == normalize(&b.text)) {
+                    let delta = line.time_ms - timing.time_ms;
+                    line.words = tokens.into_iter().zip(&timing.words).map(|(text, word)| {
+                        super::types::LyricWord { text, time_ms: word.time_ms + delta, end_ms: word.end_ms + delta }
+                    }).collect();
+                }
+            }
+        }
+    }
+    apple.lines.sort_by_key(|line| line.time_ms);
+    if deltas.is_empty() { return Alignment::unknown(); }
+    let delta = median(&mut deltas.clone());
+    Alignment { offset_ms: -delta, residual_ms: mad(&deltas, delta), matched: deltas.len(), aligned: true }
 }
 
 // the measurement core
@@ -506,11 +587,6 @@ fn mad(deltas: &[i64], center: i64) -> i64 {
 /// does alignment `a` (from source `a_src`) beat `b`? both have already passed
 /// the gates, so this is purely a preference order.
 fn beats(a: &Alignment, a_src: &str, b: &Alignment, b_src: &str) -> bool {
-    // Both passed the sync gates. Prefer Apple's document even when another
-    // source happens to follow Spotify's line onsets a little more closely.
-    if is_apple_source(a_src) || is_apple_source(b_src) {
-        return source_rank(a_src) < source_rank(b_src);
-    }
     let (ba, bb) = (a.residual_ms / RESIDUAL_BUCKET_MS, b.residual_ms / RESIDUAL_BUCKET_MS);
     if ba != bb {
         return ba < bb;
@@ -594,7 +670,7 @@ mod tests {
     use crate::lyrics::types::{LyricLine, LyricWord};
 
     #[test]
-    fn apple_wins_after_passing_sync_gates_even_with_a_larger_residual() {
+    fn apple_survives_sync_disagreement_and_is_corrected_line_by_line() {
         let reference = doc("spotify", 20, 5_000, 4_000);
         let other = worded_doc("amll", 20, 5_000, 4_000);
         let mut apple = worded_doc("applemusic", 20, 5_000, 4_000);
@@ -621,7 +697,9 @@ mod tests {
             }
         }
         assert!(!align_to_reference(&apple, &reference).aligned);
-        assert_eq!(choose(Some(&reference), vec![apple, other]).unwrap().0.source, "amll");
+        let (won, _) = choose(Some(&reference), vec![apple, other]).unwrap();
+        assert_eq!(won.source, "applemusic");
+        assert_eq!(won.onsets(), reference.onsets());
     }
 
     /// a document whose lines sit `step` apart starting at `start`, each with
@@ -769,6 +847,54 @@ mod tests {
         assert_eq!(won.lines[0].text, text);
         assert_eq!(won.lines[0].time_ms, reference.lines[0].time_ms);
         assert_eq!(alignment.applied_shift(), -600);
+    }
+
+    #[test]
+    fn apple_is_canonical_even_when_no_donor_text_matches() {
+        for source in ["applemusic", "betterlyrics"] {
+            let apple = Candidate::new(source, vec![LyricLine::line(1234, "Apple wording")]);
+            let spotify = doc("spotify", 20, 1000, 3000);
+            let (won, alignment) = choose(Some(&spotify), vec![apple.clone()]).unwrap();
+            assert_eq!(won.source, source);
+            assert_eq!(won.lines[0].text, "Apple wording");
+            assert_eq!(won.lines[0].time_ms, 1234);
+            assert!(!alignment.aligned);
+            let (won, _) = choose(None, vec![spotify, apple]).unwrap();
+            assert_eq!(won.source, source);
+        }
+    }
+
+    #[test]
+    fn donor_words_keep_apple_text_and_cannot_reuse_a_repeated_line() {
+        let apple = Candidate::new("applemusic", vec![
+            LyricLine::line(1100, "Hello, WORLD!"),
+            LyricLine::line(5100, "Hello, WORLD!"),
+        ]);
+        let donor = Candidate::new("musixmatch", vec![LyricLine::worded(5000, None, vec![
+            LyricWord { time_ms: 5000, end_ms: 5300, text: "hello ".into() },
+            LyricWord { time_ms: 5300, end_ms: 5700, text: "world".into() },
+        ])]);
+        let (won, _) = choose(None, vec![donor, apple]).unwrap();
+        assert_eq!(won.source, "applemusic");
+        assert!(won.lines[0].words.is_empty(), "one donor line cannot time both repeats");
+        assert_eq!(won.lines[0].time_ms, 1100);
+        assert_eq!(won.lines[1].time_ms, 5000);
+        assert_eq!(won.lines[1].text, "Hello, WORLD!");
+        assert_eq!(won.lines[1].words.iter().map(|w| w.text.as_str()).collect::<String>(), "Hello, WORLD!");
+        assert_eq!(won.lines[1].words[1].time_ms, 5300);
+    }
+
+    #[test]
+    fn exact_apple_keeps_native_words_and_overlapping_singers() {
+        let mut apple = worded_doc("applemusic", 10, 1000, 3000);
+        apple.exact = true;
+        apple.lines[1].time_ms = 1100;
+        apple.lines[1].agent = Some("guest".into());
+        apple.lines[1].role = super::super::types::LineRole::Duet;
+        let before = format!("{:?}", apple.lines);
+        let reference = doc("spotify", 10, 2000, 4000);
+        let (won, _) = choose(Some(&reference), vec![apple]).unwrap();
+        assert_eq!(format!("{:?}", won.lines), before);
     }
 
     #[test]

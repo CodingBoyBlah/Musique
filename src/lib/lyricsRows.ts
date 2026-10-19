@@ -30,6 +30,7 @@ function leadLineEnd(lead: LyricLine, fallbackNextStart: number): number {
     }
     if (max > lead.time_ms) return max;
   }
+  if (lead.end_ms != null && lead.end_ms > lead.time_ms) return lead.end_ms;
   return fallbackNextStart;
 }
 
@@ -70,7 +71,7 @@ export function buildRows(data: Lyrics | LyricLine[] | undefined): Row[] {
     // it falls outside CONCURRENT_TOL_MS.
     if (l.role === "bg" && last) {
       last.voices.push(l);
-      if (rawLine.bg) last.voices.push(tidy(rawLine.bg));
+      if (rawLine.bg) last.voices.push({ ...tidy(rawLine.bg), role: "bg" });
       continue;
     }
 
@@ -82,7 +83,7 @@ export function buildRows(data: Lyrics | LyricLine[] | undefined): Row[] {
       Math.abs(l.time_ms - last.startMs) <= CONCURRENT_TOL_MS
     ) {
       last.voices.push(l);
-      if (rawLine.bg) last.voices.push(tidy(rawLine.bg));
+      if (rawLine.bg) last.voices.push({ ...tidy(rawLine.bg), role: "bg" });
       continue;
     }
 
@@ -93,7 +94,7 @@ export function buildRows(data: Lyrics | LyricLine[] | undefined): Row[] {
       voices: [l],
     };
     if (rawLine.bg) {
-      newRow.voices.push(tidy(rawLine.bg));
+      newRow.voices.push({ ...tidy(rawLine.bg), role: "bg" });
     }
     out.push(newRow);
   }
@@ -121,7 +122,7 @@ screen from the line it belongs to. */
 export function voiceLayout(row: Row): { side: VoiceSide; secondary: boolean }[] {
   let owner: VoiceSide = "left";
   return row.voices.map((v, i) => {
-    const primary = i === 0 || v.role === "duet" || !!v.agent || (v.role === "main" && owner === "right");
+    const primary = i === 0 || v.role === "duet" || v.role === "main" || !!v.agent;
     const secondary = v.role === "bg" || !primary;
     if (secondary) return { side: owner, secondary };
     owner = v.role === "duet" ? "right" : "left";
@@ -131,18 +132,21 @@ export function voiceLayout(row: Row): { side: VoiceSide; secondary: boolean }[]
 
 export type OverlappingVoice = { row: number; voice: number; startMs: number; endMs: number };
 
-/** Only measured word timings can extend a sublyric beyond its parent row. */
-export function timedSecondaryVoices(rows: Row[]): OverlappingVoice[] {
+/** Every measured vocal interval stays active across later rows, including leads. */
+export function timedVoices(rows: Row[]): OverlappingVoice[] {
   return rows.flatMap((row, ri) => {
-    const layout = voiceLayout(row);
     return row.voices.flatMap((voice, vi) => {
-      if (!layout[vi].secondary || !voice.words.length || voice.time_ms < 0) return [];
-      const endMs = Math.max(...voice.words.map((w, wi) =>
+      if (voice.time_ms < 0 || (!voice.words.length && voice.end_ms == null)) return [];
+      const endMs = voice.words.length ? Math.max(...voice.words.map((w, wi) =>
         w.end_ms > w.time_ms ? w.end_ms : (voice.words[wi + 1]?.time_ms ?? w.time_ms + 400),
-      ));
+      )) : voice.end_ms!;
       return [{ row: ri, voice: vi, startMs: voice.time_ms, endMs }];
     });
   });
+}
+
+export function timedSecondaryVoices(rows: Row[]): OverlappingVoice[] {
+  return timedVoices(rows).filter((v) => voiceLayout(rows[v.row])[v.voice].secondary);
 }
 
 export function overlappingVoices(voices: OverlappingVoice[], active: number, timeMs: number) {

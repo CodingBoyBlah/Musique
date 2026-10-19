@@ -1,11 +1,6 @@
-//! Apple Music supplies the preferred lyrics, including line-level documents.
-//! Spotify is fetched alongside it as the exact-track sync reference. Fuzzy
-//! matches are shifted onto that reference after passing the alignment gates;
-//! exact recording matches retain their native timing.
-//!
-//! Try both Apple TTML endpoints before AMLL, Musixmatch/NetEase, and QQ/Kugou.
-//! When Spotify has no reference, use cross-provider timing consensus. Other
-//! providers remain fallbacks when Apple's lyrics are missing or fail sync.
+//! Apple Music supplies the lyric content whenever available. Spotify and the
+//! other sources donate matching line/word timings. Only a missing Apple
+//! document allows another provider's content to become the result.
 
 pub mod align;
 pub mod cache;
@@ -126,6 +121,10 @@ fn is_upgrade(new: &Lyrics, old: &Lyrics) -> bool {
     if is_apple_source(new.source.as_str()) && new.source != old.source {
         return align::source_rank(&new.source) < align::source_rank(&old.source);
     }
+    if is_apple_source(&new.source) && new.lines.iter().map(|l| l.words.len()).sum::<usize>()
+        > old.lines.iter().map(|l| l.words.len()).sum::<usize>() {
+        return true;
+    }
     if new.word_level && !old.word_level {
         return true;
     }
@@ -220,10 +219,7 @@ async fn with_recording_isrc(app: &AppHandle, pool: &SqlitePool, track: &TrackRe
     enriched
 }
 
-/// stage 2: Apple Music TTML again, but found by fuzzy search rather than by
-/// ISRC - the fallback for recordings the exact lookup doesn't index. Same rich
-/// format, so it still carries word timings and background vocals; it just has
-/// to prove itself against the sync reference first.
+/// Secondary Apple endpoint for recordings the primary lookup doesn't index.
 async fn stage_betterlyrics(pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
     try_provider!(pool, track, "betterlyrics", providers::betterlyrics::fetch(track))
         .into_iter()
@@ -271,13 +267,17 @@ async fn stage_lrclib(pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
 /// Fetch (or read from cache) the lyrics for a track.
 ///
 /// Fetch Apple lyrics alongside the Spotify sync reference. If Apple is missing
-/// or fails alignment, show the reference and try other sources in the background.
+/// show fallback content only after both Apple lookups have completed.
 pub async fn get_or_fetch(
     app: &AppHandle,
     pool: &SqlitePool,
     track: TrackRef,
     force: bool,
 ) -> Result<Lyrics, AppError> {
+    if force {
+        sqlx::query("DELETE FROM lyrics_miss WHERE track_id = ?")
+            .bind(&track.id).execute(pool).await?;
+    }
     if !force {
         if let Some(mut hit) = cache::read(pool, &track.id).await {
             hit.alternates = cache::list_alts(pool, &track.id).await;
@@ -311,12 +311,7 @@ pub async fn get_or_fetch(
     // Apple supplies the text; Spotify supplies the recording's sync reference.
     let (mut reference, mut candidates) = tokio::join!(
         providers::spotify::fetch(app, &track),
-        async {
-            // Slow Apple searches can continue in the background while the
-            // reference is displayed, rather than holding the panel open.
-            tokio::time::timeout(std::time::Duration::from_secs(6), stage_apple(app, pool, &track))
-                .await.unwrap_or_default()
-        },
+        stage_apple(app, pool, &track),
     );
     // the reference defines the rows the user actually reads, so it gets the
     // same voice structuring as every other source - Spotify lists backing
@@ -333,7 +328,7 @@ pub async fn get_or_fetch(
         }
         let (chosen, alignment) = align::choose(Some(&reference), candidates)
             .expect("the sync reference is always a fallback");
-        let upgrading = !is_apple_source(chosen.source);
+        let upgrading = !is_apple_source(chosen.source) || chosen.lines.iter().any(|l| l.words.is_empty());
         let mut out = finalize(&track.id, &chosen, alignment.applied_shift(), upgrading);
         out.alternates = cache::list_alts(pool, &track.id).await;
         cache::write(pool, &out).await.ok();
@@ -348,9 +343,6 @@ pub async fn get_or_fetch(
     // against the exact recording any more, so fall back to cross-source
     // consensus: two independent providers agreeing on the timing is decent
     // evidence they're both describing the same master.
-    if candidates.is_empty() {
-        candidates.extend(stage_apple(app, pool, &track).await);
-    }
     if candidates.is_empty() {
         candidates.extend(stage_amll(pool, &track).await);
     }
@@ -373,15 +365,17 @@ pub async fn get_or_fetch(
         return Ok(Lyrics::none(&track.id));
     };
 
-    let mut out = finalize(&track.id, &chosen, alignment.applied_shift(), false);
+    let upgrading = is_apple_source(chosen.source) && chosen.lines.iter().any(|l| l.words.is_empty());
+    let mut out = finalize(&track.id, &chosen, alignment.applied_shift(), upgrading);
     out.alternates = cache::list_alts(pool, &track.id).await;
     cache::write(pool, &out).await.ok();
+    if upgrading {
+        spawn_upgrade(app, pool, track, out.clone());
+    }
     Ok(out)
 }
 
-/// Kick off the background word-by-word hunt. Never blocks the caller, and
-/// every stage is gated on the alignment check so a drifting candidate can't
-/// replace correctly-synced lines.
+/// Collect more timing donors, or find fallback content when Apple is absent.
 fn spawn_upgrade(app: &AppHandle, pool: &SqlitePool, track: TrackRef, current: Lyrics) {
     let app = app.clone();
     let pool = pool.clone();
@@ -418,7 +412,7 @@ async fn run_upgrade(
     };
     let reference_lyrics = cached_spotify.as_ref().unwrap_or(current);
     let reference = Candidate {
-        source:       "cached",
+        source:       if reference_lyrics.source == "spotify" { "spotify" } else { "cached" },
         lines:        reference_lyrics.lines.clone(),
         plain:        reference_lyrics.plain.clone(),
         instrumental: reference_lyrics.instrumental,
@@ -426,18 +420,27 @@ async fn run_upgrade(
     };
     let reference = (!reference.lines.is_empty()).then_some(reference);
 
-    let mut seen: Vec<Candidate> = Vec::new();
+    // Keep the Apple document in every round: subsequent sources are timing
+    // donors, never competing lyric content.
+    let mut best = None;
+    let mut seen: Vec<Candidate> = if is_apple_source(&current.source) {
+        vec![Candidate {
+            source: if current.source == "applemusic" { "applemusic" } else { "betterlyrics" },
+            lines: current.lines.clone(), plain: current.plain.clone(),
+            instrumental: current.instrumental, exact: true,
+        }]
+    } else { Vec::new() };
 
-    // staged by expected yield, cheapest and most trustworthy first. we stop
-    // the moment something passes the check - that's the early exit that keeps
-    // this from costing six round trips per track
+    // Stop when the Apple document has full word timing, or a non-Apple
+    // fallback passes its recording check. Partial donations accumulate.
     for stage in 0..5 {
         let batch = match stage {
-            0 => stage_apple(app, pool, track).await,
-            1 => stage_betterlyrics(pool, track).await,
-            2 => stage_amll(pool, track).await,
-            3 => stage_major(pool, track).await,
-            _ => stage_cjk(pool, track).await,
+            0 if !is_apple_source(&current.source) => stage_apple(app, pool, track).await,
+            0 => Vec::new(),
+            1 => stage_amll(pool, track).await,
+            2 => stage_major(pool, track).await,
+            3 => stage_cjk(pool, track).await,
+            _ => stage_lrclib(pool, track).await,
         };
         if batch.is_empty() {
             continue;
@@ -449,16 +452,16 @@ async fn run_upgrade(
         }
         seen.extend(batch);
 
-        // Apple text is preferred even without word timings. Other sources
-        // must add word timings to replace the line-level fallback.
+        // Apple keeps ownership of the text at every stage.
+        let has_apple = seen.iter().any(|c| is_apple_source(c.source));
         let eligible: Vec<Candidate> = seen.iter()
-            .filter(|c| c.word_level() || is_apple_source(c.source)).cloned().collect();
+            .filter(|c| has_apple || c.word_level()).cloned().collect();
         if eligible.is_empty() {
             continue;
         }
 
         if let Some((chosen, alignment)) = align::choose(reference.as_ref(), eligible) {
-            if !alignment.aligned {
+            if !alignment.aligned && !is_apple_source(chosen.source) {
                 continue;
             }
             let mut upgraded = finalize(&track.id, &chosen, alignment.applied_shift(), false);
@@ -466,6 +469,11 @@ async fn run_upgrade(
                 continue;
             }
             upgraded.alternates = cache::list_alts(pool, &track.id).await;
+            if is_apple_source(chosen.source) && chosen.lines.iter().any(|l| l.words.is_empty()) {
+                // Keep collecting donors for uncovered lines before settling.
+                best = Some(upgraded);
+                continue;
+            }
             cache::write(pool, &upgraded).await.ok();
 
             eprintln!(
@@ -476,9 +484,12 @@ async fn run_upgrade(
         }
     }
 
-    // nothing aligned. we keep the correctly-synced line-level lyrics - that is
-    // the right outcome, not a failure. still clear the flag on the frontend so
-    // it stops expecting an upgrade.
+    if let Some(upgraded) = best {
+        cache::write(pool, &upgraded).await.ok();
+        return Some(upgraded);
+    }
+
+    // No further timing donation or fallback upgrade. Clear the pending flag.
     let _ = app;
     if current.upgrading {
         let mut settled = current.clone();
@@ -497,6 +508,19 @@ pub async fn switch_source(
     track_id: &str,
     source: &str,
 ) -> Result<Lyrics, AppError> {
+    if !is_apple_source(source) {
+        if let Some(mut canonical) = cache::read(pool, track_id).await.filter(|c| is_apple_source(&c.source)) {
+            canonical.alternates = cache::list_alts(pool, track_id).await;
+            return Ok(canonical);
+        }
+        for apple in ["applemusic", "betterlyrics"] {
+            if let Some(mut canonical) = cache::read_alt(pool, track_id, apple).await {
+                canonical.alternates = cache::list_alts(pool, track_id).await;
+                cache::write(pool, &canonical).await?;
+                return Ok(canonical);
+            }
+        }
+    }
     let Some(mut alt) = cache::read_alt(pool, track_id, source).await else {
         return Err(AppError::NotFound(format!("no cached {source} lyrics for {track_id}")));
     };
@@ -648,5 +672,16 @@ mod tests {
         assert!(!is_upgrade(&secondary, &apple));
         assert!(!is_upgrade(&other, &apple));
         assert!(!is_upgrade(&other, &secondary));
+    }
+
+    #[sqlx::test]
+    async fn source_switch_cannot_replace_available_apple_with_spotify(pool: SqlitePool) {
+        let apple = finalize("t", &cand("applemusic", vec![LyricLine::line(1000, "Apple wording")]), 0, false);
+        let spotify = finalize("t", &cand("spotify", vec![LyricLine::line(1000, "Spotify wording")]), 0, false);
+        cache::write(&pool, &apple).await.unwrap();
+        cache::write_alt(&pool, "t", &spotify).await.unwrap();
+        let chosen = switch_source(&pool, "t", "spotify").await.unwrap();
+        assert_eq!(chosen.source, "applemusic");
+        assert_eq!(chosen.lines[0].text, "Apple wording");
     }
 }

@@ -13,7 +13,7 @@
 use serde::Deserialize;
 
 use super::{duration_ok, text_matches, UA};
-use crate::lyrics::ttml::parse_ttml;
+use crate::lyrics::ttml::{parse_plain_ttml, parse_ttml};
 use crate::lyrics::types::{Candidate, TrackRef};
 
 const API_BASE: &str = "https://lyrics-api.boidu.dev/getLyrics";
@@ -54,11 +54,14 @@ pub async fn fetch(track: &TrackRef) -> Option<Candidate> {
 
     let ttml = resp.ttml.as_deref()?;
     let lines = parse_ttml(ttml);
-    if lines.is_empty() {
+    let plain = if lines.is_empty() { parse_plain_ttml(ttml) } else { None };
+    if lines.is_empty() && plain.is_none() {
         return None;
     }
 
-    Some(Candidate::new("betterlyrics", lines))
+    let mut candidate = Candidate::new("betterlyrics", lines);
+    candidate.plain = plain;
+    Some(candidate)
 }
 
 async fn query(track: &TrackRef, with_album: bool) -> Option<Response> {

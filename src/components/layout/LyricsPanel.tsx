@@ -150,7 +150,7 @@ function SongLyricsPanel() {
 
   // interpolated clock AND active-row tracking shared with the Immersive view
   const { getClock, resync } = useLyricClock();
-  const { active, overlapping } = useActiveLyrics(rows, getClock, synced);
+  const { active, overlapping, singing } = useActiveLyrics(rows, getClock, synced);
 
   /* keep the active row at about 40%. the same follower the immersive view
      uses: a jump for the first placement, one velocity-keeping spring line to
@@ -362,17 +362,18 @@ function SongLyricsPanel() {
                     }}
                   >
                     {row.voices.map((voice, vi) => {
-                      const isDuet = voice.role === "duet";
                       // lead left, duet right, a backing vocal on the side of
                       // the singer it's under (lib/lyricsRows voiceLayout)
                       const { side: align, secondary: isSecondary } = layout[vi];
-                      const voiceActive = isActive || overlapping.some((v) => v.row === ri && v.voice === vi);
+                      const voiceActive = voice.words.length || voice.end_ms != null
+                        ? singing.some((v) => v.row === ri && v.voice === vi)
+                        : isActive;
                       const voiceTone = voiceActive ? lyricTone(0, false, moreContrast) : tone;
                       const collapsed = synced && isSecondary && autoHideSublyrics && !voiceActive;
 
                       // Lead voice is primary; bg voice is visually subordinate (smaller, lower opacity, indented)
                       // rem (19 / 22 / 25px at the default size), so the user's text size carries through
-                      const size = isSecondary ? "1.357rem" : isDuet && vi > 0 ? "1.571rem" : "1.786rem";
+                      const size = isSecondary ? "1.357rem" : "1.786rem";
                       const weight = isSecondary ? 700 : 800;
                       const romIdx = rowOffsets[ri] + vi;
                       const words = lyricWords(voice, row.startMs, row.endMs);

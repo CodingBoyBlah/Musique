@@ -14,7 +14,7 @@
 use serde::Deserialize;
 
 use super::{duration_ok, text_matches, UA};
-use crate::lyrics::ttml::parse_ttml;
+use crate::lyrics::ttml::{parse_plain_ttml, parse_ttml};
 use crate::lyrics::types::{Candidate, TrackRef};
 
 const API_BASE: &str = "https://lyrics-api.binimum.org/";
@@ -55,9 +55,12 @@ pub(crate) struct Hit {
 
 pub async fn fetch(track: &TrackRef) -> Option<Candidate> {
     if let Some(isrc) = track.isrc.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        if let Some(hit) = by_isrc(isrc).await {
-            if let Some(candidate) = fetch_hit(hit, true).await {
-                return Some(candidate);
+        if let Some(mut hits) = by_isrc(isrc).await {
+            while let Some(hit) = pick_isrc(hits.clone()) {
+                hits.retain(|other| other.lyrics_url != hit.lyrics_url);
+                if let Some(candidate) = fetch_hit(hit, true).await {
+                    return Some(candidate);
+                }
             }
         }
     }
@@ -83,7 +86,8 @@ async fn fetch_hit(hit: Hit, exact: bool) -> Option<Candidate> {
 
     let body = resp.text().await.ok()?;
     let lines = parse_ttml(&body);
-    if lines.is_empty() {
+    let plain = if lines.is_empty() { parse_plain_ttml(&body) } else { None };
+    if lines.is_empty() && plain.is_none() {
         return None;
     }
 
@@ -91,12 +95,13 @@ async fn fetch_hit(hit: Hit, exact: bool) -> Option<Candidate> {
     // the TTML's iTunesMetadata. it is apple's spatial-audio metadata, not a
     // lyric sync correction, and applying it would shift correctly-timed lyrics.
     let mut cand = Candidate::new("applemusic", lines);
+    cand.plain = plain;
     cand.exact = exact;
     Some(cand)
 }
 
 /// isrc lookup pins the exact recording with zero fuzzy matching
-async fn by_isrc(isrc: &str) -> Option<Hit> {
+async fn by_isrc(isrc: &str) -> Option<Vec<Hit>> {
     let mut url = url::Url::parse(API_BASE).ok()?;
     url.query_pairs_mut().append_pair("isrc", isrc);
 
@@ -113,7 +118,7 @@ async fn by_isrc(isrc: &str) -> Option<Hit> {
 
     let body = resp.text().await.ok()?;
     let parsed: ApiResponse = serde_json::from_str(&body).ok()?;
-    pick_isrc(parsed.results)
+    Some(parsed.results)
 }
 
 /// fallback title/artist/album/duration search when isrc is missing or unindexed
@@ -129,8 +134,11 @@ async fn by_search(track: &TrackRef) -> Option<Candidate> {
     let albums = if track.album.trim().is_empty() { vec![""] } else { vec![track.album.trim(), ""] };
     for duration in [track.duration_sec(), 0] {
         for album in &albums {
-            if let Some(hits) = search_request(title, &track.artist, album, duration).await {
-                if let Some(hit) = pick_search(hits, track) {
+            if let Some(mut hits) = search_request(title, &track.artist, album, duration).await {
+                while let Some(hit) = pick_search(hits.clone(), track) {
+                    // A dead document for one edition must not hide a working
+                    // Apple document returned in the very same search.
+                    hits.retain(|other| other.lyrics_url != hit.lyrics_url);
                     if let Some(candidate) = fetch_hit(hit, false).await {
                         return Some(candidate);
                     }

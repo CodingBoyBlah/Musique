@@ -8,8 +8,8 @@ use crate::{
 
 /// Grab the lyrics for a track (or read them from cache).
 ///
-/// Prefers Apple Music text, checked against Spotify's exact-track timing.
-/// Other sources provide sync evidence and fallbacks. Background replacements
+/// Uses Apple Music text whenever found. Other sources donate matching timings
+/// and supply fallback text only when Apple is absent. Background updates
 /// arrive on `lyrics:upgraded` without restarting the panel's loading state.
 ///
 /// The frontend hands us the metadata it already has so we don't need a Spotify

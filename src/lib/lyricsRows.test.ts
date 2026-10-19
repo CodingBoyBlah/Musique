@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRows, voiceLayout, timedSecondaryVoices, overlappingVoices, CONCURRENT_TOL_MS, type Row } from "./lyricsRows";
+import { buildRows, voiceLayout, timedVoices, timedSecondaryVoices, overlappingVoices, CONCURRENT_TOL_MS, type Row } from "./lyricsRows";
 import type { LyricLine } from "../api/lyrics";
 
 // line-level helper (no word timings, like LRCLIB)
@@ -266,5 +266,40 @@ describe("overlapping sublyrics", () => {
     const unsynced = { ...L(-1, "plain"), bg: W(-1, "plain backing", 1000, "bg") };
     const duet = { ...W(1000, "duet", 6000, "duet"), agent: "guest" };
     expect(timedSecondaryVoices(buildRows([untimed, duet, unsynced]))).toEqual([]);
+  });
+});
+
+describe("overlapping main singers", () => {
+  it("keeps both main phrases active across staggered starts without making either a sublyric", () => {
+    const rows = buildRows([
+      { ...W(1000, "first singer", 5000, "main"), agent: "v1" },
+      { ...W(2000, "second singer", 6000, "duet"), agent: "v2" },
+      W(5000, "next phrase", 1000, "main"),
+    ]);
+    const voices = timedVoices(rows);
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => voiceLayout(r)[0].secondary)).toEqual([false, false, false]);
+    expect(overlappingVoices(voices, 1, 2500).map((v) => v.row)).toEqual([0]);
+    expect(overlappingVoices(voices, 2, 5500).map((v) => v.row)).toEqual([0, 1]);
+    expect(overlappingVoices(voices, 2, 6500).map((v) => v.row)).toEqual([1]);
+    expect(overlappingVoices(voices, 2, 8000)).toEqual([]);
+    expect(overlappingVoices(voices, 1, 2500).map((v) => v.row)).toEqual([0]);
+  });
+
+  it("uses explicit TTML ends for overlapping line-synced main vocals", () => {
+    const rows = buildRows([
+      { ...L(1000, "first", "main"), end_ms: 6000 },
+      { ...L(2000, "second", "duet"), end_ms: 7000 },
+    ]);
+    expect(rows[0].endMs).toBe(6000);
+    expect(overlappingVoices(timedVoices(rows), 1, 3000)).toEqual([
+      { row: 0, voice: 0, startMs: 1000, endMs: 6000 },
+    ]);
+  });
+
+  it("keeps simultaneous Apple main lines primary even without agent identifiers", () => {
+    const [row] = buildRows([W(1000, "one", 1000, "main"), W(1040, "two", 3000, "main")]);
+    expect(voiceLayout(row).every((v) => !v.secondary)).toBe(true);
+    expect(timedVoices([row]).map((v) => v.endMs)).toEqual([2000, 4040]);
   });
 });
