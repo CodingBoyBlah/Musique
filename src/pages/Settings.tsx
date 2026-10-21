@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, RotateCcw, ChevronDown, Info, Minus, Plus } from "@/lib/icons";
 import { stepZoom, resetZoom, zoomLabel, ZOOM_MIN, ZOOM_MAX } from "../lib/zoom";
-import { SegmentedControl } from "../components/playground/PlaygroundControls";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { Tooltip } from "../components/ui/Tooltip";
 import {
   getCredentials,
@@ -453,25 +453,25 @@ function AppearanceCard() {
       <SettingRow
         label="Album colors"
         hint="Recolor album & playlist pages from their cover art."
-        control={<Switch checked={albumColors} onChange={setAlbumColors} />}
+        control={<Switch label="Album colors" checked={albumColors} onChange={setAlbumColors} />}
       />
       <Divider />
       <SettingRow
         label="Animated background"
         hint="Let the blurred cover art drift behind the full-screen player while music plays. Turn off for a still background."
-        control={<Switch checked={ambientMotion} onChange={setAmbientMotion} />}
+        control={<Switch label="Animated background" checked={ambientMotion} onChange={setAmbientMotion} />}
       />
       <Divider />
       <SettingRow
         label="Animated artwork"
-        hint="Play the looping video (Spotify Canvas) some artists attach to their tracks in the full-screen player. The background takes its colours from the video."
-        control={<Switch checked={showCanvas} onChange={setShowCanvas} />}
+        hint="Play the looping video (Spotify Canvas) some artists attach to their tracks in the full-screen player. The background takes its colors from the video."
+        control={<Switch label="Animated artwork" checked={showCanvas} onChange={setShowCanvas} />}
       />
       <Divider />
       <SettingRow
-        label="Hide inactive sublyrics"
-        hint="Show backing vocals when their main lyric is active, and keep them visible until they finish."
-        control={<Switch label="Hide inactive sublyrics" checked={autoHideSublyrics} onChange={setAutoHideSublyrics} />}
+        label="Hide inactive backing vocals"
+        hint="Hide backing vocals outside their active lyric. Active vocals stay visible until they finish."
+        control={<Switch label="Hide inactive backing vocals" checked={autoHideSublyrics} onChange={setAutoHideSublyrics} />}
       />
     </Card>
   );
@@ -667,6 +667,7 @@ function GeneralCard() {
         hint="Show a desktop notification when a new song starts."
         control={
           <Switch
+            label="Playback notification"
             checked={notifyOnTrack}
             onChange={(v) => {
               setNotifyOnTrack(v);
@@ -679,13 +680,13 @@ function GeneralCard() {
       <SettingRow
         label="Confirm before closing"
         hint="Ask before quitting while music is still playing."
-        control={<Switch checked={promptOnClose} onChange={setPromptOnClose} />}
+        control={<Switch label="Confirm before closing" checked={promptOnClose} onChange={setPromptOnClose} />}
       />
       <Divider />
       <SettingRow
         label="Discord Rich Presence"
         hint="Show the song you're playing on your Discord profile."
-        control={<Switch checked={discordPresence} onChange={toggleDiscord} />}
+        control={<Switch label="Discord Rich Presence" checked={discordPresence} onChange={toggleDiscord} />}
       />
     </Card>
   );
@@ -699,10 +700,11 @@ function FeaturesCard() {
   return (
     <Card title="Features">
       <SettingRow
-        label="Friend activity"
+        label="Friends"
         hint="The Friends panel in the top bar: what people you follow are playing, and Jams."
         control={
           <Switch
+            label="Friends"
             checked={showFriends}
             onChange={(v) => {
               setShowFriends(v);
@@ -715,7 +717,7 @@ function FeaturesCard() {
       <SettingRow
         label="Listening stats"
         hint="The Stats page in the sidebar: time listened, streaks, top songs and when you listen. Worked out on this device."
-        control={<Switch checked={showStats} onChange={setShowStats} />}
+        control={<Switch label="Listening stats" checked={showStats} onChange={setShowStats} />}
       />
     </Card>
   );
@@ -1061,6 +1063,7 @@ function LastfmCard() {
                   : "Connect Last.fm"}
             </PrimaryBtn>
           </div>
+          {!status?.configured && !(apiKey.trim() && apiSecret.trim()) && <p className="t-caption" style={{ color: "var(--color-text-dim)" }}>Enter both your API key and shared secret to connect.</p>}
         </>
       )}
     </Card>
@@ -1176,7 +1179,7 @@ export default function Settings() {
     <div
       style={{
         maxWidth: "min(760px, 100%)",
-        margin: "0 auto",
+        margin: 0,
         width: "100%",
         boxSizing: "border-box",
         display: "flex",
@@ -1274,7 +1277,7 @@ export default function Settings() {
           </span>
 
           <span style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-            <StatusBadge status={status} />
+            {isCustom ? <StatusBadge status={status} /> : <span className="t-caption" style={{ color: "var(--color-text-dim)" }}>Built-in access</span>}
             <motion.span
               animate={{ rotate: collapsed ? 0 : 180 }}
               transition={{ duration: 0.2, ease: EASE_OUT }}

@@ -2,12 +2,11 @@ import { memo, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Check, Mic, Plus, Link2, Play } from "@/lib/icons";
-import { AnimatedPlayPause } from "../playground/AnimatedIcons";
+import { AnimatedPlayPause } from "./AnimatedIcons";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
 import { Tooltip } from "./Tooltip";
 import { coverUrl } from "../../lib/coverUrl";
-import { fmtMs } from "../../utils/fmt";
-import { episodeProgress, episodeToTrack } from "../../utils/episode";
+import { episodeLength, episodeProgress, episodeToTrack } from "../../utils/episode";
 import { useQueueStore } from "../../store/queue.store";
 import { shareSpotifyLink } from "../../lib/share";
 import { toast } from "../../store/toast.store";
@@ -161,8 +160,8 @@ export const EpisodeRow = memo(function EpisodeRow({
           )
         )}
 
-        <span className="tnum t-caption" style={{ fontSize: 12.5, flexShrink: 0, minWidth: 40, textAlign: "right", color: "rgba(255,255,255,0.35)" }}>
-          {fmtMs(episode.duration_ms)}
+        <span className="tnum t-caption" style={{ fontSize: 12.5, flexShrink: 0, minWidth: 40, textAlign: "right", color: "var(--color-text-dim)" }}>
+          {progress && progress.fraction < 1 ? progress.label : episodeLength(episode.duration_ms)}
         </span>
       </div>
       {menuEl}

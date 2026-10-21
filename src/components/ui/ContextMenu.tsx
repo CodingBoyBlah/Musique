@@ -47,7 +47,7 @@ export function useContextMenu() {
   const close = useCallback(() => setMenu(null), []);
 
   const element = menu ? (
-    <ContextMenuView anchor={menu.anchor} entries={menu.entries} onClose={close} />
+    <ContextMenuView anchor={menu.anchor} entries={[...menu.entries.filter((e) => !e.danger), ...menu.entries.filter((e) => e.danger)]} onClose={close} />
   ) : null;
 
   return { open, element };
@@ -70,8 +70,8 @@ function ContextMenuView({
     const W = window.innerWidth;
     const H = window.innerHeight;
     if (anchor.kind === "point") {
-      const nx = anchor.x + r.width  > W ? W - r.width  - 8 : anchor.x;
-      const ny = anchor.y + r.height > H ? H - r.height - 8 : anchor.y;
+      const nx = Math.max(8, Math.min(anchor.x, W - r.width - 8));
+      const ny = Math.max(8, Math.min(anchor.y, H - r.height - 8));
       setPos({ x: nx, y: ny, origin: "top left" });
       return;
     }
@@ -113,9 +113,12 @@ function ContextMenuView({
         visibility:    pos ? "visible" : "hidden",
         transformOrigin: pos?.origin ?? "top left",
         minWidth:      180,
+        maxWidth: "calc(100vw - 16px)",
+        maxHeight: "calc(100vh - 16px)",
+        overflowY: "auto",
         padding:       5,
         borderRadius:  10,
-        background:    "var(--color-popover)",
+        background:    "var(--color-popover-solid)",
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
         border:        "1px solid var(--color-border)",
@@ -124,7 +127,10 @@ function ContextMenuView({
       }}
     >
       {entries.map((entry, i) => (
-        <MenuRow key={i} entry={entry} onClose={onClose} />
+        <div key={i}>
+          {entry.danger && !entries[i - 1]?.danger && <div role="separator" style={{ borderTop: "1px solid var(--color-border)", margin: "4px 0" }} />}
+          <MenuRow entry={entry} onClose={onClose} />
+        </div>
       ))}
     </motion.div>,
     document.body,

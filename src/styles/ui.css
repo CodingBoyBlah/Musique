@@ -34,7 +34,7 @@
 }
 .row-action[data-active="true"] {
     color: var(--color-accent);
-    background: var(--color-accent-dim);
+    background: transparent;
 }
 @media (hover: hover) and (pointer: fine) {
     .row-action:not([data-active="true"]):hover {

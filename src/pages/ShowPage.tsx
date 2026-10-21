@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Heart, Link2, Search, X } from "@/lib/icons";
+import { Check, Plus, Link2, Search, X } from "@/lib/icons";
 import { getShow, getShowEpisodes, isShowSaved, saveShow, unsaveShow } from "../api/podcasts";
 import { PageHeader } from "../components/ui/PageHeader";
 import { PlayActions } from "../components/ui/PlayActions";
@@ -124,13 +124,13 @@ export default function ShowPage() {
 
   const meta = [
     data.total_episodes != null ? `${data.total_episodes.toLocaleString()} episodes` : null,
-    data.languages.length > 0 ? data.languages.slice(0, 2).join(", ").toUpperCase() : null,
+    data.languages.length > 0 ? data.languages.slice(0, 2).map((code) => { try { return new Intl.DisplayNames(undefined, { type: "language" }).of(code) ?? code; } catch { return code; } }).join(", ") : null,
     data.explicit ? "Explicit" : null,
   ].filter(Boolean);
 
   return (
     <div className="flex flex-col" onContextMenu={openMenu([
-      { label: saved ? "Unfollow" : "Follow", icon: <Heart size={14} active={saved} />, onSelect: toggleSave },
+      { label: saved ? "Unfollow" : "Follow", icon: saved ? <Check size={14} /> : <Plus size={14} />, onSelect: toggleSave },
       { label: "Copy Spotify link", icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("show", data.id) },
     ])}>
       <PageHeader imageUrl={data.image_url} eyebrow="Podcast" title={data.name}>
@@ -138,7 +138,7 @@ export default function ShowPage() {
         <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
           <span style={{ color: "var(--color-text-hi)", fontWeight: 600 }}>{data.publisher}</span>
           {meta.map((m) => (
-            <span key={m} className="tnum" style={{ textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}> · {m}</span>
+            <span key={m} className="tnum" style={{ fontWeight: 500 }}> · {m}</span>
           ))}
         </p>
         <PlayActions
@@ -159,7 +159,7 @@ export default function ShowPage() {
                 transition={PRESS_TRANSITION}
                 style={{ height: 36, padding: "0 16px", borderRadius: 99, color: "#ffffff", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", flexShrink: 0 }}
               >
-                <Heart size={14} strokeWidth={2.2} active={saved} />
+                {saved ? <Check size={14} strokeWidth={2.2} /> : <Plus size={14} strokeWidth={2.2} />}
                 <span>{saved ? "Following" : "Follow"}</span>
               </motion.button>
             </Tooltip>

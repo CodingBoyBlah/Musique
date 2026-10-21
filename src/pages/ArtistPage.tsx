@@ -1,3 +1,4 @@
+import { DetailPageSkeleton } from "../components/ui/Skeletons";
 import { useState, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -14,7 +15,6 @@ import { ArtistCard } from "../components/ui/ArtistCard";
 import { TrackRow } from "../components/ui/TrackRow";
 import { PageHeader } from "../components/ui/PageHeader";
 import { PlayActions } from "../components/ui/PlayActions";
-import { Loader } from "../components/ui/Loader";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SectionTitle, ShowAllButton } from "../components/ui/SectionTitle";
 import { Shelf } from "../components/ui/Shelf";
@@ -73,7 +73,7 @@ export default function ArtistPage() {
   const { data: savedIds = [] } = useSavedTrackIds(topTrackIds);
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
 
-  if (isLoading) return <Loader label="Loading artist" />;
+  if (isLoading) return <DetailPageSkeleton label="Loading artist" round />;
 
   if (error) {
     return (
@@ -100,7 +100,7 @@ export default function ArtistPage() {
   const shareEntries = [
     { label: "Artist radio", icon: <Radio size={14} />, onSelect: () => { playStation(`spotify:artist:${data.id}`, data.name); } },
     { label: "Copy Spotify link", icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("artist", data.id) },
-    { label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("artist", data.id) },
+    { label: "Copy link for other music apps", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("artist", data.id) },
   ];
 
   // a row plays from itself onward through the whole top list, not just the

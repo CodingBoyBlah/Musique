@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Plus } from "@/lib/icons";
-import { AnimatedPlayPause, AnimatedHeart } from "./AnimatedIcons";
+import { AnimatedPlayPause, AnimatedHeart } from "../ui/AnimatedIcons";
 
 const SAMPLE_TRACKS = [
   { id: "1", index: 0, name: "Give Life Back to Music", artist: "Daft Punk", duration: "4:34" },

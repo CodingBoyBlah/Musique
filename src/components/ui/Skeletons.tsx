@@ -86,3 +86,17 @@ export function TopResultSkeleton() {
     </div>
   );
 }
+
+export function DetailPageSkeleton({ label = "Loading", round = false }: { label?: string; round?: boolean }) {
+  return <div role="status" aria-label={label}>
+    <div aria-hidden style={{ display: "flex", alignItems: "end", gap: 24, marginBottom: 32 }}>
+      <div style={{ width: "clamp(120px, 20vw, 200px)", aspectRatio: "1", flexShrink: 0, borderRadius: round ? "50%" : "var(--radius-artwork)", background: BLOCK }} />
+      <div style={{ flex: 1, display: "grid", gap: 16 }}>
+        <div style={{ width: "35%", height: 14, background: BLOCK, borderRadius: 4 }} />
+        <div style={{ width: "80%", height: 32, background: BLOCK, borderRadius: 4 }} />
+        <div style={{ width: "55%", height: 14, background: BLOCK, borderRadius: 4 }} />
+      </div>
+    </div>
+    <TrackRowsSkeleton />
+  </div>;
+}

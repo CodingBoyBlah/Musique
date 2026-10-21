@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X, Info } from "@/lib/icons";
 import { Tooltip } from "./Tooltip";
-import { SegmentedControl } from "../playground/PlaygroundControls";
+import { SegmentedControl } from "./SegmentedControl";
 import { Modal } from "./Modal";
 import { CoverArt } from "./CoverArt";
 import { updatePlaylistDetails } from "../../api/library";
@@ -198,7 +198,7 @@ export function EditPlaylistModal({
 
         <div style={{ padding: "20px 20px 0" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-            <span id="edit-playlist-vis" style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-dim)" }}>Who can see it</span>
+            <span id="edit-playlist-vis" style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-dim)" }}>Sharing</span>
             <Tooltip
               side="top"
               label={
@@ -222,6 +222,7 @@ export function EditPlaylistModal({
               layoutId="edit-playlist-visibility"
             />
           </div>
+          <p className="t-caption" style={{ color: "var(--color-text-dim)", marginTop: 8 }}>Collaborative playlists let friends add songs and are always private on Spotify.</p>
         </div>
 
         <div
@@ -239,7 +240,7 @@ export function EditPlaylistModal({
           <div style={{ display: "flex", gap: 8 }}>
             <button type="button" className="btn-pill" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn-primary" disabled={!canSave} style={{ minWidth: 84 }}>
-              {busy ? "Saving..." : "Save"}
+              {busy ? "Saving…" : "Save"}
             </button>
           </div>
         </div>

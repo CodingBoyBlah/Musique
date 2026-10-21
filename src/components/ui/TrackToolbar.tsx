@@ -85,8 +85,8 @@ export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Find in tracks"
-          aria-label="Find in tracks"
+          placeholder="Filter this list"
+          aria-label="Filter this list"
           spellCheck={false}
           style={{
             flex: 1, minWidth: 0, height: "100%", border: "none", outline: "none",

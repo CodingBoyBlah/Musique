@@ -27,7 +27,7 @@ export function SortDirectionToggle({
         transition={PRESS_TRANSITION}
         style={{
           display: "flex", alignItems: "center", justifyContent: "center",
-          width: 32, height: 32, borderRadius: 8, cursor: "pointer", flexShrink: 0,
+          gap: 6, padding: "0 10px", height: 32, borderRadius: 8, cursor: "pointer", flexShrink: 0,
           border: "1px solid var(--color-glass-border)",
           background: "var(--color-glass)",
           color: "var(--color-text-hi)",
@@ -41,6 +41,7 @@ export function SortDirectionToggle({
         >
           <ChevronDown size={14} strokeWidth={2.5} />
         </motion.span>
+        <span style={{ fontSize: 12 }}>{asc ? "Ascending" : "Descending"}</span>
       </motion.button>
     </Tooltip>
   );

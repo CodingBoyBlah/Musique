@@ -5,7 +5,7 @@ import { usePrefsStore } from "../store/prefs.store";
 import { useQuery } from "@tanstack/react-query";
 import { Stats } from "@/lib/icons";
 import { getListeningStats, type ListeningStats, type Ranked, type StatsRange } from "../api/stats";
-import { SegmentedControl } from "../components/playground/PlaygroundControls";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { SectionTitle } from "../components/ui/SectionTitle";
 import { Shelf } from "../components/ui/Shelf";
 import { ArtistCard } from "../components/ui/ArtistCard";
@@ -56,7 +56,7 @@ function Heatmap({ grid }: { grid: number[][] }) {
           <span />
           {Array.from({ length: 24 }, (_, h) => (
             <span key={h} className="t-caption tnum" style={{ fontSize: 10, color: "var(--color-text-dim)", textAlign: "center" }}>
-              {h % 6 === 0 ? hourLabel(h) : ""}
+              {h % 3 === 0 ? hourLabel(h) : ""}
             </span>
           ))}
           {ROW_ORDER.map((day) => (
@@ -86,6 +86,11 @@ function Heatmap({ grid }: { grid: number[][] }) {
             </div>
           ))}
         </div>
+      </div>
+      <div aria-label={`Color scale: zero to ${max} plays per hour`} style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 8, fontSize: 12, color: "var(--color-text-dim)" }}>
+        <span>0 plays</span>
+        {[0, 0.25, 0.5, 0.75, 1].map((level) => <span key={level} aria-hidden style={{ width: 14, height: 14, borderRadius: 3, background: level ? `color-mix(in srgb, var(--color-accent) ${level * 100}%, transparent)` : "rgba(255,255,255,0.05)" }} />)}
+        <span>{max} plays</span>
       </div>
       <p className="t-caption" style={{ fontSize: 12.5, color: "var(--color-text-dim)", marginTop: 8, minHeight: 18 }}>
         {hover
@@ -170,7 +175,7 @@ function RankedTracks({ id, title, rows, contextId, caption }: { id: string; tit
   );
 }
 
-const TILE_MIN = 150;
+const TILE_MIN = 200;
 const TILE_GAP = 10;
 
 /* always six tiles, laid out 6 / 3 / 2 / 1 across so the rows stay even at

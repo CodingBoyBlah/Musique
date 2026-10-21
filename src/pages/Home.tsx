@@ -3,7 +3,7 @@ import { coverUrl } from "../lib/coverUrl";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { Heart, Music2, ListMusic, Disc3, Users } from "@/lib/icons";
+import { Play, Pause, Heart, Music2, ListMusic, Disc3, Users } from "@/lib/icons";
 import { useAuth } from "../hooks/useAuth";
 import { getRecommendations, getAlbum, getArtist, getPlaylist, getTrack } from "../api/spotify";
 import { getLikedSongs } from "../api/library";
@@ -26,8 +26,7 @@ import { useCarousel, CarouselControls, CarouselTrack } from "../components/ui/C
 import { ArtistCard } from "../components/ui/ArtistCard";
 import { AlbumCard } from "../components/ui/AlbumCard";
 import { EvenGrid, EvenGridSkeleton } from "../components/ui/EvenGrid";
-import { CirclePlayButton } from "../components/ui/CirclePlayButton";
-import { SegmentedControl } from "../components/playground/PlaygroundControls";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { meshGradient } from "../lib/mesh";
 import { gpuLayer, zTransform, EASE_OUT, PRESS } from "../lib/motion";
 import { useReflowPulse } from "../hooks/useReflowPulse";
@@ -237,13 +236,13 @@ const QuickActionCard = memo(function QuickActionCard({
     navigate(item.to);
   }
 
-  /* the whole card is a mouse target, but the play button inside it is the one
-  real control - so there is no role=button wrapping a <button>. keyboard users
-  tab straight to the play button, and focusing it lights the card up the same
-  way hovering does. */
+  // One focus target gives mouse and keyboard users the same playback action.
   const lit = hover || focused;
   return (
-    <motion.div
+    <motion.button
+      type="button"
+      className="quick-action focus-ring"
+      aria-label={isThisPlaying ? `Pause ${item.title}` : `Play ${item.title}`}
       layout="position"
       transformTemplate={zTransform}
       initial={animateIn ? { opacity: 0, y: 10 } : false}
@@ -262,6 +261,9 @@ const QuickActionCard = memo(function QuickActionCard({
       onBlur={() => setFocused(false)}
       aria-busy={pending || undefined}
       style={{
+        position: "relative",
+        textAlign: "left",
+        fontFamily: "inherit",
         display: "flex",
         alignItems: "center",
         height: 60,
@@ -290,9 +292,9 @@ const QuickActionCard = memo(function QuickActionCard({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "linear-gradient(135deg, #450af5 0%, #8e8ee5 100%)",
+            background: "linear-gradient(135deg, var(--color-accent), #819af1)",
             color: "#ffffff",
-            boxShadow: "0 2px 8px rgba(69, 10, 245, 0.35)",
+            boxShadow: "var(--shadow-artwork)",
           }}
         >
           <Heart size={20} fill="#ffffff" strokeWidth={0} />
@@ -373,18 +375,10 @@ const QuickActionCard = memo(function QuickActionCard({
         )}
       </div>
 
-      <div style={{ marginRight: 12, flexShrink: 0 }}>
-        <CirclePlayButton
-          isPlaying={isThisPlaying}
-          visible={lit || isThisPlaying || pending}
-          pending={pending}
-          onClick={(e) => handlePlay(e)}
-          size={42}
-          iconSize={17}
-          ariaLabel={isThisPlaying ? `Pause ${item.title}` : `Play ${item.title}`}
-        />
-      </div>
-    </motion.div>
+      <span aria-hidden className="quick-action-cue" style={{ opacity: lit || isThisPlaying || pending ? 1 : 0 }}>
+        {pending ? <span className="loader-arc">...</span> : isThisPlaying ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}
+      </span>
+    </motion.button>
   );
 });
 
@@ -702,7 +696,12 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
       layout="position"
       transformTemplate={zTransform}
       transition={{ layout: REFLOW }}
-      onClick={onPlay}
+      type="button"
+      className="focus-ring"
+      aria-label={isThisTrackPlaying ? `Pause ${track.name}` : `Play ${track.name}`}
+      onFocus={() => setHover(true)}
+      onBlur={() => setHover(false)}
+      onClick={() => isThisTrackPlaying ? transportPause() : onPlay()}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       whileTap={{ scale: 0.97 }}
@@ -748,22 +747,9 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
         ) : (
           <div style={{ width: "100%", height: "100%", overflow: "hidden", ...meshGradient(track.id) }} />
         )}
-        <CirclePlayButton
-          isPlaying={isThisTrackPlaying}
-          visible={hover || isThisTrackPlaying}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (isThisTrackPlaying) {
-              transportPause();
-            } else {
-              onPlay();
-            }
-          }}
-          size={40}
-          iconSize={16}
-          style={{ position: "absolute", right: 8, bottom: 8 }}
-          ariaLabel={isThisTrackPlaying ? `Pause ${track.name}` : `Play ${track.name}`}
-        />
+        <span aria-hidden style={{ position: "absolute", right: 8, bottom: 8, width: 40, height: 40, borderRadius: "50%", background: "var(--color-accent)", color: "var(--color-accent-text)", display: "grid", placeItems: "center", opacity: hover || isThisTrackPlaying ? 1 : 0, transition: "opacity 150ms ease" }}>
+          {isThisTrackPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
+        </span>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", minWidth: 0, height: 17, flexShrink: 0 }}>
         <span
@@ -838,7 +824,7 @@ const tileKey = (t: { id: string }) => t.id;
 function MadeForYou() {
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext = useQueueStore((s) => s.playContext);
-  const { data: recs = [], isLoading } = useQuery({
+  const { data: rawRecs = [], isLoading } = useQuery({
     queryKey:  ["recommendations", "home"],
     queryFn:   () => getRecommendations(undefined, 16),
     staleTime: 10 * 60_000,
@@ -846,6 +832,7 @@ function MadeForYou() {
     placeholderData: (prev) => prev,
     refetchOnWindowFocus: false,
   });
+  const recs = useMemo(() => Array.from(new Map(rawRecs.map((track) => [track.id, track])).values()), [rawRecs]);
   const carousel = useCarousel([recs.length]);
 
   function play(i: number) {
@@ -1071,7 +1058,7 @@ function greeting() {
 // follows the root text size
 const GREETING_STYLE: React.CSSProperties = {
   margin: 0,
-  fontSize: "clamp(2rem, 3.8vw, 2.714rem)",
+  fontSize: "var(--type-display-size)",
   fontWeight: 400,
   letterSpacing: "var(--type-display-track)",
   lineHeight: 1.14,
@@ -1118,7 +1105,7 @@ export default function Home() {
               ,{" "}
               <span
                 style={{
-                  fontWeight: 800,
+                  fontWeight: 600,
                   color: "var(--color-text-hi)",
                 }}
               >

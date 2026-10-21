@@ -14,11 +14,11 @@
     --color-glass: rgba(255, 255, 255, 0.05);
     --color-glass-border: rgba(255, 255, 255, 0.08);
     --color-surface: rgba(255, 255, 255, 0.04);
-    --color-surface-2: rgba(255, 255, 255, 0.07);
+    --color-surface-2: var(--color-surface-elevated);
     --color-surface-elevated: rgba(255, 255, 255, 0.07);
 
    
-    --color-hover: rgba(255, 255, 255, 0.06);
+    --color-hover: var(--color-surface-hover);
     --color-surface-hover: rgba(255, 255, 255, 0.06);
     --color-active: rgba(255, 255, 255, 0.11);
 
@@ -29,11 +29,11 @@
    
     --color-text: rgba(255, 255, 255, 0.84);
     --color-text-hi: rgba(255, 255, 255, 0.98);
-    --color-text-dim: rgba(255, 255, 255, 0.48);
-    --color-text-muted: rgba(255, 255, 255, 0.48);
+    --color-text-dim: rgba(255, 255, 255, 0.64);
+    --color-text-muted: var(--color-text-dim);
 
    
-    --color-accent: #5873D8;
+    --color-accent: #5068c4;
     --color-accent-hover: #819af1;
     --color-accent-dim: rgba(88, 115, 216, 0.16);
     --color-accent-text: #ffffff;
@@ -60,6 +60,13 @@
    One vocabulary for the whole app (mirrored in lib/motion.ts for framer).
    The same kind of motion always uses the same curve. */
 :root {
+    --radius-control: 8px;
+    --radius-card: 12px;
+    --radius-artwork: 8px;
+    --space-section: 32px;
+    --shadow-artwork: 0 4px 14px rgba(0, 0, 0, 0.3);
+    --shadow-artwork-hover: 0 12px 28px rgba(0, 0, 0, 0.5);
+    --player-clearance: 104px;
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
     --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
     --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
@@ -178,7 +185,7 @@ input[type="range"]::-webkit-slider-thumb {
     border-radius: 50%;
     background: #fff;
     margin-top: -4px;
-    opacity: 0;
+    opacity: 1;
     transition: opacity 0.15s;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
@@ -713,10 +720,10 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
     padding: 0 6px;
     border-radius: 5px;
     font-family: inherit;
-    font-size: 10.5px;
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.02em;
-    color: rgba(255, 255, 255, 0.45);
+    color: var(--color-text-dim);
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.07);
     user-select: none;
@@ -1077,6 +1084,13 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    brought up. */
 @media (prefers-contrast: more) {
     :root {
+    --radius-control: 8px;
+    --radius-card: 12px;
+    --radius-artwork: 8px;
+    --space-section: 32px;
+    --shadow-artwork: 0 4px 14px rgba(0, 0, 0, 0.3);
+    --shadow-artwork-hover: 0 12px 28px rgba(0, 0, 0, 0.5);
+    --player-clearance: 104px;
         --color-text: rgba(255, 255, 255, 0.95);
         --color-text-dim: rgba(255, 255, 255, 0.78);
         --color-text-muted: rgba(255, 255, 255, 0.78);
@@ -1202,4 +1216,40 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
     .tr-sentence:hover {
         background: rgba(255, 255, 255, 0.07);
     }
+}
+
+/* Keyboard bypass and shared card affordances. */
+.skip-link {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 20000;
+    padding: 12px 16px;
+    border-radius: var(--radius-control);
+    background: var(--color-popover-solid);
+    color: var(--color-text-hi);
+    transform: translateY(-160%);
+}
+.skip-link:focus { transform: translateY(0); }
+.quick-action-cue {
+    position: absolute;
+    right: 12px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: #111;
+    background: #fff;
+    box-shadow: var(--shadow-artwork);
+    pointer-events: none;
+    transition: opacity 150ms ease;
+}
+.quick-action:hover > div:nth-child(2),
+.quick-action:focus-visible > div:nth-child(2) { padding-right: 44px !important; }
+.btn-icon[aria-disabled="true"] { opacity: 0.5; }
+.credit-chev { opacity: 0.7; }
+@media (max-width: 999px) {
+    .tb-search-kbd { display: none; }
+    .tb-search input { text-overflow: ellipsis; }
 }

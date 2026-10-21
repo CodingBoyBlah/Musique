@@ -1,3 +1,5 @@
+import { episodeLength } from "../utils/episode";
+import { DetailPageSkeleton } from "../components/ui/Skeletons";
 import { useMemo } from "react";
 import { coverUrl } from "../lib/coverUrl";
 import { useParams, Link } from "react-router-dom";
@@ -12,7 +14,6 @@ import { PlayActions } from "../components/ui/PlayActions";
 import { SaveAlbumButton } from "../components/ui/SaveAlbumButton";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ExpandableDescription } from "../components/ui/ExpandableDescription";
-import { Loader } from "../components/ui/Loader";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SectionTitle } from "../components/ui/SectionTitle";
 import { useCarousel, CarouselControls, CarouselTrack } from "../components/ui/Carousel";
@@ -57,7 +58,7 @@ export default function AlbumPage() {
   const { view, keys, toolbar } = useTrackTools(tracks, "Album order");
 
   if (isLoading) {
-    return <Loader label="Loading album" />;
+    return <DetailPageSkeleton label="Loading album" />;
   }
   if (error) {
     return (
@@ -125,6 +126,9 @@ export default function AlbumPage() {
             )}
           </div>
         </div>
+        <p className="t-caption" style={{ color: "var(--color-text-dim)", marginTop: 8 }}>
+          {tracks.length} {tracks.length === 1 ? "song" : "songs"} · {episodeLength(tracks.reduce((sum, track) => sum + track.duration_ms, 0))}
+        </p>
         {data.description && (
           <ExpandableDescription text={data.description} />
         )}

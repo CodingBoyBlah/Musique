@@ -41,7 +41,7 @@ export function EmptyState({
         <div
           style={{
             color: "var(--color-text-dim)",
-            opacity: 0.5,
+            opacity: 1,
             marginBottom: 4,
             display: "flex",
             alignItems: "center",

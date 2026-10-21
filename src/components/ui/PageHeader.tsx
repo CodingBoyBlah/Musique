@@ -57,6 +57,7 @@ export function PageHeader({ imageUrl, eyebrow, title, round, children }: Props)
           borderRadius: round ? "50%" : 14,
           overflow: "hidden",
           boxShadow: "0 20px 54px rgba(0, 0, 0, 0.6)",
+          border: "1px solid var(--color-glass-border)",
         }}
       >
         {/* radius passes down through this wrapper so the image is clipped to

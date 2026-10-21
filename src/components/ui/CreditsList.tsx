@@ -89,7 +89,7 @@ export function CreditsList({ trackId, onNavigate, dark }: { trackId: string; on
                       <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                         {p.roles.map((r) => (
                           <span key={r} style={{ fontSize: 11, fontWeight: 600, lineHeight: "18px", padding: "0 7px", borderRadius: 99, background: chipBg, color: dark ? "rgba(255,255,255,0.85)" : "var(--color-text)" }}>
-                            {r}
+                            {r.charAt(0).toUpperCase() + r.slice(1)}
                           </span>
                         ))}
                       </span>

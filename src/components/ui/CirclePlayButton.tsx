@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { AnimatedPlayPause } from "../playground/AnimatedIcons";
+import { AnimatedPlayPause } from "./AnimatedIcons";
 import { EASE_OUT, PRESS } from "@/lib/motion";
 
 export function CirclePlayButton({

@@ -18,7 +18,7 @@ const Playlists = lazy(() => import("./pages/Playlists"));
 const PlaylistPage = lazy(() => import("./pages/PlaylistPage"));
 const ArtistPage = lazy(() => import("./pages/ArtistPage"));
 const AlbumPage = lazy(() => import("./pages/AlbumPage"));
-const Playground = lazy(() => import("./pages/Playground"));
+const Playground = import.meta.env.DEV ? lazy(() => import("./pages/Playground")) : null;
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 const ShowPage = lazy(() => import("./pages/ShowPage"));
 const StatsPage = lazy(() => import("./pages/StatsPage"));
@@ -533,14 +533,14 @@ export default function App() {
               </Suspense>
             }
           />
-          <Route
+          {Playground && <Route
             path="playground"
             element={
               <Suspense fallback={<Loader />}>
                 <Playground />
               </Suspense>
             }
-          />
+          />}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

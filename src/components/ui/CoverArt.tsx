@@ -95,11 +95,12 @@ function FadeImg({
 }) {
   const ref = useRef<HTMLImageElement>(null);
   // "cached": already decoded on first look - show it with no transition at all
-  const [state, setState] = useState<"waiting" | "loaded" | "cached">("waiting");
+  const [state, setState] = useState<"waiting" | "loaded" | "cached" | "error">("waiting");
 
   useLayoutEffect(() => {
     const img = ref.current;
     if (img && img.complete && img.naturalWidth > 0) setState("cached");
+    else if (img?.complete && img.naturalWidth === 0) setState("error");
     else setState("waiting");
   }, [src]);
 
@@ -116,6 +117,7 @@ function FadeImg({
         ...outer,
       }}
     >
+      {state === "error" && <span aria-hidden style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "var(--color-text-dim)" }}><Music size={28} strokeWidth={1.5} /></span>}
       <img
         ref={ref}
         src={src}
@@ -123,6 +125,7 @@ function FadeImg({
         referrerPolicy="no-referrer"
         loading={loading}
         decoding={decoding}
+        onError={() => setState("error")}
         onLoad={() => setState((s) => (s === "cached" ? s : "loaded"))}
         style={{
           display: "block",
@@ -131,7 +134,7 @@ function FadeImg({
           borderRadius: "inherit",
           objectFit: objectFit ?? "cover",
           objectPosition,
-          opacity: state === "waiting" ? 0 : 1,
+          opacity: state === "waiting" || state === "error" ? 0 : 1,
           transition: state === "loaded" ? "opacity 150ms cubic-bezier(0.23, 1, 0.32, 1)" : "none",
         }}
       />

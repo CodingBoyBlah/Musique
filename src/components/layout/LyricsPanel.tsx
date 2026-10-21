@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
+  X,
   Globe,
   Languages,
   Music2,
@@ -64,14 +65,20 @@ function TranscriptPanel() {
       transition={RAIL_OPEN}
       style={{ position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5, width: WIDTH, maxWidth: "100vw", overflow: "hidden", contain: "paint", willChange: "transform", display: "flex", flexDirection: "column" }}
     >
-      <div style={{ display: "flex", alignItems: "center", padding: "4px 14px 0", height: 40, flexShrink: 0, fontSize: 14, fontWeight: 700, color: "var(--color-text-hi)" }}>
-        Transcript
-      </div>
+      <LyricsPanelHeader title="Transcript" />
       <div style={{ flex: 1, minHeight: 0 }}>
         <TranscriptView episodeId={track.id} ink={ink} empty={NO_TRANSCRIPT} />
       </div>
     </motion.div>
   );
+}
+
+function LyricsPanelHeader({ title }: { title: string }) {
+  const close = usePlayerStore((s) => s.toggleLyrics);
+  return <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 14px", minHeight: 40, flexShrink: 0 }}>
+    <h2 style={{ fontSize: 14, fontWeight: 700, color: "var(--color-text-hi)" }}>{title}</h2>
+    <button type="button" className="btn-icon" aria-label={`Close ${title.toLowerCase()}`} onClick={close}><X size={16} /></button>
+  </header>;
 }
 
 const NO_TRANSCRIPT = <CenterNote title="No transcript" subtitle="Spotify has no transcript for this episode." />;
@@ -219,6 +226,7 @@ function SongLyricsPanel() {
           overflow: "hidden",
         }}
       >
+        <LyricsPanelHeader title="Lyrics" />
         {/* header - every control here is conditional on the track actually
             having something to offer, so a plain LRCLIB track shows none of
             them and the panel looks exactly as it always did */}

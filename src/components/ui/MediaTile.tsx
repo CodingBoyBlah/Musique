@@ -36,6 +36,7 @@ export const MediaTile = memo(function MediaTile({
       to={to}
       layout="position"
       className="card-link"
+      aria-label={title}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onFocus={() => setHover(true)}
@@ -49,7 +50,7 @@ export const MediaTile = memo(function MediaTile({
         flexDirection: "column",
         gap: 8,
         padding: TILE_PAD,
-        borderRadius: 12,
+        borderRadius: "var(--radius-card)",
         width: "100%",
         boxSizing: "border-box",
         textDecoration: "none",
@@ -68,7 +69,7 @@ export const MediaTile = memo(function MediaTile({
           borderRadius: round ? "50%" : 8,
           overflow: "hidden",
           flexShrink: 0,
-          boxShadow: hover ? "0 12px 28px rgba(0, 0, 0, 0.5)" : "0 4px 14px rgba(0, 0, 0, 0.3)",
+          boxShadow: hover ? "var(--shadow-artwork-hover)" : "var(--shadow-artwork)",
           transition: "box-shadow 0.25s ease",
         }}
       >
@@ -95,12 +96,14 @@ export const MediaTile = memo(function MediaTile({
         <span
           className="t-caption"
           style={{
-            display: "block",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
             fontSize: 12,
             lineHeight: "15px",
-            height: 15,
+            minHeight: 30,
             color: "var(--color-text-dim)",
-            whiteSpace: "nowrap",
+            whiteSpace: "normal",
             overflow: "hidden",
             textOverflow: "ellipsis",
             minWidth: 0,

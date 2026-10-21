@@ -48,7 +48,7 @@ export function Loader({ label, fill = true, size = 26 }: Props) {
       </svg>
       {label && (
         <span
-          style={{ fontSize: 12.5, fontWeight: 500, letterSpacing: "0.01em", color: "var(--color-text-dim)", opacity: 0.55 }}
+          style={{ fontSize: 12.5, fontWeight: 500, letterSpacing: "0.01em", color: "var(--color-text-dim)", opacity: 1 }}
         >
           {label}
         </span>

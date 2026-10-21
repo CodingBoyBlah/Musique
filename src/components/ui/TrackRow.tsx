@@ -19,7 +19,7 @@ import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { toast } from "../../store/toast.store";
 import { transportPlay, transportPause } from "../../hooks/usePlayerControls";
-import { AnimatedPlayPause, AnimatedHeart } from "../playground/AnimatedIcons";
+import { AnimatedPlayPause, AnimatedHeart } from "./AnimatedIcons";
 import { Tooltip } from "./Tooltip";
 import "../../styles/ui.css";
 import { isEpisodeId } from "../../utils/episode";
@@ -159,7 +159,7 @@ function TrackRowImpl({
     });
   }
   menuEntries.push({ label: "Copy Spotify link",   icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("track", track.id) });
-  menuEntries.push({ label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("track", track.id) });
+  menuEntries.push({ label: "Copy link for other music apps", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("track", track.id) });
 
   const baseBg = index != null && index % 2 === 0 ? "rgba(255,255,255,0.032)" : "transparent";
 
@@ -378,7 +378,7 @@ function TrackRowImpl({
           </Tooltip>
         )}
 
-        <span className="tnum t-caption" style={{ fontSize: 12.5, flexShrink: 0, color: "rgba(255,255,255,0.35)" }}>
+        <span className="tnum t-caption" style={{ fontSize: 12.5, flexShrink: 0, color: "var(--color-text-dim)" }}>
           {fmtMs(track.duration_ms)}
         </span>
       </div>

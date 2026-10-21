@@ -90,6 +90,7 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
       to={`/album/${album.id}`}
       layout="position"
       className="card-link"
+      aria-label={album.name}
       transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchAlbum(qc, album.id); }}
       onMouseLeave={() => setHover(false)}
@@ -108,7 +109,7 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
         flexDirection: "column",
         gap: 8,
         padding: TILE_PAD,
-        borderRadius: 12,
+        borderRadius: "var(--radius-card)",
         width: "100%",
         boxSizing: "border-box",
         textDecoration: "none",
@@ -130,7 +131,7 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
           aspectRatio: "1 / 1",
           borderRadius: 8,
           overflow: "hidden",
-          boxShadow: hover ? "0 12px 28px rgba(0, 0, 0, 0.5)" : "0 4px 14px rgba(0, 0, 0, 0.3)",
+          boxShadow: hover ? "var(--shadow-artwork-hover)" : "var(--shadow-artwork)",
           transition: "box-shadow 0.25s ease",
           flexShrink: 0,
         }}

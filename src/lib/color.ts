@@ -198,7 +198,7 @@ export function applyAccent(baseHex: string | null): void {
   const { h, s, l } = rgbToHsl(rgb);
   const hover = rgbToHex(hslToRgb({ h, s, l: clamp(l + 0.1, 0, 0.85) }));
   const dim = `rgba(${Math.round(rgb.r)}, ${Math.round(rgb.g)}, ${Math.round(rgb.b)}, 0.16)`;
-  const text = luminance(rgb) > 0.55 ? "#0a0a0f" : "#ffffff";
+  const text = luminance(rgb) > 0.179 ? "#000000" : "#ffffff";
   root.style.setProperty("--color-accent", baseHex);
   root.style.setProperty("--color-accent-hover", hover);
   root.style.setProperty("--color-accent-dim", dim);

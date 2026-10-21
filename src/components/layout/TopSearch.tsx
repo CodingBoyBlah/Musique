@@ -97,10 +97,9 @@ export function TopSearch() {
     return () => clearTimeout(t);
   }, [query, onSearchPage]);
 
-  // on the search page, typing drives the page. a blank field is left alone:
-  // the page sends an empty query home, which is not what clearing to retype means
+  // On the search page, clearing the field also clears the displayed results.
   useEffect(() => {
-    if (!onSearchPage || !debouncedQuery || debouncedQuery === urlQuery.trim()) return;
+    if (!onSearchPage || debouncedQuery === urlQuery.trim()) return;
     pushedRef.current = debouncedQuery;
     navigate(`/search?q=${encodeURIComponent(debouncedQuery)}`, { replace: true });
   }, [debouncedQuery, onSearchPage, urlQuery, navigate]);
@@ -221,7 +220,7 @@ export function TopSearch() {
           onFocus={() => { setFocused(true); setSelectedIndex(0); }}
           onBlur={() => { setFocused(false); instantOpenRef.current = false; }}
           onKeyDown={handleKeyDown}
-          placeholder="What do you want to play?"
+          placeholder="Search music and podcasts"
           spellCheck={false}
           aria-label="Search"
           aria-expanded={open}

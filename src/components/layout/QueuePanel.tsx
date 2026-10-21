@@ -384,7 +384,7 @@ export function QueuePanel() {
           {queue.length === 0 ? (
             <div className="t-caption" style={{ margin: "0 4px", padding: "16px 10px", borderRadius: 10, border: "1.5px dashed var(--color-glass-border)", background: "var(--color-glass)", display: "flex", alignItems: "center", gap: 9, fontSize: 12, color: "var(--color-text-dim)" }}>
               <Queue size={14} strokeWidth={2} style={{ flexShrink: 0 }} />
-              <span>Nothing queued. Add a song with the ＋ on any track.</span>
+              <span>Your queue is empty. Right-click a song and choose Add to queue.</span>
             </div>
           ) : (
             /* Drag to reorder: the row stays glued to the pointer (from where

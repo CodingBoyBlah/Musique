@@ -583,7 +583,7 @@ const PlayerScrubber = memo(function PlayerScrubber({
           position: "relative",
           flex: 1,
           minWidth: 0,
-          height: 12,
+          height: 24,
           display: "flex",
           alignItems: "center",
           cursor: durationMs > 0 ? "pointer" : "default",
@@ -1141,7 +1141,7 @@ export function PlayerBar({ immersive = false }: { immersive?: boolean }) {
             </div>
 
             {/* Progress line under album title: isolated leaf scrubber so PlayerBar does not re-render every second */}
-            <PlayerScrubber durationMs={durationMs} doSeek={doSeek} showTimes={showSecondaryControls} />
+            <PlayerScrubber durationMs={durationMs} doSeek={doSeek} showTimes />
           </div>
         </div>
 

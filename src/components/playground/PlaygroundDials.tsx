@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { AnimatedVolumeIcon } from "./AnimatedIcons";
+import { AnimatedVolumeIcon } from "../ui/AnimatedIcons";
 
 // 1. Spring Toggle (KEPT - user explicitly approved!)
 export function SpringToggle({

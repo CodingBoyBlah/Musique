@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, memo } from "react";
-import { Link, Navigate, useSearchParams, useNavigate } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useSearch } from "../hooks/useSearch";
 import { useAuth } from "../hooks/useAuth";
@@ -17,8 +17,8 @@ import { usePlayEpisodes } from "../hooks/usePlayEpisodes";
 import { EPISODE_PREFIX } from "../utils/episode";
 import type { EpisodeItem } from "../types/podcast";
 import { TrackRow } from "../components/ui/TrackRow";
-import { SegmentedControl } from "../components/playground/PlaygroundControls";
-import { AnimatedPlayPause } from "../components/playground/AnimatedIcons";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
+import { AnimatedPlayPause } from "../components/ui/AnimatedIcons";
 import { getArtist, getAlbum } from "../api/spotify";
 import { playTrack } from "../api/playback";
 import { transportPlay, transportPause } from "../hooks/usePlayerControls";
@@ -509,14 +509,14 @@ export default function Search() {
     );
   }
 
-  if (!query) return <Navigate to="/" replace />;
+  if (!query) return <EmptyState title="Find your next listen" description="Search for a song, artist, album, or podcast using the search field above." action={<Link to="/library?tab=songs" className="btn-pill">Browse your library</Link>} />;
 
   const hasResults = Boolean(
     data &&
       (data.tracks.length > 0 ||
         data.artists.length > 0 ||
         data.albums.length > 0 ||
-        data.playlists.length > 0)
+        data.playlists.length > 0 || (data.shows?.length ?? 0) > 0 || (data.episodes?.length ?? 0) > 0)
   );
 
   function playFromSearch(i: number) {
@@ -583,7 +583,7 @@ export default function Search() {
             title={query}
             style={{
               margin: 0,
-              fontSize: "clamp(24px, 3.8vw, 40px)",
+              fontSize: "var(--type-title-size)",
               lineHeight: 1.06,
               letterSpacing: "-0.028em",
               color: "#ffffff",
@@ -619,7 +619,7 @@ export default function Search() {
         <EmptyState
           title="Search didn't go through"
           description={errMsg(error)}
-          hint="If this keeps happening, connecting your own Spotify developer app in Settings usually fixes it."
+          hint="Try again in a moment. If search still fails, check your Spotify connection in Settings."
           action={
             <button type="button" className="btn-pill" onClick={() => refetch()}>
               Try again

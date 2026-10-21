@@ -1,3 +1,4 @@
+import { useAuthStore } from "../../store/auth.store";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate } from "framer-motion";
@@ -50,6 +51,7 @@ const COLLAPSED_SIDEBAR_W = 64;
 const MAC_COLLAPSED_SIDEBAR_W = 72;
 
 export default function Layout() {
+  const loggedIn = useAuthStore((s) => s.loggedIn);
   const queueOpen = usePlayerStore((s) => s.queueOpen);
   const lyricsOpen = usePlayerStore((s) => s.lyricsOpen);
   // the panel can be switched off in settings; a stale open flag must not keep it
@@ -103,7 +105,7 @@ export default function Layout() {
     if (typeof window === "undefined") return;
     const checkCrush = () => {
       const w = window.innerWidth;
-      const isCollapsed = sidebarCollapsed || w < 768;
+      const isCollapsed = sidebarCollapsed || w < 1000;
       const sw = isCollapsed ? collapsedSidebarW : 232;
       const rpw = lyricsOpen ? 366 : queueOpen || friendsOpen ? 272 : 0;
       const nextCrush = w - sw - rpw < 340;
@@ -247,6 +249,7 @@ export default function Layout() {
         inert={shellHidden ? true : undefined}
       >
         {/* the sidebar runs the full height of the window */}
+        <a className="skip-link" href="#main-content" onClick={() => mainRef.current?.focus()}>Skip to content</a>
         <Sidebar />
 
         {/* everything right of the sidebar: the top bar on the OS material,
@@ -352,9 +355,11 @@ export default function Layout() {
               </AnimatePresence>
 
               {/* Scrolling page view inside card */}
-              <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden" }}>
+              <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden", marginBottom: loggedIn ? "var(--player-clearance)" : 0 }}>
                 <main
                   ref={mainRef}
+                  id="main-content"
+                  tabIndex={-1}
                   style={{
                     position: "absolute",
                     inset: 0,
@@ -363,11 +368,12 @@ export default function Layout() {
                     paddingTop: 20,
                     paddingLeft: "clamp(14px, 2.5vw, 32px)",
                     paddingRight: "clamp(14px, 2.5vw, 32px)",
-                    paddingBottom: "90px",
+                    paddingBottom: 24,
                   }}
                 >
                   <motion.div
                     key={location.pathname}
+                    style={{ maxWidth: 1440 }}
                     initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.995 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     transition={{ duration: 0.18, ease: EASE_OUT }}
@@ -380,7 +386,7 @@ export default function Layout() {
               {/* PlayerBar docked inside card. The immersive view floats its own
                   copy over the top, so this one stands down rather than render and
                   paint underneath an opaque overlay. */}
-              {!immersiveOpen && <PlayerBar />}
+              {loggedIn && !immersiveOpen && <PlayerBar />}
             </div>
 
             {/* Right rail - Lyrics or Queue on base layer */}
@@ -410,7 +416,7 @@ export default function Layout() {
       </div>
 
       <DevicesPopover />
-      <Immersive />
+      {loggedIn && <Immersive />}
       <QuitConfirm />
       <AddToPlaylistModal />
       <CreditsModal />

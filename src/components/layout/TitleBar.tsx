@@ -249,7 +249,7 @@ function AccountMenu() {
         aria-label="Account"
         aria-expanded={open}
         aria-haspopup="menu"
-        style={{ position: "relative" }}
+        style={{ position: "relative", borderRadius: "50%" }}
       >
         {imageUrl ? (
           <img
@@ -544,10 +544,10 @@ export function TitleBar() {
           </CapsuleButton>
 
           {showFriends && <CapsuleButton
-            label={friendsOpen ? "Hide friend activity" : "Friend activity"}
+            label={friendsOpen ? "Hide friends" : "Friends"}
             onClick={toggleFriends}
             on={friendsOpen}
-            aria-label="Friend activity"
+            aria-label="Friends"
             aria-pressed={friendsOpen}
           >
             <Users size={17} strokeWidth={1.75} active={friendsOpen} />

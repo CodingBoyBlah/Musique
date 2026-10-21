@@ -72,7 +72,7 @@ function NavItem({
         border:        "none",
         fontSize:      13.5,
         fontWeight:    active ? 600 : 500,
-        color:         active ? "#ffffff" : "var(--color-text)",
+        color:         active ? "var(--color-accent-text)" : "var(--color-text)",
         background:    "transparent",
         cursor:        "pointer",
         textAlign:     collapsed ? "center" : "left",
@@ -103,7 +103,7 @@ function NavItem({
         <Icon size={collapsed ? 19 : 18} strokeWidth={1.7} active={active} />
       </span>
       {!collapsed && (
-        <span style={{ position: "relative", zIndex: 1, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: active ? "#ffffff" : "inherit" }}>{label}</span>
+        <span style={{ position: "relative", zIndex: 1, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: active ? "var(--color-accent-text)" : "inherit" }}>{label}</span>
       )}
     </motion.button>
   );
@@ -385,12 +385,12 @@ export default function Sidebar() {
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const macSimulated     = useUIStore((s) => s.macSimulated);
   const [isNarrow, setIsNarrow] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth < 768 : false
+    typeof window !== "undefined" ? window.innerWidth < 1000 : false
   );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const mql = window.matchMedia("(max-width: 767px)");
+    const mql = window.matchMedia("(max-width: 999px)");
     const handler = (e: MediaQueryListEvent) => setIsNarrow(e.matches);
     setIsNarrow(mql.matches);
     mql.addEventListener("change", handler);
@@ -499,14 +499,14 @@ export default function Sidebar() {
                   className="t-caption"
                   style={{
                     borderRadius: 8,
-                    border:       "1.5px dashed var(--color-glass-border)",
+                    border:       "1px solid var(--color-glass-border)",
                     background:   "var(--color-glass)",
                     padding:      "12px 13px",
                     fontSize:     12,
                     color:        "var(--color-text-dim)",
                     lineHeight:   1.5,
                     display:      "flex",
-                    alignItems:   "flex-start",
+                    alignItems:   "center",
                     gap:          8,
                   }}
                 >
@@ -593,7 +593,7 @@ export default function Sidebar() {
                     borderRadius:  isCollapsed ? RAIL_RADIUS : 8,
                     border:        "none",
                     background:    "transparent",
-                    color:         active ? "#ffffff" : "var(--color-text)",
+                    color:         active ? "var(--color-accent-text)" : "var(--color-text)",
                     cursor:        "pointer",
                     textAlign:     isCollapsed ? "center" : "left",
                   }}
@@ -622,7 +622,7 @@ export default function Sidebar() {
                       <img src={coverUrl(p.image_url, coverSize) ?? p.image_url} alt="" style={{ width: coverSize, height: coverSize, borderRadius: coverRadius, objectFit: "cover", boxShadow: isCollapsed ? "0 2px 6px rgba(0, 0, 0, 0.35)" : undefined }} />
                     ) : (
                       <div style={{ width: coverSize, height: coverSize, borderRadius: coverRadius, background: active ? "rgba(255,255,255,0.2)" : "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <ListMusic size={14} style={{ color: active ? "#ffffff" : "var(--color-text-dim)" }} />
+                        <ListMusic size={14} style={{ color: active ? "var(--color-accent-text)" : "var(--color-text-dim)" }} />
                       </div>
                     )}
                   </span>

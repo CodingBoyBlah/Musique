@@ -506,7 +506,7 @@ function ImmersiveQueue() {
   const queue = useQueueStore((s) => s.queue);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
 
-  if (queue.length === 0) return <Centered>Nothing queued.</Centered>;
+  if (queue.length === 0) return <Centered>Your queue is empty. Right-click a song and choose Add to queue.</Centered>;
 
   function jump(i: number) {
     /*drop everything before the picked track, then play it
@@ -658,7 +658,7 @@ export function Immersive() {
                   /* Dark, not pale. The reference card is a shade dropped over the
                      ambient, which is what keeps white type readable while the
                      field behind it keeps moving and changing colour. */
-                  background: "linear-gradient(180deg, rgba(10, 8, 14, 0.30) 0%, rgba(10, 8, 14, 0.42) 100%)",
+                  background: "linear-gradient(180deg, rgba(10, 8, 14, 0.65) 0%, rgba(10, 8, 14, 0.75) 100%)",
                   border: "1px solid rgba(255, 255, 255, 0.11)",
                   boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 30px 80px rgba(0, 0, 0, 0.30)",
                   padding: "20px clamp(20px, 2vw, 36px)",
@@ -698,7 +698,7 @@ export function Immersive() {
                       {panel === "lyrics" && podcast ? (
                         <TranscriptView episodeId={track.id} size="stage" ink={ink} />
                       ) : panel === "lyrics" ? (
-                        <ImmersiveLyrics glow={glow} ink={ink} />
+                        <ImmersiveLyrics glow={glow} ink="255, 255, 255" />
                       ) : panel === "credits" && podcast ? (
                         <EpisodeAbout track={track} ink={ink} />
                       ) : panel === "credits" ? (

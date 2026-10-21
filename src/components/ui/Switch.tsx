@@ -9,7 +9,7 @@ export function Switch({
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
-  label?: string;
+  label: string;
 }) {
   return (
     <button

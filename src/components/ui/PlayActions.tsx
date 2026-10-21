@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Shuffle, Pin, Link2, Globe, Share2 } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
@@ -15,7 +15,7 @@ import "../../styles/ui.css";
 import { useContextMenu } from "./ContextMenu";
 import { shareSpotifyLink, shareUniversalLink, type ShareKind } from "../../lib/share";
 import { Tooltip } from "./Tooltip";
-import { AnimatedPlayPause } from "../playground/AnimatedIcons";
+import { AnimatedPlayPause } from "./AnimatedIcons";
 
 // the page this row plays. Artists can't be pinned to the sidebar, so an
 // artist page passes its own right-hand control (Follow) as `accessory`.
@@ -48,45 +48,10 @@ export function PlayActions({ tracks, contextId, pinItem, accessory, onStart, hi
   const sidebarMode         = usePrefsStore((s) => s.sidebarMode);
   const { open: openMenu, element: menuEl } = useContextMenu();
 
-  // when the button row runs out of room, condense Play and Shuffle to
-  // circular icon buttons. Width only: this used to condense whenever a side
-  // panel opened, room or not, which made the first frame of every panel
-  // slide a render plus a layout animation - and a layout animation walks
-  // every `layout` element on the page (each track row) on every frame.
-  const rootRef = useRef<HTMLDivElement>(null);
-  const spacerRef = useRef<HTMLDivElement>(null);
-  const [compact, setCompact] = useState(false);
-  // the room the full-size row needs, measured whenever it is full size. It
-  // depends on what is in the row (Save, Pin, Follow...), so a fixed width
-  // threshold was either too early or let the row overflow
-  const need = useRef(0);
-  const compactRef = useRef(false);
-  useEffect(() => {
-    const el = rootRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? 0;
-      if (w <= 0) return;
-      if (!compactRef.current) {
-        const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
-        const kids = Array.from(el.children) as HTMLElement[];
-        const used = kids.reduce((sum, k) => (k === spacerRef.current ? sum : sum + k.offsetWidth), 0);
-        need.current = used + gap * Math.max(0, kids.length - 1);
-      }
-      const next = w < need.current;
-      compactRef.current = next;
-      setCompact(next);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const isCondensed = compact;
-
   const shareKind = pinItem.type as ShareKind;
   const shareEntries = [
     { label: "Copy Spotify link",   icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink(shareKind, pinItem.id) },
-    { label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink(shareKind, pinItem.id) },
+    { label: "Copy link for other music apps", icon: <Globe size={14} />, onSelect: () => shareUniversalLink(shareKind, pinItem.id) },
   ];
 
   const empty   = tracks.length === 0;
@@ -161,23 +126,19 @@ export function PlayActions({ tracks, contextId, pinItem, accessory, onStart, hi
   const shareLabelled = !pinnable && pinItem.type !== "artist" && pinItem.type !== "show";
 
   return (
-    <div ref={rootRef} className="flex items-center mt-2" style={{ gap: 10, width: "100%" }}>
+    <div className="flex items-center mt-2" style={{ gap: 10, width: "100%", flexWrap: "wrap" }}>
       <Tooltip label={playing ? "Pause" : "Play"} side="top">
-        {/* The condense morph runs as a layout (transform) animation: the width
-            flips once and framer tweens the difference as a scale, with the
-            icon and label counter-scaled so they never stretch. Nothing
-            relayouts per frame, and the label simply fades - no blur or scale
-            on text, which read as a smear. */}
         <motion.button
           layout
           initial={false}
+          aria-label={playing ? "Pause" : "Play"}
           onClick={onPlay}
           disabled={empty}
           whileTap={empty ? undefined : PRESS}
           transition={{ layout: REFLOW_SPRING, default: PRESS_TRANSITION }}
           className="focus-ring"
           style={{
-            width: isCondensed ? 36 : 102,
+            width: 102,
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
@@ -210,7 +171,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory, onStart, hi
             />
           </motion.span>
           <AnimatePresence initial={false} mode="popLayout">
-            {!isCondensed && (
+            {(
               <motion.span
                 key="label"
                 layout="position"
@@ -231,13 +192,14 @@ export function PlayActions({ tracks, contextId, pinItem, accessory, onStart, hi
         <motion.button
           layout
           initial={false}
+          aria-label="Shuffle play"
           onClick={onShuffle}
           disabled={empty}
           whileTap={empty ? undefined : PRESS}
           transition={{ layout: REFLOW_SPRING, default: PRESS_TRANSITION }}
           className="focus-ring"
           style={{
-            width: isCondensed ? 36 : 108,
+            width: 108,
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
@@ -280,7 +242,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory, onStart, hi
             <Shuffle size={15} strokeWidth={2.2} />
           </motion.span>
           <AnimatePresence initial={false} mode="popLayout">
-            {!isCondensed && (
+            {(
               <motion.span
                 key="label"
                 layout="position"
@@ -297,7 +259,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory, onStart, hi
         </motion.button>
       </Tooltip>}
 
-      <div ref={spacerRef} style={{ flex: 1 }} />
+
 
       {/* Right actions: Pin and Share. The button pins to the sidebar, so it
           says Pin - it used to say Add with a plus, which read as adding to

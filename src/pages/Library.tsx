@@ -55,7 +55,7 @@ function LikedSongsTab() {
   if (tracks.length === 0) {
     return (
       <EmptyState
-        icon={<Heart size={44} strokeWidth={1.5} style={{ color: "rgba(255,255,255,0.18)" }} />}
+        icon={<Heart size={44} strokeWidth={1.5} style={{ color: "var(--color-text-dim)" }} />}
         title="Songs you like will appear here"
         description="Like a song anywhere in the app, or pull in the ones you've already liked on Spotify."
         action={<SyncButton showStatus={false} prominent />}
@@ -80,7 +80,7 @@ function LikedSongsTab() {
         className="tnum"
         style={{ margin: "0 0 12px", fontSize: 12, color: "var(--color-text-dim)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}
       >
-        {count || tracks.length} TRACKS
+        {count || tracks.length} songs
       </motion.p>
       <motion.div layout="position" transition={{ layout: REFLOW }}>
         {toolbar}
@@ -119,7 +119,7 @@ function AlbumsTab() {
   if (albums.length === 0) {
     return (
       <EmptyState
-        icon={<Disc3 size={44} strokeWidth={1.5} style={{ color: "rgba(255,255,255,0.18)" }} />}
+        icon={<Disc3 size={44} strokeWidth={1.5} style={{ color: "var(--color-text-dim)" }} />}
         title="Albums you save will appear here"
         description="Pull in the albums you've saved on Spotify."
         action={<SyncButton showStatus={false} prominent />}
@@ -163,7 +163,7 @@ function ArtistsTab() {
   if (artists.length === 0) {
     return (
       <EmptyState
-        icon={<Users size={44} strokeWidth={1.5} style={{ color: "rgba(255,255,255,0.18)" }} />}
+        icon={<Users size={44} strokeWidth={1.5} style={{ color: "var(--color-text-dim)" }} />}
         title="Artists you follow will appear here"
         description="Pull in the artists you follow on Spotify."
         action={<SyncButton showStatus={false} prominent />}
@@ -251,7 +251,7 @@ export default function Library() {
         style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", rowGap: 12 }}
       >
         <h1 className="t-title" style={{ margin: 0, color: "var(--color-text-hi)" }}>
-          Your library
+          {tab === "songs" ? "Liked songs" : tab === "albums" ? "Saved albums" : tab === "artists" ? "Followed artists" : "Followed podcasts"}
         </h1>
         <SyncButton />
       </motion.div>

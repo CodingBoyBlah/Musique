@@ -46,6 +46,7 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
       to={`/artist/${artist.id}`}
       layout="position"
       className="card-link"
+      aria-label={artist.name}
       transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchArtist(qc, artist.id); }}
       onMouseLeave={() => setHover(false)}
@@ -64,7 +65,7 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
         flexDirection: "column",
         gap: 10,
         padding: TILE_PAD,
-        borderRadius: 12,
+        borderRadius: "var(--radius-card)",
         width: "100%",
         boxSizing: "border-box",
         textDecoration: "none",
@@ -85,7 +86,7 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
           position: "relative",
           width: "100%",
           aspectRatio: "1 / 1",
-          borderRadius: 10,
+          borderRadius: "50%",
           overflow: "hidden",
           flexShrink: 0,
           boxShadow: hover
@@ -203,16 +204,6 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
         </span>
 
         <div className="t-caption" style={{ display: "flex", alignItems: "center", gap: 6, height: 16, fontSize: 12, color: "var(--color-text-dim)", overflow: "hidden", whiteSpace: "nowrap", width: "100%", minWidth: 0, maxWidth: "100%", flexShrink: 0 }}>
-          <span
-            style={{
-              width: 5,
-              height: 5,
-              borderRadius: "50%",
-              background: hover ? "var(--color-accent)" : "rgba(255, 255, 255, 0.25)",
-              transition: "background 0.16s ease",
-              flexShrink: 0,
-            }}
-          />
           <span style={{ transition: "color 0.16s ease", color: hover ? "var(--color-text)" : "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {/* static: text that changes under the pointer reads as the
                 card moving, and the arrow already says where this goes */}

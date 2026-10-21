@@ -1,3 +1,4 @@
+import { DetailPageSkeleton } from "../components/ui/Skeletons";
 import { useMemo, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -8,7 +9,6 @@ import { TrackRow } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ExpandableDescription } from "../components/ui/ExpandableDescription";
-import { Loader } from "../components/ui/Loader";
 import { EmptyState } from "../components/ui/EmptyState";
 import { useTrackTools } from "../components/ui/TrackToolbar";
 import { playTrack } from "../api/playback";
@@ -105,7 +105,7 @@ export default function PlaylistPage() {
   const { view, keys, toolbar } = useTrackTools(tracks, "Playlist order");
 
   if (isLoading) {
-    return <Loader label="Loading playlist" />;
+    return <DetailPageSkeleton label="Loading playlist" />;
   }
   if (error && !data) {
     return (
@@ -207,8 +207,8 @@ export default function PlaylistPage() {
           {data.followers != null && data.followers > 0 && (
             <span className="tnum">{data.followers.toLocaleString()} {data.followers === 1 ? "save" : "saves"} · </span>
           )}
-          <span className="tnum" style={{ textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>
-            {data.total_tracks} {data.total_tracks === 1 ? "track" : "tracks"}
+          <span className="tnum" style={{ fontWeight: 600 }}>
+            {data.total_tracks} {data.total_tracks === 1 ? "song" : "songs"}
           </span>
         </p>
         <PlayActions
@@ -282,7 +282,7 @@ export default function PlaylistPage() {
           ))}
           {view.length === 0 && (
             <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>
-              No tracks match your filter.
+              No songs match your filter.
             </p>
           )}
         </motion.div>
