@@ -74,7 +74,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           pnpm test
-          cargo test --manifest-path src-tauri/Cargo.toml --lib auth:: --release --locked
+          cargo test --manifest-path src-tauri/Cargo.toml --lib --release --locked -- --test-threads=1
 
       # tauri-action builds the app, creates/updates the GitHub Release for this
       # tag, SIGNS the updater artifacts, generates `latest.json`, and uploads ONLY

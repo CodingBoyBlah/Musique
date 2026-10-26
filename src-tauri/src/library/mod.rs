@@ -608,12 +608,11 @@ pub async fn sync_new_releases(pool: &SqlitePool, token: &str) -> Result<usize, 
     });
     let mut results = futures_util::stream::iter(fetches).buffered(8);
     while let Some(page_res) = results.next().await {
-        if let Ok(page) = page_res {
-            for al in page.items {
-                if !seen.insert(al.id.clone()) { continue; }
-                let key = release_sort_key(al.release_date.as_deref());
-                albums.push((al, key));
-            }
+        let page = page_res?;
+        for al in page.items {
+            if !seen.insert(al.id.clone()) { continue; }
+            let key = release_sort_key(al.release_date.as_deref());
+            albums.push((al, key));
         }
         if albums.len() > 250 { break; }
     }

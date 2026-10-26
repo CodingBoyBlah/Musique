@@ -27,13 +27,14 @@ pub fn sync_probe() -> i32 {
             Ok(token) => token,
             Err(e) => { eprintln!("sync probe authentication: {e}"); return 5; }
         };
+        let mut failed = false;
         for attempt in 1..=2 {
             match crate::library::sync_all(&pool, &token, &|step| println!("sync step completed: {step}")).await {
                 Ok(result) => println!("sync attempt {attempt} completed: {result:?}"),
-                Err(e) => { eprintln!("sync attempt {attempt} returned an error without exiting: {e}"); return 6; }
+                Err(e) => { eprintln!("sync attempt {attempt} returned an error without exiting: {e}"); failed = true; }
             }
         }
-        println!("sync probe passed");
-        0
+        println!("sync probe survived both attempts");
+        if failed { 6 } else { 0 }
     }))
 }
