@@ -70,6 +70,12 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      - name: Verify frontend and OAuth regression tests
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          pnpm test
+          cargo test --manifest-path src-tauri/Cargo.toml --lib auth:: --release --locked
+
       # tauri-action builds the app, creates/updates the GitHub Release for this
       # tag, SIGNS the updater artifacts, generates `latest.json`, and uploads ONLY
       # the final installers + updater bundles + latest.json (no bundle folders).

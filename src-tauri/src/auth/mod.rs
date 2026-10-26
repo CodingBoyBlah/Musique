@@ -2,6 +2,7 @@ pub mod http;
 pub mod pkce;
 pub mod token;
 pub mod profile;
+pub mod redirect;
 
 use profile::{cache_profile, fetch_profile_retrying};
 
@@ -24,8 +25,7 @@ pub struct AuthStatus {
     pub image_url:    Option<String>,
 }
 
-// public shared client ID (ncspot / spotify-player public Web API application)
-pub const SHARED_CLIENT_ID: &str = "d420a117a32841c2b3474932e49fb54b";
+pub use redirect::SHARED_CLIENT_ID;
 // official Spotify desktop client ID (playback grant with full streaming capabilities)
 pub const PLAYBACK_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
 // persistent device ID derived from device name: hex(&Sha1::digest(device_name.as_bytes()))

@@ -248,7 +248,7 @@ fn classify_request_line(line: &str, expected_state: &str) -> Callback {
     };
 
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    if path != "/login" && path != "/callback" {
+    if !super::redirect::is_callback_path(path) {
         return Callback::Unrelated(format!("Unexpected path {path}"));
     }
 
@@ -292,9 +292,9 @@ mod tests {
     use tokio::io::AsyncReadExt;
     use tokio::net::TcpStream;
 
-    async fn send_callback(port: u16, state: &str, code: &str) {
+    async fn send_callback(port: u16, path: &str, state: &str, code: &str) {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        stream.write_all(format!("GET /login?state={state}&code={code} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes()).await.unwrap();
+        stream.write_all(format!("GET {path}?state={state}&code={code} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes()).await.unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).await.unwrap();
         assert!(response.starts_with("HTTP/1.1 200 OK"));
@@ -306,11 +306,11 @@ mod tests {
             let (login, desktop) = open_login_redirects().await.unwrap();
             let callbacks = async {
                 if desktop_first {
-                    send_callback(PLAYBACK_PORT, "desktop-state", "desktop-code").await;
-                    send_callback(CALLBACK_PORT, "login-state", "login-code").await;
+                    send_callback(PLAYBACK_PORT, "/login", "desktop-state", "desktop-code").await;
+                    send_callback(CALLBACK_PORT, "/ncspot_login", "login-state", "login-code").await;
                 } else {
-                    send_callback(CALLBACK_PORT, "login-state", "login-code").await;
-                    send_callback(PLAYBACK_PORT, "desktop-state", "desktop-code").await;
+                    send_callback(CALLBACK_PORT, "/ncspot_login", "login-state", "login-code").await;
+                    send_callback(PLAYBACK_PORT, "/login", "desktop-state", "desktop-code").await;
                 }
             };
             let (codes, _) = tokio::join!(async {
@@ -324,5 +324,27 @@ mod tests {
         assert!(first.is_err() && second.is_err());
         let next = open_login_redirects().await.unwrap();
         drop(next);
+    }
+
+    #[test]
+    fn ncspot_callback_checks_state_and_decodes_the_code() {
+        assert!(matches!(
+            classify_request_line("GET /ncspot_login?state=current&code=code%2Bvalue HTTP/1.1", "current"),
+            Callback::Code(code) if code == "code+value"
+        ));
+        for query in ["state=stale&code=code", "code=code", "state=stale&error=access_denied"] {
+            assert!(matches!(
+                classify_request_line(&format!("GET /ncspot_login?{query} HTTP/1.1"), "current"),
+                Callback::Unrelated(_)
+            ));
+        }
+        assert!(matches!(
+            classify_request_line("GET /ncspot_login?state=current&error=access_denied HTTP/1.1", "current"),
+            Callback::Refused(_)
+        ));
+        assert!(matches!(
+            classify_request_line("GET /ncspot_login?state=current HTTP/1.1", "current"),
+            Callback::Refused(_)
+        ));
     }
 }

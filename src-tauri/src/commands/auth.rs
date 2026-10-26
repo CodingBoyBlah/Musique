@@ -138,6 +138,35 @@ fn build_auth_url(
     url.to_string()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn login_links_encode_the_registered_redirect_and_pkce_parameters() {
+        for (client_id, port, expected_redirect) in [
+            (auth::SHARED_CLIENT_ID, http::CALLBACK_PORT, "http://127.0.0.1:8989/ncspot_login"),
+            ("custom-client", http::CALLBACK_PORT, "http://127.0.0.1:8989/login"),
+            (auth::PLAYBACK_CLIENT_ID, http::PLAYBACK_PORT, "http://127.0.0.1:8898/login"),
+        ] {
+            let redirect = auth::redirect::login_redirect_uri(client_id, port);
+            let link = build_auth_url(client_id, "challenge", "state+value", &redirect, SCOPES, true);
+            let url = Url::parse(&link).unwrap();
+            assert_eq!(url.origin().ascii_serialization(), "https://accounts.spotify.com");
+            assert_eq!(url.path(), "/authorize");
+            let params: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+            for (key, expected) in [
+                ("client_id", client_id), ("redirect_uri", expected_redirect),
+                ("response_type", "code"), ("code_challenge_method", "S256"),
+                ("code_challenge", "challenge"), ("state", "state+value"),
+                ("scope", SCOPES), ("show_dialog", "true"),
+            ] {
+                assert_eq!(params.get(key).map(String::as_str), Some(expected), "{key}");
+            }
+        }
+    }
+}
+
 fn open_browser(app: &AppHandle, auth_url: &str) -> Result<(), AppError> {
     #[cfg(target_os = "linux")]
     {
@@ -185,7 +214,7 @@ pub async fn start_login(
     let verifier = pkce::generate_verifier();
     let challenge = pkce::derive_challenge(&verifier);
     let state_token = gen_state();
-    let redirect = format!("http://127.0.0.1:{port}/login");
+    let redirect = auth::redirect::login_redirect_uri(&client_id, port);
 
     // Bind the redirect port BEFORE opening the browser: if the port is taken
     // (another copy of the app, an abandoned sign-in) the user finds out now
@@ -193,7 +222,7 @@ pub async fn start_login(
     let (listener, playback_listener) = http::open_login_redirects().await?;
     let playback_verifier = pkce::generate_verifier();
     let playback_state = gen_state();
-    let playback_redirect = format!("http://127.0.0.1:{}/login", http::PLAYBACK_PORT);
+    let playback_redirect = auth::redirect::login_redirect_uri(auth::PLAYBACK_CLIENT_ID, http::PLAYBACK_PORT);
     let playback_url = build_auth_url(
         auth::PLAYBACK_CLIENT_ID,
         &pkce::derive_challenge(&playback_verifier),
@@ -270,7 +299,7 @@ pub async fn authorize_playback_token(app: &AppHandle) -> Result<String, AppErro
     let verifier = pkce::generate_verifier();
     let challenge = pkce::derive_challenge(&verifier);
     let state_token = gen_state();
-    let redirect = format!("http://127.0.0.1:{port}/login");
+    let redirect = auth::redirect::login_redirect_uri(client_id, port);
 
     let listener = http::open_redirect(port).await?;
 
