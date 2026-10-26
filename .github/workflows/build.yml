@@ -51,6 +51,13 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: actions/cache@v4
+        if: matrix.platform == 'windows-latest'
+        with:
+          path: src-tauri/target
+          key: windows-native-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: windows-native-
+
       - name: Install Linux deps
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -90,6 +97,6 @@ jobs:
           tagName: ${{ steps.notes.outputs.tag }}
           releaseName: "Musique ${{ steps.notes.outputs.tag }}"
           releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}

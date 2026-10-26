@@ -81,14 +81,14 @@ it("ignores a login response arriving after logout", async () => {
   expect(syncLibrary).not.toHaveBeenCalled();
 });
 
-it("publishes manual login links and discards callbacks from a signed-out session", async () => {
+it.each([true, false])("publishes login links with automatic opening=%s and discards signed-out callbacks", async (automatic) => {
   const pending = deferred<AuthStatus>();
   vi.mocked(startLogin).mockReturnValue(pending.promise);
   vi.mocked(logout).mockResolvedValue(undefined);
-  const task = loginSession(qc, false);
+  const task = loginSession(qc, automatic);
   await vi.waitFor(() => expect(startLogin).toHaveBeenCalledOnce());
   const [onLinks, openBrowser] = vi.mocked(startLogin).mock.calls[0];
-  expect(openBrowser).toBe(false);
+  expect(openBrowser).toBe(automatic);
   const links = { ncspot: "https://accounts.spotify.com/authorize?state=first", desktop: "https://accounts.spotify.com/authorize?state=second" };
   onLinks(links);
   expect(useAuthStore.getState().loginLinks).toEqual(links);
