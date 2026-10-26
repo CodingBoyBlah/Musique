@@ -1,0 +1,32 @@
+name: Verify before release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - name: Run native login, sync and request regressions
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --release --locked -- --test-threads=1 --nocapture
+      - name: Build diagnostic binary without publishing a release
+        run: cargo build --manifest-path src-tauri/Cargo.toml --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-verified-binary
+          path: src-tauri/target/release/spotify.exe

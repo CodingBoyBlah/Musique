@@ -2,6 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if std::env::args().any(|a| a == "--sync-probe") {
+        std::process::exit(spotify_lib::sync_probe());
+    }
    
     if std::env::args().any(|a| a == "--audio-probe"){
         std::process::exit(spotify_lib::audio_probe());

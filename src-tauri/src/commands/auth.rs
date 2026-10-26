@@ -239,16 +239,20 @@ pub async fn start_login(
     if open_browser {
         // Keep the callbacks alive if a browser launcher fails. The user can
         // still copy these exact links or open each tab from the app.
-        for url in [&auth_url, &playback_url] {
-            if let Err(e) = self::open_browser(&app, url) {
-                eprintln!("[auth] browser launch failed; manual links remain available: {e}");
-            }
+        if let Err(e) = self::open_browser(&app, &auth_url) {
+            eprintln!("[auth] browser launch failed; manual links remain available: {e}");
         }
     }
 
-    let (code, playback_code) = tokio::try_join!(
-        listener.wait(&state_token), playback_listener.wait(&playback_state)
-    )?;
+    let (code, playback_code) = http::wait_login_redirects(
+        listener, playback_listener, &state_token, &playback_state, || {
+            if open_browser {
+                if let Err(e) = self::open_browser(&app, &playback_url) {
+                    eprintln!("[auth] playback browser launch failed; manual link remains available: {e}");
+                }
+            }
+        },
+    ).await?;
     let _cleanup = auth::account_cleanup().await;
     auth::require_epoch(epoch)?;
     let mut status = auth::complete_login(&client_id, &code, &verifier, &redirect, &db, &auth, epoch).await?;

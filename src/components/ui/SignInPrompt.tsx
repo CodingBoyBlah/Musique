@@ -296,8 +296,8 @@ export function SignInPrompt({
           <div className="sign-in-caption">
             <p>
               {loggingIn
-                ? "Finish both browser tabs to continue."
-                : "Two tabs will open. Premium is not required."}
+                ? "Approve ncspot, then Spotify desktop, to continue."
+                : "Two sign-in steps will open in order. Premium is not required."}
             </p>
             <button
               ref={helpButtonRef}
@@ -345,10 +345,10 @@ export function SignInPrompt({
               <li>
                 <strong>Approve both tabs</strong>
                 <p>
-                  Click "Log in with Spotify", then approve{" "}
-                  <span className="sign-in-app-name">ncspot</span> and{" "}
-                  <span className="sign-in-app-name">Spotify desktop</span> with
-                  the same account.
+                  Click "Log in with Spotify" and approve{" "}
+                  <span className="sign-in-app-name">ncspot</span>. The{" "}
+                  <span className="sign-in-app-name">Spotify desktop</span> tab
+                  opens next. Use the same account for both.
                 </p>
               </li>
               <li>

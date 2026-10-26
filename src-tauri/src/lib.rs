@@ -8,6 +8,8 @@ use tokio::sync::RwLock;
 
 mod auth;
 mod commands;
+mod diagnostics;
+pub use diagnostics::sync_probe;
 
 pub fn connect_probe() -> i32 {
     use librespot_core::{authentication::Credentials, config::SessionConfig, session::Session};
@@ -693,7 +695,7 @@ pub fn run() {
     if std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
         std::env::set_var(
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            "--js-flags=--max-old-space-size=96,--optimize-for-size --renderer-process-limit=1 --gpu-rasterization-msaa-sample-count=0 --num-raster-threads=1 --enable-zero-copy --disk-cache-size=33554432 --media-cache-size=33554432 --disable-renderer-accessibility --disable-speech-api --disable-print-preview --enable-features=TrimOnMemoryPressure,NetworkServiceInProcess --disable-background-networking --disable-component-update --disable-domain-reliability --disable-sync --disable-breakpad --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,BackForwardCache,GlobalMediaControls",
+            "--renderer-process-limit=1 --gpu-rasterization-msaa-sample-count=0 --num-raster-threads=1 --enable-zero-copy --disk-cache-size=33554432 --media-cache-size=33554432 --disable-renderer-accessibility --disable-speech-api --disable-print-preview --enable-features=TrimOnMemoryPressure,NetworkServiceInProcess --disable-background-networking --disable-component-update --disable-domain-reliability --disable-sync --disable-breakpad --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,BackForwardCache,GlobalMediaControls",
         );
     }
 

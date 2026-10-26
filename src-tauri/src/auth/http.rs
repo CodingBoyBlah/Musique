@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 pub const CALLBACK_PORT: u16 = 8989;
 pub const PLAYBACK_PORT: u16 = 8898;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 /// How often a waiting flow checks whether a newer one has superseded it.
 const SUPERSEDE_POLL: Duration = Duration::from_millis(200);
 
@@ -108,6 +109,32 @@ pub async fn open_login_redirects() -> Result<(Redirect, Redirect), AppError> {
         Redirect { listener: login_listener, port: CALLBACK_PORT, generation: login, _guard: guard.clone() },
         Redirect { listener: playback_listener, port: PLAYBACK_PORT, generation: playback, _guard: guard },
     ))
+}
+
+/// Both listeners stay live, but automatic login opens the second consent page
+/// only after the first returns. Parallel Spotify consent tabs can replace the
+/// browser's pending authorization. Manually copied links may finish either way.
+pub async fn wait_login_redirects(
+    login: Redirect,
+    playback: Redirect,
+    login_state: &str,
+    playback_state: &str,
+    open_playback: impl FnOnce(),
+) -> Result<(String, String), AppError> {
+    let login = login.wait(login_state);
+    let playback = playback.wait(playback_state);
+    tokio::pin!(login, playback);
+    tokio::select! {
+        code = &mut login => {
+            let code = code?;
+            open_playback();
+            Ok((code, playback.await?))
+        }
+        code = &mut playback => {
+            let code = code?;
+            Ok((login.await?, code))
+        }
+    }
 }
 
 /// Bind 127.0.0.1:port, retrying briefly while the OS releases a just-closed
@@ -210,8 +237,11 @@ impl Redirect {
 
             let mut reader = BufReader::new(&mut stream);
             let mut request_line = String::new();
-            if reader.read_line(&mut request_line).await.is_err() {
-                continue;
+            // Browsers can open an idle speculative connection before the
+            // actual callback. Never let it block the listener indefinitely.
+            match tokio::time::timeout(REQUEST_TIMEOUT, reader.read_line(&mut request_line)).await {
+                Ok(Ok(n)) if n > 0 => {}
+                _ => continue,
             }
 
             let outcome = classify_request_line(&request_line, expected_state);
@@ -225,8 +255,10 @@ impl Redirect {
                 "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
                 body.len()
             );
-            let _ = stream.write_all(response.as_bytes()).await;
-            let _ = stream.shutdown().await;
+            let _ = tokio::time::timeout(REQUEST_TIMEOUT, async {
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            }).await;
 
             match outcome {
                 Callback::Code(code) => return Ok(code),
@@ -304,19 +336,29 @@ mod tests {
     async fn onboarding_callbacks_accept_either_order_and_release_on_cancel() {
         for desktop_first in [true, false] {
             let (login, desktop) = open_login_redirects().await.unwrap();
+            let opened = std::sync::atomic::AtomicBool::new(false);
             let callbacks = async {
+                assert!(!opened.load(Ordering::SeqCst));
+                let _idle_preconnect = TcpStream::connect(("127.0.0.1", CALLBACK_PORT)).await.unwrap();
                 if desktop_first {
                     send_callback(PLAYBACK_PORT, "/login", "desktop-state", "desktop-code").await;
                     send_callback(CALLBACK_PORT, "/ncspot_login", "login-state", "login-code").await;
                 } else {
                     send_callback(CALLBACK_PORT, "/ncspot_login", "login-state", "login-code").await;
+                    tokio::time::timeout(Duration::from_secs(1), async {
+                        while !opened.load(Ordering::SeqCst) { tokio::task::yield_now().await; }
+                    }).await.expect("desktop must open after ncspot returns");
                     send_callback(PLAYBACK_PORT, "/login", "desktop-state", "desktop-code").await;
                 }
             };
-            let (codes, _) = tokio::join!(async {
-                tokio::try_join!(login.wait("login-state"), desktop.wait("desktop-state"))
-            }, callbacks);
+            let (codes, _) = tokio::time::timeout(Duration::from_secs(6), async { tokio::join!(
+                wait_login_redirects(login, desktop, "login-state", "desktop-state", || {
+                    opened.store(true, Ordering::SeqCst);
+                }),
+                callbacks,
+            ) }).await.expect("an idle browser connection must not stall sign-in");
             assert_eq!(codes.unwrap(), ("login-code".into(), "desktop-code".into()));
+            assert_eq!(opened.load(Ordering::SeqCst), !desktop_first);
         }
         let (login, desktop) = open_login_redirects().await.unwrap();
         cancel_pending_flows();

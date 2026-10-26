@@ -5,6 +5,8 @@ use crate::errors::AppError;
 use futures_util::{StreamExt, TryStreamExt};
 use std::collections::HashMap;
 use std::sync::Mutex;
+use sha2::{Digest, Sha256};
+use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
 // Two lanes. Library sync pulls dozens of pages at once; if it shared one pool
@@ -16,6 +18,11 @@ static BG_SEMAPHORE:  Semaphore = Semaphore::const_new(6);
 
 tokio::task_local! {
     static BACKGROUND: ();
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    pub(crate) static TEST_API_BASE: String;
 }
 
 /// Run `fut` with every Spotify request inside it on the background lane.
@@ -55,14 +62,35 @@ pub(crate) async fn get_all_pages<P: serde::de::DeserializeOwned>(
     Ok(pages)
 }
 
-async fn send_request(builder: reqwest::RequestBuilder) -> Result<reqwest::Response, AppError> {
+static RATE_LIMITS: Mutex<Option<HashMap<[u8; 32], Instant>>> = Mutex::new(None);
+
+fn check_rate_limit(key: &[u8; 32]) -> Result<(), AppError> {
+    let mut limits = RATE_LIMITS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(limits) = limits.as_mut() {
+        let now = Instant::now();
+        limits.retain(|_, until| *until > now);
+        if let Some(until) = limits.get(key) {
+            return Err(AppError::Network(format!(
+                "Spotify is rate-limited. Retry in {} seconds.",
+                until.duration_since(now).as_secs().saturating_add(1)
+            )));
+        }
+    }
+    Ok(())
+}
+
+async fn send_request(token: &str, builder: reqwest::RequestBuilder) -> Result<reqwest::Response, AppError> {
+    let key: [u8; 32] = Sha256::digest(token.as_bytes()).into();
     let mut attempt = 0;
     loop {
+        check_rate_limit(&key)?;
         attempt += 1;
         let _permit = lane()
             .acquire()
             .await
             .map_err(|e| AppError::Network(e.to_string()))?;
+        // A request ahead of us may have received 429 while we queued.
+        check_rate_limit(&key)?;
 
         let req = builder
             .try_clone()
@@ -70,18 +98,22 @@ async fn send_request(builder: reqwest::RequestBuilder) -> Result<reqwest::Respo
         let resp = req.send().await?;
 
         let status = resp.status();
-        if status.as_u16() == 429 && attempt <= 3 {
+        if status.as_u16() == 429 {
             let retry_after_secs = resp
                 .headers()
                 .get("Retry-After")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(1);
-            let backoff = std::time::Duration::from_secs(retry_after_secs.clamp(1, 30));
-            eprintln!("[spotify-api] 429 rate limit hit, backing off for {retry_after_secs}s (attempt {attempt}/3)");
-            drop(_permit);
-            tokio::time::sleep(backoff).await;
-            continue;
+                .unwrap_or(60).max(1);
+            if let Some(until) = Instant::now().checked_add(Duration::from_secs(retry_after_secs)) {
+                let mut limits = RATE_LIMITS.lock().unwrap_or_else(|e| e.into_inner());
+                let limits = limits.get_or_insert_with(HashMap::new);
+                limits.retain(|_, until| *until > Instant::now());
+                limits.insert(key, until);
+            }
+            return Err(AppError::Network(format!(
+                "Spotify is rate-limited. Retry in {retry_after_secs} seconds."
+            )));
         }
 
         if status.is_server_error() && attempt <= 2 {
@@ -132,6 +164,12 @@ pub(crate) async fn spotify_get<T: serde::de::DeserializeOwned>(
     url:   &str,
 ) -> Result<T, AppError> {
     let mut url = url.to_string();
+    #[cfg(test)]
+    if let Ok(base) = TEST_API_BASE.try_with(Clone::clone) {
+        if let Some(path) = url.strip_prefix("https://api.spotify.com/v1") {
+            url = format!("{base}{path}");
+        }
+    }
     if let Ok(parsed) = url::Url::parse(&url) {
         if let (Some(limit), Some(cap)) = (url_limit(&parsed), limit_cap(&url)) {
             if limit > cap { url = set_limit(&parsed, cap); }
@@ -139,7 +177,7 @@ pub(crate) async fn spotify_get<T: serde::de::DeserializeOwned>(
     }
 
     let resp = loop {
-        let resp = send_request(crate::http::client().get(&url).bearer_auth(token)).await?;
+        let resp = send_request(token, crate::http::client().get(&url).bearer_auth(token)).await?;
         if resp.status().is_success() { break resp; }
 
         let status = resp.status().as_u16();
@@ -177,6 +215,7 @@ pub(crate) async fn spotify_write(
     url:    &str,
 ) -> Result<(), AppError> {
     let resp = send_request(
+        token,
         crate::http::client()
             .request(method, url)
             .bearer_auth(token)
@@ -201,6 +240,7 @@ pub(crate) async fn spotify_write_json(
     body:   serde_json::Value,
 ) -> Result<serde_json::Value, AppError> {
     let resp = send_request(
+        token,
         crate::http::client()
             .request(method, url)
             .bearer_auth(token)
@@ -240,5 +280,27 @@ mod tests {
         assert_eq!(smaller_limit(20), Some(10));
         assert_eq!(smaller_limit(50), Some(20));
         assert_eq!(smaller_limit(1), None);
+    }
+
+    #[tokio::test]
+    async fn rate_limit_stops_retries_and_keeps_other_grants_available() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/request", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for status in ["429 Too Many Requests", "200 OK"] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = [0; 2048];
+                socket.read(&mut buffer).await.unwrap();
+                socket.write_all(format!("HTTP/1.1 {status}\r\nRetry-After: 120\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+            }
+        });
+        let request = || crate::http::client().get(&url);
+        let first = send_request("limited-grant-test", request()).await.unwrap_err();
+        assert!(first.to_string().contains("120 seconds"));
+        assert!(send_request("limited-grant-test", request()).await.is_err());
+        let other = send_request("different-grant-test", request()).await.unwrap();
+        assert!(other.status().is_success());
+        tokio::time::timeout(Duration::from_secs(3), server).await.unwrap().unwrap();
     }
 }

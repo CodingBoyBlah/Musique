@@ -665,7 +665,9 @@ pub async fn sync_all(
         }
     }
 
-    let result = spotify::background(sync_steps(pool, token, epoch, on_step)).await?;
+    // The concurrent request/SQL futures are large. Keep them off the runtime
+    // thread's stack, including when sync is invoked through a Tauri command.
+    let result = spotify::background(Box::pin(sync_steps(pool, token, epoch, on_step))).await?;
     if let Ok(mut last) = LAST_SYNC.lock() {
         *last = Some((epoch, Instant::now(), result.clone()));
     }
@@ -679,9 +681,9 @@ async fn sync_steps(
     on_step: &(dyn Fn(&'static str) + Sync),
 ) -> Result<SyncResult, AppError> {
     // The steps fetch concurrently and take turns writing (SYNC_WRITE): the
-    // network is the slow part, and sqlite only has one writer anyway. Each
-    // step is fault tolerant, one failing endpoint just logs and returns 0
-    // instead of nuking the whole sync (and the "last synced" timestamp below)
+    // network is the slow part, and sqlite only has one writer anyway. The
+    // completed steps remain cached, but a failed endpoint must be reported to
+    // the caller rather than claiming that an incomplete sync succeeded.
     //
     // Each step is also gated on the auth epoch. A sync is long and chatty, so
     // a sign-out (or an account switch) lands in the middle of one often enough
@@ -692,30 +694,30 @@ async fn sync_steps(
         epoch:   u64,
         on_step: &(dyn Fn(&'static str) + Sync),
         fut:     impl std::future::Future<Output = Result<usize, AppError>>,
-    ) -> usize {
+    ) -> Result<usize, AppError> {
         if !crate::auth::epoch_is_current(epoch) {
-            return 0;
+            return Err(AppError::Auth("Signed out while syncing".into()));
         }
         match fut.await {
-            Ok(n) => { on_step(label); n }
-            Err(e) => { eprintln!("[library] {label} sync failed: {e}"); 0 }
+            Ok(n) => { on_step(label); Ok(n) }
+            Err(e) => { eprintln!("[library] {label} sync failed: {e}"); Err(e) }
         }
     }
 
     // new releases are picked from the artists the other steps just stored, so
     // they go after followed + top artists
     let (liked, playlists, albums_n, top_tracks, recent, (artists, top_artists, new_rel)) = tokio::join!(
-        step("liked",           epoch, on_step, sync_liked_songs(pool, token)),
-        step("playlists",       epoch, on_step, sync_playlists(pool, token)),
-        step("albums",          epoch, on_step, sync_saved_albums(pool, token)),
-        step("top_tracks",      epoch, on_step, sync_top_tracks(pool, token)),
-        step("recently_played", epoch, on_step, sync_recently_played(pool, token)),
+        step("liked",           epoch, on_step, Box::pin(sync_liked_songs(pool, token))),
+        step("playlists",       epoch, on_step, Box::pin(sync_playlists(pool, token))),
+        step("albums",          epoch, on_step, Box::pin(sync_saved_albums(pool, token))),
+        step("top_tracks",      epoch, on_step, Box::pin(sync_top_tracks(pool, token))),
+        step("recently_played", epoch, on_step, Box::pin(sync_recently_played(pool, token))),
         async {
             let (artists, top_artists) = tokio::join!(
-                step("artists",     epoch, on_step, sync_followed_artists(pool, token)),
-                step("top_artists", epoch, on_step, sync_top_artists(pool, token)),
+                step("artists",     epoch, on_step, Box::pin(sync_followed_artists(pool, token))),
+                step("top_artists", epoch, on_step, Box::pin(sync_top_artists(pool, token))),
             );
-            let new_rel = step("new_releases", epoch, on_step, sync_new_releases(pool, token)).await;
+            let new_rel = step("new_releases", epoch, on_step, Box::pin(sync_new_releases(pool, token))).await;
             (artists, top_artists, new_rel)
         },
     );
@@ -726,14 +728,14 @@ async fn sync_steps(
     }
 
     let result = SyncResult {
-        liked_count:       liked,
-        playlist_count:    playlists,
-        artist_count:      artists,
-        album_count:       albums_n,
-        top_track_count:   top_tracks,
-        top_artist_count:  top_artists,
-        recent_count:      recent,
-        new_release_count: new_rel,
+        liked_count:       liked?,
+        playlist_count:    playlists?,
+        artist_count:      artists?,
+        album_count:       albums_n?,
+        top_track_count:   top_tracks?,
+        top_artist_count:  top_artists?,
+        recent_count:      recent?,
+        new_release_count: new_rel?,
     };
 
     // stash the sync timestamp in settings
@@ -783,5 +785,90 @@ pub async fn library_sync_loop(app: tauri::AppHandle) {
         }
 
         tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener};
+
+    async fn server(rate_limited: bool) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let hits = Arc::new(AtomicUsize::new(0));
+        let count = hits.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                count.fetch_add(1, Ordering::SeqCst);
+                let mut request = [0; 4096];
+                let n = stream.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..n]);
+                let path = request.split_whitespace().nth(1).unwrap_or("");
+                let (status, extra, body) = if rate_limited {
+                    ("429 Too Many Requests", "Retry-After: 120\r\n", "{}")
+                } else {
+                    let body = if path.starts_with("/me/tracks?") {
+                        r#"{"items":[{"added_at":"2026-01-01T00:00:00Z","track":{"id":"test-track","name":"Track","duration_ms":1000,"explicit":false,"artists":[{"id":"test-artist","name":"Artist"}]}}],"total":1}"#
+                    } else if path.starts_with("/me/following?") {
+                        r#"{"artists":{"items":[],"next":null}}"#
+                    } else if path.starts_with("/browse/new-releases?") {
+                        r#"{"albums":{"items":[],"total":0}}"#
+                    } else {
+                        r#"{"items":[],"total":0}"#
+                    };
+                    ("200 OK", "", body)
+                };
+                let response = format!("HTTP/1.1 {status}\r\n{extra}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        (base, hits, task)
+    }
+
+    #[tokio::test]
+    async fn sync_future_keeps_stack_bounded() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().connect_lazy("sqlite::memory:").unwrap();
+        let callback = |_| {};
+        let outer = sync_all(&pool, "test-token", &callback);
+        let steps = sync_steps(&pool, "test-token", crate::auth::auth_epoch(), &callback);
+        println!("sync future bytes: outer={}, steps={}", std::mem::size_of_val(&outer), std::mem::size_of_val(&steps));
+        assert!(std::mem::size_of_val(&outer) < 16 * 1024);
+        assert!(std::mem::size_of_val(&steps) < 32 * 1024);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn native_sync_writes_rows_and_rate_limits_preserve_them() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1)
+            .connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let (base, _, successful_server) = server(false).await;
+        let steps = AtomicUsize::new(0);
+        let result = crate::spotify::TEST_API_BASE.scope(base,
+            sync_all(&pool, "sync-success-token", &|_| { steps.fetch_add(1, Ordering::SeqCst); })
+        ).await.unwrap();
+        assert_eq!(result.liked_count, 1);
+        assert_eq!(steps.load(Ordering::SeqCst), 8);
+        successful_server.abort();
+        let previous_sync = crate::auth::get_setting_value(&pool, "library_last_synced").await.unwrap();
+        assert!(previous_sync.is_some());
+
+        let (base, hits, limited_server) = server(true).await;
+        let result = crate::spotify::TEST_API_BASE.scope(base.clone(),
+            sync_all(&pool, "sync-limited-token", &|_| {})
+        ).await;
+        assert!(result.unwrap_err().to_string().contains("rate-limited"));
+        let before_retry = hits.load(Ordering::SeqCst);
+        let result = crate::spotify::TEST_API_BASE.scope(base,
+            sync_all(&pool, "sync-limited-token", &|_| {})
+        ).await;
+        assert!(result.is_err());
+        assert_eq!(hits.load(Ordering::SeqCst), before_retry, "cooldown must prevent more HTTP requests");
+        let (saved,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM saved_tracks").fetch_one(&pool).await.unwrap();
+        assert_eq!(saved, 1, "failed sync must keep the library");
+        assert_eq!(crate::auth::get_setting_value(&pool, "library_last_synced").await.unwrap(), previous_sync);
+        limited_server.abort();
     }
 }
