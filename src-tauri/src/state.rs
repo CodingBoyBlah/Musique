@@ -17,6 +17,9 @@ pub struct AppState {
     /// Exactly one of the two drives audio at a time - see
     /// `commands::playback::uses_youtube`.
     pub yt:       Arc<Mutex<Option<crate::playback::youtube::YtPlayback>>>,
+    /// Spotify's own Soloist player, when the listener has turned it on. It
+    /// always exists; whether it is running is its `status`.
+    pub soloist:  Arc<crate::soloist::Soloist>,
     pub media_tx: mpsc::SyncSender<MediaMsg>,
 
     /// Held for reading while a library sync runs, and for writing while a

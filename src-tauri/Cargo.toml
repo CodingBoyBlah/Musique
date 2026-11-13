@@ -78,6 +78,16 @@ flate2 = "1.0"
 # played", now-playing, and the device list. rustls to match the rest of the
 # librespot stack (no native-tls / OpenSSL dep).
 librespot-connect = { version = "0.8", default-features = false, features = ["rustls-tls-webpki-roots"] }
+# Spotify Soloist (src/soloist): Spotify's own headless player, run as a child
+# process and driven over a loopback WebSocket. All four are already in the tree
+# (librespot's dealer, the updater plugin), so nothing new is downloaded or built.
+#  - tokio-tungstenite: the WebSocket client for its control API
+#  - zip / tar: taking only the executable out of Spotify's archive
+#  - sysinfo: stopping a copy an earlier run left behind
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
+zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+tar = { version = "0.4", default-features = false }
+sysinfo = { version = "0.36", default-features = false, features = ["system"] }
 
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.7"

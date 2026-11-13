@@ -767,7 +767,7 @@ mod tests {
             start_ms: 0.0, end_ms: 4000.0,
         }, None, 48_000 * 4, &|| false));
         assert_eq!(t.frames.load(Ordering::Relaxed), 0);
-        let mut source = RingSource::endless(Arc::clone(&ring), 2, 48_000);
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 48_000).without_fades();
         for _ in 0..48_000 * 2 {
             assert_eq!(source.next(), Some(1.0));
         }

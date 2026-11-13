@@ -34,7 +34,7 @@ async fn read_muted(pool: &sqlx::SqlitePool) -> bool {
     row.map(|(v,)| v == "1").unwrap_or(false)
 }
 
-async fn save_setting(pool: &sqlx::SqlitePool, key: &str, value: &str) -> Result<(), AppError> {
+pub(crate) async fn save_setting(pool: &sqlx::SqlitePool, key: &str, value: &str) -> Result<(), AppError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -132,6 +132,8 @@ async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), App
 pub enum Backend {
     Spotify,
     YouTube,
+    /// Spotify's own Soloist player, run beside the app (see `crate::soloist`).
+    Soloist,
 }
 
 async fn setting_value(pool: &sqlx::SqlitePool, key: &str) -> Option<String> {
@@ -170,7 +172,55 @@ async fn backend(pool: &sqlx::SqlitePool) -> Backend {
     }
     match setting_value(pool, "playback_backend").await.as_deref() {
         Some("youtube") => Backend::YouTube,
+        // Soloist is another way of playing from Spotify, so it sits under
+        // that choice rather than beside it. Once it is turned on, playback
+        // never quietly falls back to the built-in player: a Soloist that is
+        // not ready says so instead.
+        _ if soloist_enabled(pool).await => Backend::Soloist,
         _ => Backend::Spotify,
+    }
+}
+
+pub(crate) async fn soloist_enabled(pool: &sqlx::SqlitePool) -> bool {
+    setting_value(pool, "soloist_enabled").await.as_deref() == Some("1")
+}
+
+/// Soloist, when it is what plays.
+async fn soloist(app: &AppHandle) -> Option<std::sync::Arc<crate::soloist::Soloist>> {
+    let state = app.state::<AppState>();
+    let pool = state.db.clone();
+    let soloist = state.soloist.clone();
+    drop(state);
+    (backend(&pool).await == Backend::Soloist).then_some(soloist)
+}
+
+/// Pause whatever `which` is playing: the other backends each own an output
+/// of their own and would otherwise carry on underneath the new one.
+pub(crate) async fn silence(app: &AppHandle, which: Backend) {
+    match which {
+        Backend::Spotify => {
+            let playback = app.state::<AppState>().playback.clone();
+            let guard = playback.lock().await;
+            if let Some(inner) = guard.as_ref() {
+                if let Err(e) = inner.pause() {
+                    eprintln!("[playback] pausing spotify on backend switch: {e}");
+                }
+            }
+        }
+        Backend::YouTube => {
+            let yt = app.state::<AppState>().yt.clone();
+            let guard = yt.lock().await;
+            if let Some(player) = guard.as_ref() {
+                if let Err(e) = player.pause() {
+                    eprintln!("[playback] pausing youtube on backend switch: {e}");
+                }
+            }
+        }
+        Backend::Soloist => {
+            let soloist = app.state::<AppState>().soloist.clone();
+            // not being up yet is not being heard either
+            let _ = soloist.pause();
+        }
     }
 }
 
@@ -491,6 +541,8 @@ async fn yt_preload(app: &AppHandle, id: &str) {
 pub struct BackendState {
     /// Backend actually in use right now: "spotify" or "youtube".
     pub active:            String,
+    /// What plays under that choice: "librespot", "soloist" or "youtube".
+    pub engine:            String,
     /// Spotify account product, when known.
     pub product:           Option<String>,
     /// Whether Spotify is a selectable option. False on a free account, which
@@ -507,9 +559,15 @@ pub async fn get_playback_backend(app: AppHandle) -> Result<BackendState, AppErr
     // resolved backend *is* the selection, and a free account's forced
     // YouTube shows up as YouTube being selected rather than as a stored
     // preference that disagrees with reality.
+    let backend = backend(&pool).await;
     Ok(BackendState {
-        active: match backend(&pool).await {
-            Backend::Spotify => "spotify".into(),
+        active: match backend {
+            Backend::Spotify | Backend::Soloist => "spotify".into(),
+            Backend::YouTube => "youtube".into(),
+        },
+        engine: match backend {
+            Backend::Spotify => "librespot".into(),
+            Backend::Soloist => "soloist".into(),
             Backend::YouTube => "youtube".into(),
         },
         product:           setting_value(&pool, "spotify_product").await,
@@ -550,32 +608,13 @@ pub async fn set_playback_backend(app: AppHandle, mode: String) -> Result<(), Ap
         //
         // Pause rather than stop: the track and position survive, so pressing
         // play resumes where it left off, now through the new backend.
-        match previous {
-            Backend::Spotify => {
-                let playback = app.state::<AppState>().playback.clone();
-                let guard = playback.lock().await;
-                if let Some(inner) = guard.as_ref() {
-                    if let Err(e) = inner.pause() {
-                        eprintln!("[playback] pausing spotify on backend switch: {e}");
-                    }
-                }
-            }
-            Backend::YouTube => {
-                let yt = app.state::<AppState>().yt.clone();
-                let guard = yt.lock().await;
-                if let Some(player) = guard.as_ref() {
-                    if let Err(e) = player.pause() {
-                        eprintln!("[playback] pausing youtube on backend switch: {e}");
-                    }
-                }
-            }
-        }
+        silence(&app, previous).await;
     }
 
     // Prepared YouTube buffers are useless once audio comes from Spotify, and
     // holding several megabytes for a backend that is no longer running is
     // pure waste.
-    if next == Backend::Spotify {
+    if next != Backend::YouTube {
         crate::youtube::clear_prepared().await;
     }
     Ok(())
@@ -736,7 +775,9 @@ pub async fn warm_session_if_possible(app: AppHandle) {
 pub async fn play_track(app: AppHandle, id: String, context_uri: Option<String>) -> Result<(), AppError> {
     eprintln!("[playback cmd] play_track id={id} context={context_uri:?}");
 
-    if uses_youtube(&app).await {
+    if let Some(soloist) = soloist(&app).await {
+        soloist.play(&crate::playback::track_uri(&id)?, 0)?;
+    } else if uses_youtube(&app).await {
         // A resolution failure here is a real, expected outcome (no acceptable
         // YouTube match). It propagates to the frontend as an error naming the
         // track rather than silently playing something else.
@@ -779,6 +820,10 @@ pub async fn play_track(app: AppHandle, id: String, context_uri: Option<String>)
 // actually playing to interrupt
 #[tauri::command]
 pub async fn retry_play_track(app: AppHandle, id: String, context_uri: Option<String>) -> Result<(), AppError> {
+    if let Some(soloist) = soloist(&app).await {
+        // Soloist keeps its own session; there is nothing of ours to rebuild
+        return soloist.play(&crate::playback::track_uri(&id)?, 0);
+    }
     {
         // drop the wedged session so ensure_inner just builds a fresh one
         let playback = app.state::<AppState>().playback.clone();
@@ -799,6 +844,9 @@ pub async fn retry_play_track(app: AppHandle, id: String, context_uri: Option<St
 
 #[tauri::command]
 pub async fn pause_playback(app: AppHandle) -> Result<(), AppError> {
+    if let Some(soloist) = soloist(&app).await {
+        return soloist.pause();
+    }
     if uses_youtube(&app).await {
         // cancels a load still downloading, so it can't start audio after this
         yt_claim();
@@ -820,6 +868,13 @@ pub async fn pause_playback(app: AppHandle) -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn resume_playback(app: AppHandle) -> Result<(), AppError> {
+    if let Some(soloist) = soloist(&app).await {
+        // a track that played to its end has nothing left to carry on with
+        return match soloist.current_uri() {
+            Some(uri) if !soloist.resumable(&uri) => soloist.play(&uri, 0),
+            _ => soloist.resume(),
+        };
+    }
     if uses_youtube(&app).await {
         // After end-of-track the decoder queue is drained, so there is nothing
         // to un-pause - the track has to be fetched and decoded again.
@@ -873,6 +928,19 @@ pub async fn resume_or_play(
     context_uri: Option<String>,
 ) -> Result<(), AppError> {
     eprintln!("[playback cmd] resume_or_play id={id} pos={position_ms}");
+
+    if let Some(soloist) = soloist(&app).await {
+        let uri = crate::playback::track_uri(&id)?;
+        if !soloist.resumable(&uri) {
+            return soloist.play(&uri, position_ms);
+        }
+        // the same track, still loaded: carry on, moving only if another
+        // device took it somewhere else meanwhile
+        if position_ms > 0 && soloist.position_ms().abs_diff(position_ms) > 2000 {
+            soloist.seek(position_ms)?;
+        }
+        return soloist.resume();
+    }
 
     if uses_youtube(&app).await {
         // Un-pause when the very same track is still loaded and live; anything
@@ -942,6 +1010,9 @@ pub async fn resume_or_play(
 
 #[tauri::command]
 pub async fn stop_playback(app: AppHandle) -> Result<(), AppError> {
+    if let Some(soloist) = soloist(&app).await {
+        return soloist.pause();
+    }
     if uses_youtube(&app).await {
         yt_claim();
         // Unlike the Spirc path there is no connect-state to keep consistent,
@@ -968,6 +1039,9 @@ pub async fn stop_playback(app: AppHandle) -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn seek_playback(app: AppHandle, position_ms: u32) -> Result<(), AppError> {
+    if let Some(soloist) = soloist(&app).await {
+        return soloist.seek(position_ms);
+    }
     if uses_youtube(&app).await {
         return yt_seek(&app, position_ms).await;
     }
@@ -983,6 +1057,11 @@ pub async fn seek_playback(app: AppHandle, position_ms: u32) -> Result<(), AppEr
 // preload the next track so it kicks in instantly when the current one ends
 #[tauri::command]
 pub async fn preload_track(app: AppHandle, id: String) -> Result<(), AppError> {
+    if soloist(&app).await.is_some() {
+        // Soloist fetches what it plays itself, and anything put in its
+        // queue could never be taken out again if the app's queue changed
+        return Ok(());
+    }
     if uses_youtube(&app).await {
         // Returns immediately - the frontend fires this on a timer while a
         // track is playing, so it must not hold up the IPC call or the caller.
@@ -1031,6 +1110,11 @@ pub async fn set_volume(app: AppHandle, level: u8) -> Result<(), AppError> {
     }
     drop(yt_guard);
 
+    // Soloist has one level and no mute of its own
+    if !read_muted(&pool).await {
+        app.state::<AppState>().soloist.set_volume(level.min(100));
+    }
+
     save_setting(&pool, "player_volume", &level.to_string()).await
 }
 
@@ -1053,6 +1137,9 @@ pub async fn set_muted(app: AppHandle, muted: bool) -> Result<(), AppError> {
         player.set_muted(muted);
     }
     drop(yt_guard);
+
+    let level = if muted { 0 } else { (read_vol(&pool).await * 100.0).round().clamp(0.0, 100.0) as u8 };
+    app.state::<AppState>().soloist.set_volume(level);
 
     save_setting(&pool, "player_muted", if muted { "1" } else { "0" }).await
 }
@@ -1179,6 +1266,10 @@ pub async fn get_output_latency_ms(app: AppHandle) -> Result<i64, AppError> {
     // reports 0 - and `lib/outputLatency.ts` reads 0 as "no sink" and keeps its
     // 250ms placeholder. That placeholder is what was desyncing lyrics, since
     // the real buffer is nothing like 250ms.
+    if soloist(&app).await.is_some() {
+        // Soloist reports positions as it plays them and owns its own output
+        return Ok(0);
+    }
     if uses_youtube(&app).await {
         let yt = app.state::<AppState>().yt.clone();
         let guard = yt.lock().await;
@@ -1207,6 +1298,11 @@ async fn with_spirc<T>(
     if uses_youtube(app).await {
         return Err(AppError::Playback(
             "Jams play through Spotify. Switch the audio source to Spotify in Settings.".into(),
+        ));
+    }
+    if soloist(app).await.is_some() {
+        return Err(AppError::Playback(
+            "Jams play through the built-in player. Turn Soloist off to join one.".into(),
         ));
     }
     ensure_inner(app).await?;

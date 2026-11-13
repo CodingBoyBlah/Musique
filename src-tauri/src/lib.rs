@@ -525,6 +525,7 @@ mod playout;
 mod recommend;
 mod resample;
 mod sink;
+mod soloist;
 mod spotify;
 mod stretch;
 mod youtube;
@@ -798,6 +799,7 @@ pub fn run() {
                     auth: Arc::new(RwLock::new(auth_state)),
                     playback: Arc::new(tokio::sync::Mutex::new(None)),
                     yt: Arc::new(tokio::sync::Mutex::new(None)),
+                    soloist: soloist::Soloist::new(),
                     media_tx,
                     sync_gate: Arc::new(RwLock::new(())),
                     backdrop_active,
@@ -806,6 +808,10 @@ pub fn run() {
             })?;
 
             mem_trim::start_memory_trimmer(app.handle().clone());
+
+            // Soloist is a separate program; one the listener turned on is
+            // started with the app so it is signed in by the first play
+            tauri::async_runtime::spawn(commands::soloist::start_if_enabled(app.handle().clone()));
 
             // background loops that just keep running
             let handle2 = app.handle().clone();
@@ -982,6 +988,10 @@ pub fn run() {
             commands::playback::preload_track,
             commands::playback::get_playback_backend,
             commands::playback::set_playback_backend,
+            commands::soloist::soloist_status,
+            commands::soloist::soloist_enable,
+            commands::soloist::soloist_disable,
+            commands::soloist::soloist_forget,
             commands::playback::get_yt_match,
             commands::playback::search_yt_candidates,
             commands::playback::pin_yt_match,

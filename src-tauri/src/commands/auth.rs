@@ -594,6 +594,10 @@ pub async fn logout(app: AppHandle) -> Result<(), AppError> {
     drop(_commit);
     let _cleanup = auth::account_cleanup().await;
 
+    // Soloist is signed in as the account that is leaving: stop it and take
+    // its key and pairing with it
+    crate::commands::soloist::forget(&app).await;
+
     purge_account_data(&app, Purge::Everything).await;
 
     // The session had a moment to shut down while the tables were cleared, so
