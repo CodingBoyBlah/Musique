@@ -163,14 +163,89 @@ async fn upsert_album_full(conn: &mut SqliteConnection, al: &SpAlbum) -> Result<
 
 // ipc commands
 
+// searches already answered
+//
+// Typing a query, deleting a letter and typing it again, or going back to the
+// results from an artist page, asked Spotify the same question again each time
+// and waited on the network for an answer that was already known. Answers are
+// kept for a few minutes, so those are instant and cost no request.
+//
+// Only the newest search is worth writing down: a query that has already been
+// replaced by a longer one used to cache its sixty rows and add itself to the
+// search history anyway, queuing sqlite work in front of the search the
+// listener is actually waiting for.
+
+/// How long an answer is good for. New releases appear on a scale of hours.
+const SEARCH_KEPT_FOR: std::time::Duration = std::time::Duration::from_secs(300);
+/// How many answers are kept.
+const SEARCHES_KEPT: usize = 64;
+
+#[derive(Default)]
+struct Searches {
+    answers: std::collections::HashMap<String, (std::time::Instant, SearchResults)>,
+    /// Keys, oldest first.
+    order:   std::collections::VecDeque<String>,
+}
+
+impl Searches {
+    fn get(&mut self, key: &str, now: std::time::Instant) -> Option<SearchResults> {
+        match self.answers.get(key) {
+            Some((at, results)) if now.duration_since(*at) < SEARCH_KEPT_FOR => Some(results.clone()),
+            Some(_) => {
+                self.answers.remove(key);
+                self.order.retain(|k| k != key);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn put(&mut self, key: String, results: SearchResults, now: std::time::Instant) {
+        if self.answers.insert(key.clone(), (now, results)).is_none() {
+            self.order.push_back(key);
+        }
+        while self.order.len() > SEARCHES_KEPT {
+            if let Some(oldest) = self.order.pop_front() {
+                self.answers.remove(&oldest);
+            }
+        }
+    }
+}
+
+fn searches() -> &'static std::sync::Mutex<Searches> {
+    static SEARCHES: std::sync::OnceLock<std::sync::Mutex<Searches>> = std::sync::OnceLock::new();
+    SEARCHES.get_or_init(Default::default)
+}
+
+/// Counts searches, so one can tell whether a newer one has started since.
+static SEARCH_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// What a search is kept under: the account it was made by (results are
+/// market- and account-specific), what was asked for, and of which kinds.
+fn search_key(epoch: u64, query: &str, types: &str) -> String {
+    let query = query.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    format!("{epoch}
+{types}
+{query}")
+}
+
 #[tauri::command]
 pub async fn search(
     app:   AppHandle,
     query: String,
     types: Option<String>,
 ) -> Result<SearchResults, AppError> {
-    let token = tok(&app).await?;
+    let serial = SEARCH_SERIAL.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     let t     = types.as_deref().unwrap_or("track,artist,album,playlist");
+    let key   = search_key(crate::auth::auth_epoch(), &query, t);
+    let known = searches()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&key, std::time::Instant::now());
+    if let Some(results) = known {
+        return Ok(results);
+    }
+    let token = tok(&app).await?;
 
     let mut url = url::Url::parse(&format!("{BASE}/search")).unwrap();
     url.query_pairs_mut()
@@ -211,6 +286,17 @@ pub async fn search(
                 .filter_map(|e| crate::commands::podcasts::episode_from(e, None)).collect())
             .unwrap_or_default(),
     };
+
+    searches()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .put(key, result.clone(), std::time::Instant::now());
+
+    // a newer search has started: this one's rows and its place in the search
+    // history are not worth holding that one's writes up for
+    if SEARCH_SERIAL.load(std::sync::atomic::Ordering::SeqCst) != serial {
+        return Ok(result);
+    }
 
     // cache the hits after answering. awaiting ~60 row writes here put every
     // keystroke's results behind sqlite - and behind a running sync's writes
@@ -638,4 +724,52 @@ where
         write(&mut tx).await;
         let _ = tx.commit().await;
     });
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn results(name: &str) -> SearchResults {
+        SearchResults {
+            tracks: Vec::new(),
+            artists: Vec::new(),
+            albums: Vec::new(),
+            playlists: vec![PlaylistCard {
+                id: name.into(),
+                name: name.into(),
+                description: None,
+                image_url: None,
+                owner_name: None,
+            }],
+            shows: Vec::new(),
+            episodes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_same_question_is_the_same_key_however_it_was_typed() {
+        assert_eq!(search_key(1, "  Daft   Punk ", "track"), search_key(1, "daft punk", "track"));
+        assert_ne!(search_key(1, "daft punk", "track"), search_key(1, "daft punk", "album"));
+        // another account's answers are not this one's
+        assert_ne!(search_key(1, "daft punk", "track"), search_key(2, "daft punk", "track"));
+    }
+
+    #[test]
+    fn answers_are_kept_for_a_while_and_only_so_many() {
+        let mut searches = Searches::default();
+        let start = Instant::now();
+        searches.put("a".into(), results("a"), start);
+        assert_eq!(searches.get("a", start + Duration::from_secs(60)).unwrap().playlists[0].id, "a");
+        assert!(searches.get("a", start + SEARCH_KEPT_FOR).is_none());
+        assert!(searches.order.is_empty());
+
+        for i in 0..SEARCHES_KEPT + 5 {
+            searches.put(format!("q{i}"), results("x"), start);
+        }
+        assert_eq!(searches.answers.len(), SEARCHES_KEPT);
+        assert!(searches.get("q0", start).is_none());
+        assert!(searches.get(&format!("q{}", SEARCHES_KEPT + 4), start).is_some());
+    }
 }
