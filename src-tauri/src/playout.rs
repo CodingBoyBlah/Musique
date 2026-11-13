@@ -15,7 +15,7 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -46,6 +46,14 @@ const FADE: Duration = Duration::from_millis(20);
 /// Used sample buffers kept for the producer to take back. Room for every
 /// chunk a full ring can hold, so the device thread never frees one.
 const SPARE: usize = 2048;
+
+/// Chunks the device thread takes from the ring at a time and keeps to
+/// itself. It never waits for the ring's lock: it tries it, and when someone
+/// else has it, it plays on from these and tries again at the next chunk.
+const RESERVE: usize = 4;
+
+/// The device thread tops its reserve up when it is down to this many.
+const LOW: usize = 2;
 
 /// When an output last played real sound, in milliseconds since `clock`.
 static LAST_SOUND: AtomicU64 = AtomicU64::new(0);
@@ -422,7 +430,8 @@ impl Ring {
         self.heard_ms.store(ms, Ordering::Relaxed);
     }
 
-    /// Milliseconds still queued from play `tag`.
+    /// Milliseconds still queued from play `tag`. The few chunks the device
+    /// thread has already taken for itself are not counted.
     pub fn queued_ms_of(&self, tag: u64) -> u64 {
         let state = self.lock();
         state
@@ -442,19 +451,35 @@ impl Ring {
         self.underruns.load(Ordering::Relaxed)
     }
 
-    /// Runs on the device thread: everything under the lock is a few moves,
-    /// nothing is allocated or freed, and a producer is only signalled when
-    /// one is waiting, after the lock is let go.
-    fn pop(&self, rate: SampleRate, used: Vec<Sample>) -> Pop {
-        let mut state = self.lock();
-        if used.capacity() > 0 && state.spare.len() < state.spare.capacity() {
-            state.spare.push(used);
+    /// Move chunks from the ring into the device thread's own `ahead`, and
+    /// the buffers it has finished with back the other way.
+    ///
+    /// Runs on the device thread, so it never waits: when the lock is taken
+    /// it returns at once and the caller plays on from what it has. Under the
+    /// lock it only moves things - nothing is allocated or freed - and a
+    /// producer is only signalled when one is waiting, after the lock is let go.
+    fn refill(
+        &self,
+        rate: SampleRate,
+        ahead: &mut VecDeque<(Chunk, u64)>,
+        used: &mut Vec<Vec<Sample>>,
+    ) -> Refill {
+        let mut state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return Refill::Busy,
+        };
+        while state.spare.len() < state.spare.capacity() {
+            match used.pop() {
+                Some(buffer) => state.spare.push(buffer),
+                None => break,
+            }
         }
-        let popped = loop {
+        let flushes = self.flushes.load(Ordering::SeqCst);
+        while ahead.len() < RESERVE {
             let Some(chunk) = state.chunks.pop_front() else {
-                break if state.finished { Pop::Finished } else { Pop::Empty };
+                break;
             };
-            let flushes = self.flushes.load(Ordering::SeqCst);
             state.frames = state.frames.saturating_sub(chunk.samples.len() / self.channels);
             let ms = chunk_ms(&chunk, self.channels);
             state.sub_queued(chunk.tag, ms);
@@ -462,37 +487,54 @@ impl Ring {
             // another rate (and not converted: see `retime`); playing it
             // would come out at the wrong pitch
             if chunk.rate == rate {
-                break Pop::Chunk(chunk, flushes);
-            }
-            if state.spare.len() < state.spare.capacity() {
+                ahead.push_back((chunk, flushes));
+            } else if state.spare.len() < state.spare.capacity() {
                 state.spare.push(chunk.samples);
             }
+        }
+        let refill = if !ahead.is_empty() {
+            Refill::Got
+        } else if state.finished {
+            Refill::Finished
+        } else {
+            Refill::Empty
         };
         let wake = state.waiting > 0;
         drop(state);
         if wake {
             self.changed.notify_all();
         }
-        popped
+        refill
     }
 }
 
-enum Pop {
-    /// With the flush count it was taken at.
-    Chunk(Chunk, u64),
+/// What became of an attempt to take chunks from the ring.
+enum Refill {
+    /// Someone else has the ring's lock. Not waited for.
+    Busy,
+    /// There is audio to play.
+    Got,
+    /// The ring has run dry.
     Empty,
+    /// It has run dry and the producer has no more to give.
     Finished,
 }
 
 /// What the device plays: whatever is at the front of a `Ring`.
 ///
-/// Never blocks for long and never decodes. When the ring is empty it plays
+/// Never blocks and never decodes: the ring's lock is only ever tried, and a
+/// few chunks kept here cover the moments someone else has it. When the ring is empty it plays
 /// silence and keeps going rather than ending, so a producer that is late is a
 /// brief gap and never the end of the track.
 pub struct RingSource {
     ring:     Arc<Ring>,
     channels: ChannelCount,
     rate:     SampleRate,
+    /// Chunks taken from the ring and not yet played, each with the ring's
+    /// flush count when it was taken.
+    ahead:    VecDeque<(Chunk, u64)>,
+    /// Buffers played out, on their way back to the producer.
+    used:     Vec<Vec<Sample>>,
     cur:      Vec<Sample>,
     idx:      usize,
     tag:      u64,
@@ -535,6 +577,8 @@ impl RingSource {
             ring,
             channels: channels.max(1),
             rate,
+            ahead: VecDeque::with_capacity(RESERVE),
+            used: Vec::with_capacity(RESERVE * 4),
             cur: Vec::new(),
             idx: 0,
             tag: NOTHING,
@@ -568,6 +612,15 @@ impl RingSource {
         let ms = self.start_ms + (self.end_ms - self.start_ms) * frac;
         self.ring.set_heard(self.tag, ms.max(0.0) as u64);
         LAST_SOUND.store(clock(), Ordering::Relaxed);
+    }
+
+    /// Put a played-out buffer aside for the producer. Only dropped here, on
+    /// the device thread, if the ring's lock has been out of reach for long
+    /// enough to fill the pile.
+    fn hand_back(&mut self, buffer: Vec<Sample>) {
+        if buffer.capacity() > 0 && self.used.len() < self.used.capacity() {
+            self.used.push(buffer);
+        }
     }
 
     /// Whether what is left of `cur` is from before a flush. A flush that
@@ -635,8 +688,26 @@ impl Iterator for RingSource {
                 continue;
             }
             let used = std::mem::take(&mut self.cur);
-            match self.ring.pop(self.rate, used) {
-                Pop::Chunk(chunk, flushes) => {
+            self.hand_back(used);
+            let refill = if self.ahead.len() < LOW {
+                self.ring.refill(self.rate, &mut self.ahead, &mut self.used)
+            } else {
+                Refill::Got
+            };
+            // what was taken before a seek or a skip is not played, unless
+            // the skip kept its play (`Ring::skip_to_tag`)
+            let flushes = self.ring.flushes();
+            let kept = self.ring.kept_tag.load(Ordering::SeqCst);
+            let next = loop {
+                match self.ahead.pop_front() {
+                    Some((chunk, taken)) if taken != flushes && chunk.tag != kept => {
+                        self.hand_back(chunk.samples);
+                    }
+                    next => break next,
+                }
+            };
+            match next {
+                Some((chunk, _)) => {
                     if flushes != self.flushes {
                         // the first sound after a seek or a skip
                         self.gain = 0.0;
@@ -651,16 +722,22 @@ impl Iterator for RingSource {
                     self.starving = false;
                     self.note_heard();
                 }
-                Pop::Empty => {
-                    if !self.starving && self.ring.streaming.load(Ordering::Relaxed) {
-                        self.ring.underruns.fetch_add(1, Ordering::Relaxed);
-                        self.starving = true;
+                None => {
+                    match refill {
+                        Refill::Finished if !self.endless => return None,
+                        Refill::Empty => {
+                            if !self.starving && self.ring.streaming.load(Ordering::Relaxed) {
+                                self.ring.underruns.fetch_add(1, Ordering::Relaxed);
+                                self.starving = true;
+                            }
+                        }
+                        // the lock was taken with nothing left here, or all
+                        // that was here was stale: look again in a moment
+                        _ => {}
                     }
                     self.gain = 0.0;
                     self.silence = GAP * channels;
                 }
-                Pop::Finished if !self.endless => return None,
-                Pop::Finished => self.silence = GAP * channels,
             }
         }
     }
@@ -693,11 +770,9 @@ impl Source for RingSource {
         self.ring.request_seek(pos);
         self.count_rendered();
         let used = std::mem::take(&mut self.cur);
-        if used.capacity() > 0 {
-            let mut state = self.ring.lock();
-            if state.spare.len() < 8 {
-                state.spare.push(used);
-            }
+        self.hand_back(used);
+        while let Some((chunk, _)) = self.ahead.pop_front() {
+            self.hand_back(chunk.samples);
         }
         self.idx = 0;
         self.counted = 0;
@@ -1092,9 +1167,9 @@ mod tests {
         let next = Chunk { samples: vec![2.0; 100], rate: 1000, tag: 2, start_ms: 0.0, end_ms: 50.0 };
         assert!(ring.push(tail, Some(epoch), 10_000, &|| false));
         assert!(ring.push(next, Some(epoch), 10_000, &|| false));
+        assert_eq!(ring.queued_ms_of(2), 50);
         let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
         assert!((0..10).all(|_| source.next() == Some(1.0)));
-        assert_eq!(ring.queued_ms_of(2), 50);
         ring.skip_to_tag(2);
         assert_eq!(ring.heard(2), Some(0));
         // the producer of the play that was kept is not turned away
@@ -1122,6 +1197,36 @@ mod tests {
         let played = (0..2 * 48_000).filter(|_| source.next().unwrap() != 0.0).count();
         // all of it but the converter's last few frames, at the new rate
         assert!(played > 2 * 47_800 && played <= 2 * 48_000, "played {played}");
+    }
+
+    #[test]
+    fn the_device_thread_plays_on_while_the_ring_is_locked() {
+        let ring = Ring::new(2);
+        for at in 0..8u32 {
+            let chunk = Chunk {
+                samples: vec![(at + 1) as Sample; 20], rate: 1000, tag: 1,
+                start_ms: at as f64 * 10.0, end_ms: (at + 1) as f64 * 10.0,
+            };
+            assert!(ring.push(chunk, None, 10_000, &|| false));
+        }
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
+        assert_eq!(source.next(), Some(1.0));
+        // someone holds the ring for as long as they like
+        let held = ring.lock();
+        let started = Instant::now();
+        let played: Vec<Sample> = (0..400).map(|_| source.next().unwrap()).collect();
+        assert!(started.elapsed() < Duration::from_secs(1), "the device thread waited for the lock");
+        // everything it had taken plays, in order, and then silence - not a wait
+        let heard: Vec<Sample> = played.iter().copied().filter(|s| *s != 0.0).collect();
+        assert_eq!(heard.len(), 19 + 3 * 20);
+        assert!(heard.windows(2).all(|w| w[1] >= w[0]));
+        assert_eq!(ring.underruns(), 0);
+        drop(held);
+        // and it picks the rest up as soon as the lock is free
+        let rest: Vec<Sample> = (0..400).map(|_| source.next().unwrap()).filter(|s| *s != 0.0).collect();
+        assert_eq!(rest.len(), 4 * 20);
+        assert_eq!(rest.first().copied(), Some(5.0));
+        assert_eq!(rest.last().copied(), Some(8.0));
     }
 
     #[test]
