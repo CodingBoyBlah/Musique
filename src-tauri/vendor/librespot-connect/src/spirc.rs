@@ -106,6 +106,10 @@ struct SpircTask {
     connect_established: bool,
 
     play_request_id: Option<u64>,
+    /// musique: the play that was current when the app commanded a load. The
+    /// end of that play, arriving after the load, is not the end of what was
+    /// just loaded (see `handle_player_event`).
+    superseded_play: Option<u64>,
     play_status: SpircPlayStatus,
 
     connection_id_update: BoxedStreamResult<String>,
@@ -386,6 +390,7 @@ impl Spirc {
             connect_established: false,
 
             play_request_id: None,
+            superseded_play: None,
             play_status: SpircPlayStatus::Stopped,
 
             connection_id_update,
@@ -933,6 +938,8 @@ impl SpircTask {
             SpircCommand::SetVolume(volume) => self.set_volume(volume),
             SpircCommand::Load(command) => {
                 self.jam_hold = false;
+                // whatever was playing is replaced; its end is no longer news
+                self.superseded_play = self.play_request_id;
                 self.handle_load(command, None, None).await?
             }
             SpircCommand::LoadKeepStream(command) => {
@@ -1037,7 +1044,21 @@ impl SpircTask {
         // update play_request_id
         if let PlayerEvent::PlayRequestIdChanged { play_request_id } = event {
             self.play_request_id = Some(play_request_id);
+            self.superseded_play = None;
             return Ok(());
+        }
+
+        // musique: the app loads the next track the moment the player reports
+        // the end of the current one. That report reaches this task too, and
+        // when the load command is handled first, the old play is still the
+        // one on record until the player announces the new request - so its
+        // end would be taken as the end of the context just loaded, and
+        // `handle_next` would stop or restart the track that has only begun.
+        if let PlayerEvent::EndOfTrack { play_request_id, .. } = &event {
+            if self.superseded_play == Some(*play_request_id) {
+                debug!("ignoring the end of a play a load has already replaced");
+                return Ok(());
+            }
         }
 
         let is_current_track = matches! {
