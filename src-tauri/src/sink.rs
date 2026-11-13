@@ -58,6 +58,9 @@ pub struct Playout {
     /// The play the player has decoded to the end of, so all that is left of
     /// it is the tail in the ring.
     decoded_end: AtomicU64,
+    /// The play whose tail is still being heard while the player is already
+    /// on the one after it (see `playback::Advance`).
+    tail_of:     AtomicU64,
 }
 
 /// How long audio is dropped waiting for the player to confirm a seek. It
@@ -75,7 +78,33 @@ impl Playout {
             current:    AtomicU64::new(u64::MAX),
             seeking:    Mutex::new(None),
             decoded_end: AtomicU64::new(u64::MAX),
+            tail_of:     AtomicU64::new(u64::MAX),
         })
+    }
+
+    /// The play the player is on, as far as the audio reaching the sink goes.
+    pub fn current_tag(&self) -> u64 {
+        self.current.load(Ordering::Relaxed)
+    }
+
+    /// The player has been given the next track while the tail of play `tag`
+    /// is still in the ring. Nothing is flushed: the next track's audio queues
+    /// up behind the tail and follows it without a gap.
+    pub fn rolling_on(&self, tag: u64) {
+        self.tail_of.store(tag, Ordering::Relaxed);
+    }
+
+    /// Cut what is left of a finished track's tail and go straight to the
+    /// track the player has already moved on to behind it.
+    pub fn skip_tail(&self) {
+        let tail = self.tail_of.swap(u64::MAX, Ordering::Relaxed);
+        let current = self.current.load(Ordering::Relaxed);
+        if current != tail && current != u64::MAX {
+            self.ring.skip_to_tag(current);
+        } else {
+            // none of the next track has reached the sink yet
+            self.ring.flush_at(current, 0);
+        }
     }
 
     /// The app asked the player to seek to `position_ms`. What is queued goes
@@ -143,7 +172,10 @@ impl Playout {
     /// Where the listener is in the track the player is on, once any of it
     /// has been heard.
     pub fn heard_now(&self) -> Option<u32> {
-        self.ring.heard(self.current.load(Ordering::Relaxed))
+        self.ring
+            .heard(self.current.load(Ordering::Relaxed))
+            // the player is on the next track but its tail is what is heard
+            .or_else(|| self.ring.heard(self.tail_of.load(Ordering::Relaxed)))
     }
 }
 

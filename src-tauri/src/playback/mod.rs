@@ -229,6 +229,121 @@ fn audio_device_safe() -> bool {
     })
 }
 
+// the queue moving on, without the interface in the way
+//
+// The interface owns the queue and used to be the only thing that could start
+// the next track: the engine told the webview a track had ended, the webview
+// looked up what comes next and called `play_track`, and only then did the
+// load begin - with 400ms of audio left. A webview that was busy rendering,
+// minimised or throttled in the background answered late and the music
+// stopped between songs.
+//
+// The interface already names the next track ahead of time (`preload_track`).
+// `Advance` remembers it, and the moment the decoder reaches the end of a
+// track the engine loads that next one itself. Its audio queues up behind the
+// tail still in the ring, so the join is gapless and nothing waits on the
+// interface. The interface is still told the track ended when the tail has
+// played out, and its `play_track` for the track the engine is already
+// playing is recognised and left alone.
+
+/// How long after the interface is told a track ended its `play_track` for
+/// the next one is taken as the same hand-off rather than a new request.
+const ANNOUNCED_FOR: std::time::Duration = std::time::Duration::from_secs(5);
+
+struct Auto {
+    /// What the engine moved on to.
+    uri:       String,
+    /// What was playing before, whose tail may still be heard.
+    from:      Option<String>,
+    /// When the interface was told the previous track ended. None while its
+    /// tail is still playing.
+    announced: Option<std::time::Instant>,
+}
+
+#[derive(Default)]
+struct AdvanceState {
+    next:    Option<String>,
+    context: Option<String>,
+    auto:    Option<Auto>,
+}
+
+/// How a `play_track` relates to what the engine did by itself.
+#[derive(Debug, PartialEq, Eq)]
+enum Claim {
+    /// The engine did nothing by itself.
+    Nothing,
+    /// It is the hand-off the engine already made.
+    Done,
+    /// The engine has it decoded behind the previous track's tail.
+    BehindTail,
+    /// The engine moved on to something else.
+    Other,
+}
+
+#[derive(Default)]
+pub struct Advance(Mutex<AdvanceState>);
+
+impl Advance {
+    fn state(&self) -> std::sync::MutexGuard<'_, AdvanceState> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// What the interface says comes after the track playing now.
+    fn set_next(&self, uri: String) {
+        self.state().next = Some(uri);
+    }
+
+    fn set_context(&self, context: Option<String>) {
+        self.state().context = context;
+    }
+
+    /// Something else took over: forget what was lined up.
+    fn reset(&self) {
+        let mut state = self.state();
+        state.next = None;
+        state.auto = None;
+    }
+
+    /// The next track, to load now. It is only good for one end of track.
+    fn take_next(&self) -> Option<(String, Option<String>)> {
+        let mut state = self.state();
+        let context = state.context.clone();
+        state.next.take().map(|uri| (uri, context))
+    }
+
+    fn started(&self, uri: String, from: Option<String>) {
+        self.state().auto = Some(Auto { uri, from, announced: None });
+    }
+
+    /// The interface has been told the previous track ended.
+    fn announce(&self) {
+        if let Some(auto) = self.state().auto.as_mut() {
+            auto.announced = Some(std::time::Instant::now());
+        }
+    }
+
+    /// The track on screen while the engine is already on the next one: the
+    /// one whose tail is still playing.
+    fn tail_uri(&self) -> Option<String> {
+        match self.state().auto.as_ref() {
+            Some(auto) if auto.announced.is_none() => auto.from.clone(),
+            _ => None,
+        }
+    }
+
+    fn claim(&self, uri: &str) -> Claim {
+        let Some(auto) = self.state().auto.take() else {
+            return Claim::Nothing;
+        };
+        match auto.announced {
+            Some(at) if at.elapsed() > ANNOUNCED_FOR => Claim::Nothing,
+            Some(_) if auto.uri == uri => Claim::Done,
+            None if auto.uri == uri => Claim::BehindTail,
+            _ => Claim::Other,
+        }
+    }
+}
+
 // playbackinner
 
 pub struct PlaybackInner {
@@ -243,7 +358,8 @@ pub struct PlaybackInner {
     /// The audio queued in front of the speaker (see `sink::Playout`).
     playout:               Arc<crate::sink::Playout>,
     listens:               Arc<listening::ListenTracker>,
-    spirc:                 Spirc,
+    advance:               Arc<Advance>,
+    spirc:                 Arc<Spirc>,
     session:               Session,
     _event_task:           tauri::async_runtime::JoinHandle<()>,
     _spirc_task:           tauri::async_runtime::JoinHandle<()>,
@@ -323,11 +439,47 @@ impl PlaybackInner {
     // app is about to play `track_uri` from, so the listen is reported against
     // it in spotify's recents. call before play_uri.
     pub fn set_play_context(&self, track_uri: &str, context_uri: Option<String>) {
+        self.advance.set_context(context_uri.clone());
         self.listens.set_requested(track_uri, context_uri);
+    }
+
+    /// What the interface says comes after the track playing now. The engine
+    /// loads it by itself when this one ends (see `Advance`).
+    pub fn set_next(&self, uri: String) {
+        self.advance.set_next(uri);
+    }
+
+    /// The interface asked for `uri` from the start: a track the user picked,
+    /// or the queue moving on - which the engine may already have done.
+    pub fn play_requested(&self, uri: String, context_uri: Option<String>) -> Result<(), AppError> {
+        match self.advance.claim(&uri) {
+            Claim::Done => {
+                eprintln!("[playback] play_requested uri={uri}: already playing, the engine moved on to it");
+                self.advance.set_context(context_uri);
+                return Ok(());
+            }
+            Claim::BehindTail => {
+                // skipped to the next track while the last one's tail played:
+                // it is decoded and waiting right behind
+                eprintln!("[playback] play_requested uri={uri}: cutting the tail in front of it");
+                self.advance.set_context(context_uri);
+                self.playout.skip_tail();
+                self.is_playing_atomic.store(true, Ordering::Relaxed);
+                self.is_ended.store(false, Ordering::Relaxed);
+                return Ok(());
+            }
+            // the queue changed after the next track was named; what the
+            // engine lined up is not wanted
+            Claim::Other => self.playout.user_load(),
+            Claim::Nothing => {}
+        }
+        self.set_play_context(&uri, context_uri);
+        self.play_uri(uri, 0)
     }
 
     pub fn play_uri(&self, uri: String, position_ms: u32) -> Result<(), AppError> {
         eprintln!("[playback] play_uri uri={uri} pos={position_ms}");
+        self.advance.reset();
         self.playout.loading();
         self.spirc.activate().map_err(spirc_err)?;
         self.spirc.load(LoadRequest::from_tracks(
@@ -369,6 +521,12 @@ impl PlaybackInner {
 
     pub fn seek(&self, position_ms: u32) -> Result<(), AppError> {
         eprintln!("[playback] seek pos={position_ms}");
+        if let Some(uri) = self.advance.tail_uri() {
+            // the engine is already on the next track, but the one on screen
+            // is the one whose tail is playing: go back into that
+            self.playout.user_load();
+            return self.play_uri(uri, position_ms);
+        }
         let state = self.connect_state();
         if self.playout.only_tail_left() {
             // the player has decoded this track to the end and let it go, so
@@ -419,6 +577,7 @@ impl PlaybackInner {
     /// load a list as the context, starting at `index`. with `keep_stream`,
     /// the track already playing at that spot carries on instead of restarting
     pub fn load_tracks(&self, uris: Vec<String>, index: u32, position_ms: u32, start_playing: bool, keep_stream: bool) -> Result<(), AppError> {
+        self.advance.reset();
         if !keep_stream {
             self.playout.user_load();
         }
@@ -451,16 +610,19 @@ impl PlaybackInner {
     }
 
     pub fn skip_to(&self, uri: String) -> Result<(), AppError> {
+        self.advance.reset();
         self.playout.user_load();
         self.spirc.skip_to(uri).map_err(spirc_err)
     }
 
     pub fn next(&self) -> Result<(), AppError> {
+        self.advance.reset();
         self.playout.user_load();
         self.spirc.next().map_err(spirc_err)
     }
 
     pub fn prev(&self) -> Result<(), AppError> {
+        self.advance.reset();
         self.playout.user_load();
         self.spirc.prev().map_err(spirc_err)
     }
@@ -852,6 +1014,7 @@ pub async fn create_inner(
         eprintln!("[playback] spirc connect finally failed: {e}");
         AppError::Auth(e.to_string())
     })?;
+    let spirc = Arc::new(spirc);
     eprintln!("[playback] STEP spirc connected (Connect device 'Musique' registered)");
     let spirc_task = tauri::async_runtime::spawn(spirc_task);
     // spirc has the dealer connected now; tap it for device/jam/playlist pushes
@@ -896,7 +1059,11 @@ pub async fn create_inner(
     let listens       = listening::ListenTracker::new(session.clone(), bitrate, rendered_frames);
     let listens_event = Arc::clone(&listens);
 
-    let current_uri       = Arc::new(Mutex::new(None));
+    let current_uri: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let advance           = Arc::new(Advance::default());
+    let event_advance     = Arc::clone(&advance);
+    let event_spirc       = Arc::clone(&spirc);
+    let event_current_uri = Arc::clone(&current_uri);
     let is_ended          = Arc::new(AtomicBool::new(false));
     let is_playing_atomic = Arc::new(AtomicBool::new(false));
 
@@ -937,12 +1104,26 @@ pub async fn create_inner(
             // music and the next track loads just in time to follow it
             if let PlayerEvent::EndOfTrack { play_request_id, .. } = &event {
                 playout.decoded_to_end(*play_request_id);
+                // start the next track now, behind the tail, rather than
+                // when the interface gets round to asking for it
+                let rolled_on = roll_on(
+                    &event_advance,
+                    &event_spirc,
+                    &playout,
+                    &listens_event,
+                    &event_current_uri,
+                    *play_request_id,
+                );
                 if !hold_end_of_track(&playout, *play_request_id, &mut event_rx, &mut held).await {
                     // the user moved on while the tail played; the queue
                     // mustn't also advance
                     continue;
                 }
-                playout.told_end();
+                if rolled_on {
+                    event_advance.announce();
+                } else {
+                    playout.told_end();
+                }
             }
 
             // positions as heard rather than as decoded
@@ -1048,6 +1229,7 @@ pub async fn create_inner(
         output_latency,
         playout,
         listens,
+        advance,
         spirc,
         session,
         _event_task:       event_task,
@@ -1055,6 +1237,54 @@ pub async fn create_inner(
         _spirc_task:       spirc_task,
         _state_task:       state_task,
     })
+}
+
+/// The decoder has reached the end of play `tag`. Load the track the interface
+/// lined up after it, if there is one, so it follows the tail without a gap.
+///
+/// False when there is nothing lined up or this is not the place to do it; the
+/// interface then moves the queue on itself, as it always could.
+fn roll_on(
+    advance: &Advance,
+    spirc: &Spirc,
+    playout: &crate::sink::Playout,
+    listens: &listening::ListenTracker,
+    current_uri: &Mutex<Option<String>>,
+    tag: u64,
+) -> bool {
+    // an end of track from a play the user has already left
+    if playout.current_tag() != tag {
+        return false;
+    }
+    // loading starts playback; a paused player must stay paused
+    if playout.ring.held() {
+        return false;
+    }
+    // a jam's queue is spotify's, and spirc moves it on
+    if ConnectStateMsg::from(&*spirc.state_updates().borrow()).jam_mode {
+        return false;
+    }
+    let Some((uri, context)) = advance.take_next() else {
+        return false;
+    };
+    let request = LoadRequest::from_tracks(
+        vec![uri.clone()],
+        LoadRequestOptions {
+            start_playing: true,
+            seek_to: 0,
+            ..Default::default()
+        },
+    );
+    if let Err(e) = spirc.activate().and_then(|_| spirc.load(request)) {
+        eprintln!("[playback] could not roll on to {uri}: {e}");
+        return false;
+    }
+    eprintln!("[playback] rolling on to {uri} behind the tail");
+    listens.set_requested(&uri, context);
+    let from = current_uri.lock().unwrap().replace(uri.clone());
+    playout.rolling_on(tag);
+    advance.started(uri, from);
+    true
 }
 
 /// How much of a finished track may still be left to play when the interface
@@ -1141,4 +1371,52 @@ pub fn track_uri(raw: &str) -> Result<String, AppError> {
     parse_track_id(raw)?
         .to_uri()
         .map_err(|e| AppError::InvalidInput(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_next_track_is_good_for_one_end_of_track() {
+        let advance = Advance::default();
+        assert!(advance.take_next().is_none());
+        advance.set_context(Some("spotify:album:x".into()));
+        advance.set_next("spotify:track:b".into());
+        assert_eq!(
+            advance.take_next(),
+            Some(("spotify:track:b".to_string(), Some("spotify:album:x".to_string())))
+        );
+        assert!(advance.take_next().is_none());
+    }
+
+    #[test]
+    fn the_interface_asking_for_what_the_engine_moved_on_to_is_the_same_hand_off() {
+        let advance = Advance::default();
+        assert_eq!(advance.claim("spotify:track:b"), Claim::Nothing);
+
+        // skipped to it while the previous track's tail was still playing
+        advance.started("spotify:track:b".into(), Some("spotify:track:a".into()));
+        assert_eq!(advance.tail_uri().as_deref(), Some("spotify:track:a"));
+        assert_eq!(advance.claim("spotify:track:b"), Claim::BehindTail);
+        assert_eq!(advance.claim("spotify:track:b"), Claim::Nothing);
+
+        // the queue moving on once the tail has played out
+        advance.started("spotify:track:b".into(), Some("spotify:track:a".into()));
+        advance.announce();
+        assert!(advance.tail_uri().is_none());
+        assert_eq!(advance.claim("spotify:track:b"), Claim::Done);
+
+        // the queue changed after the next track was named
+        advance.started("spotify:track:b".into(), None);
+        advance.announce();
+        assert_eq!(advance.claim("spotify:track:c"), Claim::Other);
+
+        // a new load forgets all of it
+        advance.set_next("spotify:track:b".into());
+        advance.started("spotify:track:b".into(), None);
+        advance.reset();
+        assert!(advance.take_next().is_none());
+        assert_eq!(advance.claim("spotify:track:b"), Claim::Nothing);
+    }
 }

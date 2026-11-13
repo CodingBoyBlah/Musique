@@ -747,8 +747,7 @@ pub async fn play_track(app: AppHandle, id: String, context_uri: Option<String>)
         let playback = app.state::<AppState>().playback.clone();
         let guard    = playback.lock().await;
         if let Some(inner) = guard.as_ref() {
-            inner.set_play_context(&uri, context_uri);
-            inner.play_uri(uri, 0)?;
+            inner.play_requested(uri, context_uri)?;
         }
     }
 
@@ -993,10 +992,14 @@ pub async fn preload_track(app: AppHandle, id: String) -> Result<(), AppError> {
     }
 
     let track_id = crate::playback::parse_track_id(&id)?;
+    let uri      = crate::playback::track_uri(&id)?;
     let playback = app.state::<AppState>().playback.clone();
     let guard    = playback.lock().await;
     if let Some(inner) = guard.as_ref() {
         inner.player.preload(track_id);
+        // the interface only preloads what its queue plays next, so this is
+        // also what the engine moves on to by itself when this track ends
+        inner.set_next(uri);
     }
     Ok(())
 }
