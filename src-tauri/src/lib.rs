@@ -90,6 +90,16 @@ pub fn playback_probe() -> i32 {
             1.0
         }
     }
+    /// The output's own volume. With MUSIQUE_PROBE_SILENT set the probe runs
+    /// the whole path to the device at zero volume, so it can be run while
+    /// something else is playing without being heard.
+    struct ProbeVol(f64);
+    impl VolumeGetter for ProbeVol {
+        fn attenuation_factor(&self) -> f64 {
+            self.0
+        }
+    }
+    let probe_volume = if std::env::var_os("MUSIQUE_PROBE_SILENT").is_some() { 0.0 } else { 1.0 };
 
     struct StderrLog;
     impl log::Log for StderrLog {
@@ -204,6 +214,12 @@ pub fn playback_probe() -> i32 {
         let on_err: crate::sink::ErrorHook = Arc::new(|msg| {
             eprintln!("[playback error] {msg}");
         });
+        // kept here too, so the probe can say what the speaker was actually
+        // given and not only that the decoder started
+        let playout = crate::sink::Playout::new();
+        let sink_playout = Arc::clone(&playout);
+        let event_slot: crate::sink::EventSlot = Default::default();
+        let sink_events = Arc::clone(&event_slot);
         let player = Player::new(
             PlayerConfig { bitrate: Bitrate::Bitrate320, ..Default::default() },
             session.clone(),
@@ -211,12 +227,13 @@ pub fn playback_probe() -> i32 {
             move || Box::new(crate::sink::RodioSink::new(
                 None,
                 on_err.clone(),
-                Box::new(librespot_playback::mixer::NoOpVolume),
+                Box::new(ProbeVol(probe_volume)),
                 crate::sink::DEFAULT_BUFFER_MS,
-                crate::sink::Playout::new(),
-                Default::default(),
+                Arc::clone(&sink_playout),
+                Arc::clone(&sink_events),
             )) as Box<dyn Sink>,
         );
+        *event_slot.lock().unwrap() = Some(player.get_player_event_channel());
         let mut rx = player.get_player_event_channel();
         player.load(SpotifyUri::Track { id: spotify_id }, true, 0);
 
@@ -227,9 +244,51 @@ pub fn playback_probe() -> i32 {
             match tokio::time::timeout(remaining, rx.recv()).await {
                 Ok(Some(ev)) => match ev {
                     PlayerEvent::Playing { .. } | PlayerEvent::TrackChanged { .. } => {
-                        eprintln!("[playback-probe] SUCCESS - audio keys granted, track is PLAYING through RodioSink. Letting 2s of audio play...");
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        eprintln!("[playback-probe] 2s audio playback complete!");
+                        eprintln!("[playback-probe] SUCCESS - audio keys granted, track is PLAYING through RodioSink. Letting 6s of audio play...");
+                        // what the device pulled, second by second: the heard
+                        // position has to advance in step with the clock
+                        let ring = &playout.ring;
+                        let mut heard = Vec::new();
+                        let mut dry = Vec::new();
+                        for _ in 0..3 {
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                            heard.push(ring.heard_ms());
+                            dry.push(ring.underruns());
+                        }
+                        // a pause holds the position, and a resume moves it on
+                        player.pause();
+                        ring.set_held(true);
+                        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                        let paused_at = ring.heard_ms();
+                        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                        let still_at = ring.heard_ms();
+                        player.play();
+                        ring.set_held(false);
+                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                        let resumed_to = ring.heard_ms();
+                        dry.push(ring.underruns());
+                        // a seek flushes what was queued and lands where asked
+                        playout.seek_requested(60_000);
+                        player.seek(60_000);
+                        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+                        let after_seek = ring.heard_ms();
+                        dry.push(ring.underruns());
+                        eprintln!("[playback-probe] underruns after each second, after the resume and after the seek: {dry:?}");
+                        let frames = ring.rendered_frames.load(std::sync::atomic::Ordering::Relaxed);
+                        eprintln!(
+                            "[playback-probe] heard {heard:?}ms; paused at {paused_at}ms, held at {still_at}ms, resumed to {resumed_to}ms; after seeking to 60000ms heard {after_seek}ms; {frames} frames rendered; {} underruns; {} flushes",
+                            ring.underruns(),
+                            ring.flushes(),
+                        );
+                        let advancing = heard.windows(2).all(|w| w[1] > w[0] + 700 && w[1] < w[0] + 1300);
+                        let held = still_at.abs_diff(paused_at) < 50;
+                        let resumed = resumed_to > still_at + 900;
+                        let seeked = (60_500..64_000).contains(&after_seek);
+                        if !(advancing && held && resumed && seeked && frames > 44_100 * 4 && ring.underruns() == 0) {
+                            eprintln!("[playback-probe] FAILED - advancing={advancing} held={held} resumed={resumed} seeked={seeked}");
+                            return 7;
+                        }
+                        eprintln!("[playback-probe] audio reached the device, paused, resumed and seeked cleanly");
                         return 0;
                     }
                     PlayerEvent::Unavailable { track_id, .. } => {

@@ -55,6 +55,17 @@ const RESERVE: usize = 4;
 /// The device thread tops its reserve up when it is down to this many.
 const LOW: usize = 2;
 
+/// How much has to be queued before a stream that is starting (a new track,
+/// the far side of a seek, the far side of a dropout) begins to sound. The
+/// device used to play the first packet the moment it arrived, and ran dry
+/// again before the second had been fetched and decoded: a hole a few
+/// milliseconds into every track.
+const START_AHEAD: Duration = Duration::from_millis(150);
+
+/// How many `GAP`s of silence a starting stream is given to get that far
+/// (about half a second) before what there is plays anyway.
+const START_PATIENCE: u32 = 350;
+
 /// When an output last played real sound, in milliseconds since `clock`.
 static LAST_SOUND: AtomicU64 = AtomicU64::new(0);
 
@@ -463,6 +474,7 @@ impl Ring {
         rate: SampleRate,
         ahead: &mut VecDeque<(Chunk, u64)>,
         used: &mut Vec<Vec<Sample>>,
+        starting: bool,
     ) -> Refill {
         let mut state = match self.state.try_lock() {
             Ok(state) => state,
@@ -474,6 +486,17 @@ impl Ring {
                 Some(buffer) => state.spare.push(buffer),
                 None => break,
             }
+        }
+        // a stream that is starting waits until enough of it is queued. not
+        // when the producer has stopped mid-way or finished: then what is
+        // here is all there will be (the tail of a track)
+        if starting
+            && ahead.is_empty()
+            && !state.finished
+            && self.streaming.load(Ordering::Relaxed)
+            && state.frames < frames_in(START_AHEAD, rate)
+        {
+            return Refill::Starting;
         }
         let flushes = self.flushes.load(Ordering::SeqCst);
         while ahead.len() < RESERVE {
@@ -514,6 +537,8 @@ enum Refill {
     Busy,
     /// There is audio to play.
     Got,
+    /// A stream is starting and not enough of it is queued yet.
+    Starting,
     /// The ring has run dry.
     Empty,
     /// It has run dry and the producer has no more to give.
@@ -556,6 +581,10 @@ pub struct RingSource {
     /// The level the sound is at, 0 to 1, and how far it moves per frame.
     gain:     f32,
     step:     f32,
+    /// Sound is flowing. False from a dry ring until enough is queued again.
+    flowing:  bool,
+    /// `GAP`s of silence played waiting for a starting stream to queue up.
+    waited:   u32,
 }
 
 impl RingSource {
@@ -593,6 +622,8 @@ impl RingSource {
             reported: 0,
             gain: 1.0,
             step: 1.0 / frames_in(FADE, rate).max(1) as f32,
+            flowing: false,
+            waited: 0,
         }
     }
 
@@ -690,7 +721,8 @@ impl Iterator for RingSource {
             let used = std::mem::take(&mut self.cur);
             self.hand_back(used);
             let refill = if self.ahead.len() < LOW {
-                self.ring.refill(self.rate, &mut self.ahead, &mut self.used)
+                let starting = !self.flowing && self.waited < START_PATIENCE;
+                self.ring.refill(self.rate, &mut self.ahead, &mut self.used, starting)
             } else {
                 Refill::Got
             };
@@ -713,6 +745,8 @@ impl Iterator for RingSource {
                         self.gain = 0.0;
                     }
                     self.flushes = flushes;
+                    self.flowing = true;
+                    self.waited = 0;
                     self.cur = chunk.samples;
                     self.idx = 0;
                     self.counted = 0;
@@ -726,11 +760,15 @@ impl Iterator for RingSource {
                     match refill {
                         Refill::Finished if !self.endless => return None,
                         Refill::Empty => {
-                            if !self.starving && self.ring.streaming.load(Ordering::Relaxed) {
+                            // only a stream that was flowing can run dry;
+                            // one still starting has simply not begun
+                            if self.flowing && !self.starving && self.ring.streaming.load(Ordering::Relaxed) {
                                 self.ring.underruns.fetch_add(1, Ordering::Relaxed);
                                 self.starving = true;
                             }
+                            self.flowing = false;
                         }
+                        Refill::Starting => self.waited += 1,
                         // the lock was taken with nothing left here, or all
                         // that was here was stale: look again in a moment
                         _ => {}
@@ -1234,9 +1272,48 @@ mod tests {
         let ring = Ring::new(2);
         let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000);
         ring.set_streaming(true);
+        // nothing has played yet: a stream that has not started has not run dry
+        for _ in 0..1000 {
+            source.next();
+        }
+        assert_eq!(ring.underruns(), 0);
+        let chunk = Chunk { samples: vec![1.0; 400], rate: 1000, tag: 1, start_ms: 0.0, end_ms: 200.0 };
+        assert!(ring.push(chunk, None, 10_000, &|| false));
+        assert_eq!(source.by_ref().take(2000).filter(|s| *s != 0.0).count(), 400);
         for _ in 0..1000 {
             source.next();
         }
         assert_eq!(ring.underruns(), 1);
+    }
+
+    #[test]
+    fn a_starting_stream_waits_until_enough_is_queued() {
+        let ring = Ring::new(2);
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
+        ring.set_streaming(true);
+        // 100ms of the 150ms it wants: held back, and nothing is counted
+        let first = Chunk { samples: vec![1.0; 200], rate: 1000, tag: 1, start_ms: 0.0, end_ms: 100.0 };
+        assert!(ring.push(first, None, 10_000, &|| false));
+        assert!((0..2000).all(|_| source.next() == Some(0.0)));
+        assert_eq!(ring.underruns(), 0);
+        let second = Chunk { samples: vec![1.0; 200], rate: 1000, tag: 1, start_ms: 100.0, end_ms: 200.0 };
+        assert!(ring.push(second, None, 10_000, &|| false));
+        assert_eq!(source.by_ref().take(2000).filter(|s| *s == 1.0).count(), 400);
+
+        // the short end of a track is all there will be, and plays at once
+        let ring = Ring::new(2);
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
+        let tail = Chunk { samples: vec![1.0; 40], rate: 1000, tag: 1, start_ms: 0.0, end_ms: 20.0 };
+        assert!(ring.push(tail, None, 10_000, &|| false));
+        assert_eq!(source.by_ref().take(200).filter(|s| *s == 1.0).count(), 40);
+
+        // and a producer that never gets there is not waited on for ever
+        let ring = Ring::new(2);
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
+        ring.set_streaming(true);
+        let little = Chunk { samples: vec![1.0; 40], rate: 1000, tag: 1, start_ms: 0.0, end_ms: 20.0 };
+        assert!(ring.push(little, None, 10_000, &|| false));
+        let waited = source.by_ref().take(200_000).take_while(|s| *s == 0.0).count();
+        assert!(waited > 20_000 && waited < 100_000, "waited {waited} samples");
     }
 }
