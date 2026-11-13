@@ -237,6 +237,10 @@ features = [
     "time",
 ]
 
+# socket.rs calls hyper's TCP connector through this trait (already in the tree)
+[dependencies.tower-service]
+version = "0.3"
+
 [dependencies.tokio-stream]
 version = "0.1"
 default-features = false
@@ -259,7 +263,8 @@ default-features = false
 
 [dev-dependencies.tokio]
 version = "1"
-features = ["macros"]
+features = ["macros", "test-util"
+]
 
 [build-dependencies.rand]
 version = "0.9"
