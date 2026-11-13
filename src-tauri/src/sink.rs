@@ -211,6 +211,18 @@ fn engine_buffer(
     }
 }
 
+/// The most the volume moves per packet (a packet is 4 to 13 ms of sound).
+const VOLUME_STEP: f32 = 0.06;
+
+/// The next level on the way from `applied` to `target`. A level not applied
+/// yet (negative: the output has just opened) goes straight there.
+fn volume_step(applied: f32, target: f32) -> f32 {
+    if applied < 0.0 || (target - applied).abs() <= VOLUME_STEP {
+        return target;
+    }
+    applied + (target - applied).clamp(-VOLUME_STEP, VOLUME_STEP)
+}
+
 /// Computes output latency in milliseconds from frames queued in the sink,
 /// the output sample rate, and the granted device buffer duration.
 ///
@@ -441,12 +453,16 @@ impl RodioSink {
         }
     }
 
+    /// Brings the output's volume to the player's. A change is walked there
+    /// over a few packets rather than made in one step: a slider being dragged
+    /// would otherwise move the level in jumps, each one a small click.
     fn apply_volume(&mut self) {
         let factor = self.volume.attenuation_factor() as f32;
         if let Some(output) = &self.output {
             if (factor - self.applied_volume).abs() > 0.001 {
-                output.sink.set_volume(factor);
-                self.applied_volume = factor;
+                let next = volume_step(self.applied_volume, factor);
+                output.sink.set_volume(next);
+                self.applied_volume = next;
             }
         }
     }
@@ -915,6 +931,23 @@ mod tests {
         // Zero rate with device buffer -> returns device buffer safely.
         let latency = calculate_latency_ms(0, 0, Some(100));
         assert_eq!(latency, 100);
+    }
+
+    #[test]
+    fn volume_walks_to_a_new_level_and_lands_on_it_exactly() {
+        // a newly opened output takes the level at once
+        assert_eq!(volume_step(-1.0, 0.8), 0.8);
+        let mut level = 1.0;
+        let mut steps = 0;
+        while level != 0.2 {
+            let next = volume_step(level, 0.2);
+            assert!(next < level && level - next <= VOLUME_STEP + 1e-6);
+            level = next;
+            steps += 1;
+            assert!(steps < 100);
+        }
+        assert!(steps >= 10);
+        assert_eq!(volume_step(0.2, 0.2), 0.2);
     }
 
     #[test]
