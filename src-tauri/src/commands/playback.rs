@@ -1572,6 +1572,73 @@ pub async fn set_audio_quality(app: AppHandle, quality: String) -> Result<(), Ap
     Ok(())
 }
 
+/// What the equalizer is set to, and the bands it has.
+#[derive(Debug, Clone, Serialize)]
+pub struct EqualizerState {
+    pub enabled:     bool,
+    /// One gain per band, in dB.
+    pub gains:       Vec<f32>,
+    /// The centre of each band, in Hz.
+    pub bands:       Vec<f32>,
+    /// How far a band can be moved either way, in dB.
+    pub max_gain_db: f32,
+}
+
+fn equalizer_state() -> EqualizerState {
+    let settings = crate::eq::settings();
+    EqualizerState {
+        enabled:     settings.enabled,
+        gains:       settings.gains,
+        bands:       crate::eq::BANDS.to_vec(),
+        max_gain_db: crate::eq::MAX_GAIN_DB,
+    }
+}
+
+#[tauri::command]
+pub async fn get_equalizer() -> Result<EqualizerState, AppError> {
+    Ok(equalizer_state())
+}
+
+/// Set the equalizer. It is heard at once, on whichever backend is playing
+/// through the app's own output (not Soloist, which owns its own).
+#[tauri::command]
+pub async fn set_equalizer(app: AppHandle, enabled: bool, gains: Vec<f32>) -> Result<EqualizerState, AppError> {
+    crate::eq::set(enabled, &gains);
+    let pool = app.state::<AppState>().db.clone();
+    save_setting(&pool, "equalizer", &crate::eq::encode(&crate::eq::settings())).await?;
+    Ok(equalizer_state())
+}
+
+/// "linear" or "cubic": how the volume slider maps to loudness.
+#[tauri::command]
+pub async fn get_volume_curve() -> Result<String, AppError> {
+    Ok(if crate::playback::cubic_volume() { "cubic" } else { "linear" }.into())
+}
+
+#[tauri::command]
+pub async fn set_volume_curve(app: AppHandle, curve: String) -> Result<(), AppError> {
+    let cubic = match curve.as_str() {
+        "cubic" => true,
+        "linear" => false,
+        other => {
+            return Err(AppError::InvalidInput(format!(
+                "unknown volume curve {other:?}; expected linear or cubic"
+            )))
+        }
+    };
+    crate::playback::set_cubic_volume(cubic);
+    let pool = app.state::<AppState>().db.clone();
+    save_setting(&pool, "volume_curve", if cubic { "cubic" } else { "linear" }).await
+}
+
+/// The sound settings that live outside any one session, read once at start.
+pub async fn load_sound_settings(pool: &sqlx::SqlitePool) {
+    if let Some(saved) = setting_value(pool, "equalizer").await.as_deref().and_then(crate::eq::decode) {
+        crate::eq::set(saved.enabled, &saved.gains);
+    }
+    crate::playback::set_cubic_volume(setting_value(pool, "volume_curve").await.as_deref() == Some("cubic"));
+}
+
 /// Whether tracks are levelled to the same loudness.
 #[tauri::command]
 pub async fn get_audio_normalisation(app: AppHandle) -> Result<bool, AppError> {

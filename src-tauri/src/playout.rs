@@ -581,6 +581,10 @@ pub struct RingSource {
     /// The level the sound is at, 0 to 1, and how far it moves per frame.
     gain:     f32,
     step:     f32,
+    /// The equalizer, here so a band that is moved is heard at once and not
+    /// after the queue has played out. (Left out under test, where exact
+    /// samples are compared while other tests move its settings.)
+    eq:       Option<crate::eq::Equalizer>,
     /// Sound is flowing. False from a dry ring until enough is queued again.
     flowing:  bool,
     /// `GAP`s of silence played waiting for a starting stream to queue up.
@@ -622,6 +626,7 @@ impl RingSource {
             reported: 0,
             gain: 1.0,
             step: 1.0 / frames_in(FADE, rate).max(1) as f32,
+            eq: (!cfg!(test)).then(|| crate::eq::Equalizer::new(rate)),
             flowing: false,
             waited: 0,
         }
@@ -683,6 +688,9 @@ impl Iterator for RingSource {
             if self.idx < self.cur.len() {
                 // only between frames, so left and right never trade places
                 if self.idx % channels == 0 {
+                    if let Some(eq) = &mut self.eq {
+                        eq.refresh();
+                    }
                     let stale = self.stale();
                     if stale || self.ring.held() {
                         // let the sound down over a few milliseconds of
@@ -707,7 +715,10 @@ impl Iterator for RingSource {
                         }
                     }
                 }
-                let sample = self.cur[self.idx] * self.gain;
+                let sample = match &mut self.eq {
+                    Some(eq) => eq.process(self.idx % channels, self.cur[self.idx]),
+                    None => self.cur[self.idx],
+                } * self.gain;
                 self.idx += 1;
                 return Some(sample);
             }

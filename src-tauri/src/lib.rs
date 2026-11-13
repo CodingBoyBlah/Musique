@@ -647,6 +647,7 @@ pub fn audio_probe() -> i32 {
 mod db;
 mod discord;
 mod episode_audio;
+mod eq;
 mod errors;
 mod http;
 mod internal;
@@ -931,6 +932,7 @@ pub fn run() {
                 let pool = db::connection::create_pool(&handle).await;
                 // seed spotify creds from .env on first run, does nothing if theyre already set
                 commands::credentials::seed_credentials_from_env(&pool).await;
+                commands::playback::load_sound_settings(&pool).await;
                 let auth_state = auth::init_auth_state_with(
                     &pool,
                     tokens.await.unwrap_or(None),
@@ -1143,6 +1145,10 @@ pub fn run() {
             commands::playback::preload_track,
             commands::playback::get_playback_backend,
             commands::playback::set_playback_backend,
+            commands::playback::get_equalizer,
+            commands::playback::set_equalizer,
+            commands::playback::get_volume_curve,
+            commands::playback::set_volume_curve,
             commands::playback::get_audio_normalisation,
             commands::playback::set_audio_normalisation,
             commands::soloist::soloist_status,

@@ -41,6 +41,29 @@ struct VolumeState {
     muted: bool,
 }
 
+/// Whether the volume slider follows a cubic curve instead of a straight line.
+///
+/// Loudness is heard on a logarithmic scale, so a straight line from the
+/// slider to the gain puts everything anyone wants in its top quarter: half
+/// way down the slider is only 6 dB quieter. The cube of the position reaches
+/// -18 dB at the middle and -36 dB at a quarter, which is what a volume control
+/// is expected to feel like. It changes how loud every position is, so it is
+/// the listener's to turn on (`set_volume_curve`), not a default.
+static CUBIC_VOLUME: AtomicBool = AtomicBool::new(false);
+
+pub fn set_cubic_volume(cubic: bool) {
+    CUBIC_VOLUME.store(cubic, Ordering::Relaxed);
+}
+
+pub fn cubic_volume() -> bool {
+    CUBIC_VOLUME.load(Ordering::Relaxed)
+}
+
+/// The gain for a slider position of 0 to 1.
+fn gain_for(level: f64, cubic: bool) -> f64 {
+    if cubic { level * level * level } else { level }
+}
+
 #[derive(Clone)]
 pub struct SharedVolume(Arc<Mutex<VolumeState>>);
 
@@ -72,7 +95,7 @@ impl SharedVolume {
 impl VolumeGetter for SharedVolume {
     fn attenuation_factor(&self) -> f64 {
         let s = self.0.lock().unwrap();
-        if s.muted { 0.0 } else { s.level }
+        if s.muted { 0.0 } else { gain_for(s.level, cubic_volume()) }
     }
 }
 
@@ -863,9 +886,23 @@ pub async fn create_inner(
         .unwrap_or_else(|| auth::DEFAULT_DEVICE_NAME.to_string());
     let device_id = auth::compute_device_id(&device_name);
 
+    // an HTTP proxy for the session itself (the access point, the dealer and
+    // the audio), for networks that only let traffic out through one.
+    // librespot speaks HTTP CONNECT only, so a SOCKS address is not used here
+    let proxy = auth::get_setting_value(&pool, "proxy_url")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|url| url::Url::parse(url.trim()).ok())
+        .filter(|url| matches!(url.scheme(), "http" | "https"));
+    if let Some(proxy) = &proxy {
+        eprintln!("[playback] session goes through the proxy at {}", proxy.host_str().unwrap_or("?"));
+    }
+
     let session_config = SessionConfig {
         device_id,
         autoplay: Some(false),
+        proxy,
         ..SessionConfig::default()
     };
     let mut session = Session::new(session_config.clone(), cache);
@@ -936,9 +973,21 @@ pub async fn create_inner(
         .is_some_and(|v| v == "1");
     eprintln!("[playback] loudness normalisation = {normalisation}");
 
+    // a folder of the listener's own music. the player reads its tags when it
+    // starts, and can then play the spotify:local: rows of a playlist from it
+    let local_files: Vec<std::path::PathBuf> = auth::get_setting_value(&pool, "local_files_dir")
+        .await
+        .ok()
+        .flatten()
+        .map(|dir| std::path::PathBuf::from(dir.trim()))
+        .filter(|dir| dir.is_dir())
+        .into_iter()
+        .collect();
+
     let player_config = PlayerConfig {
         bitrate,
         gapless: true,
+        local_file_directories: local_files,
         normalisation,
         normalisation_type: librespot_playback::config::NormalisationType::Auto,
         ..Default::default()
@@ -1430,6 +1479,16 @@ pub fn track_uri(raw: &str) -> Result<String, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cubic_curve_spreads_the_useful_range_over_the_slider() {
+        assert_eq!(gain_for(0.5, false), 0.5);
+        assert_eq!(gain_for(1.0, true), 1.0);
+        assert_eq!(gain_for(0.0, true), 0.0);
+        let db = |gain: f64| 20.0 * gain.log10();
+        assert!((db(gain_for(0.5, true)) + 18.06).abs() < 0.1);
+        assert!((db(gain_for(0.5, false)) + 6.02).abs() < 0.1);
+    }
 
     #[test]
     fn the_next_track_is_good_for_one_end_of_track() {
