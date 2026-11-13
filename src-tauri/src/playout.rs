@@ -39,6 +39,29 @@ const TICK: usize = 256;
 /// No chunk has been heard yet.
 const NOTHING: u64 = u64::MAX;
 
+/// How long the sound takes to go down before a pause, a seek or a skip cuts
+/// it, and to come back up after one. Cutting a waveform mid-swing is a click.
+const FADE: Duration = Duration::from_millis(20);
+
+/// Used sample buffers kept for the producer to take back. Room for every
+/// chunk a full ring can hold, so the device thread never frees one.
+const SPARE: usize = 2048;
+
+/// When an output last played real sound, in milliseconds since `clock`.
+static LAST_SOUND: AtomicU64 = AtomicU64::new(0);
+
+fn clock() -> u64 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
+}
+
+/// Whether any output played sound in the last `within`. Housekeeping that
+/// would disturb the audio threads (emptying the working set) asks first.
+pub fn sounding(within: Duration) -> bool {
+    let last = LAST_SOUND.load(Ordering::Relaxed);
+    last != 0 && clock().saturating_sub(last) <= within.as_millis() as u64
+}
+
 /// How many frames `span` of audio is at `rate`.
 pub fn frames_in(span: Duration, rate: SampleRate) -> usize {
     (span.as_millis() as u64 * rate as u64 / 1000) as usize
@@ -71,6 +94,37 @@ struct State {
     /// Used sample buffers, handed back so the producer need not allocate and
     /// the device thread need not free.
     spare:    Vec<Vec<Sample>>,
+    /// Milliseconds queued per play, so asking is not a walk over the queue
+    /// with the device thread waiting on the lock.
+    queued:   Vec<(u64, f64)>,
+    /// Producers asleep in `push`, so the device thread only signals when
+    /// someone is there to hear it.
+    waiting:  usize,
+}
+
+impl State {
+    fn add_queued(&mut self, tag: u64, ms: f64) {
+        match self.queued.iter_mut().find(|(t, _)| *t == tag) {
+            Some((_, total)) => *total += ms,
+            None => self.queued.push((tag, ms)),
+        }
+    }
+
+    fn sub_queued(&mut self, tag: u64, ms: f64) {
+        if let Some(at) = self.queued.iter().position(|(t, _)| *t == tag) {
+            self.queued[at].1 -= ms;
+            if self.queued[at].1 <= 0.5 {
+                self.queued.swap_remove(at);
+            }
+        }
+    }
+}
+
+fn chunk_ms(chunk: &Chunk, channels: usize) -> f64 {
+    if chunk.rate == 0 {
+        return 0.0;
+    }
+    (chunk.samples.len() / channels) as f64 * 1000.0 / chunk.rate as f64
 }
 
 pub struct Ring {
@@ -84,6 +138,9 @@ pub struct Ring {
     heard_tag: AtomicU64,
     heard_ms:  AtomicU64,
     flushes:   AtomicU64,
+    /// The play a flush left alone (see `skip_to_tag`). A chunk of it that
+    /// the device is partway through plays on.
+    kept_tag:  AtomicU64,
     underruns: AtomicU64,
     /// Audio actually pulled by the output, normalized to 44.1 kHz frames.
     /// Queued, flushed, paused and underrun samples never enter this counter.
@@ -100,7 +157,9 @@ impl Ring {
                 closed:   false,
                 seek:     None,
                 epoch:    0,
-                spare:    Vec::new(),
+                spare:    Vec::with_capacity(SPARE),
+                queued:   Vec::with_capacity(4),
+                waiting:  0,
             }),
             changed:   Condvar::new(),
             channels:  channels.max(1),
@@ -109,6 +168,7 @@ impl Ring {
             heard_tag: AtomicU64::new(NOTHING),
             heard_ms:  AtomicU64::new(0),
             flushes:   AtomicU64::new(0),
+            kept_tag:  AtomicU64::new(NOTHING),
             underruns: AtomicU64::new(0),
             rendered_frames: Arc::new(AtomicU64::new(0)),
         })
@@ -161,15 +221,24 @@ impl Ring {
                     return false;
                 }
             }
+            state.waiting += 1;
             state = self
                 .changed
                 .wait_timeout(state, Duration::from_millis(50))
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
+            state.waiting -= 1;
         }
         state.frames += frames;
         state.finished = false;
+        let ms = chunk_ms(&chunk, self.channels);
+        state.add_queued(chunk.tag, ms);
         state.chunks.push_back(chunk);
+        // buffers the device thread handed back and nobody reused: freed
+        // here, on this thread, once the lock is let go
+        let used = if state.spare.len() > 8 { state.spare.split_off(8) } else { Vec::new() };
+        drop(state);
+        drop(used);
         true
     }
 
@@ -212,9 +281,68 @@ impl Ring {
             }
         }
         state.frames = 0;
+        state.queued.clear();
         state.finished = false;
         state.epoch += 1;
+        self.kept_tag.store(NOTHING, Ordering::SeqCst);
         self.flushes.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Throw away what is queued ahead of play `tag` and carry straight on
+    /// with it: the rest of a track whose successor is already decoded behind
+    /// it. Nothing of `tag` is lost and its producer is not turned away.
+    pub fn skip_to_tag(&self, tag: u64) {
+        let mut dropped = Vec::new();
+        let mut state = self.lock();
+        while state.chunks.front().is_some_and(|chunk| chunk.tag != tag) {
+            if let Some(chunk) = state.chunks.pop_front() {
+                state.frames = state.frames.saturating_sub(chunk.samples.len() / self.channels);
+                dropped.push(chunk.samples);
+            }
+        }
+        state.queued.retain(|(t, _)| *t == tag);
+        let start = state.chunks.front().map_or(0.0, |chunk| chunk.start_ms);
+        self.kept_tag.store(tag, Ordering::SeqCst);
+        self.flushes.fetch_add(1, Ordering::SeqCst);
+        self.set_heard(tag, start.max(0.0) as u64);
+        drop(state);
+        drop(dropped);
+        self.changed.notify_all();
+    }
+
+    /// Convert what is queued to `rate`, for an output that has just been
+    /// replaced by one running at another rate. Only call with no output
+    /// attached: the queue is taken out while it is converted.
+    pub fn retime(&self, rate: SampleRate) {
+        let chunks = {
+            let mut state = self.lock();
+            if state.chunks.iter().all(|chunk| chunk.rate == rate) {
+                return;
+            }
+            std::mem::take(&mut state.chunks)
+        };
+        let mut converter: Option<(SampleRate, crate::resample::Resampler)> = None;
+        let mut converted = VecDeque::with_capacity(chunks.len());
+        for mut chunk in chunks {
+            if chunk.rate != rate && chunk.rate != 0 {
+                if converter.as_ref().map(|(from, _)| *from) != Some(chunk.rate) {
+                    converter = crate::resample::Resampler::new(chunk.rate, rate, self.channels)
+                        .map(|resampler| (chunk.rate, resampler));
+                }
+                if let Some((_, resampler)) = &mut converter {
+                    chunk.samples = resampler.process(&chunk.samples);
+                    chunk.rate = rate;
+                }
+            }
+            converted.push_back(chunk);
+        }
+        let mut state = self.lock();
+        // anything pushed meanwhile came after what was taken out
+        converted.extend(state.chunks.drain(..));
+        state.frames = converted.iter().map(|chunk| chunk.samples.len() / self.channels).sum();
+        state.chunks = converted;
+        drop(state);
+        self.changed.notify_all();
     }
 
     /// Flush and have the producer seek to `pos`. What is heard is `pos` from
@@ -297,13 +425,11 @@ impl Ring {
     /// Milliseconds still queued from play `tag`.
     pub fn queued_ms_of(&self, tag: u64) -> u64 {
         let state = self.lock();
-        let ms: f64 = state
-            .chunks
+        state
+            .queued
             .iter()
-            .filter(|c| c.tag == tag && c.rate > 0)
-            .map(|c| (c.samples.len() / self.channels) as f64 * 1000.0 / c.rate as f64)
-            .sum();
-        ms as u64
+            .find(|(t, _)| *t == tag)
+            .map_or(0, |(_, ms)| ms.max(0.0) as u64)
     }
 
     /// How many flushes there have been. A change means a discontinuity.
@@ -316,27 +442,38 @@ impl Ring {
         self.underruns.load(Ordering::Relaxed)
     }
 
+    /// Runs on the device thread: everything under the lock is a few moves,
+    /// nothing is allocated or freed, and a producer is only signalled when
+    /// one is waiting, after the lock is let go.
     fn pop(&self, rate: SampleRate, used: Vec<Sample>) -> Pop {
         let mut state = self.lock();
-        if used.capacity() > 0 && state.spare.len() < 8 {
+        if used.capacity() > 0 && state.spare.len() < state.spare.capacity() {
             state.spare.push(used);
         }
-        loop {
+        let popped = loop {
             let Some(chunk) = state.chunks.pop_front() else {
-                return if state.finished { Pop::Finished } else { Pop::Empty };
+                break if state.finished { Pop::Finished } else { Pop::Empty };
             };
             let flushes = self.flushes.load(Ordering::SeqCst);
             state.frames = state.frames.saturating_sub(chunk.samples.len() / self.channels);
-            self.changed.notify_all();
+            let ms = chunk_ms(&chunk, self.channels);
+            state.sub_queued(chunk.tag, ms);
             // made for an output that has since been replaced by one at
-            // another rate; playing it would come out at the wrong pitch
+            // another rate (and not converted: see `retime`); playing it
+            // would come out at the wrong pitch
             if chunk.rate == rate {
-                return Pop::Chunk(chunk, flushes);
+                break Pop::Chunk(chunk, flushes);
             }
-            if state.spare.len() < 8 {
+            if state.spare.len() < state.spare.capacity() {
                 state.spare.push(chunk.samples);
             }
+        };
+        let wake = state.waiting > 0;
+        drop(state);
+        if wake {
+            self.changed.notify_all();
         }
+        popped
     }
 }
 
@@ -374,6 +511,9 @@ pub struct RingSource {
     counted: usize,
     rendered: u64,
     reported: u64,
+    /// The level the sound is at, 0 to 1, and how far it moves per frame.
+    gain:     f32,
+    step:     f32,
 }
 
 impl RingSource {
@@ -381,6 +521,13 @@ impl RingSource {
     /// swapped underneath it.
     pub fn endless(ring: Arc<Ring>, channels: ChannelCount, rate: SampleRate) -> Self {
         Self::new(ring, channels, rate, true)
+    }
+
+    /// Cuts at once, so a test can check exact samples either side of one.
+    #[cfg(test)]
+    pub fn without_fades(mut self) -> Self {
+        self.step = 1.0;
+        self
     }
 
     fn new(ring: Arc<Ring>, channels: ChannelCount, rate: SampleRate, endless: bool) -> Self {
@@ -400,6 +547,8 @@ impl RingSource {
             counted: 0,
             rendered: 0,
             reported: 0,
+            gain: 1.0,
+            step: 1.0 / frames_in(FADE, rate).max(1) as f32,
         }
     }
 
@@ -418,6 +567,22 @@ impl RingSource {
         let frac = if self.cur.is_empty() { 0.0 } else { self.idx as f64 / self.cur.len() as f64 };
         let ms = self.start_ms + (self.end_ms - self.start_ms) * frac;
         self.ring.set_heard(self.tag, ms.max(0.0) as u64);
+        LAST_SOUND.store(clock(), Ordering::Relaxed);
+    }
+
+    /// Whether what is left of `cur` is from before a flush. A flush that
+    /// kept this chunk's play (`Ring::skip_to_tag`) is taken note of and the
+    /// chunk plays on.
+    fn stale(&mut self) -> bool {
+        let flushes = self.ring.flushes();
+        if flushes == self.flushes {
+            return false;
+        }
+        if self.ring.kept_tag.load(Ordering::SeqCst) == self.tag {
+            self.flushes = flushes;
+            return false;
+        }
+        true
     }
 }
 
@@ -434,33 +599,48 @@ impl Iterator for RingSource {
             if self.idx < self.cur.len() {
                 // only between frames, so left and right never trade places
                 if self.idx % channels == 0 {
-                    if self.ring.flushes() != self.flushes {
-                        self.count_rendered();
-                        self.idx = self.cur.len();
-                        self.counted = self.idx;
-                        continue;
-                    }
-                    if self.ring.held() {
-                        self.count_rendered();
-                        self.silence = GAP * channels;
-                        continue;
-                    }
-                    if self.idx % (TICK * channels) == 0 {
-                        self.note_heard();
+                    let stale = self.stale();
+                    if stale || self.ring.held() {
+                        // let the sound down over a few milliseconds of
+                        // what was playing, then cut
+                        if self.gain <= 0.0 {
+                            self.count_rendered();
+                            if stale {
+                                self.idx = self.cur.len();
+                                self.counted = self.idx;
+                            } else {
+                                self.silence = GAP * channels;
+                            }
+                            continue;
+                        }
+                        self.gain = (self.gain - self.step).max(0.0);
+                    } else {
+                        if self.gain < 1.0 {
+                            self.gain = (self.gain + self.step).min(1.0);
+                        }
+                        if self.idx % (TICK * channels) == 0 {
+                            self.note_heard();
+                        }
                     }
                 }
-                let sample = self.cur[self.idx];
+                let sample = self.cur[self.idx] * self.gain;
                 self.idx += 1;
                 return Some(sample);
             }
             self.count_rendered();
             if self.ring.held() {
+                // whatever comes after the pause comes up from silence
+                self.gain = 0.0;
                 self.silence = GAP * channels;
                 continue;
             }
             let used = std::mem::take(&mut self.cur);
             match self.ring.pop(self.rate, used) {
                 Pop::Chunk(chunk, flushes) => {
+                    if flushes != self.flushes {
+                        // the first sound after a seek or a skip
+                        self.gain = 0.0;
+                    }
                     self.flushes = flushes;
                     self.cur = chunk.samples;
                     self.idx = 0;
@@ -476,6 +656,7 @@ impl Iterator for RingSource {
                         self.ring.underruns.fetch_add(1, Ordering::Relaxed);
                         self.starving = true;
                     }
+                    self.gain = 0.0;
                     self.silence = GAP * channels;
                 }
                 Pop::Finished if !self.endless => return None,
@@ -781,7 +962,8 @@ mod tests {
 
     #[test]
     fn plays_everything_in_order_then_ends() {
-        let (mut source, _ring) = prebuffer(Counter { next: 0, len: 10_000 }, Duration::ZERO, false, None);
+        let (source, _ring) = prebuffer(Counter { next: 0, len: 10_000 }, Duration::ZERO, false, None);
+        let mut source = source.without_fades();
         let out = drain(&mut source);
         assert_eq!(out.len(), 10_000);
         assert!(out.windows(2).all(|w| w[1] == w[0] + 1.0));
@@ -789,7 +971,8 @@ mod tests {
 
     #[test]
     fn a_seek_lands_where_asked() {
-        let (mut source, ring) = prebuffer(Counter { next: 0, len: 10_000 }, Duration::ZERO, false, None);
+        let (source, ring) = prebuffer(Counter { next: 0, len: 10_000 }, Duration::ZERO, false, None);
+        let mut source = source.without_fades();
         source.next();
         source.try_seek(Duration::from_millis(3000)).unwrap();
         assert_eq!(ring.heard_ms(), 3000);
@@ -800,7 +983,8 @@ mod tests {
 
     #[test]
     fn a_direct_seek_while_paused_drops_the_old_position() {
-        let (mut source, ring) = prebuffer(Counter { next: 0, len: 10_000 }, Duration::ZERO, false, None);
+        let (source, ring) = prebuffer(Counter { next: 0, len: 10_000 }, Duration::ZERO, false, None);
+        let mut source = source.without_fades();
         while source.next() == Some(0.0) {}
         // Controls take effect between stereo frames, never between channels.
         assert_eq!(source.next(), Some(2.0));
@@ -834,7 +1018,7 @@ mod tests {
         let ring = Ring::new(2);
         let chunk = Chunk { samples: vec![1.0; 200], rate: 1000, tag: 7, start_ms: 0.0, end_ms: 100.0 };
         assert!(ring.push(chunk, None, 10_000, &|| false));
-        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000);
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
         ring.set_held(true);
         assert!((0..500).all(|_| source.next() == Some(0.0)));
         ring.set_held(false);
@@ -859,7 +1043,7 @@ mod tests {
         let ring = Ring::new(2);
         let chunk = Chunk { samples: vec![1.0; 2000], rate: 1000, tag: 3, start_ms: 0.0, end_ms: 1000.0 };
         assert!(ring.push(chunk, None, 10_000, &|| false));
-        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000);
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
         ring.set_streaming(true);
         assert!((0..10).all(|_| source.next() == Some(1.0)));
         ring.flush_at(3, 60_000);
@@ -871,6 +1055,73 @@ mod tests {
         let after = Chunk { samples: vec![2.0; 20], rate: 1000, tag: 3, start_ms: 60_000.0, end_ms: 60_010.0 };
         assert!(ring.push(after, None, 10_000, &|| false));
         assert!((0..100).any(|_| source.next() == Some(2.0)));
+    }
+
+    #[test]
+    fn a_pause_fades_out_and_a_resume_fades_back_in() {
+        let ring = Ring::new(2);
+        let chunk = Chunk { samples: vec![1.0; 4000], rate: 1000, tag: 1, start_ms: 0.0, end_ms: 2000.0 };
+        assert!(ring.push(chunk, None, 10_000, &|| false));
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000);
+        assert!((0..10).all(|_| source.next() == Some(1.0)));
+        ring.set_held(true);
+        // 20ms at 1 kHz: twenty frames on the way down, each quieter
+        let down: Vec<Sample> = (0..40).map(|_| source.next().unwrap()).collect();
+        assert!(down.chunks(2).all(|frame| frame[0] == frame[1]));
+        assert!(down.windows(3).step_by(2).all(|w| w[2] < w[0]));
+        assert!(down[0] < 1.0 && down[38] == 0.0);
+        assert!((0..200).all(|_| source.next() == Some(0.0)));
+        ring.set_held(false);
+        let mut up = Vec::new();
+        while up.len() < 40 {
+            let sample = source.next().unwrap();
+            if sample != 0.0 || !up.is_empty() {
+                up.push(sample);
+            }
+        }
+        assert!(up[0] > 0.0 && up[0] < 1.0);
+        assert!(up.windows(3).step_by(2).all(|w| w[2] >= w[0]));
+        assert!((0..10).all(|_| source.next() == Some(1.0)));
+    }
+
+    #[test]
+    fn skipping_a_tail_starts_the_next_play_and_loses_none_of_it() {
+        let ring = Ring::new(2);
+        let epoch = ring.epoch();
+        let tail = Chunk { samples: vec![1.0; 400], rate: 1000, tag: 1, start_ms: 0.0, end_ms: 200.0 };
+        let next = Chunk { samples: vec![2.0; 100], rate: 1000, tag: 2, start_ms: 0.0, end_ms: 50.0 };
+        assert!(ring.push(tail, Some(epoch), 10_000, &|| false));
+        assert!(ring.push(next, Some(epoch), 10_000, &|| false));
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
+        assert!((0..10).all(|_| source.next() == Some(1.0)));
+        assert_eq!(ring.queued_ms_of(2), 50);
+        ring.skip_to_tag(2);
+        assert_eq!(ring.heard(2), Some(0));
+        // the producer of the play that was kept is not turned away
+        let more = Chunk { samples: vec![2.0; 100], rate: 1000, tag: 2, start_ms: 50.0, end_ms: 100.0 };
+        assert!(ring.push(more, Some(epoch), 10_000, &|| false));
+        let out: Vec<Sample> = (0..400).map(|_| source.next().unwrap()).filter(|s| *s != 0.0).collect();
+        assert_eq!(out.len(), 200);
+        assert!(out.iter().all(|s| *s == 2.0));
+        // a chunk of the kept play that is already playing carries on
+        let later = Chunk { samples: vec![3.0; 100], rate: 1000, tag: 2, start_ms: 100.0, end_ms: 150.0 };
+        assert!(ring.push(later, Some(epoch), 10_000, &|| false));
+        assert_eq!(source.by_ref().find(|s| *s != 0.0), Some(3.0));
+        ring.skip_to_tag(2);
+        assert!((0..99).all(|_| source.next() == Some(3.0)));
+    }
+
+    #[test]
+    fn a_new_output_rate_converts_the_queue_instead_of_dropping_it() {
+        let ring = Ring::new(2);
+        let queued = Chunk { samples: vec![0.5; 2 * 44_100], rate: 44_100, tag: 1, start_ms: 0.0, end_ms: 1000.0 };
+        assert!(ring.push(queued, None, 1_000_000, &|| false));
+        ring.retime(48_000);
+        assert_eq!(ring.queued_ms_of(1), 1000);
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 48_000);
+        let played = (0..2 * 48_000).filter(|_| source.next().unwrap() != 0.0).count();
+        // all of it but the converter's last few frames, at the new rate
+        assert!(played > 2 * 47_800 && played <= 2 * 48_000, "played {played}");
     }
 
     #[test]

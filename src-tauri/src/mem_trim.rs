@@ -40,7 +40,13 @@ pub fn start_memory_trimmer(app: tauri::AppHandle) {
                     None => false,
                 };
 
-                if !out_of_sight {
+                // music playing from the tray is the app in use. emptying the
+                // working set then evicts the decoder, the queued audio and the
+                // device callback's own code, and the audio threads fault it all
+                // back in mid-song. only an app that is hidden AND silent is idle
+                let in_use = crate::playout::sounding(std::time::Duration::from_secs(30));
+
+                if !out_of_sight || in_use {
                     hidden_since = None;
                     trimmed_this_idle = false;
                     continue;
@@ -122,6 +128,9 @@ pub fn trim_all() {
 #[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn trim_memory() {
+    if crate::playout::sounding(std::time::Duration::from_secs(30)) {
+        return;
+    }
     trim_all();
 }
 

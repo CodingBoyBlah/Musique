@@ -722,6 +722,9 @@ fn open_output(
             "the output runs at {sample_rate} Hz; the music is converted from {SAMPLE_RATE} Hz"
         );
     }
+    // what was queued for the output this one replaces carries on here, at
+    // this one's rate, rather than being skipped over
+    ring.retime(sample_rate);
     let sink = rodio::Sink::connect_new(stream.mixer());
     sink.append(RingSource::endless(
         Arc::clone(ring),
@@ -761,7 +764,7 @@ mod tests {
         assert!(playout.ring.push(Chunk {
             samples: vec![1.0; 200], rate: 1000, tag: 1, start_ms: 0.0, end_ms: 100.0,
         }, Some(epoch), 1000, &|| false));
-        let mut source = RingSource::endless(Arc::clone(&playout.ring), 2, 1000);
+        let mut source = RingSource::endless(Arc::clone(&playout.ring), 2, 1000).without_fades();
         assert_eq!(source.next(), Some(1.0));
         assert_eq!(source.next(), Some(1.0));
         playout.loading();
@@ -806,7 +809,7 @@ mod tests {
         // No event follows a skip to an entry that's no longer in the queue.
         // This is the predicate write() uses before it queues each packet.
         assert!(!playout.awaiting_seek());
-        let mut source = RingSource::endless(Arc::clone(&playout.ring), 2, 1000);
+        let mut source = RingSource::endless(Arc::clone(&playout.ring), 2, 1000).without_fades();
         let epoch = playout.ring.epoch();
         assert!(playout.ring.push(Chunk {
             samples: vec![1.0; 200], rate: 1000, tag: 7,
