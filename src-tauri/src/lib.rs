@@ -238,12 +238,14 @@ pub fn playback_probe() -> i32 {
         player.load(SpotifyUri::Track { id: spotify_id }, true, 0);
 
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut duration_ms = 0u32;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() { eprintln!("[playback-probe] TIMEOUT - no decisive event"); return 6; }
             match tokio::time::timeout(remaining, rx.recv()).await {
                 Ok(Some(ev)) => match ev {
-                    PlayerEvent::Playing { .. } | PlayerEvent::TrackChanged { .. } => {
+                    PlayerEvent::TrackChanged { audio_item } => duration_ms = audio_item.duration_ms,
+                    PlayerEvent::Playing { .. } => {
                         eprintln!("[playback-probe] SUCCESS - audio keys granted, track is PLAYING through RodioSink. Letting 6s of audio play...");
                         // what the device pulled, second by second: the heard
                         // position has to advance in step with the clock
@@ -289,6 +291,71 @@ pub fn playback_probe() -> i32 {
                             return 7;
                         }
                         eprintln!("[playback-probe] audio reached the device, paused, resumed and seeked cleanly");
+
+                        // the join between two tracks, made the way the engine
+                        // makes it (playback::roll_on): the next track is loaded
+                        // the moment the decoder ends this one, behind the tail
+                        // still queued, and nothing is flushed. the device must
+                        // not go quiet anywhere across it
+                        let second: Option<(String,)> = sqlx::query_as("SELECT track_id FROM saved_tracks LIMIT 1 OFFSET 1").fetch_optional(&pool).await.ok().flatten();
+                        let next = second.and_then(|t| SpotifyId::from_base62(&t.0).ok());
+                        let (Some(next), true) = (next, duration_ms > 30_000) else {
+                            eprintln!("[playback-probe] no second saved track (or no duration); the join was not tried");
+                            return 0;
+                        };
+                        let next = SpotifyUri::Track { id: next };
+                        let near_end = duration_ms - 7_000;
+                        playout.seek_requested(near_end);
+                        player.seek(near_end);
+                        player.preload(next.clone());
+                        let waiting = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+                        let old_tag = loop {
+                            match tokio::time::timeout_at(waiting, rx.recv()).await {
+                                Ok(Some(PlayerEvent::EndOfTrack { play_request_id, .. })) => break play_request_id,
+                                Ok(Some(_)) => {}
+                                _ => { eprintln!("[playback-probe] FAILED - the first track never reached its end"); return 8; }
+                            }
+                        };
+                        let tail_ms = ring.queued_ms_of(old_tag);
+                        player.load(next, true, 0);
+                        playout.rolling_on(old_tag);
+
+                        let rendered = || ring.rendered_frames.load(std::sync::atomic::Ordering::Relaxed);
+                        let dry_before = ring.underruns();
+                        let flushes_before = ring.flushes();
+                        let mut new_tag = None;
+                        let mut worst_gap_ms = 0i64;
+                        let mut last = (std::time::Instant::now(), rendered());
+                        let mut joined = false;
+                        for _ in 0..240 {
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            while let Ok(ev) = rx.try_recv() {
+                                if let PlayerEvent::PlayRequestIdChanged { play_request_id } = ev {
+                                    new_tag = Some(play_request_id);
+                                }
+                            }
+                            let now = (std::time::Instant::now(), rendered());
+                            let clock_ms = now.0.duration_since(last.0).as_millis() as i64;
+                            let sound_ms = ((now.1 - last.1) * 1000 / 44_100) as i64;
+                            worst_gap_ms = worst_gap_ms.max(clock_ms - sound_ms);
+                            last = now;
+                            if new_tag.and_then(|tag| ring.heard(tag)).is_some_and(|heard| heard > 2_000) {
+                                joined = true;
+                                break;
+                            }
+                        }
+                        let dry = ring.underruns() - dry_before;
+                        let flushed = ring.flushes() - flushes_before;
+                        eprintln!(
+                            "[playback-probe] join: {tail_ms}ms of tail queued when the next track was loaded; longest stretch without sound {worst_gap_ms}ms; {dry} underruns; {flushed} flushes; next track heard: {joined}"
+                        );
+                        // the device takes sound in bursts of its own period, so
+                        // a few tens of ms of slack is the measurement, not a gap
+                        if !(joined && dry == 0 && flushed == 0 && worst_gap_ms < 80) {
+                            eprintln!("[playback-probe] FAILED - the join between tracks was not gapless");
+                            return 8;
+                        }
+                        eprintln!("[playback-probe] the next track followed the first without a gap");
                         return 0;
                     }
                     PlayerEvent::Unavailable { track_id, .. } => {
