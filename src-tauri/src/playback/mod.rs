@@ -435,6 +435,29 @@ impl PlaybackInner {
         self.session.clone()
     }
 
+    /// What spirc was playing when its session ended without being asked to:
+    /// the context, the queue in its exact order, and where it had got to.
+    /// None while the session is alive, or when nothing was playing.
+    pub fn disconnected_playback(&self) -> Option<Arc<librespot_connect::PlaybackSnapshot>> {
+        self.spirc.disconnected_playback()
+    }
+
+    /// Carry on, on this new session, with what a session that dropped was
+    /// playing: spirc's own queue and context come back as they were. This is
+    /// how a jam survives a reconnect, since its queue is spirc's, not the app's.
+    pub fn restore_playback(
+        &self,
+        snapshot: Arc<librespot_connect::PlaybackSnapshot>,
+        uri: String,
+    ) -> Result<(), AppError> {
+        self.advance.reset();
+        self.spirc.restore_playback(snapshot).map_err(spirc_err)?;
+        *self.current_uri.lock().unwrap() = Some(uri);
+        self.loaded.store(true, Ordering::Relaxed);
+        self.is_ended.store(false, Ordering::Relaxed);
+        Ok(())
+    }
+
     // which spotify context (playlist / album / artist / liked songs uri) the
     // app is about to play `track_uri` from, so the listen is reported against
     // it in spotify's recents. call before play_uri.

@@ -129,20 +129,33 @@ const SESSION_CHECK: std::time::Duration = std::time::Duration::from_secs(3);
 /// How long to leave it after a rebuild that failed (no network yet).
 const SESSION_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// What was playing when the session dropped: the track, where the listener
-/// was in it, and whether it was playing rather than paused.
-async fn interrupted(app: &AppHandle) -> Option<(String, u32, bool)> {
+/// What was playing when the session dropped.
+struct Interrupted {
+    uri:         String,
+    /// Where the listener was in it.
+    position_ms: u32,
+    /// Playing rather than paused.
+    playing:     bool,
+    /// The queue was spirc's (a jam), so it is spirc's to bring back.
+    jam:         bool,
+    /// What spirc kept of its own queue and context as the session ended.
+    snapshot:    Option<std::sync::Arc<librespot_connect::PlaybackSnapshot>>,
+}
+
+async fn interrupted(app: &AppHandle) -> Option<Interrupted> {
     let playback = app.state::<AppState>().playback.clone();
     let guard = playback.lock().await;
     let inner = guard.as_ref()?;
     if !inner.session_invalid() || !inner.loaded.load(Ordering::Relaxed) || inner.is_ended() {
         return None;
     }
-    // a jam is spotify's to restore; rejoining it is not a track to reload
-    if inner.connect_state().jam_mode {
-        return None;
-    }
-    Some((inner.current_uri()?, inner.position_ms(), inner.is_playing()))
+    Some(Interrupted {
+        uri:         inner.current_uri()?,
+        position_ms: inner.position_ms(),
+        playing:     inner.is_playing(),
+        jam:         inner.connect_state().jam_mode,
+        snapshot:    inner.disconnected_playback(),
+    })
 }
 
 /// Runs for the life of the app (see `lib.rs`).
@@ -153,7 +166,7 @@ pub async fn recover_dropped_sessions(app: AppHandle) {
         if backend(&pool).await != Backend::Spotify {
             continue;
         }
-        let Some((uri, position_ms, playing)) = interrupted(&app).await else {
+        let Some(Interrupted { uri, position_ms, playing, jam, snapshot }) = interrupted(&app).await else {
             continue;
         };
         eprintln!("[playback] the session dropped at {position_ms}ms of {uri}; reconnecting");
@@ -172,10 +185,23 @@ pub async fn recover_dropped_sessions(app: AppHandle) {
         if inner.loaded.load(Ordering::Relaxed) {
             continue;
         }
+        if jam {
+            // a jam's queue is spirc's and everyone's in it: only what spirc
+            // kept of it can put it back, in order. without that there is
+            // nothing of the app's to reload; the listener rejoins the jam
+            match snapshot.map(|snapshot| inner.restore_playback(snapshot, uri)) {
+                Some(Ok(())) => eprintln!("[playback] the jam carried on, on a new session"),
+                Some(Err(e)) => eprintln!("[playback] could not put the jam back after reconnecting: {e}"),
+                None => eprintln!("[playback] nothing was kept of the jam to put back"),
+            }
+            continue;
+        }
         if !playing {
             // paused when it dropped: pressing play loads it again from there
             continue;
         }
+        // the app's own queue: the track, from where the listener heard it
+        // to (spirc's own record is where the decoder was, seconds further on)
         match inner.play_uri(uri, position_ms) {
             Ok(()) => eprintln!("[playback] carried on from {position_ms}ms on a new session"),
             Err(e) => eprintln!("[playback] could not carry on after reconnecting: {e}"),
