@@ -912,6 +912,10 @@ impl SpircTask {
                 self.handle_activate();
                 self.load_track(snapshot.playing, snapshot.position_ms)?;
             }
+            // A volume set while the device is inactive is still its volume:
+            // `set_volume` records it in the device state and the mixer and
+            // withholds the player event, and activation then reports it.
+            SpircCommand::SetVolume(volume) => self.set_volume(volume),
             _ if !self.connect_state.is_active() => {
                 warn!("SpircCommand::{cmd:?} will be ignored while Not Active")
             }
@@ -935,7 +939,6 @@ impl SpircTask {
             SpircCommand::Repeat(repeat) => self.handle_repeat_context(repeat)?,
             SpircCommand::RepeatTrack(repeat) => self.handle_repeat_track(repeat),
             SpircCommand::SetPosition(position) => self.handle_seek(position),
-            SpircCommand::SetVolume(volume) => self.set_volume(volume),
             SpircCommand::Load(command) => {
                 self.jam_hold = false;
                 // whatever was playing is replaced; its end is no longer news
