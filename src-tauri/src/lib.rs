@@ -813,6 +813,9 @@ pub fn run() {
             // started with the app so it is signed in by the first play
             tauri::async_runtime::spawn(commands::soloist::start_if_enabled(app.handle().clone()));
 
+            // a session spotify closed mid-song is rebuilt and the song carried on
+            tauri::async_runtime::spawn(commands::playback::recover_dropped_sessions(app.handle().clone()));
+
             // background loops that just keep running
             let handle2 = app.handle().clone();
             tauri::async_runtime::spawn(auth::refresh_loop(handle2));

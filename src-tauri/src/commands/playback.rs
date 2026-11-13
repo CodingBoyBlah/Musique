@@ -115,6 +115,74 @@ async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), App
     Ok(())
 }
 
+// picking playback back up after the session drops
+//
+// Spotify's access point closes sessions now and then, and a network change
+// (wifi to ethernet, a VPN coming up, the laptop waking) takes one with it. The
+// player keeps playing what it had already downloaded and then goes quiet, and
+// until now nothing happened until the listener pressed something: the next
+// command noticed the dead session and rebuilt it. This notices by itself,
+// builds a new session, and carries on from where the listener had got to.
+
+/// How often the session is looked at.
+const SESSION_CHECK: std::time::Duration = std::time::Duration::from_secs(3);
+/// How long to leave it after a rebuild that failed (no network yet).
+const SESSION_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What was playing when the session dropped: the track, where the listener
+/// was in it, and whether it was playing rather than paused.
+async fn interrupted(app: &AppHandle) -> Option<(String, u32, bool)> {
+    let playback = app.state::<AppState>().playback.clone();
+    let guard = playback.lock().await;
+    let inner = guard.as_ref()?;
+    if !inner.session_invalid() || !inner.loaded.load(Ordering::Relaxed) || inner.is_ended() {
+        return None;
+    }
+    // a jam is spotify's to restore; rejoining it is not a track to reload
+    if inner.connect_state().jam_mode {
+        return None;
+    }
+    Some((inner.current_uri()?, inner.position_ms(), inner.is_playing()))
+}
+
+/// Runs for the life of the app (see `lib.rs`).
+pub async fn recover_dropped_sessions(app: AppHandle) {
+    loop {
+        tokio::time::sleep(SESSION_CHECK).await;
+        let pool = app.state::<AppState>().db.clone();
+        if backend(&pool).await != Backend::Spotify {
+            continue;
+        }
+        let Some((uri, position_ms, playing)) = interrupted(&app).await else {
+            continue;
+        };
+        eprintln!("[playback] the session dropped at {position_ms}ms of {uri}; reconnecting");
+        // non-interactive: never a browser tab the listener did not ask for
+        if let Err(e) = ensure_inner_with(&app, false).await {
+            eprintln!("[playback] could not reconnect yet: {e}");
+            tokio::time::sleep(SESSION_RETRY).await;
+            continue;
+        }
+        let playback = app.state::<AppState>().playback.clone();
+        let guard = playback.lock().await;
+        let Some(inner) = guard.as_ref() else {
+            continue;
+        };
+        // the listener got there first and picked something on the new session
+        if inner.loaded.load(Ordering::Relaxed) {
+            continue;
+        }
+        if !playing {
+            // paused when it dropped: pressing play loads it again from there
+            continue;
+        }
+        match inner.play_uri(uri, position_ms) {
+            Ok(()) => eprintln!("[playback] carried on from {position_ms}ms on a new session"),
+            Err(e) => eprintln!("[playback] could not carry on after reconnecting: {e}"),
+        }
+    }
+}
+
 // backend routing
 //
 // Free Spotify accounts cannot stream through librespot - Spotify gates audio
