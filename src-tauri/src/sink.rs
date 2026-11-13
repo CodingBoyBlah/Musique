@@ -180,7 +180,16 @@ impl Playout {
 }
 
 /// How often playback looks at which output the system calls its default.
-const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+/// Headphones that connect should take the music within a moment, not after
+/// the old output has played on for ten seconds.
+const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_secs(2);
+
+/// How long a full queue may go without the device taking a single frame
+/// before the output is taken to have stopped. A stream can stop asking for
+/// sound without reporting any error (a driver that hangs, a device that goes
+/// away quietly), and then nothing would ever make room again: the player
+/// would sit blocked in `write` with the music silent until restarted.
+const STALLED_AFTER: Duration = Duration::from_secs(3);
 
 /// How much sound the audio engine is asked to hold for the device, in milliseconds.
 pub const DEFAULT_BUFFER_MS: u32 = 100;
@@ -554,14 +563,27 @@ impl Sink for RodioSink {
         // Blocks while the queue is full, which is what paces the decoder.
         let limit = playout::frames_in(playout::AHEAD, output.sample_rate);
         let failed = Arc::clone(&output.failed);
-        let queued = self
-            .playout
-            .ring
-            .push(chunk, Some(epoch), limit, &|| failed.load(Ordering::Relaxed));
+        let ring = &self.playout.ring;
+        let rendered = Arc::clone(&ring.rendered_frames);
+        let rendered_before = rendered.load(Ordering::Relaxed);
+        let waiting_since = Instant::now();
+        // waited this long on a queue that is meant to be draining, and the
+        // device has not taken one frame of it
+        let stalled = || {
+            !ring.held()
+                && waiting_since.elapsed() >= STALLED_AFTER
+                && rendered.load(Ordering::Relaxed) == rendered_before
+        };
+        let queued = ring.push(chunk, Some(epoch), limit, &|| failed.load(Ordering::Relaxed) || stalled());
         if !queued && failed.load(Ordering::Relaxed) {
             let message = "The audio output stopped working".to_string();
             (self.on_error)(message.clone());
             return Err(SinkError::OnWrite(message));
+        }
+        if !queued && stalled() {
+            // opened again by the next packet; what is queued carries over
+            log::warn!("the audio output stopped playing without an error; opening it again");
+            self.output = None;
         }
         Ok(())
     }
