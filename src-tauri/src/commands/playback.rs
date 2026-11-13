@@ -222,6 +222,21 @@ pub async fn recover_dropped_sessions(app: AppHandle) {
 // It only runs when nothing is playing on the account, since loading a track
 // here would take playback away from whatever device has it.
 
+/// Whether this run is the engine probe. Playback commands from the interface
+/// are refused then: the probe plays the interface's part itself, and one that
+/// managed to load must not be able to join in.
+fn probing() -> bool {
+    static PROBING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PROBING.get_or_init(|| std::env::var_os("MUSIQUE_ENGINE_PROBE").is_some())
+}
+
+fn refuse_while_probing() -> Result<(), AppError> {
+    if probing() {
+        return Err(AppError::Playback("the engine probe is running".into()));
+    }
+    Ok(())
+}
+
 async fn probe_inner<T>(
     app: &AppHandle,
     f: impl FnOnce(&crate::playback::PlaybackInner) -> T,
@@ -404,6 +419,13 @@ pub async fn engine_probe(app: AppHandle) -> i32 {
     // had the late request restarted the track, it would be near its start
     // again and the queue would have been flushed
     let not_restarted = position + 1500 >= since_told && flushes_after == flushes_before;
+    // spotify can hand playback to another device at any moment (the listener
+    // pressing play somewhere else). the engine stopping then is it doing its
+    // job, and says nothing about the hand-off
+    if probe_inner(&app, |inner| !inner.connect_state().active).await.unwrap_or(false) {
+        eprintln!("[engine-probe] INCONCLUSIVE - another device took playback during the probe");
+        return 4;
+    }
     if !(on_next && matches!(asked, Some(Ok(()))) && playing_b.is_some() && not_restarted && dry_after == dry_before && worst_gap_ms < 80) {
         eprintln!("[engine-probe] FAILED - hand-off: on_next={on_next} playing={} not_restarted={not_restarted}", playing_b.is_some());
         return 6;
@@ -1099,6 +1121,7 @@ pub async fn warm_session_if_possible(app: AppHandle) {
 
 #[tauri::command]
 pub async fn play_track(app: AppHandle, id: String, context_uri: Option<String>) -> Result<(), AppError> {
+    refuse_while_probing()?;
     eprintln!("[playback cmd] play_track id={id} context={context_uri:?}");
 
     if let Some(soloist) = soloist(&app).await {
@@ -1146,6 +1169,7 @@ pub async fn play_track(app: AppHandle, id: String, context_uri: Option<String>)
 // actually playing to interrupt
 #[tauri::command]
 pub async fn retry_play_track(app: AppHandle, id: String, context_uri: Option<String>) -> Result<(), AppError> {
+    refuse_while_probing()?;
     if let Some(soloist) = soloist(&app).await {
         // Soloist keeps its own session; there is nothing of ours to rebuild
         return soloist.play(&crate::playback::track_uri(&id)?, 0);
@@ -1170,6 +1194,7 @@ pub async fn retry_play_track(app: AppHandle, id: String, context_uri: Option<St
 
 #[tauri::command]
 pub async fn pause_playback(app: AppHandle) -> Result<(), AppError> {
+    refuse_while_probing()?;
     if let Some(soloist) = soloist(&app).await {
         return soloist.pause();
     }
@@ -1194,6 +1219,7 @@ pub async fn pause_playback(app: AppHandle) -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn resume_playback(app: AppHandle) -> Result<(), AppError> {
+    refuse_while_probing()?;
     if let Some(soloist) = soloist(&app).await {
         // a track that played to its end has nothing left to carry on with
         return match soloist.current_uri() {
@@ -1253,6 +1279,7 @@ pub async fn resume_or_play(
     position_ms: u32,
     context_uri: Option<String>,
 ) -> Result<(), AppError> {
+    refuse_while_probing()?;
     eprintln!("[playback cmd] resume_or_play id={id} pos={position_ms}");
 
     if let Some(soloist) = soloist(&app).await {
@@ -1336,6 +1363,7 @@ pub async fn resume_or_play(
 
 #[tauri::command]
 pub async fn stop_playback(app: AppHandle) -> Result<(), AppError> {
+    refuse_while_probing()?;
     if let Some(soloist) = soloist(&app).await {
         return soloist.pause();
     }
@@ -1365,6 +1393,7 @@ pub async fn stop_playback(app: AppHandle) -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn seek_playback(app: AppHandle, position_ms: u32) -> Result<(), AppError> {
+    refuse_while_probing()?;
     if let Some(soloist) = soloist(&app).await {
         return soloist.seek(position_ms);
     }
@@ -1383,6 +1412,7 @@ pub async fn seek_playback(app: AppHandle, position_ms: u32) -> Result<(), AppEr
 // preload the next track so it kicks in instantly when the current one ends
 #[tauri::command]
 pub async fn preload_track(app: AppHandle, id: String) -> Result<(), AppError> {
+    refuse_while_probing()?;
     if soloist(&app).await.is_some() {
         // Soloist fetches what it plays itself, and anything put in its
         // queue could never be taken out again if the app's queue changed

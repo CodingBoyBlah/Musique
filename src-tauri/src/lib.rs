@@ -272,7 +272,15 @@ pub fn playback_probe() -> i32 {
                         // a seek flushes what was queued and lands where asked
                         playout.seek_requested(60_000);
                         player.seek(60_000);
-                        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+                        // the far side of a seek may have to come from the CDN;
+                        // how long that takes is the network's business. what
+                        // is checked is that it lands, and plays on from there
+                        let seek_began = std::time::Instant::now();
+                        while ring.heard_ms() < 60_400 && seek_began.elapsed() < std::time::Duration::from_secs(20) {
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        }
+                        eprintln!("[playback-probe] the seek was heard after {}ms", seek_began.elapsed().as_millis());
+                        tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
                         let after_seek = ring.heard_ms();
                         dry.push(ring.underruns());
                         eprintln!("[playback-probe] underruns after each second, after the resume and after the seek: {dry:?}");
@@ -285,7 +293,7 @@ pub fn playback_probe() -> i32 {
                         let advancing = heard.windows(2).all(|w| w[1] > w[0] + 700 && w[1] < w[0] + 1300);
                         let held = still_at.abs_diff(paused_at) < 50;
                         let resumed = resumed_to > still_at + 900;
-                        let seeked = (60_500..64_000).contains(&after_seek);
+                        let seeked = (62_000..63_500).contains(&after_seek);
                         if !(advancing && held && resumed && seeked && frames > 44_100 * 4 && ring.underruns() == 0) {
                             eprintln!("[playback-probe] FAILED - advancing={advancing} held={held} resumed={resumed} seeked={seeked}");
                             return 7;
@@ -890,9 +898,14 @@ pub fn run() {
                 // false and the frontend just paints its own solid background
 
                 // the engine probe runs with no interface: the window stays hidden
+                // and empty. a release build carries the real interface, which
+                // would otherwise load, pick up its saved queue and start
+                // issuing commands of its own in the middle of the probe
                 if std::env::var_os("MUSIQUE_ENGINE_PROBE").is_none() {
                     let _ = window.show();
                     let _ = window.set_focus();
+                } else if let Ok(blank) = "about:blank".parse() {
+                    let _ = window.navigate(blank);
                 }
 
                 // grab the HWND now, windows only, means nothing anywhere else
