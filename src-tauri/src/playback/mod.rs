@@ -926,9 +926,21 @@ pub async fn create_inner(
     };
     eprintln!("[playback] configured bitrate = {bitrate:?}");
 
+    // loudness normalisation: every track brought to the same level from the
+    // gain spotify publishes for it, so a quiet album and a loud single don't
+    // have the listener reaching for the volume. off unless turned on
+    let normalisation = auth::get_setting_value(&pool, "audio_normalisation")
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|v| v == "1");
+    eprintln!("[playback] loudness normalisation = {normalisation}");
+
     let player_config = PlayerConfig {
         bitrate,
         gapless: true,
+        normalisation,
+        normalisation_type: librespot_playback::config::NormalisationType::Auto,
         ..Default::default()
     };
     let player = Player::new(

@@ -1572,6 +1572,35 @@ pub async fn set_audio_quality(app: AppHandle, quality: String) -> Result<(), Ap
     Ok(())
 }
 
+/// Whether tracks are levelled to the same loudness.
+#[tauri::command]
+pub async fn get_audio_normalisation(app: AppHandle) -> Result<bool, AppError> {
+    let pool = app.state::<AppState>().db.clone();
+    Ok(setting_value(&pool, "audio_normalisation").await.as_deref() == Some("1"))
+}
+
+/// Turn loudness normalisation on or off. Like the bitrate, it is the
+/// player's from the moment it is built, so it takes hold with the next
+/// session: at once when nothing is playing, after this track otherwise.
+#[tauri::command]
+pub async fn set_audio_normalisation(app: AppHandle, enabled: bool) -> Result<(), AppError> {
+    let s = app.state::<AppState>();
+    let pool = s.db.clone();
+    let playback = s.playback.clone();
+    drop(s);
+
+    save_setting(&pool, "audio_normalisation", if enabled { "1" } else { "0" }).await?;
+
+    let mut guard = playback.lock().await;
+    let playing = guard.as_ref().map(|i| i.is_playing()).unwrap_or(false);
+    if !playing {
+        *guard = None;
+    } else if let Some(inner) = guard.as_ref() {
+        inner.needs_rebuild.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_audio_cache_limit(app: AppHandle) -> Result<u64, AppError> {
     let s = app.state::<AppState>();

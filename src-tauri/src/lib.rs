@@ -1142,6 +1142,8 @@ pub fn run() {
             commands::playback::preload_track,
             commands::playback::get_playback_backend,
             commands::playback::set_playback_backend,
+            commands::playback::get_audio_normalisation,
+            commands::playback::set_audio_normalisation,
             commands::soloist::soloist_status,
             commands::soloist::soloist_enable,
             commands::soloist::soloist_disable,
