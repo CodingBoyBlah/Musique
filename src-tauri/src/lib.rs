@@ -1068,7 +1068,8 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler({
+            let commands: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> = Box::new(tauri::generate_handler![
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::get_all_settings,
@@ -1224,7 +1225,20 @@ pub fn run() {
             commands::connect::remote_add_to_queue,
             commands::connect::remote_play_context,
             mem_trim::trim_memory,
-        ])
+            ]);
+            // the engine probe runs with nobody at the controls. an interface
+            // that manages to start anyway (a release build carries one) must
+            // not be able to play, or to write its own idea of the settings
+            // over the listener's
+            let probing = std::env::var_os("MUSIQUE_ENGINE_PROBE").is_some();
+            move |invoke| {
+                if probing {
+                    invoke.resolver.reject("the engine probe is running");
+                    return true;
+                }
+                commands(invoke)
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
