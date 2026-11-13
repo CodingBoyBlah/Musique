@@ -435,6 +435,18 @@ impl PlaybackInner {
         self.session.clone()
     }
 
+    /// For diagnostics: how many times the output has run dry mid-track, how
+    /// many times its queue has been flushed, and how many frames (at 44.1 kHz)
+    /// the device has actually been given.
+    pub fn audio_health(&self) -> (u64, u64, u64) {
+        let ring = &self.playout.ring;
+        (
+            ring.underruns(),
+            ring.flushes(),
+            ring.rendered_frames.load(Ordering::Relaxed),
+        )
+    }
+
     /// What spirc was playing when its session ended without being asked to:
     /// the context, the queue in its exact order, and where it had got to.
     /// None while the session is alive, or when nothing was playing.

@@ -889,8 +889,11 @@ pub fn run() {
                 // linux has no native backdrop material so backdrop_active stays
                 // false and the frontend just paints its own solid background
 
-                let _ = window.show();
-                let _ = window.set_focus();
+                // the engine probe runs with no interface: the window stays hidden
+                if std::env::var_os("MUSIQUE_ENGINE_PROBE").is_none() {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
 
                 // grab the HWND now, windows only, means nothing anywhere else
                 #[cfg(target_os = "windows")]
@@ -938,6 +941,15 @@ pub fn run() {
             // Soloist is a separate program; one the listener turned on is
             // started with the app so it is signed in by the first play
             tauri::async_runtime::spawn(commands::soloist::start_if_enabled(app.handle().clone()));
+
+            if std::env::var_os("MUSIQUE_ENGINE_PROBE").is_some() {
+                let probe = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let code = commands::playback::engine_probe(probe.clone()).await;
+                    eprintln!("[engine-probe] exit {code}");
+                    probe.exit(code);
+                });
+            }
 
             // a session spotify closed mid-song is rebuilt and the song carried on
             tauri::async_runtime::spawn(commands::playback::recover_dropped_sessions(app.handle().clone()));

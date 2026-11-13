@@ -104,7 +104,8 @@ async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), App
     };
     if rebuild {
         let vol   = read_vol(&db).await;
-        let muted = read_muted(&db).await;
+        // a probe run while something else is playing must not be heard
+        let muted = read_muted(&db).await || std::env::var_os("MUSIQUE_PROBE_SILENT").is_some();
         let inner = crate::playback::create_inner(app.clone(), db, auth, vol, muted, media_tx, interactive).await?;
         if !crate::auth::epoch_is_current(epoch) {
             inner.shutdown().await;
@@ -207,6 +208,237 @@ pub async fn recover_dropped_sessions(app: AppHandle) {
             Err(e) => eprintln!("[playback] could not carry on after reconnecting: {e}"),
         }
     }
+}
+
+// ── engine probe ────────────────────────────────────────────────────────────
+//
+// `MUSIQUE_ENGINE_PROBE=1 spotify.exe` runs the real engine - the session,
+// spirc, the player, the output - with the window left hidden and no interface
+// attached, and plays the part of the interface itself: it names the next
+// track, waits to be told the first one ended, and asks for the next the way
+// `App.tsx` does. Then it drops the session and waits for the engine to pick
+// the song back up. It checks what the device was given throughout.
+//
+// It only runs when nothing is playing on the account, since loading a track
+// here would take playback away from whatever device has it.
+
+async fn probe_inner<T>(
+    app: &AppHandle,
+    f: impl FnOnce(&crate::playback::PlaybackInner) -> T,
+) -> Option<T> {
+    let playback = app.state::<AppState>().playback.clone();
+    let guard = playback.lock().await;
+    guard.as_ref().map(f)
+}
+
+async fn probe_wait(
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>,
+    kind: &str,
+    track: &str,
+    within: std::time::Duration,
+) -> Option<serde_json::Value> {
+    let deadline = tokio::time::Instant::now() + within;
+    loop {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(event)) if event["type"] == kind && event["track_id"] == track => return Some(event),
+            Ok(Some(_)) => {}
+            _ => return None,
+        }
+    }
+}
+
+pub async fn engine_probe(app: AppHandle) -> i32 {
+    use tauri::Listener;
+    use std::time::{Duration, Instant};
+
+    let state = app.state::<AppState>();
+    let pool = state.db.clone();
+    let auth = state.auth.clone();
+    drop(state);
+
+    if backend(&pool).await != Backend::Spotify {
+        eprintln!("[engine-probe] the built-in Spotify player is not the selected backend");
+        return 2;
+    }
+    let token = match crate::auth::get_valid_token(&pool, &auth).await {
+        Ok(token) => token,
+        Err(e) => { eprintln!("[engine-probe] not signed in: {e}"); return 2; }
+    };
+    let now_playing = crate::http::client()
+        .get("https://api.spotify.com/v1/me/player")
+        .bearer_auth(&token)
+        .send()
+        .await;
+    match now_playing {
+        Ok(response) if response.status().as_u16() == 204 => {}
+        Ok(response) if response.status().is_success() => {
+            let body: serde_json::Value = response.json().await.unwrap_or_default();
+            if body["is_playing"] == true {
+                eprintln!("[engine-probe] something is playing on this account; not taking playback away from it");
+                return 4;
+            }
+        }
+        Ok(response) => { eprintln!("[engine-probe] could not read the player state ({})", response.status()); return 2; }
+        Err(e) => { eprintln!("[engine-probe] could not read the player state: {e}"); return 2; }
+    }
+
+    let tracks: Vec<(String,)> = sqlx::query_as("SELECT track_id FROM saved_tracks LIMIT 2")
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+    let [(a,), (b,)] = tracks.as_slice() else {
+        eprintln!("[engine-probe] needs two saved tracks");
+        return 2;
+    };
+    let (a, b) = (a.clone(), b.clone());
+    let (uri_a, uri_b) = match (crate::playback::track_uri(&a), crate::playback::track_uri(&b)) {
+        (Ok(a), Ok(b)) => (a, b),
+        _ => { eprintln!("[engine-probe] bad saved track ids"); return 2; }
+    };
+
+    // what the interface would be sent
+    let (tx, mut events) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
+    app.listen("player:event", move |event| {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(event.payload()) {
+            let _ = tx.send(value);
+        }
+    });
+
+    if let Err(e) = ensure_inner_with(&app, false).await {
+        eprintln!("[engine-probe] no session: {e}");
+        return 3;
+    }
+    eprintln!("[engine-probe] session up; playing {a}, then {b}");
+    let started = probe_inner(&app, |inner| inner.play_requested(uri_a.clone(), None)).await;
+    if !matches!(started, Some(Ok(()))) {
+        eprintln!("[engine-probe] FAILED - could not start the first track: {started:?}");
+        return 5;
+    }
+    if probe_wait(&mut events, "playing", &a, Duration::from_secs(25)).await.is_none() {
+        eprintln!("[engine-probe] FAILED - the first track never started");
+        return 5;
+    }
+
+    // the interface names what is next, as it does when a track starts
+    let duration_ms = {
+        let mut duration = 0;
+        for _ in 0..50 {
+            duration = probe_inner(&app, |inner| inner.connect_state().duration_ms).await.unwrap_or(0);
+            if duration > 0 { break; }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        duration
+    };
+    if duration_ms < 30_000 {
+        eprintln!("[engine-probe] FAILED - no duration for the first track ({duration_ms}ms)");
+        return 5;
+    }
+    let lined_up = probe_inner(&app, |inner| -> Result<(), AppError> {
+        inner.player.preload(crate::playback::parse_track_id(&b)?);
+        inner.set_next(uri_b.clone());
+        inner.seek((duration_ms - 9_000) as u32)
+    })
+    .await;
+    if !matches!(lined_up, Some(Ok(()))) {
+        eprintln!("[engine-probe] FAILED - could not line the next track up: {lined_up:?}");
+        return 5;
+    }
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let (dry_before, _, _) = probe_inner(&app, |inner| inner.audio_health()).await.unwrap_or_default();
+
+    // watch the device from here to a few seconds into the next track
+    let watching = app.clone();
+    let stop_watch = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop = stop_watch.clone();
+    let watch = tokio::spawn(async move {
+        let mut worst = 0i64;
+        let mut gaps: Vec<(u128, i64, u32)> = Vec::new();
+        let began = Instant::now();
+        let mut last: Option<(Instant, u64)> = None;
+        while !stop.load(Ordering::Relaxed) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let Some((_, _, frames)) = probe_inner(&watching, |inner| inner.audio_health()).await else { continue };
+            let now = (Instant::now(), frames);
+            if let Some(last) = last {
+                let clock = now.0.duration_since(last.0).as_millis() as i64;
+                let sound = (now.1.saturating_sub(last.1) * 1000 / 44_100) as i64;
+                worst = worst.max(clock - sound);
+                if clock - sound > 30 {
+                    let at = probe_inner(&watching, |inner| inner.position_ms()).await.unwrap_or(0);
+                    gaps.push((began.elapsed().as_millis(), clock - sound, at));
+                }
+            }
+            last = Some(now);
+        }
+        (worst, gaps, began)
+    });
+
+    if probe_wait(&mut events, "end_of_track", &a, Duration::from_secs(30)).await.is_none() {
+        eprintln!("[engine-probe] FAILED - the interface was never told the first track ended");
+        return 6;
+    }
+    let told_at = Instant::now();
+    // by now the engine is on the next track by itself
+    let engine_on = probe_inner(&app, |inner| inner.current_uri()).await.flatten();
+    let (_, flushes_before, _) = probe_inner(&app, |inner| inner.audio_health()).await.unwrap_or_default();
+    // ...and the interface asks for it, late, exactly as App.tsx does
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let asked = probe_inner(&app, |inner| inner.play_requested(uri_b.clone(), None)).await;
+    let playing_b = probe_wait(&mut events, "playing", &b, Duration::from_secs(15)).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    stop_watch.store(true, Ordering::Relaxed);
+    let (worst_gap_ms, gaps, began) = watch.await.unwrap_or((i64::MAX, Vec::new(), Instant::now()));
+    eprintln!(
+        "[engine-probe] quiet stretches (ms into the watch, ms quiet, position): {gaps:?}; the interface was told at {}ms",
+        told_at.duration_since(began).as_millis(),
+    );
+    let (dry_after, flushes_after, _) = probe_inner(&app, |inner| inner.audio_health()).await.unwrap_or_default();
+    let position = probe_inner(&app, |inner| inner.position_ms()).await.unwrap_or(0);
+    let since_told = told_at.elapsed().as_millis() as u32;
+    eprintln!(
+        "[engine-probe] hand-off: engine was on {engine_on:?} when the interface was told; its late play_track -> {asked:?}; next track at {position}ms {since_told}ms later; longest stretch without sound {worst_gap_ms}ms; {} underruns; {} flushes",
+        dry_after - dry_before,
+        flushes_after - flushes_before,
+    );
+    let on_next = engine_on.as_deref() == Some(uri_b.as_str());
+    // had the late request restarted the track, it would be near its start
+    // again and the queue would have been flushed
+    let not_restarted = position + 1500 >= since_told && flushes_after == flushes_before;
+    if !(on_next && matches!(asked, Some(Ok(()))) && playing_b.is_some() && not_restarted && dry_after == dry_before && worst_gap_ms < 80) {
+        eprintln!("[engine-probe] FAILED - hand-off: on_next={on_next} playing={} not_restarted={not_restarted}", playing_b.is_some());
+        return 6;
+    }
+    eprintln!("[engine-probe] the engine moved on by itself, gaplessly, and the interface's late request left it alone");
+
+    // the session drops mid-song
+    let before = probe_inner(&app, |inner| inner.position_ms()).await.unwrap_or(0);
+    let dropped_at = Instant::now();
+    probe_inner(&app, |inner| inner.session().shutdown()).await;
+    eprintln!("[engine-probe] session shut down at {before}ms; waiting for the engine to carry on");
+    while events.try_recv().is_ok() {}
+    let back = probe_wait(&mut events, "playing", &b, Duration::from_secs(45)).await;
+    let took = dropped_at.elapsed().as_millis();
+    let healthy = probe_inner(&app, |inner| !inner.session_invalid()).await.unwrap_or(false);
+    let first = probe_inner(&app, |inner| inner.position_ms()).await.unwrap_or(0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let second = probe_inner(&app, |inner| inner.position_ms()).await.unwrap_or(0);
+    eprintln!(
+        "[engine-probe] recovery: back after {took}ms on a {} session, at {first}ms (dropped at {before}ms), {second}ms two seconds later",
+        if healthy { "live" } else { "dead" },
+    );
+    let _ = probe_inner(&app, |inner| inner.pause()).await;
+    let recovered = back.is_some() && healthy && first + 500 >= before && first < before + 20_000 && second > first + 1200;
+    if !recovered {
+        eprintln!("[engine-probe] FAILED - playback did not carry on after the session dropped");
+        return 7;
+    }
+    eprintln!("[engine-probe] the song carried on from where it was after the session dropped");
+
+    let playback = app.state::<AppState>().playback.clone();
+    if let Some(inner) = playback.lock().await.take() {
+        inner.shutdown().await;
+    }
+    0
 }
 
 // backend routing
