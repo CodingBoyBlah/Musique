@@ -1165,6 +1165,7 @@ pub async fn create_inner(
                 }
                 PlayerEvent::Stopped { .. }
                 | PlayerEvent::EndOfTrack { .. }
+                | PlayerEvent::AudioKeyUnavailable { .. }
                 | PlayerEvent::Unavailable { .. } => {
                     is_playing_atomic_clone.store(false, Ordering::Relaxed);
                     is_ended_clone.store(true, Ordering::Relaxed);
@@ -1204,6 +1205,12 @@ pub async fn create_inner(
                 PlayerEvent::EndOfTrack { track_id, .. } =>
                     Some(PlayerMsg::EndOfTrack { track_id: track_id.to_id().ok() }),
                 PlayerEvent::Unavailable { track_id, .. } =>
+                    Some(PlayerMsg::Unavailable { track_id: track_id.to_id().ok() }),
+                // Spotify refused the key for this track and the player has
+                // stopped rather than play on without it. To the interface
+                // that is a track that did not load: it retries once on a
+                // fresh session, which is what gets a key channel back
+                PlayerEvent::AudioKeyUnavailable { track_id, .. } =>
                     Some(PlayerMsg::Unavailable { track_id: track_id.to_id().ok() }),
                 PlayerEvent::TimeToPreloadNextTrack { track_id, .. } =>
                     Some(PlayerMsg::TimeToPreloadNextTrack { track_id: track_id.to_id().ok() }),

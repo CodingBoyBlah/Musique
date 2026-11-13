@@ -116,8 +116,8 @@ async fn receive_data(
     if measure_throughput {
         let duration = Instant::now().duration_since(request_time).as_millis();
         if actual_length > 0 && duration > 0 {
-            let throughput = ONE_SECOND.as_millis() as usize * actual_length / duration as usize;
-            file_data_tx.send(ReceivedData::Throughput(throughput))?;
+            let throughput = ONE_SECOND.as_millis() * actual_length as u128 / duration;
+            file_data_tx.send(ReceivedData::Throughput(throughput as usize))?;
         }
     }
 
@@ -426,10 +426,7 @@ pub(super) async fn audio_file_fetch(
     let (file_data_tx, mut file_data_rx) = mpsc::unbounded_channel();
 
     {
-        let requested_range = Range::new(
-            initial_request.offset,
-            initial_request.offset + initial_request.length,
-        );
+        let requested_range = Range::new(initial_request.offset, initial_request.length);
 
         let mut download_status = shared
             .download_status

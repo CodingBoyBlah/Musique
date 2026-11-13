@@ -156,7 +156,8 @@ impl ListenTracker {
             PlayerEvent::Stopped { play_request_id, .. } =>
                 self.close_if(*play_request_id, Some(End::EndPlay)),
             // nothing played, nothing to report
-            PlayerEvent::Unavailable { play_request_id, .. } =>
+            PlayerEvent::Unavailable { play_request_id, .. }
+            | PlayerEvent::AudioKeyUnavailable { play_request_id, .. } =>
                 self.close_if(*play_request_id, None),
             _ => {}
         }

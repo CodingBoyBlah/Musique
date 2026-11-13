@@ -362,6 +362,23 @@ impl<'ct> ConnectState {
         SpotifyUri::from_uri(next).ok()
     }
 
+    /// The first `count` tracks and episodes that would play after the current
+    /// one, skipping delimiters and tracks known to be unavailable. Empty while
+    /// the current track repeats.
+    pub fn upcoming_tracks(&self, count: usize) -> Vec<SpotifyUri> {
+        if self.repeat_track() {
+            return Vec::new();
+        }
+
+        self.next_tracks()
+            .iter()
+            .filter(|track| !track.is_unavailable())
+            .filter_map(|track| SpotifyUri::from_uri(&track.uri).ok())
+            .filter(|uri| matches!(uri, SpotifyUri::Track { .. } | SpotifyUri::Episode { .. }))
+            .take(count)
+            .collect()
+    }
+
     pub fn has_next_tracks(&self, min: Option<usize>) -> bool {
         if let Some(min) = min {
             self.next_tracks().len() >= min

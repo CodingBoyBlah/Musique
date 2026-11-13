@@ -125,6 +125,12 @@ librespot-core = { path = "vendor/librespot-core" }
 # playback even though storage-resolve returns 3-4 working mirrors. See
 # vendor/librespot-audio/src/fetch/mod.rs.
 librespot-audio = { path = "vendor/librespot-audio" }
+# Vendored librespot-playback 0.8.0 with player patches from crmne/librespot (each
+# open as a librespot-org pull request): a stop and a distinct event when Spotify
+# refuses an audio key (#1799), the start of upcoming tracks prefetched so a skip
+# plays at once (#1832), loads dropped once skipped past (#1845) and the key
+# prefetched for the next track only (#1846). See vendor/librespot-playback/src/player.rs.
+librespot-playback = { path = "vendor/librespot-playback" }
 # Vendored librespot-connect, patched for Spotify Jam: social-connect pushes
 # every Jam edit as a transfer of the track already playing (kept, not
 # restarted), the app needs Spirc's queue to show it, and hosts add to the Jam
