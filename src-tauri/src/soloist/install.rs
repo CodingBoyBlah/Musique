@@ -377,6 +377,32 @@ mod tests {
         assert!(accepted(Path::new("/usr/bin/soloist"), "soloist").is_err());
     }
 
+    /// Downloads Spotify's real build and asks it what it is. Needs the
+    /// network, so it only runs when asked for: `cargo test -- --ignored soloist`.
+    #[tokio::test]
+    #[ignore]
+    async fn live_download_installs_a_build_that_identifies_itself() {
+        if !supported() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("musique-soloist-live-{:016x}", rand::random::<u64>()));
+        let build = download(&root, &|_, _| {}).await.expect("download");
+        println!("soloist {} built {} digest {}", build.version, build.built, build.digest);
+        assert!(build.usable(now()));
+        assert!(build.path(&root).is_file());
+        remember(&root, "current.json", &build).await.unwrap();
+        assert_eq!(saved(&root, "current.json").await, Some(build.clone()));
+        // a second download of the same build lands on the same folder
+        let again = download(&root, &|_, _| {}).await.expect("second download");
+        assert_eq!(again.digest, build.digest);
+        if let Some(keep) = std::env::var_os("MUSIQUE_SOLOIST_KEEP") {
+            let _ = std::fs::remove_dir_all(&keep);
+            std::fs::rename(&root, &keep).unwrap();
+            return;
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     fn tarball(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast()));
         for (name, body) in entries {

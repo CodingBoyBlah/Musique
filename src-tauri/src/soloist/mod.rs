@@ -647,9 +647,12 @@ async fn run(
     let ours = builds.to_owned();
     let _ = tokio::task::spawn_blocking(move || reclaim(&ours)).await;
 
+    // Soloist starts at a level of its own (40) unless it is told otherwise
+    let volume = saved_volume(app).await.to_string();
     let mut command = tokio::process::Command::new(build.path(builds));
     command
         .args(["--device-name", name, "--api-key", key, "--ws", "127.0.0.1:0", "--cache-size", "512"])
+        .args(["--initial-volume", &volume])
         .arg("--data-dir")
         .arg(data)
         .arg("--cache-dir")
@@ -1038,6 +1041,76 @@ mod tests {
             play.observe(&json!({"type": "playback_changed", "status": "playing"}), 0),
             vec![Out::Event(PlayerMsg::Playing { track_id: id(A), position_ms: 0 })]
         );
+    }
+
+    /// Starts Spotify's real player the way `run` does, with a key that is
+    /// not one, and talks to its local API as far as that goes without an
+    /// account. Point `MUSIQUE_SOLOIST_EXE` at a downloaded `soloist` and run
+    /// `cargo test -- --ignored soloist`.
+    #[tokio::test]
+    #[ignore]
+    async fn live_the_real_player_listens_where_it_says_and_speaks_the_protocol() {
+        let Some(exe) = std::env::var_os("MUSIQUE_SOLOIST_EXE") else {
+            return;
+        };
+        let data = std::env::temp_dir().join(format!("musique-soloist-run-{:016x}", rand::random::<u64>()));
+        std::fs::create_dir_all(&data).unwrap();
+        let mut command = tokio::process::Command::new(exe);
+        command
+            .args(["--device-name", "Musique Soloist (test)", "--api-key", "not-a-real-key", "--ws", "127.0.0.1:0", "--cache-size", "512", "--initial-volume", "50"])
+            .arg("--data-dir")
+            .arg(&data)
+            .arg("--cache-dir")
+            .arg(data.join("cache"))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000);
+        let mut child = command.spawn().unwrap();
+        keep_output(data.join("soloist-output.log"), "not-a-real-key".into(), &mut child);
+
+        let started = Instant::now();
+        let port = loop {
+            if let Some(exit) = child.try_wait().unwrap() {
+                let output = std::fs::read_to_string(data.join("soloist-output.log")).unwrap_or_default();
+                panic!("soloist exited before listening ({exit}):
+{output}");
+            }
+            let port = std::fs::read_to_string(data.join("ws.port")).ok().and_then(|text| text.trim().parse::<u16>().ok());
+            if let Some(port) = port.filter(|port| *port != 0) {
+                break port;
+            }
+            assert!(started.elapsed() < START_LIMIT, "no ws.port");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        assert_eq!(std::fs::read_to_string(data.join("ws.addr")).unwrap().trim(), "127.0.0.1");
+
+        let mut socket = connect(port).await.unwrap();
+        let hello = tokio::time::timeout(Duration::from_secs(5), receive(&mut socket)).await.unwrap().unwrap();
+        println!("on connect: {hello}");
+        assert_eq!(hello["type"], "auth_state");
+        assert_eq!(hello["logged_in"], false);
+
+        send(&mut socket, json!({"command": "get_auth_state"})).await.unwrap();
+        let state = tokio::time::timeout(Duration::from_secs(5), receive(&mut socket)).await.unwrap().unwrap();
+        println!("get_auth_state: {state}");
+        assert_eq!(state["type"], "auth_state");
+
+        // nobody is signed in, so a play is refused, in the documented shape
+        send(&mut socket, json!({"command": "play", "uri": A})).await.unwrap();
+        let refused = tokio::time::timeout(Duration::from_secs(5), receive(&mut socket)).await.unwrap().unwrap();
+        println!("play: {refused}");
+        assert_eq!(refused["type"], "error");
+
+        child.kill().await.unwrap();
+        let _ = child.wait().await;
+        let output = std::fs::read_to_string(data.join("soloist-output.log")).unwrap_or_default();
+        println!("its output:
+{output}");
+        assert!(!output.contains("not-a-real-key"));
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     #[test]
