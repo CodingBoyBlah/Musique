@@ -420,6 +420,12 @@ impl PlaybackInner {
     /// registered, kept answering remote commands, and kept rewriting its
     /// credentials cache - which then got picked up as "cached credentials" on
     /// the next sign-in and put the old account straight back.
+    /// Stops what the player is playing, at once. For a player about to be
+    /// replaced, before its slower `shutdown`.
+    pub fn stop_playing(&self) {
+        self.player.stop();
+    }
+
     pub async fn shutdown(&self) {
         // report the track that was playing before the session goes away
         self.listens.close_and_flush(std::time::Duration::from_secs(3)).await;

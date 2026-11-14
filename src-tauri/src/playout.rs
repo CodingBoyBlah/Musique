@@ -385,6 +385,27 @@ impl Ring {
         self.lock().epoch
     }
 
+    /// Puts audio an output had taken from the queue and not yet played back
+    /// at its front, so the output opened next carries on from the same
+    /// sample: one closed while paused (`sink::IDLE_CLOSE`) or swapped for
+    /// another device. What a flush has since made stale is left out.
+    fn put_back(&self, taken: Vec<(Chunk, u64)>) {
+        let flushes = self.flushes();
+        let kept = self.kept_tag.load(Ordering::SeqCst);
+        let mut state = self.lock();
+        for (chunk, taken_at) in taken.into_iter().rev() {
+            if chunk.samples.is_empty() || (taken_at != flushes && chunk.tag != kept) {
+                continue;
+            }
+            state.frames += chunk.samples.len() / self.channels;
+            let ms = chunk_ms(&chunk, self.channels);
+            state.add_queued(chunk.tag, ms);
+            state.chunks.push_front(chunk);
+        }
+        drop(state);
+        self.changed.notify_all();
+    }
+
     /// The producer is out of audio. Blocks until there is a reason to carry on
     /// (a seek); false when the listener is gone instead.
     fn finish_and_wait(&self, epoch: u64) -> bool {
@@ -841,6 +862,28 @@ impl Drop for RingSource {
         self.count_rendered();
         if !self.endless {
             self.ring.close();
+            return;
+        }
+        // the output is going and the queue stays: what this one took and
+        // did not play goes back for the next
+        let channels = (self.channels as usize).max(1);
+        let mut taken = Vec::with_capacity(self.ahead.len() + 1);
+        if self.idx < self.cur.len() && self.idx % channels == 0 && !self.stale() {
+            let played = self.idx as f64 / self.cur.len() as f64;
+            taken.push((
+                Chunk {
+                    samples:  self.cur[self.idx..].to_vec(),
+                    rate:     self.rate,
+                    tag:      self.tag,
+                    start_ms: self.start_ms + (self.end_ms - self.start_ms) * played,
+                    end_ms:   self.end_ms,
+                },
+                self.flushes,
+            ));
+        }
+        taken.extend(self.ahead.drain(..));
+        if !taken.is_empty() {
+            self.ring.put_back(taken);
         }
     }
 }
@@ -1155,6 +1198,56 @@ mod tests {
         let played = (0..1000).filter(|_| source.next() == Some(1.0)).count();
         assert_eq!(played, 200);
         assert!(ring.heard(7).is_some());
+    }
+
+    #[test]
+    fn an_output_closed_while_paused_hands_back_what_it_had_not_played() {
+        // the same pause and resume, once on one output and once with the
+        // output closed and another opened in between: the same sound
+        let listen = |reopen: bool| {
+            let ring = Ring::new(2);
+            for n in 0..6u32 {
+                let start = f64::from(n) * 100.0;
+                let chunk = Chunk {
+                    samples:  vec![f32::from(n as u8 + 1); 200],
+                    rate:     1000,
+                    tag:      4,
+                    start_ms: start,
+                    end_ms:   start + 100.0,
+                };
+                assert!(ring.push(chunk, None, 10_000, &|| false));
+            }
+            let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
+            let mut heard: Vec<Sample> = (0..100).filter_map(|_| source.next()).collect();
+            ring.set_held(true);
+            assert!((0..50).all(|_| source.next() == Some(0.0)));
+            if reopen {
+                drop(source);
+                source = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
+            }
+            ring.set_held(false);
+            heard.extend((0..2000).filter_map(|_| source.next()).filter(|s| *s != 0.0));
+            heard
+        };
+        let kept = listen(false);
+        let reopened = listen(true);
+        assert_eq!(reopened.len(), kept.len());
+        assert_eq!(reopened, kept);
+        assert_eq!(reopened.last().copied(), Some(6.0));
+        assert!(reopened.windows(2).all(|pair| pair[0] <= pair[1]));
+    }
+
+    #[test]
+    fn audio_from_before_a_flush_is_not_handed_back() {
+        let ring = Ring::new(2);
+        let chunk = Chunk { samples: vec![1.0; 2000], rate: 1000, tag: 3, start_ms: 0.0, end_ms: 1000.0 };
+        assert!(ring.push(chunk, None, 10_000, &|| false));
+        let mut source = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
+        assert!((0..10).all(|_| source.next() == Some(1.0)));
+        ring.flush_at(3, 60_000);
+        drop(source);
+        let mut next = RingSource::endless(Arc::clone(&ring), 2, 1000).without_fades();
+        assert!((0..500).all(|_| next.next() == Some(0.0)));
     }
 
     #[test]

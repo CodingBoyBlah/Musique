@@ -111,6 +111,19 @@ async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), App
             inner.shutdown().await;
             return Err(AppError::Auth("Account changed; playback cancelled".into()));
         }
+        // the player of a session that died plays on through what it had
+        // downloaded, which carries the listener over the reconnect. left
+        // running it would be heard under the new one, so it stops the
+        // moment the new one is ready, and where it got to is kept for the
+        // new one to carry on from (`recover_dropped_sessions`)
+        if let Some(old) = guard.take() {
+            if let Some(uri) = old.current_uri() {
+                *REPLACED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some((uri, old.position_ms(), std::time::Instant::now()));
+            }
+            old.stop_playing();
+            tauri::async_runtime::spawn(async move { old.shutdown().await });
+        }
         *guard = Some(inner);
     }
     Ok(())
@@ -159,6 +172,16 @@ async fn interrupted(app: &AppHandle) -> Option<Interrupted> {
     })
 }
 
+/// The track a replaced player was on, and where it had got to when it was
+/// stopped. Only good for a moment.
+static REPLACED: std::sync::Mutex<Option<(String, u32, std::time::Instant)>> = std::sync::Mutex::new(None);
+
+/// Where the replaced player had got to in `uri`, if it was on it just now.
+fn replaced_at(uri: &str) -> Option<u32> {
+    let replaced = REPLACED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()?;
+    (replaced.0 == uri && replaced.2.elapsed() < std::time::Duration::from_secs(30)).then_some(replaced.1)
+}
+
 /// Runs for the life of the app (see `lib.rs`).
 pub async fn recover_dropped_sessions(app: AppHandle) {
     loop {
@@ -202,7 +225,9 @@ pub async fn recover_dropped_sessions(app: AppHandle) {
             continue;
         }
         // the app's own queue: the track, from where the listener heard it
-        // to (spirc's own record is where the decoder was, seconds further on)
+        // to (spirc's own record is where the decoder was, seconds further on).
+        // the old player played on while the new session came up
+        let position_ms = replaced_at(&uri).filter(|at| *at >= position_ms).unwrap_or(position_ms);
         match inner.play_uri(uri, position_ms) {
             Ok(()) => eprintln!("[playback] carried on from {position_ms}ms on a new session"),
             Err(e) => eprintln!("[playback] could not carry on after reconnecting: {e}"),
@@ -455,6 +480,42 @@ pub async fn engine_probe(app: AppHandle) -> i32 {
         return 7;
     }
     eprintln!("[engine-probe] the song carried on from where it was after the session dropped");
+    // the old session's player must not be playing on under the new one
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let outputs = crate::sink::open_outputs();
+    if outputs > 1 {
+        eprintln!("[engine-probe] FAILED - {outputs} outputs open after the session was rebuilt; the old player plays on");
+        return 7;
+    }
+    eprintln!("[engine-probe] one output open after the rebuild");
+
+    // paused long enough, the output closes; the next play opens it again
+    // and carries on from the same place
+    let closes = crate::sink::idle_closes();
+    let (underruns, _, _) = probe_inner(&app, |inner| inner.audio_health()).await.unwrap_or((0, 0, 0));
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let paused_at = probe_inner(&app, |inner| inner.position_ms()).await.unwrap_or(0);
+    tokio::time::sleep(crate::sink::IDLE_CLOSE + Duration::from_secs(3)).await;
+    let closed = crate::sink::idle_closes() > closes;
+    while events.try_recv().is_ok() {}
+    let _ = probe_inner(&app, |inner| inner.resume()).await;
+    let resumed_at = Instant::now();
+    let back = probe_wait(&mut events, "playing", &b, Duration::from_secs(10)).await;
+    let took = resumed_at.elapsed().as_millis();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let first = probe_inner(&app, |inner| inner.position_ms()).await.unwrap_or(0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let second = probe_inner(&app, |inner| inner.position_ms()).await.unwrap_or(0);
+    let (underruns_after, _, _) = probe_inner(&app, |inner| inner.audio_health()).await.unwrap_or((0, 0, 0));
+    let _ = probe_inner(&app, |inner| inner.pause()).await;
+    eprintln!(
+        "[engine-probe] idle close: closed={closed}; resumed in {took}ms at {first}ms (paused at {paused_at}ms), {second}ms two seconds later, underruns {underruns} -> {underruns_after}",
+    );
+    if !closed || back.is_none() || first + 300 < paused_at || first > paused_at + 1500 || second < first + 1200 || underruns_after > underruns {
+        eprintln!("[engine-probe] FAILED - the output did not close while paused, or did not carry on after");
+        return 8;
+    }
+    eprintln!("[engine-probe] the output closed while paused and carried on from the same place on resume");
 
     let playback = app.state::<AppState>().playback.clone();
     if let Some(inner) = playback.lock().await.take() {

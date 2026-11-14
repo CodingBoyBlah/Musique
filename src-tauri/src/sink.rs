@@ -289,9 +289,91 @@ struct Track {
     fresh: bool,
 }
 
+/// How long the output stays open with nothing heard (paused, stopped, or
+/// another device playing) before it is closed. An open stream keeps the
+/// audio device and its thread working on silence, and on Windows it holds a
+/// power request that keeps the computer from going to sleep. Long enough
+/// that a pause and resume never waits on a device opening.
+pub const IDLE_CLOSE: Duration = Duration::from_secs(20);
+/// How often the keeper looks.
+const KEEPER_TICK: Duration = Duration::from_millis(500);
+
+/// Outputs closed for being idle, since the app started.
+static IDLE_CLOSES: AtomicU64 = AtomicU64::new(0);
+/// Outputs open right now. More than one means two players are being heard.
+static OPEN_OUTPUTS: AtomicU64 = AtomicU64::new(0);
+
+pub fn idle_closes() -> u64 {
+    IDLE_CLOSES.load(Ordering::Relaxed)
+}
+
+pub fn open_outputs() -> u64 {
+    OPEN_OUTPUTS.load(Ordering::Relaxed)
+}
+
+/// Whether an output open for `open_for`, with sound last heard within the
+/// idle span or not, should be closed.
+fn idle_for_good(open_for: Duration, sounding: bool) -> bool {
+    open_for >= IDLE_CLOSE && !sounding
+}
+
+/// Holds an output's stream on a thread of its own, which closes it once
+/// nothing has been heard for `IDLE_CLOSE`. The sink is only called while
+/// librespot has audio for it, so it cannot be the one to notice. Dropping
+/// the keeper closes the stream and waits until it is closed.
+struct StreamKeeper {
+    close:  Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<thread::JoinHandle<()>>,
+    idle:   Arc<AtomicBool>,
+}
+
+impl StreamKeeper {
+    fn keep(stream: rodio::OutputStream) -> Self {
+        let (close, closed) = std::sync::mpsc::channel::<()>();
+        let idle = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&idle);
+        let opened = Instant::now();
+        OPEN_OUTPUTS.fetch_add(1, Ordering::Relaxed);
+        let thread = thread::Builder::new()
+            .name("audio-output".into())
+            .spawn(move || {
+                loop {
+                    match closed.recv_timeout(KEEPER_TICK) {
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            if idle_for_good(opened.elapsed(), playout::sounding(IDLE_CLOSE)) {
+                                log::info!("nothing heard for {}s; closing the audio output", IDLE_CLOSE.as_secs());
+                                flag.store(true, Ordering::Release);
+                                IDLE_CLOSES.fetch_add(1, Ordering::Relaxed);
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                drop(stream);
+                OPEN_OUTPUTS.fetch_sub(1, Ordering::Relaxed);
+            })
+            .ok();
+        Self { close: Some(close), thread, idle }
+    }
+
+    fn idle(&self) -> bool {
+        self.idle.load(Ordering::Acquire)
+    }
+}
+
+impl Drop for StreamKeeper {
+    fn drop(&mut self) {
+        drop(self.close.take());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 struct Output {
     sink: rodio::Sink,
-    _stream: rodio::OutputStream,
+    _stream: StreamKeeper,
     /// The name of the device the stream was opened on.
     device_name: Option<String>,
     /// Set from the audio thread when the stream dies (device unplugged).
@@ -307,6 +389,11 @@ struct Output {
 impl Output {
     fn failed(&self) -> bool {
         self.failed.load(Ordering::Relaxed)
+    }
+
+    /// Closed for having nothing to play; opened again by the next play.
+    fn idle(&self) -> bool {
+        self._stream.idle()
     }
 }
 
@@ -471,6 +558,9 @@ impl RodioSink {
     fn ensure_open(&mut self) -> SinkResult<()> {
         if self.output.as_ref().is_some_and(Output::failed) {
             log::warn!("the audio output stopped working; reopening it");
+            self.output = None;
+        }
+        if self.output.as_ref().is_some_and(Output::idle) {
             self.output = None;
         }
         if self.output.is_some() {
@@ -804,7 +894,7 @@ fn open_output(
     sink.play();
     let output = Output {
         sink,
-        _stream: stream,
+        _stream: StreamKeeper::keep(stream),
         device_name,
         failed,
         sample_rate,
@@ -817,6 +907,13 @@ fn open_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_output_closes_only_after_a_long_quiet() {
+        assert!(!idle_for_good(Duration::from_secs(1), false), "a stream just opened, before its first sound");
+        assert!(!idle_for_good(IDLE_CLOSE * 3, true));
+        assert!(idle_for_good(IDLE_CLOSE, false));
+    }
 
     #[test]
     fn audio_output_and_app_state_are_thread_safe() {
