@@ -11,6 +11,7 @@ pub mod media;
 pub mod playback;
 pub mod podcasts;
 pub mod profile;
+pub mod receivers;
 pub mod settings;
 pub mod share;
 pub mod social;

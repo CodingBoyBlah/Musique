@@ -38,7 +38,7 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "migrate
 tokio = { version = "1", features = ["full"] }
 thiserror = "1"
 keyring = "2"
-reqwest = { version = "0.12", features = ["rustls-tls", "json", "cookies", "http2", "gzip", "brotli"], default-features = false }
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "cookies", "http2", "gzip", "brotli", "blocking"], default-features = false }
 base64 = "0.22"
 dotenvy = "0.15"
 rand = "0.8"
@@ -88,6 +88,21 @@ tokio-tungstenite = { version = "0.28", default-features = false, features = ["c
 zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
 tar = { version = "0.4", default-features = false }
 sysinfo = { version = "0.36", default-features = false, features = ["system"] }
+# Speakers on the local network (src/zeroconf.rs, src/cast.rs, src/sonos.rs):
+# Spotify Connect receivers over mDNS and ZeroConf addUser, and Google Cast
+# speakers over Cast v2, whose TLS and device certificate are checked against
+# Google's Cast roots. All but mdns-sd were already in the tree.
+mdns-sd = "0.21"
+anyhow = "1"
+aes = "0.8"
+ctr = "0.9"
+hmac = "0.12"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+md5_digest = { package = "md-5", version = "0.10" }
+rand09 = { package = "rand", version = "0.9", default-features = false, features = ["thread_rng"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+ring = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.7"

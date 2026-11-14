@@ -597,6 +597,7 @@ pub async fn logout(app: AppHandle) -> Result<(), AppError> {
     // Soloist is signed in as the account that is leaving: stop it and take
     // its key and pairing with it
     crate::commands::soloist::forget(&app).await;
+    crate::commands::receivers::LAN.clear();
 
     purge_account_data(&app, Purge::Everything).await;
 

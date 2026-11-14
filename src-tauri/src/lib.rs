@@ -647,6 +647,9 @@ pub fn audio_probe() -> i32 {
 mod db;
 mod discord;
 mod episode_audio;
+mod cast;
+mod sonos;
+mod zeroconf;
 mod eq;
 mod errors;
 mod http;
@@ -1215,6 +1218,9 @@ pub fn run() {
             commands::theme::get_wallpaper_data_url,
             commands::theme::get_system_accent,
             commands::connect::get_devices,
+            commands::receivers::discover_receivers,
+            commands::receivers::get_receivers,
+            commands::receivers::activate_receiver,
             commands::connect::get_playback_state,
             commands::connect::transfer_playback,
             commands::connect::remote_play,
