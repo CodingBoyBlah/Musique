@@ -11,6 +11,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# Soloist's sound read back for the visualizer (src/soloist/native/windows.cpp)
+cc = "1"
 
 [dependencies]
 # macos-private-api: REQUIRED for `transparent: true` to work on macOS.

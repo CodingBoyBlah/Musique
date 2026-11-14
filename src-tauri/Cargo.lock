@@ -5433,6 +5433,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bytes",
+ "cc",
  "cipher",
  "cpal",
  "ctr",

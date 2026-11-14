@@ -110,6 +110,21 @@ impl Collector {
     }
 }
 
+/// Hands over interleaved sound from a worker thread (Soloist's capture),
+/// scaled by `gain`. Not for a realtime thread: it waits for the lock.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn push(interleaved: &[f32], channels: usize, gain: f32) {
+    let channels = channels.max(1);
+    let mut tap = TAP.lock().unwrap_or_else(|p| p.into_inner());
+    for frame in interleaved.chunks_exact(channels) {
+        let mono = frame.iter().sum::<f32>() / channels as f32 * gain;
+        tap.samples.push_back(if mono.is_finite() { mono } else { 0.0 });
+    }
+    let excess = tap.samples.len().saturating_sub(KEPT);
+    tap.samples.drain(..excess);
+    tap.last = Some(Instant::now());
+}
+
 /// The newest `count` samples, with silence where there are fewer, and all
 /// silence once the sound has stopped.
 fn window(count: usize) -> Vec<f32> {

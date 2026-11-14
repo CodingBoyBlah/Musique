@@ -18,6 +18,7 @@
 //! other backends. Soloist gives no PCM, so nothing here touches the audio.
 
 pub mod install;
+mod capture;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -667,10 +668,12 @@ async fn run(
     // the child prints are never written to the app's own log.
     let mut child = command.spawn().map_err(|e| format!("Could not start Soloist: {e}"))?;
     keep_output(data.join("soloist-output.log"), key.to_string(), &mut child);
+    // what it plays, read back for the visualizer while one is watching
+    let capture = capture::Capture::start(child.id(), volume.parse().unwrap_or(80));
 
     let outcome = tokio::select! {
         _ = stopped.changed() => Ok(Ran::Ended(End::Stopped)),
-        outcome = drive(app, shared, name, builds, data, build, &mut child, inbox) => outcome,
+        outcome = drive(app, shared, name, builds, data, build, &mut child, inbox, &capture) => outcome,
     };
     let _ = child.kill().await;
     let _ = child.wait().await;
@@ -689,6 +692,7 @@ async fn drive(
     build: &Build,
     child: &mut tokio::process::Child,
     inbox: &mut mpsc::UnboundedReceiver<Value>,
+    capture: &capture::Capture,
 ) -> Result<Ran, String> {
     let started = Instant::now();
     let port = loop {
@@ -809,6 +813,7 @@ async fn drive(
                     log::warn!("soloist refused a command: {}", message["message"].as_str().unwrap_or_default());
                     continue;
                 }
+                capture.update(&message);
                 let outs = shared.play().observe(&message, unix_ms());
                 for out in outs {
                     match out {
