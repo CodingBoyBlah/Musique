@@ -585,6 +585,8 @@ pub struct RingSource {
     /// after the queue has played out. (Left out under test, where exact
     /// samples are compared while other tests move its settings.)
     eq:       Option<crate::eq::Equalizer>,
+    /// Gathers what is heard for the visualizer, while one is watching.
+    vis:      crate::vis::Collector,
     /// Sound is flowing. False from a dry ring until enough is queued again.
     flowing:  bool,
     /// `GAP`s of silence played waiting for a starting stream to queue up.
@@ -627,6 +629,7 @@ impl RingSource {
             gain: 1.0,
             step: 1.0 / frames_in(FADE, rate).max(1) as f32,
             eq: (!cfg!(test)).then(|| crate::eq::Equalizer::new(rate)),
+            vis: crate::vis::Collector::default(),
             flowing: false,
             waited: 0,
         }
@@ -719,6 +722,9 @@ impl Iterator for RingSource {
                     Some(eq) => eq.process(self.idx % channels, self.cur[self.idx]),
                     None => self.cur[self.idx],
                 } * self.gain;
+                if crate::vis::on() {
+                    self.vis.add(self.idx % channels, channels, sample);
+                }
                 self.idx += 1;
                 return Some(sample);
             }

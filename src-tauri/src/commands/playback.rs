@@ -1609,6 +1609,23 @@ pub async fn set_equalizer(app: AppHandle, enabled: bool, gains: Vec<f32>) -> Re
     Ok(equalizer_state())
 }
 
+/// Starts or stops the visualizer's stream: `visualizer:frame` events sixty
+/// times a second with the spectrum (75 bands and their peak caps, 0 to 1)
+/// and the oscilloscope (`points` values, -1 to 1) of what is being heard.
+/// Silent while everything is at rest, and free when stopped.
+#[tauri::command]
+pub async fn set_visualizer(app: AppHandle, enabled: bool, points: Option<usize>) -> Result<(), AppError> {
+    crate::vis::stream(app, enabled, points.unwrap_or(150));
+    Ok(())
+}
+
+/// One visualizer frame, for an interface that draws on its own clock.
+#[tauri::command]
+pub async fn get_visualizer_frame(points: Option<usize>) -> Result<crate::vis::Frame, AppError> {
+    crate::vis::wanted();
+    Ok(crate::vis::frame(points.unwrap_or(150)))
+}
+
 /// "linear" or "cubic": how the volume slider maps to loudness.
 #[tauri::command]
 pub async fn get_volume_curve() -> Result<String, AppError> {

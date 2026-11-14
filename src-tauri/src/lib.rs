@@ -651,6 +651,7 @@ mod cast;
 mod sonos;
 mod zeroconf;
 mod eq;
+mod vis;
 mod errors;
 mod http;
 mod internal;
@@ -1148,6 +1149,8 @@ pub fn run() {
             commands::playback::preload_track,
             commands::playback::get_playback_backend,
             commands::playback::set_playback_backend,
+            commands::playback::set_visualizer,
+            commands::playback::get_visualizer_frame,
             commands::playback::get_equalizer,
             commands::playback::set_equalizer,
             commands::playback::get_volume_curve,
