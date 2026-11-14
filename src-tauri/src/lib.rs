@@ -652,8 +652,6 @@ mod sonos;
 mod zeroconf;
 mod eq;
 mod instance;
-mod thumbbar;
-mod vis;
 mod errors;
 mod http;
 mod internal;
@@ -954,12 +952,6 @@ pub fn run() {
             // kick off the media-controls thread (souvlaki)
             let media_tx = media_controls::start(app.handle().clone(), main_hwnd);
 
-            // previous / play / next under the window's taskbar preview
-            #[cfg(windows)]
-            if let Some(hwnd) = main_hwnd {
-                thumbbar::install(app.handle(), hwnd);
-            }
-
             // database + auth setup
             //
             // This block_on runs before the event loop starts, so every
@@ -1190,8 +1182,6 @@ pub fn run() {
             commands::playback::preload_track,
             commands::playback::get_playback_backend,
             commands::playback::set_playback_backend,
-            commands::playback::set_visualizer,
-            commands::playback::get_visualizer_frame,
             commands::playback::get_equalizer,
             commands::playback::set_equalizer,
             commands::playback::get_volume_curve,

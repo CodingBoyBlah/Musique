@@ -11,8 +11,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-# Soloist's sound read back for the visualizer (src/soloist/native/windows.cpp)
-cc = "1"
 
 [dependencies]
 # macos-private-api: REQUIRED for `transparent: true` to work on macOS.
@@ -108,21 +106,11 @@ ring = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.7"
-# the taskbar thumbnail toolbar's glyphs (src/thumbbar), drawn at whatever
-# size the desktop's scaling asks for
-tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 windows-sys = { version = "0.60", features = [
     "Win32_System_Threading",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_UI_Shell",
     "Win32_System_Registry",
-    "Win32_Foundation",
-    "Win32_Graphics_Gdi",
-    "Win32_System_Com",
-    "Win32_System_LibraryLoader",
-    "Win32_UI_Accessibility",
-    "Win32_UI_HiDpi",
-    "Win32_UI_WindowsAndMessaging",
 ] }
 
 # Unix (macOS + Linux): libc powers two crash-safety mechanisms.
