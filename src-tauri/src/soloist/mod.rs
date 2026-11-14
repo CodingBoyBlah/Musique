@@ -668,6 +668,7 @@ async fn run(
     // the child prints are never written to the app's own log.
     let mut child = command.spawn().map_err(|e| format!("Could not start Soloist: {e}"))?;
     keep_output(data.join("soloist-output.log"), key.to_string(), &mut child);
+    raise_priority(&child);
     // what it plays, read back for the visualizer while one is watching
     let capture = capture::Capture::start(child.id(), volume.parse().unwrap_or(80));
 
@@ -679,6 +680,23 @@ async fn run(
     let _ = child.wait().await;
     outcome
 }
+
+/// Soloist's stream is fed by threads at normal priority, so on a busy
+/// machine one that wakes late leaves a hole in the music. Above normal is
+/// enough to be served first without ever starving the desktop, as realtime
+/// could in a player whose code is not ours.
+#[cfg(windows)]
+fn raise_priority(child: &tokio::process::Child) {
+    use windows_sys::Win32::System::Threading::{SetPriorityClass, ABOVE_NORMAL_PRIORITY_CLASS};
+    let Some(handle) = child.raw_handle() else { return };
+    // SAFETY: the handle is the live child's, owned by `child` for this call
+    if unsafe { SetPriorityClass(handle as _, ABOVE_NORMAL_PRIORITY_CLASS) } == 0 {
+        log::debug!("soloist stays at normal priority: {}", std::io::Error::last_os_error());
+    }
+}
+
+#[cfg(not(windows))]
+fn raise_priority(_child: &tokio::process::Child) {}
 
 /// Wait for the child to listen, then relay between it and the app until
 /// something ends the session.
@@ -937,6 +955,21 @@ fn reclaim(builds: &Path) {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn the_player_runs_above_normal_priority() {
+        use windows_sys::Win32::System::Threading::{GetPriorityClass, ABOVE_NORMAL_PRIORITY_CLASS};
+        let mut child = tokio::process::Command::new("cmd")
+            .args(["/C", "ping -n 3 127.0.0.1 >NUL"])
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        super::raise_priority(&child);
+        let class = unsafe { GetPriorityClass(child.raw_handle().unwrap() as _) };
+        let _ = child.kill().await;
+        assert_eq!(class, ABOVE_NORMAL_PRIORITY_CLASS);
+    }
+
     use super::*;
 
     const A: &str = "spotify:track:aaaaaaaaaaaaaaaaaaaaaa";
