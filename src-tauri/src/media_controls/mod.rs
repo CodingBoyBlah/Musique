@@ -134,6 +134,7 @@ pub fn start(app: AppHandle, hwnd_raw: Option<isize>) -> mpsc::SyncSender<MediaM
                         }
                         last_pos = position_ms;
                         last_playing = true;
+                        crate::thumbbar::update(true, true);
                         discord.now_playing(
                             title.clone(),
                             artist.clone(),
@@ -154,6 +155,7 @@ pub fn start(app: AppHandle, hwnd_raw: Option<isize>) -> mpsc::SyncSender<MediaM
                         last_pos = position_ms;
                         last_playing = true;
                         discord.set_state(position_ms, true);
+                        crate::thumbbar::update(true, true);
                     }
                     MediaMsg::Paused { position_ms } => {
                         if let Some(c) = controls.as_mut() {
@@ -164,6 +166,7 @@ pub fn start(app: AppHandle, hwnd_raw: Option<isize>) -> mpsc::SyncSender<MediaM
                         last_pos = position_ms;
                         last_playing = false;
                         discord.set_state(position_ms, false);
+                        crate::thumbbar::update(true, false);
                     }
                     MediaMsg::Stopped => {
                         if let Some(c) = controls.as_mut() {
@@ -176,6 +179,7 @@ pub fn start(app: AppHandle, hwnd_raw: Option<isize>) -> mpsc::SyncSender<MediaM
                                 duration: None,
                             });
                         }
+                        crate::thumbbar::update(false, false);
                         last_playing = false;
                         discord.clear();
                     }

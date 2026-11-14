@@ -651,6 +651,7 @@ mod cast;
 mod sonos;
 mod zeroconf;
 mod eq;
+mod thumbbar;
 mod vis;
 mod errors;
 mod http;
@@ -922,6 +923,12 @@ pub fn run() {
 
             // kick off the media-controls thread (souvlaki)
             let media_tx = media_controls::start(app.handle().clone(), main_hwnd);
+
+            // previous / play / next under the window's taskbar preview
+            #[cfg(windows)]
+            if let Some(hwnd) = main_hwnd {
+                thumbbar::install(app.handle(), hwnd);
+            }
 
             // database + auth setup
             //
