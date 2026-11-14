@@ -229,6 +229,52 @@ fn search_key(epoch: u64, query: &str, types: &str) -> String {
 {query}")
 }
 
+/// The catalogue (songs, artists, albums) and the rest (playlists, shows,
+/// episodes), asked for side by side and put back together. Spotify answers
+/// the two halves sooner than all six types in one request: a median of about
+/// 600 ms against 700-760 (`search_probe`).
+fn split_types(types: &str) -> Option<(String, String)> {
+    let (catalogue, rest): (Vec<&str>, Vec<&str>) = types
+        .split(',')
+        .map(str::trim)
+        .filter(|kind| !kind.is_empty())
+        .partition(|kind| matches!(*kind, "track" | "artist" | "album"));
+    (!catalogue.is_empty() && !rest.is_empty()).then(|| (catalogue.join(","), rest.join(",")))
+}
+
+async fn search_once(token: &str, query: &str, types: &str) -> Result<SpSearchResponse, AppError> {
+    let mut url = url::Url::parse(&format!("{BASE}/search")).unwrap();
+    url.query_pairs_mut()
+        .append_pair("q",     query)
+        .append_pair("type",  types)
+        .append_pair("limit", "20");
+    spotify::spotify_get(token, url.as_str()).await
+}
+
+async fn search_split(token: &str, query: &str, types: &str) -> Result<SpSearchResponse, AppError> {
+    let Some((catalogue, rest)) = split_types(types) else {
+        return search_once(token, query, types).await;
+    };
+    let (first, second) = tokio::join!(search_once(token, query, &catalogue), search_once(token, query, &rest));
+    let (first, second) = match (first, second) {
+        (Ok(first), Ok(second)) => (first, second),
+        // the songs are what a search is for; playlists failing leaves them
+        (Ok(first), Err(e)) => {
+            eprintln!("[search] playlists, shows and episodes failed: {e}");
+            return Ok(first);
+        }
+        (Err(e), _) => return Err(e),
+    };
+    Ok(SpSearchResponse {
+        tracks:    first.tracks.or(second.tracks),
+        artists:   first.artists.or(second.artists),
+        albums:    first.albums.or(second.albums),
+        playlists: second.playlists.or(first.playlists),
+        shows:     second.shows.or(first.shows),
+        episodes:  second.episodes.or(first.episodes),
+    })
+}
+
 #[tauri::command]
 pub async fn search(
     app:   AppHandle,
@@ -247,13 +293,7 @@ pub async fn search(
     }
     let token = tok(&app).await?;
 
-    let mut url = url::Url::parse(&format!("{BASE}/search")).unwrap();
-    url.query_pairs_mut()
-        .append_pair("q",     &query)
-        .append_pair("type",  t)
-        .append_pair("limit", "20");
-
-    let raw: SpSearchResponse = spotify::spotify_get(&token, url.as_str()).await?;
+    let raw = search_split(&token, &query, t).await?;
 
     let result = SearchResults {
         artists: raw.artists.as_ref()
@@ -309,6 +349,77 @@ pub async fn search(
     }));
 
     Ok(result)
+}
+
+/// `MUSIQUE_ENGINE_PROBE=1 MUSIQUE_SEARCH_PROBE=1 spotify.exe` times the
+/// search the interface makes, asked for in one request and split in two run
+/// side by side, against the live Web API. Read-only. (Measured 2026-11-14:
+/// medians of 700-759 ms in one, 600-611 ms in two. Three requests, or one
+/// per type, gained no more and had a slower tail.)
+pub async fn search_probe(app: AppHandle) -> i32 {
+    use std::time::Instant;
+    let token = match tok(&app).await {
+        Ok(token) => token,
+        Err(e) => { eprintln!("[search-probe] not signed in: {e}"); return 2; }
+    };
+    let ask = |types: &'static str, query: String| {
+        let token = token.clone();
+        async move {
+            let mut url = url::Url::parse(&format!("{BASE}/search")).unwrap();
+            url.query_pairs_mut().append_pair("q", &query).append_pair("type", types).append_pair("limit", "20");
+            spotify::spotify_get::<serde_json::Value>(&token, url.as_str()).await.map(drop)
+        }
+    };
+    let queries = [
+        "daft punk", "radiohead creep", "lofi beats", "taylor swift", "moonlight sonata", "the weeknd",
+        "jazz piano", "kendrick lamar", "fleetwood mac", "ambient", "bad bunny", "chopin nocturne",
+    ];
+    let (mut whole, mut split) = (Vec::new(), Vec::new());
+    for round in 0..2 {
+        for (n, query) in queries.iter().enumerate() {
+            // a different query each round, so neither form meets a warm cache
+            let query = format!("{query}{}", if round == 0 { "" } else { " live" });
+            let one = || async {
+                let at = Instant::now();
+                ask("track,artist,album,playlist,show,episode", query.clone()).await.map(|_| at.elapsed())
+            };
+            let two = || async {
+                let at = Instant::now();
+                let (a, b) = tokio::join!(
+                    ask("track,artist,album", query.clone()),
+                    ask("playlist,show,episode", query.clone()),
+                );
+                a.and(b).map(|_| at.elapsed())
+            };
+            let (a, b) = if n % 2 == 0 { (one().await, two().await) } else { let b = two().await; (one().await, b) };
+            match (a, b) {
+                (Ok(a), Ok(b)) => { whole.push(a.as_millis()); split.push(b.as_millis()); }
+                (a, b) => { eprintln!("[search-probe] {query:?} failed: {:?} {:?}", a.err(), b.err()); return 3; }
+            }
+        }
+    }
+    let median = |v: &mut Vec<u128>| { v.sort_unstable(); v[v.len() / 2] };
+    eprintln!("[search-probe] one request: median {} ms {:?}", median(&mut whole.clone()), whole);
+    eprintln!("[search-probe] split in two: median {} ms {:?}", median(&mut split.clone()), split);
+    // the merged answer the interface gets has every kind in it
+    match search_split(&token, "daft punk", "track,artist,album,playlist,show,episode").await {
+        Ok(raw) => {
+            let counts = [
+                raw.tracks.as_ref().map_or(0, |p| p.items.len()),
+                raw.artists.as_ref().map_or(0, |p| p.items.len()),
+                raw.albums.as_ref().map_or(0, |p| p.items.len()),
+                raw.playlists.as_ref().map_or(0, |p| p.items.len()),
+                raw.shows.as_ref().and_then(|p| p["items"].as_array().map(Vec::len)).unwrap_or(0),
+                raw.episodes.as_ref().and_then(|p| p["items"].as_array().map(Vec::len)).unwrap_or(0),
+            ];
+            eprintln!("[search-probe] merged answer: tracks, artists, albums, playlists, shows, episodes = {counts:?}");
+            if counts[0] == 0 || counts[3] == 0 {
+                return 3;
+            }
+        }
+        Err(e) => { eprintln!("[search-probe] merged search failed: {e}"); return 3; }
+    }
+    0
 }
 
 #[tauri::command]
@@ -730,6 +841,18 @@ where
 mod search_tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_search_splits_the_catalogue_from_the_rest_only_when_it_asks_for_both() {
+        assert_eq!(
+            split_types("track,artist,album,playlist,show,episode"),
+            Some(("track,artist,album".into(), "playlist,show,episode".into()))
+        );
+        assert_eq!(split_types("track, playlist"), Some(("track".into(), "playlist".into())));
+        assert_eq!(split_types("track,artist,album"), None);
+        assert_eq!(split_types("playlist"), None);
+        assert_eq!(split_types(""), None);
+    }
 
     fn results(name: &str) -> SearchResults {
         SearchResults {

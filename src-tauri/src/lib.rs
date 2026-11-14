@@ -964,7 +964,11 @@ pub fn run() {
             if std::env::var_os("MUSIQUE_ENGINE_PROBE").is_some() {
                 let probe = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    let code = commands::playback::engine_probe(probe.clone()).await;
+                    let code = if std::env::var_os("MUSIQUE_SEARCH_PROBE").is_some() {
+                        commands::spotify::search_probe(probe.clone()).await
+                    } else {
+                        commands::playback::engine_probe(probe.clone()).await
+                    };
                     eprintln!("[engine-probe] exit {code}");
                     probe.exit(code);
                 });
