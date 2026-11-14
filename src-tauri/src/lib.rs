@@ -651,6 +651,7 @@ mod cast;
 mod sonos;
 mod zeroconf;
 mod eq;
+mod instance;
 mod thumbbar;
 mod vis;
 mod errors;
@@ -848,6 +849,22 @@ pub fn run() {
     let _ = dotenvy::from_filename("../.env");
     let _ = dotenvy::from_filename(".env");
 
+    // one copy at a time: a second would sign in a second session as the same
+    // Connect device and the two would knock each other off. the engine probe
+    // runs beside the app on purpose, headless
+    let _instance = if std::env::var_os("MUSIQUE_ENGINE_PROBE").is_none() {
+        match instance::claim() {
+            Some(instance::Claim::Second) => {
+                eprintln!("[instance] Musique is already running; showing it");
+                return;
+            }
+            Some(instance::Claim::First(guard)) => Some(guard),
+            None => None,
+        }
+    } else {
+        None
+    };
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -920,6 +937,19 @@ pub fn run() {
                     main_hwnd = window.hwnd().ok().map(|h| h.0 as isize);
                 }
             }
+
+            // another launch asks this copy to come forward instead
+            let shown = app.handle().clone();
+            instance::on_show(move || {
+                let app = shown.clone();
+                let _ = shown.run_on_main_thread(move || {
+                    if let Some(w) = app.get_webview_window("main") {
+                        w.unminimize().ok();
+                        w.show().ok();
+                        w.set_focus().ok();
+                    }
+                });
+            });
 
             // kick off the media-controls thread (souvlaki)
             let media_tx = media_controls::start(app.handle().clone(), main_hwnd);
