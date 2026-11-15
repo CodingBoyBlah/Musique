@@ -41,6 +41,12 @@ pub struct HomeSection {
 pub struct HomeFeed {
     pub greeting: Option<String>,
     pub sections: Vec<HomeSection>,
+    /// the untitled "shorts" grid at the top of spotify's home: the user's
+    /// recent and heavy-rotation playlists, albums, artists and liked songs.
+    /// liked songs comes through as kind "collection". `default` keeps feeds
+    /// cached before this field existed readable.
+    #[serde(default)]
+    pub shortcuts: Vec<HomeItem>,
 }
 
 /// first artwork url anywhere in the usual spots
@@ -109,14 +115,42 @@ pub(crate) fn item_from(v: &Value) -> Option<HomeItem> {
     Some(HomeItem { kind: kind.into(), id: id.to_string(), name, subtitle, image_url: image(d) })
 }
 
+/// a shortcut tile: an ordinary item, or the liked songs collection, whose
+/// uri (`spotify:user:<name>:collection` / `spotify:collection:tracks`) the
+/// plain parser rejects
+fn shortcut_from(v: &Value) -> Option<HomeItem> {
+    if let Some(item) = item_from(v) {
+        return Some(item);
+    }
+    let d = get(v, &["content", "data"]).or_else(|| get(v, &["itemV2", "data"])).unwrap_or(v);
+    let uri = get_str(d, &["uri"]).or_else(|| get_str(v, &["uri"]))?;
+    uri.contains(":collection").then(|| HomeItem {
+        kind:      "collection".into(),
+        id:        "liked-songs".into(),
+        name:      "Liked Songs".into(),
+        subtitle:  None,
+        image_url: None,
+    })
+}
+
+fn is_shortcuts_section(s: &Value) -> bool {
+    get_str(s, &["data", "__typename"]).is_some_and(|t| t.contains("Short"))
+}
+
 pub(crate) fn feed_from(data: &Value) -> HomeFeed {
     let greeting = get_str(data, &["home", "greeting", "transformedLabel"])
         .or_else(|| get_str(data, &["home", "greeting", "text"]))
         .map(str::to_string);
-    let sections = get(data, &["home", "sectionContainer", "sections", "items"])
-        .and_then(|x| x.as_array())
+    let raw = get(data, &["home", "sectionContainer", "sections", "items"]).and_then(|x| x.as_array());
+    let shortcuts: Vec<HomeItem> = raw
+        .and_then(|secs| secs.iter().find(|s| is_shortcuts_section(s)))
+        .and_then(|s| get(s, &["sectionItems", "items"])?.as_array())
+        .map(|items| items.iter().filter_map(shortcut_from).collect())
+        .unwrap_or_default();
+    let sections = raw
         .map(|secs| {
             secs.iter()
+                .filter(|s| !is_shortcuts_section(s))
                 .filter_map(|s| {
                     let title = get_str(s, &["data", "title", "transformedLabel"])
                         .or_else(|| get_str(s, &["data", "title", "text"]))
@@ -136,7 +170,7 @@ pub(crate) fn feed_from(data: &Value) -> HomeFeed {
                 .collect()
         })
         .unwrap_or_default();
-    HomeFeed { greeting, sections }
+    HomeFeed { greeting, sections, shortcuts }
 }
 
 /// the home feed, cached half an hour and served stale when pathfinder is down
@@ -160,7 +194,7 @@ pub async fn get_home_feed(app: AppHandle, time_zone: Option<String>) -> Result<
         )
         .await?;
         let feed = feed_from(&data);
-        if feed.sections.is_empty() {
+        if feed.sections.is_empty() && feed.shortcuts.is_empty() {
             return Err(AppError::NotFound("home feed came back empty".into()));
         }
         Ok(feed)
@@ -178,6 +212,15 @@ mod tests {
           "home": {
             "greeting": {"transformedLabel": "Good evening"},
             "sectionContainer": {"sections": {"items": [
+              {
+                "uri": "spotify:section:shorts",
+                "data": {"__typename": "HomeShortsSectionData"},
+                "sectionItems": {"items": [
+                  {"uri": "spotify:user:me:collection", "content": {"data": {"__typename": "LikedSongs", "uri": "spotify:user:me:collection"}}},
+                  {"uri": "spotify:playlist:pl1", "content": {"data": {"uri": "spotify:playlist:pl1", "name": "Road Trip",
+                    "images": {"items": [{"sources": [{"url": "https://img/p", "width": 300}]}]}}}}
+                ]}
+              },
               {
                 "uri": "spotify:section:0JQ5DAqbMKFHOzuVTgTizF",
                 "data": {"__typename": "HomeGenericSectionData", "title": {"transformedLabel": "Made For You"}},
@@ -208,5 +251,8 @@ mod tests {
         assert_eq!(s.items[0].name, "Daily Mix 1");
         assert_eq!(s.items[0].image_url.as_deref(), Some("https://img/300"));
         assert_eq!(s.items[1].subtitle.as_deref(), Some("Band A"));
+        assert_eq!(feed.shortcuts.len(), 2);
+        assert_eq!(feed.shortcuts[0].kind, "collection");
+        assert_eq!(feed.shortcuts[1].name, "Road Trip");
     }
 }

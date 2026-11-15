@@ -10,16 +10,21 @@ const ROUTE: Partial<Record<HomeItem["kind"], string>> = {
   show: "show",
 };
 
-/* spotify's own home shelves - daily mixes, daylist, discover weekly, release
-radar and the rest of made-for-you. best effort: if the feed can't be read,
-this renders nothing and the local shelves below carry the page. */
-export function HomeFeedShelves() {
-  const { data } = useQuery({
+// shared by the shelves and the speed dial, which reads its shortcuts
+export function useHomeFeed() {
+  return useQuery({
     queryKey: ["library", "home-feed"],
     queryFn: () => getHomeFeed(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"),
     staleTime: 30 * 60_000,
     retry: false,
   });
+}
+
+/* spotify's own home shelves - daily mixes, daylist, discover weekly, release
+radar and the rest of made-for-you. best effort: if the feed can't be read,
+this renders nothing and the local shelves below carry the page. */
+export function HomeFeedShelves() {
+  const { data } = useHomeFeed();
   if (!data) return null;
   return (
     <>

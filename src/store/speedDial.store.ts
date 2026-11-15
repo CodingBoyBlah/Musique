@@ -25,7 +25,7 @@ export interface SpeedDialEntry {
 interface SpeedDialStore {
   entries: SpeedDialEntry[];
   recordEntry: (entry: Omit<SpeedDialEntry, "timestamp" | "lastPlayedAt" | "playCount"> & { playCount?: number }) => void;
-  recordTrack: (track: TrackItem, contextId?: string | null) => void;
+  recordTrack: (track: TrackItem, contextId?: string | null, contextUri?: string | null) => void;
   recordAlbum: (album: { id: string; name: string; image_url?: string | null }) => void;
   recordPlaylist: (playlist: { id: string; name: string; image_url?: string | null }) => void;
   recordArtist: (artist: { id: string; name: string; image_url?: string | null }) => void;
@@ -72,8 +72,33 @@ export const useSpeedDialStore = create<SpeedDialStore>()(
         });
       },
 
-      recordTrack: (track, contextId) => {
+      recordTrack: (track, contextId, contextUri) => {
         if (!track || !track.id) return;
+
+        /* a song from a playlist counts as a play of the playlist, not of the
+        song - otherwise every playlist session floods the dial with loose
+        tracks. the entry was written when the playlist was opened or played
+        (it carries the name and art); without one there's nothing to show. */
+        const playlistId = contextUri?.startsWith("spotify:playlist:")
+          ? contextUri.slice("spotify:playlist:".length)
+          : null;
+        if (playlistId) {
+          const existing = get().entries.find((e) => e.id === `playlist-${playlistId}`);
+          if (existing) get().recordEntry(existing);
+          return;
+        }
+        if (contextUri?.startsWith("spotify:album:") && track.album?.id === contextUri.slice("spotify:album:".length)) {
+          get().recordAlbum({ id: track.album.id, name: track.album.name, image_url: track.album.image_url });
+          return;
+        }
+        const artistCtx = contextUri?.startsWith("spotify:artist:") ? contextUri.slice("spotify:artist:".length) : null;
+        if (artistCtx) {
+          const existing = get().entries.find((e) => e.id === `artist-${artistCtx}`);
+          if (existing) {
+            get().recordEntry(existing);
+            return;
+          }
+        }
 
         // If playing in Liked Songs context
         if (contextId === "liked-songs" || contextId === "liked") {

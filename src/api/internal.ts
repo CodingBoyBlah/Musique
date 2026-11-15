@@ -86,7 +86,8 @@ export const getExtractedColors = (imageUrls: string[]): Promise<(ExtractedColor
   invoke("get_extracted_colors", { imageUrls });
 
 export interface HomeItem {
-  kind: "playlist" | "album" | "artist" | "show" | "episode" | "track";
+  // "collection" = liked songs; only appears in shortcuts
+  kind: "playlist" | "album" | "artist" | "show" | "episode" | "track" | "collection";
   id: string;
   name: string;
   subtitle: string | null;
@@ -96,6 +97,8 @@ export interface HomeItem {
 export interface HomeFeed {
   greeting: string | null;
   sections: { id: string; title: string; items: HomeItem[] }[];
+  // spotify's own speed dial: recent / heavy-rotation playlists, albums, artists
+  shortcuts?: HomeItem[];
 }
 
 // spotify's personalised home (daily mixes, daylist, made for you...)

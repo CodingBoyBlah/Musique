@@ -274,8 +274,8 @@ Home recs so they're cached before the user gets there
           updateNowPlaying(currentTrack, 0);
 
           // Update dynamic speed dial
-          const activeContextId = useQueueStore.getState().contextId;
-          useSpeedDialStore.getState().recordTrack(currentTrack, activeContextId);
+          const { contextId: activeContextId, contextUri: activeContextUri } = useQueueStore.getState();
+          useSpeedDialStore.getState().recordTrack(currentTrack, activeContextId, activeContextUri);
           // behavioural signal for the taste engine
           trackStarted(currentTrack, "player", activeContextId);
           if (usePrefsStore.getState().notifyOnTrack)
