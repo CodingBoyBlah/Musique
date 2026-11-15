@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, RotateCcw, ChevronDown, Info, Minus, Plus } from "@/lib/icons";
@@ -27,6 +28,14 @@ import { toast } from "../store/toast.store";
 import { errMsg } from "../lib/err";
 import { useUIStore } from "../store/ui.store";
 import { setDiscordEnabled, requestNotificationPermission } from "../api/media";
+import {
+  soloistStatus,
+  soloistEnable,
+  soloistDisable,
+  soloistForget,
+  type SoloistState,
+  type SoloistStatus,
+} from "../api/soloist";
 import {
   lastfmStatus,
   lastfmSaveApi,
@@ -1067,6 +1076,246 @@ function LastfmCard() {
   );
 }
 
+/* Spotify's Soloist plays on this computer in place of the built-in player:
+   the same flow as Spotifast's. Get a personal key from Spotify, the app
+   downloads the player from Spotify, then it is chosen once in a Spotify app's
+   device list (the app also tries to sign it in by itself). */
+const SOLOIST_KEY_URL = "https://developer.spotify.com/dashboard/soloist";
+
+function SoloistStep({ n, children }: { n: number; children: React.ReactNode }) {
+  return (
+    <li style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 13, lineHeight: 1.6, color: "var(--color-text)" }}>
+      <span className="tnum" style={{ fontWeight: 700, color: "var(--color-text-dim)", minWidth: 14 }}>{n}</span>
+      <span>{children}</span>
+    </li>
+  );
+}
+
+function SoloistNote({ children, danger }: { children: React.ReactNode; danger?: boolean }) {
+  return (
+    <p role={danger ? "alert" : undefined} style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: danger ? "var(--color-danger)" : "var(--color-text-dim)" }}>
+      {children}
+    </p>
+  );
+}
+
+const STEPS_STYLE: React.CSSProperties = { margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 };
+const ROW_STYLE: React.CSSProperties = { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" };
+const CAPTION_STYLE: React.CSSProperties = { fontSize: 12, color: "var(--color-text-dim)" };
+
+function SoloistCard() {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["soloist"], queryFn: soloistStatus });
+  const [setup, setSetup] = useState(false);
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // status changes are pushed while it downloads, starts and signs in
+  useEffect(() => {
+    const off = listen<SoloistStatus>("soloist:status", (e) => {
+      qc.setQueryData<SoloistState>(["soloist"], (old) => (old ? { ...old, status: e.payload } : old));
+      if (e.payload.state === "ready" || e.payload.state === "off") qc.invalidateQueries({ queryKey: ["soloist"] });
+    });
+    return () => {
+      off.then((f) => f());
+    };
+  }, [qc]);
+
+  async function run(action: () => Promise<SoloistState>) {
+    setErr(null);
+    setBusy(true);
+    try {
+      qc.setQueryData(["soloist"], await action());
+      setKey("");
+      setSetup(false);
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!data) return null;
+  const status = data.status;
+  const keyField = (
+    <>
+      <ol style={STEPS_STYLE}>
+        <SoloistStep n={1}>
+          Copy your key from{" "}
+          <a href={SOLOIST_KEY_URL} target="_blank" rel="noreferrer" style={{ color: "var(--color-accent)", textDecoration: "none", fontWeight: 500 }}>
+            Spotify's Soloist page
+          </a>
+          .
+        </SoloistStep>
+        <SoloistStep n={2}>Paste it here.</SoloistStep>
+      </ol>
+      <Field label="Soloist key">
+        <input
+          type="password"
+          value={key}
+          onChange={(e) => setKey(e.currentTarget.value)}
+          placeholder={data.has_key ? "•••••••• (saved)" : "Paste your Soloist key"}
+          disabled={busy}
+          autoComplete="off"
+          spellCheck={false}
+          aria-label="Soloist key"
+          className="settings-input"
+          style={inputStyle}
+        />
+      </Field>
+      <div style={ROW_STYLE}>
+        <PrimaryBtn onClick={() => run(() => soloistEnable(key.trim() || undefined))} disabled={busy || (!key.trim() && !data.has_key)}>
+          {busy ? "Starting…" : "Download Soloist"}
+        </PrimaryBtn>
+        <GhostBtn
+          subtle
+          onClick={() => {
+            setSetup(false);
+            setErr(null);
+          }}
+          disabled={busy}
+        >
+          Not now
+        </GhostBtn>
+      </div>
+    </>
+  );
+
+  let body: React.ReactNode;
+  if (!data.supported || status.state === "unsupported") {
+    body = <SoloistNote>Spotify doesn't publish Soloist for this kind of computer.</SoloistNote>;
+  } else if (!data.enabled || status.state === "off") {
+    body = setup ? (
+      keyField
+    ) : (
+      <>
+        <SoloistNote>
+          Spotify's own player, playing on this computer in place of the built-in one. Lossless when your plan includes it.
+        </SoloistNote>
+        <ol style={STEPS_STYLE}>
+          <SoloistStep n={1}>Get your personal key from Spotify.</SoloistStep>
+          <SoloistStep n={2}>Musique downloads the player.</SoloistStep>
+          <SoloistStep n={3}>Choose it once in the Spotify app.</SoloistStep>
+        </ol>
+        <div style={ROW_STYLE}>
+          <PrimaryBtn onClick={() => (data.has_key ? run(() => soloistEnable()) : setSetup(true))} disabled={busy}>
+            {data.has_key ? (busy ? "Starting…" : "Turn on Soloist") : "Set up Soloist"}
+          </PrimaryBtn>
+          {data.has_key && (
+            <GhostBtn subtle onClick={() => setSetup(true)} disabled={busy}>
+              Enter a different key
+            </GhostBtn>
+          )}
+          <span className="t-caption" style={CAPTION_STYLE}>
+            Requires Spotify Premium.
+          </span>
+        </div>
+      </>
+    );
+  } else if (status.state === "needs_key" || setup) {
+    body = (
+      <>
+        {status.state === "needs_key" && <SoloistNote>Soloist needs your key. Musique can't find the one you saved.</SoloistNote>}
+        {keyField}
+      </>
+    );
+  } else if (status.state === "downloading") {
+    const mb = (n: number) => (n / 1048576).toFixed(1);
+    const pct = status.total ? Math.min(100, (status.received / status.total) * 100) : 0;
+    body = (
+      <>
+        <SoloistNote>Downloading Soloist directly from Spotify, to this computer.</SoloistNote>
+        <div style={{ height: 6, borderRadius: 99, background: "var(--color-divider)", overflow: "hidden" }}>
+          <div style={{ width: `${pct}%`, height: "100%", background: "var(--color-accent)", transition: "width 200ms ease-out" }} />
+        </div>
+        <span className="t-caption tnum" style={CAPTION_STYLE}>
+          {status.total ? `${mb(status.received)} of ${mb(status.total)} MB` : `${mb(status.received)} MB`}
+        </span>
+      </>
+    );
+  } else if (status.state === "starting") {
+    body = <SoloistNote>Checking your key and starting Spotify's player…</SoloistNote>;
+  } else if (status.state === "pairing") {
+    body = (
+      <>
+        <SoloistNote>Choose Soloist in Spotify. You only do this once, on the same network.</SoloistNote>
+        <ol style={STEPS_STYLE}>
+          <SoloistStep n={1}>Open the Spotify app (desktop or phone) on the same account.</SoloistStep>
+          <SoloistStep n={2}>
+            Open its list of devices and choose <strong style={{ color: "var(--color-text-hi)" }}>{status.name}</strong>.
+          </SoloistStep>
+        </ol>
+        <div style={ROW_STYLE}>
+          <span className="t-caption" style={{ ...CAPTION_STYLE, flex: 1 }}>
+            Waiting for Spotify…
+          </span>
+          <GhostBtn subtle onClick={() => run(soloistDisable)} disabled={busy}>
+            Use the built-in player
+          </GhostBtn>
+        </div>
+      </>
+    );
+  } else if (status.state === "ready") {
+    body = (
+      <>
+        <SettingRow
+          label="Status"
+          hint={`Ready on this computer as ${status.name}.`}
+          control={
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#34d399" }} />
+              <span className="t-caption" style={{ fontSize: 12.5, color: "var(--color-text-dim)" }}>
+                Active
+              </span>
+            </span>
+          }
+        />
+        <SettingRow
+          label="Audio quality"
+          hint="Spotify manages it: lossless (FLAC, up to 24-bit) when your plan includes it, otherwise the highest quality it streams."
+          control={null}
+        />
+        <SettingRow label="Version" hint={status.version} control={null} />
+        <Divider />
+        <div style={ROW_STYLE}>
+          <GhostBtn subtle onClick={() => run(soloistDisable)} disabled={busy}>
+            Turn off Soloist
+          </GhostBtn>
+          <div style={{ flex: 1 }} />
+          <GhostBtn subtle onClick={() => run(soloistForget)} disabled={busy}>
+            Forget key and pairing
+          </GhostBtn>
+        </div>
+      </>
+    );
+  } else {
+    body = (
+      <>
+        <SoloistNote danger>Soloist didn't start: {status.message}</SoloistNote>
+        <div style={ROW_STYLE}>
+          <PrimaryBtn onClick={() => run(() => soloistEnable())} disabled={busy}>
+            Try again
+          </PrimaryBtn>
+          <GhostBtn subtle onClick={() => setSetup(true)} disabled={busy}>
+            Enter a different key
+          </GhostBtn>
+          <GhostBtn subtle onClick={() => run(soloistDisable)} disabled={busy}>
+            Use the built-in player
+          </GhostBtn>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <Card title="Spotify Soloist">
+      {body}
+      {err && <SoloistNote danger>{err}</SoloistNote>}
+    </Card>
+  );
+}
+
 function Card({
   title,
   children,
@@ -1197,6 +1446,7 @@ export default function Settings() {
       </h1>
 
       <PlaybackCard />
+      <SoloistCard />
       <GeneralCard />
       <FeaturesCard />
       <AppearanceCard />
