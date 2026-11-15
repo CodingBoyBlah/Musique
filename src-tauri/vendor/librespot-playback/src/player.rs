@@ -120,6 +120,9 @@ struct PlayerInternal {
     /// would otherwise cancel the application's every time it is sent).
     prefetch_named: Vec<SpotifyUri>,
     prefetch_also: Vec<SpotifyUri>,
+    /// (Musique) The track the next load of which takes over what is already
+    /// playing where the decoder is, instead of seeking (`Player::carry_on`).
+    carry_on: Option<SpotifyUri>,
 }
 
 /// A track's metadata, resolved to the file that will be played.
@@ -190,6 +193,7 @@ enum PlayerCommand {
     },
     Prefetch(Vec<SpotifyUri>),
     PrefetchAlso(Vec<SpotifyUri>),
+    CarryOn(SpotifyUri),
     Play,
     Pause,
     Stop,
@@ -603,6 +607,7 @@ impl Player {
                 prefetches: Arc::default(),
                 prefetch_named: Vec::new(),
                 prefetch_also: Vec::new(),
+                carry_on: None,
             };
 
             // While PlayerInternal is written as a future, it still contains blocking code.
@@ -662,6 +667,16 @@ impl Player {
     /// Like [`Player::prefetch`], for tracks the application expects to play
     /// that Spirc's queue does not name. Kept apart from Spirc's list, which
     /// replaces only itself; these come first. Each call replaces the last.
+    /// The next load of `track_id`, if it is the track being played, carries
+    /// on from wherever the decoder has got to, whatever position it names:
+    /// for a new Spirc taking over a player that kept playing through the
+    /// loss of its session. If the player is on anything else, that load
+    /// starts afresh from its position and says it seeked, so that audio
+    /// queued from before goes. (Musique)
+    pub fn carry_on(&self, track_id: SpotifyUri) {
+        self.command(PlayerCommand::CarryOn(track_id));
+    }
+
     pub fn prefetch_also(&self, track_ids: Vec<SpotifyUri>) {
         self.command(PlayerCommand::PrefetchAlso(track_ids));
     }
@@ -2281,6 +2296,22 @@ impl PlayerInternal {
 
         self.send_event(PlayerEvent::PlayRequestIdChanged { play_request_id });
 
+        // (Musique) see `Player::carry_on`
+        let carry_on = self.carry_on.take().is_some_and(|wanted| wanted == track_id);
+        let carrying_on = carry_on
+            && matches!(
+                &self.state,
+                PlayerState::Playing { track_id: current, .. }
+                | PlayerState::Paused { track_id: current, .. } if *current == track_id
+            );
+        if carry_on && !carrying_on {
+            self.send_event(PlayerEvent::Seeked {
+                play_request_id,
+                track_id: track_id.clone(),
+                position_ms,
+            });
+        }
+
         if !self.config.gapless {
             self.ensure_sink_stopped(play);
         }
@@ -2345,7 +2376,7 @@ impl PlayerInternal {
         {
             if *current_track_id == track_id {
                 // we can use the current decoder. Ensure it's at the correct position.
-                if position_ms != *stream_position_ms {
+                if position_ms != *stream_position_ms && !carrying_on {
                     // This may be blocking.
                     *stream_position_ms = decoder.seek(position_ms)?;
                 }
@@ -2682,6 +2713,8 @@ impl PlayerInternal {
                 self.apply_prefetches();
             }
 
+            PlayerCommand::CarryOn(track_id) => self.carry_on = Some(track_id),
+
             PlayerCommand::PrefetchAlso(track_ids) => {
                 self.prefetch_also = track_ids;
                 self.apply_prefetches();
@@ -2910,6 +2943,7 @@ impl fmt::Debug for PlayerCommand {
             PlayerCommand::Prefetch(track_ids) => {
                 f.debug_tuple("Prefetch").field(&track_ids).finish()
             }
+            PlayerCommand::CarryOn(track_id) => f.debug_tuple("CarryOn").field(&track_id).finish(),
             PlayerCommand::PrefetchAlso(track_ids) => {
                 f.debug_tuple("PrefetchAlso").field(&track_ids).finish()
             }
