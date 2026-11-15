@@ -4,11 +4,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./index.css";
+import { installBrowserKeyGuard } from "./lib/browserKeys";
 import { installZoom } from "./lib/zoom";
 
 // apply the saved zoom level and bind Ctrl +/-/0 and Ctrl + wheel, before the
 // app renders
 installZoom();
+installBrowserKeyGuard();
 
 const queryClient = new QueryClient({
   defaultOptions: {

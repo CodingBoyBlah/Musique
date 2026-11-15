@@ -947,6 +947,25 @@ pub fn run() {
                     let _ = window.navigate(blank);
                 }
 
+                // a shipped build is an app, not a browser tab: turn off WebView2's
+                // browser keys (Ctrl+P / Ctrl+Shift+P print, Ctrl+F find, F5 reload,
+                // Ctrl+U, F7 caret browsing, F12 / Ctrl+Shift+I devtools). Typing,
+                // clipboard and the page's own keydown handlers are unaffected.
+                // dev builds keep them so devtools and reload still work there.
+                // src/lib/browserKeys.ts covers the same keys in the page
+                #[cfg(all(target_os = "windows", not(debug_assertions)))]
+                {
+                    let _ = window.with_webview(|wv| unsafe {
+                        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+                        use windows::core::Interface;
+                        if let Ok(settings) = wv.controller().CoreWebView2().and_then(|c| c.Settings()) {
+                            if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
+                                let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
+                            }
+                        }
+                    });
+                }
+
                 // grab the HWND now, windows only, means nothing anywhere else
                 #[cfg(target_os = "windows")]
                 {

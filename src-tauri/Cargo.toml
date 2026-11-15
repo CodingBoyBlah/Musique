@@ -106,6 +106,11 @@ ring = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.7"
+# Reach the WebView2 settings tauri doesn't expose (browser accelerator keys:
+# Ctrl+P print, Ctrl+F find, F5 reload, F12 devtools...). Versions must match
+# what wry pulls in, or the interface types won't line up.
+webview2-com = "0.38"
+windows = "0.61"
 windows-sys = { version = "0.60", features = [
     "Win32_System_Threading",
     "Win32_System_Diagnostics_ToolHelp",

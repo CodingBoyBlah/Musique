@@ -5484,7 +5484,9 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "url",
+ "webview2-com",
  "window-vibrancy",
+ "windows 0.61.3",
  "windows-sys 0.60.2",
  "zip",
 ]
