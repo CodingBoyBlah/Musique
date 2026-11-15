@@ -1316,7 +1316,24 @@ impl PlayerTrackLoader {
             let encrypted_file =
                 AudioFile::open_with_head(&self.session, file_id, bytes_per_second, head.take());
 
-            let encrypted_file = match encrypted_file.await {
+            // The key comes from the access point and the file from the CDN;
+            // neither waits on the other, so they are asked for together
+            // instead of the key only once the file's first bytes are in.
+            // (Musique: a clicked song starts a key round trip sooner.)
+            let waiting_key = prefetched_key.take();
+            let key_request = async {
+                if let Some(key) = waiting_key {
+                    if let Some(key) = key.await {
+                        return Ok(key);
+                    }
+                }
+                self.session.audio_key().request(track_id, file_id).await
+            };
+            let opening = std::time::Instant::now();
+            let (encrypted_file, key_result) = futures_util::future::join(encrypted_file, key_request).await;
+            debug!("File and key ready in {}ms", opening.elapsed().as_millis());
+
+            let encrypted_file = match encrypted_file {
                 Ok(encrypted_file) => encrypted_file,
                 Err(e) => {
                     error!("Unable to load encrypted file: {e:?}");
@@ -1333,20 +1350,13 @@ impl PlayerTrackLoader {
             // Not all audio files are encrypted. If we can't get a key, try loading the track
             // without decryption. If the file was encrypted after all, the decoder will fail
             // parsing and bail out, so we should be safe from outputting ear-piercing noise.
-            let prefetched_key = match prefetched_key.take() {
-                Some(key) => key.await,
-                None => None,
-            };
-            let (key, audio_key_unavailable) = match prefetched_key {
-                Some(key) => (Some(key), false),
-                None => match self.session.audio_key().request(track_id, file_id).await {
-                    Ok(key) => (Some(key), false),
-                    Err(e) => {
-                        let unavailable = Self::is_audio_key_unavailable(&e);
-                        warn!("Unable to load key, continuing without decryption: {e}");
-                        (None, unavailable)
-                    }
-                },
+            let (key, audio_key_unavailable) = match key_result {
+                Ok(key) => (Some(key), false),
+                Err(e) => {
+                    let unavailable = Self::is_audio_key_unavailable(&e);
+                    warn!("Unable to load key, continuing without decryption: {e}");
+                    (None, unavailable)
+                }
             };
 
             let mut decrypted_file = AudioDecrypt::new(key, encrypted_file);
@@ -1404,6 +1414,7 @@ impl PlayerTrackLoader {
                 NormalisationData::default()
             });
 
+            debug!("Decoder open in {}ms", opening.elapsed().as_millis());
             let mut decoder = match decoder_type {
                 Ok(decoder) => decoder,
                 Err(e) if is_cached => {
