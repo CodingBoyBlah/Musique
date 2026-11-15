@@ -126,6 +126,27 @@ pub fn image_url(file_id: &[u8]) -> Option<String> {
     Some(s)
 }
 
+/// a playlist's cover from its playlist4 attributes. `picture` is only set
+/// when someone uploaded a custom image; spotify-made lists (blends, daily
+/// mixes, radios, "This Is", seed mixes) leave it empty and carry a rendered
+/// cover in `picture_size` instead, keyed default/small/large/xlarge
+pub fn list_picture(
+    a: &librespot_protocol::playlist4_external::ListAttributes,
+) -> Option<String> {
+    if a.has_picture() {
+        if let Some(url) = image_url(a.picture()) {
+            return Some(url);
+        }
+    }
+    let sizes = &a.picture_size;
+    ["default", "large", "xlarge", "small"]
+        .iter()
+        .find_map(|want| sizes.iter().find(|p| p.target_name() == *want))
+        .or_else(|| sizes.first())
+        .map(|p| p.url().to_string())
+        .filter(|u| !u.is_empty())
+}
+
 /// `spotify:image:<hex>` / bare hex / full url -> https url
 pub fn image_uri_to_url(uri: &str) -> Option<String> {
     if uri.starts_with("http") {
@@ -165,5 +186,33 @@ mod tests {
         );
         assert_eq!(uri_id("spotify:track:abc"), "abc");
         assert_eq!(uri_id("abc"), "abc");
+    }
+
+    #[test]
+    fn list_picture_prefers_upload_then_default_size() {
+        use librespot_protocol::playlist4_external::{ListAttributes, PictureSize};
+        let size = |name: &str, url: &str| {
+            let mut p = PictureSize::new();
+            p.set_target_name(name.into());
+            p.set_url(url.into());
+            p
+        };
+
+        // blend / daily mix shape: no upload, rendered covers by size
+        let mut a = ListAttributes::new();
+        a.picture_size.push(size("small", "https://x/small"));
+        a.picture_size.push(size("default", "https://x/default"));
+        assert_eq!(list_picture(&a).as_deref(), Some("https://x/default"));
+
+        // an uploaded picture wins
+        a.set_picture(vec![0xab, 0x67]);
+        assert_eq!(list_picture(&a).as_deref(), Some("https://i.scdn.co/image/ab67"));
+
+        // unknown size names still give something
+        let mut b = ListAttributes::new();
+        b.picture_size.push(size("weird", "https://x/weird"));
+        assert_eq!(list_picture(&b).as_deref(), Some("https://x/weird"));
+
+        assert_eq!(list_picture(&ListAttributes::new()), None);
     }
 }

@@ -662,6 +662,9 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
     if pl.track_page().map_or(true, |p| p.items.is_empty() && p.total > 0) {
         if let Ok(mut detail) = crate::commands::internal::internal_playlist(&app, &id).await {
             if !detail.tracks.is_empty() {
+                if detail.image_url.is_none() {
+                    detail.image_url = pl.images.as_ref().and_then(|v| v.first()).map(|i| i.url.clone());
+                }
                 detail.owner_id      = pl.owner.as_ref().and_then(|o| o.id.clone());
                 detail.public        = pl.public;
                 detail.collaborative = pl.collaborative;

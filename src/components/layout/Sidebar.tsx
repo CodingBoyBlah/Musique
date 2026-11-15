@@ -364,8 +364,14 @@ export default function Sidebar() {
     if (showAllPlaylists) {
       return myPlaylists.map((pl) => ({ id: pl.id, name: pl.name, image_url: pl.image_url, type: "playlist" as const }));
     }
-    return pins;
-  }, [useTree, allRows, asEntry, showAllPlaylists, myPlaylists, pins]);
+    /* a pin keeps the cover it had when pinned, which for spotify-made
+     playlists was often none; take the library's current one when it knows */
+    return pins.map((p) =>
+      p.image_url || p.type !== "playlist"
+        ? p
+        : { ...p, image_url: syncedById.get(p.id)?.image_url ?? rootNames.get(p.id)?.image_url ?? null },
+    );
+  }, [useTree, allRows, asEntry, showAllPlaylists, myPlaylists, pins, syncedById, rootNames]);
 
   const depthOf = useMemo(
     () => new Map(allRows.filter((r) => r.kind === "playlist").map((r) => [r.id, r.depth])),

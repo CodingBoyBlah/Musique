@@ -309,9 +309,7 @@ async fn fetch_rootlist(app: &AppHandle) -> Result<Vec<RootItem>, AppError> {
                 let attrs = m.attributes.as_ref();
                 (
                     attrs.map(|a| a.name().to_string()).filter(|n| !n.is_empty()),
-                    attrs
-                        .filter(|a| a.has_picture())
-                        .and_then(|a| crate::internal::spclient::image_url(a.picture())),
+                    attrs.and_then(crate::internal::spclient::list_picture),
                     m.has_length().then(|| m.length() as i64),
                 )
             });
@@ -332,7 +330,9 @@ async fn fetch_rootlist(app: &AppHandle) -> Result<Vec<RootItem>, AppError> {
 pub async fn get_playlist_folders(app: AppHandle) -> Result<Vec<RootItem>, AppError> {
     use tauri::Manager;
     let pool = app.state::<crate::state::AppState>().db.clone();
-    crate::internal::cache::cached_json(&pool, "spotify:me", "rootlist", 10 * 60_000, || async {
+    // "rootlist2": older cached trees predate picture_size covers, so they'd
+    // keep showing spotify-made playlists blank until the ttl ran out
+    crate::internal::cache::cached_json(&pool, "spotify:me", "rootlist2", 10 * 60_000, || async {
         fetch_rootlist(&app).await
     })
     .await
@@ -626,7 +626,7 @@ pub(crate) async fn internal_playlist(
             (
                 attrs.map(|a| a.name().to_string()).filter(|n| !n.is_empty()),
                 attrs.map(|a| a.description().to_string()).filter(|d| !d.is_empty()),
-                attrs.filter(|a| a.has_picture()).and_then(|a| crate::internal::spclient::image_url(a.picture())),
+                attrs.and_then(crate::internal::spclient::list_picture),
                 Some(list.owner_username().to_string()).filter(|o| !o.is_empty()),
                 ids,
             )
