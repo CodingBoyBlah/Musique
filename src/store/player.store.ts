@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { dedupedStorage } from "../lib/persistStorage";
+import { anchorPlayhead, playheadMs, reportPlayhead } from "../lib/playClock";
 import type { TrackItem } from "../types/spotify";
 import type { SpotifyDevice, RemotePlaybackState, RemoteRepeat } from "../api/connect";
 
@@ -73,6 +74,8 @@ interface PlayerStore {
   currentId:    string | null;
   currentTrack: TrackItem | null;
   positionMs:   number;
+  // the last positionMs written by the 1s ticker (an estimate, not a report)
+  tickPos:      number;
   durationMs:   number;
 
   volume:    number;   // 0–100
@@ -249,6 +252,7 @@ export const usePlayerStore = create<PlayerStore>()(
       currentId:    null,
       currentTrack: null,
       positionMs:   0,
+      tickPos:      -1,
       durationMs:   0,
       seekFence:    null,
 
@@ -395,11 +399,13 @@ export const usePlayerStore = create<PlayerStore>()(
       incrementPos: () =>
         set((s) => {
           if (!s.isPlaying) return s;
-          const step = 1000 * (s.playbackRate || 1);
-          const next = s.durationMs > 0
-            ? Math.min(s.positionMs + step, s.durationMs)
-            : s.positionMs + step;
-          return { positionMs: next };
+          // read the shared clock rather than adding +1000: a throttled or late
+          // interval then can't make the scrubber fall behind the music
+          const at = Math.round(playheadMs());
+          const next = s.durationMs > 0 ? Math.min(at, s.durationMs) : at;
+          // tickPos marks this value as derived from the clock, not a real
+          // report, so the clock doesn't re-anchor on its own estimate
+          return { positionMs: next, tickPos: next };
         }),
 
       // optimistic position update (e.g on seek) so the bar moves instantly
@@ -448,3 +454,27 @@ export const usePlayerStore = create<PlayerStore>()(
     },
   ),
 );
+
+/* Feed the shared playhead clock (lib/playClock) from every real position
+   report, seek, track change and play/pause - and from nothing else. Ticker
+   writes are derived from the clock, so re-anchoring on them would only add
+   rounding. */
+{
+  const s0 = usePlayerStore.getState();
+  anchorPlayhead(s0.positionMs, s0.isPlaying, s0.playbackRate || 1);
+}
+usePlayerStore.subscribe((s, p) => {
+  const fromTicker = s.tickPos !== p.tickPos && s.positionMs === s.tickPos;
+  const trackChanged = s.currentId !== p.currentId;
+  const reported = (s.positionMs !== p.positionMs && !fromTicker) || trackChanged;
+  if (!reported && s.isPlaying === p.isPlaying && s.playbackRate === p.playbackRate) return;
+  const rate = s.playbackRate || 1;
+  if (!reported) {
+    // a bare play/pause or rate change keeps where the clock already is
+    anchorPlayhead(playheadMs(), s.isPlaying, rate);
+  } else if (trackChanged || s.isPlaying !== p.isPlaying) {
+    anchorPlayhead(s.positionMs, s.isPlaying, rate);
+  } else {
+    reportPlayhead(s.positionMs, s.isPlaying, rate);
+  }
+});

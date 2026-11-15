@@ -219,8 +219,11 @@ pub struct Candidate {
     /// It decides whether we're allowed to move its timestamps. A fuzzy match got
     /// its absolute timing from whatever master the search returned, so that
     /// timing is meaningless on its own and has to be shifted onto the reference.
-    /// An exact match is already on this recording's clock, and shifting it would
-    /// only import the reference's own error.
+    /// An exact match names this recording, but its timestamps follow the
+    /// provider's own file: Apple's can sit a constant lead-in or a slight tempo
+    /// off. It is only moved by a whole-document warp the reference fits tightly
+    /// (align::warp_apple), never line by line, so the reference's own per-line
+    /// error is not imported.
     pub exact: bool,
 }
 

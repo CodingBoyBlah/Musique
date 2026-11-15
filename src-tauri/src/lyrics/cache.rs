@@ -11,7 +11,9 @@ use super::types::{is_apple_source, Alternate, Lyrics};
 
 /// Parser/selection revision. Older payloads remain usable offline while their
 /// provider preference is rechecked once in the background.
-pub const SCHEMA_VERSION: i32 = 4;
+/// 5: Apple documents are warped onto the recording (align::warp_apple); older
+/// Apple rows are re-synced from the cached Spotify reference on first read.
+pub const SCHEMA_VERSION: i32 = 5;
 
 /// whole-track miss TTL: 7 days. a track might have lyrics added later,
 /// but we should avoid hammering providers repeatedly in the short term
@@ -85,6 +87,34 @@ pub async fn read(pool: &SqlitePool, track_id: &str) -> Option<Lyrics> {
                 return Some(apple);
             }
         }
+    }
+
+    // Apple rows from before the recording warp: re-sync them against the
+    // cached Spotify reference right here, offline and instantly, instead of
+    // showing timings that can sit a second off the audio.
+    if row.schema_version < 5 && lyrics.found && is_apple_source(&lyrics.source) {
+        if let Some(reference) = read_alt(pool, track_id, "spotify").await.filter(|r| !r.lines.is_empty()) {
+            let source = if lyrics.source == "applemusic" { "applemusic" } else { "betterlyrics" };
+            let apple = super::types::Candidate {
+                source,
+                lines: lyrics.lines.clone(),
+                plain: lyrics.plain.clone(),
+                instrumental: lyrics.instrumental,
+                exact: true,
+            };
+            let reference = super::types::Candidate {
+                source: "spotify",
+                lines: reference.lines,
+                plain: reference.plain,
+                instrumental: reference.instrumental,
+                exact: true,
+            };
+            if let Some((synced, alignment)) = super::align::choose(Some(&reference), vec![apple]) {
+                lyrics.lines = synced.lines;
+                lyrics.offset_ms = alignment.applied_shift();
+            }
+        }
+        write(pool, &lyrics).await.ok();
     }
 
     // Keep old lyrics usable offline while checking the new Apple Music lookup

@@ -48,6 +48,8 @@ const RESTART_AFTER: [Duration; 3] =
 const HEALTHY_AFTER: Duration = Duration::from_secs(120);
 /// How often sign-in and the build's age are looked at.
 const TICK: Duration = Duration::from_secs(30);
+/// How often the position is asked for while playing (see the poll in `run`).
+const POSITION_POLL: Duration = Duration::from_secs(1);
 /// Soloist exits with this code when its build has expired.
 const EXPIRED_EXIT: i32 = 10;
 /// The most of Soloist's own output kept for a bug report.
@@ -157,6 +159,11 @@ impl Play {
     /// Take in a message from Soloist and say what the app should hear of it.
     fn observe(&mut self, message: &Value, now_ms: u64) -> Vec<Out> {
         let kind = message["type"].as_str().unwrap_or_default();
+        // a `playback_state` that leaves the status as it was is the answer to
+        // the once-a-second position poll, not a change of state: it must
+        // reach the interface as a position update, never as a fresh
+        // `playing` (that event drives scrobbles and now-playing)
+        let was = self.status.clone();
         if self.started && !self.ended && self.on_requested() {
             self.peak_ms = self.peak_ms.max(self.position_now(now_ms));
         }
@@ -205,7 +212,8 @@ impl Play {
         let position_ms = self.position_now(now_ms).min(u64::from(u32::MAX)) as u32;
         match self.status.as_str() {
             "playing" => {
-                let moved_only = kind == "position_sync" && self.started;
+                let moved_only = self.started
+                    && (kind == "position_sync" || (kind == "playback_state" && was == "playing"));
                 self.started = true;
                 if moved_only {
                     vec![Out::Event(PlayerMsg::PositionChanged { track_id, position_ms })]
@@ -222,7 +230,7 @@ impl Play {
                     self.ended = true;
                     self.started = false;
                     vec![Out::Event(PlayerMsg::EndOfTrack { track_id })]
-                } else if kind == "position_sync" {
+                } else if kind == "position_sync" || (kind == "playback_state" && was == "paused") {
                     vec![Out::Event(PlayerMsg::PositionChanged { track_id, position_ms })]
                 } else {
                     vec![Out::Event(PlayerMsg::Paused { track_id, position_ms })]
@@ -767,8 +775,23 @@ async fn drive(
     let mut download: Option<tokio::task::JoinHandle<Result<Build, String>>> = None;
     let mut pending: Option<Build> = None;
     let mut tick = tokio::time::interval(TICK);
+    // Soloist only speaks up when playback changes, never while it simply
+    // plays on. Without asking, the interface extrapolates for minutes at a
+    // time and every rebuffer or clock difference becomes lyric drift. Its
+    // answer carries the exact position and when it was true.
+    let mut position_poll = tokio::time::interval(POSITION_POLL);
+    position_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
+            _ = position_poll.tick() => {
+                let playing = logged_in && {
+                    let play = shared.play();
+                    play.started && !play.ended && matches!(play.status.as_str(), "playing" | "buffering")
+                };
+                if playing {
+                    send(&mut socket, json!({"command": "get_state"})).await?;
+                }
+            }
             exit = child.wait() => {
                 let exit = exit.map_err(|e| e.to_string())?;
                 if exit.code() == Some(EXPIRED_EXIT) {
@@ -1061,6 +1084,22 @@ mod tests {
             vec![Out::Event(PlayerMsg::EndOfTrack { track_id: id(A) })]
         );
         assert!(play.observe(&json!({"type": "playback_changed", "status": "idle"}), now + 63_000).is_empty());
+    }
+
+    #[test]
+    fn a_polled_state_while_playing_is_only_a_position_update() {
+        let mut play = Play::default();
+        play.request(A);
+        let first = play.observe(&json!({"type": "playback_state", "status": "playing", "item": item(A),
+            "position": {"position_ms": 0, "timestamp_ms": 1000, "speed": 1.0}}), 1000);
+        assert_eq!(first, vec![Out::Event(PlayerMsg::Playing { track_id: id(A), position_ms: 0 })]);
+        // the once-a-second answer: Soloist fell 300ms behind the wall clock
+        // (a rebuffer), and its own position is what gets reported
+        assert_eq!(
+            play.observe(&json!({"type": "playback_state", "status": "playing", "item": item(A),
+                "position": {"position_ms": 9_700, "timestamp_ms": 11_000, "speed": 1.0}}), 11_000),
+            vec![Out::Event(PlayerMsg::PositionChanged { track_id: id(A), position_ms: 9_700 })]
+        );
     }
 
     #[test]

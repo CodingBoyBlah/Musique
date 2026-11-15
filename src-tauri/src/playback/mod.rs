@@ -993,6 +993,11 @@ async fn build_player(
         local_file_directories: local_files,
         normalisation,
         normalisation_type: librespot_playback::config::NormalisationType::Auto,
+        // Without this librespot reports position only on play, pause and
+        // seek, so the interface extrapolated for whole songs and lyrics drifted
+        // off the audio. The event task converts each report to the HEARD
+        // position (playout ring) and forwards about one a second.
+        position_update_interval: Some(std::time::Duration::from_millis(250)),
         ..Default::default()
     };
     let player = Player::new(

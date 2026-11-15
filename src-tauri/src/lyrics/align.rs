@@ -268,16 +268,159 @@ fn shift_line(line: &mut super::types::LyricLine, delta: i64) {
     }
 }
 
+// recording warp
+
+/// fewest matched lines a warp is fitted from. below this, a couple of sloppy
+/// reference lines could steer the whole document
+const WARP_MIN_PAIRS: usize = 6;
+/// share of matched lines that must agree with the fitted line
+const WARP_MIN_INLIERS: f64 = 0.60;
+/// largest tempo difference accepted (2%). anything steeper is a different
+/// arrangement, not the same performance on another clock
+const WARP_MAX_SLOPE: f64 = 0.02;
+/// the fitted line must explain the matched lines this tightly (median
+/// absolute residual). Spotify's own line starts carry ~100ms of noise; a
+/// looser fit means the reference itself is unreliable for this track
+const WARP_MAX_RESIDUAL_MS: i64 = 150;
+/// below this the document already sits on the recording - leave it alone
+/// rather than nudge precise word timings by reference noise
+const WARP_MIN_EFFECT_MS: i64 = 50;
+/// a tempo term is only kept when it moves the ends of the song at least this
+/// far apart AND explains the lines clearly better than a flat offset.
+/// otherwise reference noise would tilt correct documents
+const WARP_MIN_TEMPO_SPAN_MS: f64 = 150.0;
+const WARP_TEMPO_GAIN: f64 = 0.75;
+/// slope pairs closer than this in time are all noise and no signal
+const WARP_MIN_BASE_MS: i64 = 5_000;
+
+/// `shift(t) = intercept + slope * t`: ms to add to a document timestamp `t`
+/// to put it on the recording's clock.
+#[derive(Debug, Clone, Copy)]
+struct Warp {
+    slope:     f64,
+    intercept: f64,
+}
+
+impl Warp {
+    fn shift(&self, t: i64) -> i64 {
+        (self.intercept + self.slope * t as f64).round() as i64
+    }
+
+    fn apply(&self, line: &mut super::types::LyricLine) {
+        let map = |t: i64| t + self.shift(t);
+        line.time_ms = map(line.time_ms);
+        line.end_ms = line.end_ms.map(map);
+        for word in &mut line.words {
+            word.time_ms = map(word.time_ms);
+            word.end_ms = map(word.end_ms);
+        }
+        if let Some(bg) = line.bg.as_mut() {
+            self.apply(bg);
+        }
+    }
+}
+
+fn median_f(v: &mut [f64]) -> f64 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = v.len() / 2;
+    if v.len() % 2 == 1 { v[mid] } else { (v[mid - 1] + v[mid]) / 2.0 }
+}
+
+/// Robust straight-line fit of the shift each matched line needs.
+///
+/// Apple times its lyrics against ITS file. Even for the same ISRC that file
+/// can start with a different lead-in (a constant offset) or come from a
+/// slightly different transfer (an offset that grows through the song - War
+/// Pigs measured +0.92s at the top and +1.33s at the end). Theil-Sen (median
+/// of pairwise slopes, median intercept) shrugs off the handful of sloppy or
+/// mispaired reference lines every document has, and one refit after
+/// dropping outliers settles it. `pairs` are `(document_ms, needed_shift_ms)`.
+fn fit_warp(pairs: &[(i64, i64)]) -> Option<(Warp, i64)> {
+    if pairs.len() < WARP_MIN_PAIRS {
+        return None;
+    }
+    let fit = |pts: &[(i64, i64)]| {
+        let mut slopes = Vec::new();
+        for i in 0..pts.len() {
+            for j in i + 1..pts.len() {
+                let dt = pts[j].0 - pts[i].0;
+                if dt.abs() >= WARP_MIN_BASE_MS {
+                    slopes.push((pts[j].1 - pts[i].1) as f64 / dt as f64);
+                }
+            }
+        }
+        let slope = median_f(&mut slopes);
+        let mut intercepts: Vec<f64> = pts.iter().map(|&(t, r)| r as f64 - slope * t as f64).collect();
+        Warp { slope, intercept: median_f(&mut intercepts) }
+    };
+    let residual = |w: &Warp, p: &(i64, i64)| (p.1 - w.shift(p.0)).abs();
+
+    let first = fit(pairs);
+    let mut spread: Vec<i64> = pairs.iter().map(|p| residual(&first, p)).collect();
+    let cut = (median(&mut spread) * 3).max(120);
+    let inliers: Vec<(i64, i64)> = pairs.iter().copied().filter(|p| residual(&first, p) <= cut).collect();
+    if inliers.len() < WARP_MIN_PAIRS || (inliers.len() as f64) < pairs.len() as f64 * WARP_MIN_INLIERS {
+        return None;
+    }
+    let tilted = fit(&inliers);
+    if tilted.slope.abs() > WARP_MAX_SLOPE {
+        return None;
+    }
+    let mut offsets: Vec<i64> = inliers.iter().map(|p| p.1).collect();
+    let flat = Warp { slope: 0.0, intercept: median(&mut offsets) as f64 };
+    let fit_residual = |w: &Warp| median(&mut inliers.iter().map(|p| residual(w, p)).collect());
+    let (tilted_res, flat_res) = (fit_residual(&tilted), fit_residual(&flat));
+    let span = inliers.iter().map(|p| p.0).max().unwrap_or(0) - inliers.iter().map(|p| p.0).min().unwrap_or(0);
+    let tempo_matters = tilted.slope.abs() * span as f64 >= WARP_MIN_TEMPO_SPAN_MS
+        && (tilted_res as f64) <= flat_res as f64 * WARP_TEMPO_GAIN;
+    let (warp, res) = if tempo_matters { (tilted, tilted_res) } else { (flat, flat_res) };
+    (res <= WARP_MAX_RESIDUAL_MS).then_some((warp, res))
+}
+
+/// Put an Apple document on the recording's clock as one rigid, gently
+/// stretched piece, measured against Spotify's sync for this exact track.
+/// Every word moves by the same smooth map, so Apple's own syllable timing is
+/// kept intact. `None` when the reference can't vouch for a fit.
+fn warp_apple(apple: &mut Candidate, reference: &Candidate) -> Option<Alignment> {
+    let pairs: Vec<(i64, i64)> = matching_lines(apple, reference)
+        .into_iter()
+        .map(|(ai, ri)| (apple.lines[ai].time_ms, reference.lines[ri].time_ms - apple.lines[ai].time_ms))
+        .collect();
+    let (warp, residual_ms) = fit_warp(&pairs)?;
+    let first = apple.lines.first().map_or(0, |l| l.time_ms);
+    let last = apple.lines.last().map_or(0, |l| l.time_ms);
+    let effect = warp.shift(first).abs().max(warp.shift(last).abs());
+    let mut center = 0;
+    if effect >= WARP_MIN_EFFECT_MS {
+        for line in &mut apple.lines {
+            warp.apply(line);
+        }
+        let mut shifts: Vec<i64> = pairs.iter().map(|p| warp.shift(p.0)).collect();
+        center = median(&mut shifts);
+    }
+    Some(Alignment { offset_ms: -center, residual_ms, matched: pairs.len(), aligned: true })
+}
+
 fn sync_apple(apple: &mut Candidate, donors: &[&Candidate]) -> Alignment {
-    let mut synced = vec![false; apple.lines.len()];
+    // The recording's clock comes from Spotify's sync for this exact track.
+    // A fitted warp settles every line's timing at once; donors then only
+    // lend words to lines Apple ships without them.
+    let warped = donors.iter()
+        .find(|d| d.source == "spotify" && !d.lines.is_empty())
+        .and_then(|reference| warp_apple(apple, reference));
+    let mut synced = vec![warped.is_some(); apple.lines.len()];
     let mut deltas = Vec::new();
     for donor in donors {
         for (ai, di) in matching_lines(apple, donor) {
             let line = &mut apple.lines[ai];
             let timing = &donor.lines[di];
             if !synced[ai] {
-                // ISRC-matched Apple already has this recording's clock.
-                // A fuzzy lookup needs per-line correction, not a median shift.
+                // No warp could be fitted. An ISRC match is then left as Apple
+                // timed it; a fuzzy match (possibly another master) falls back
+                // to per-line correction.
                 let delta = if apple.exact { 0 } else { timing.time_ms - line.time_ms };
                 shift_line(line, delta);
                 deltas.push(delta);
@@ -304,6 +447,7 @@ fn sync_apple(apple: &mut Candidate, donors: &[&Candidate]) -> Alignment {
         }
     }
     apple.lines.sort_by_key(|line| line.time_ms);
+    if let Some(alignment) = warped { return alignment; }
     if deltas.is_empty() { return Alignment::unknown(); }
     let delta = median(&mut deltas.clone());
     Alignment { offset_ms: -delta, residual_ms: mad(&deltas, delta), matched: deltas.len(), aligned: true }
@@ -882,6 +1026,98 @@ mod tests {
         assert_eq!(won.lines[1].text, "Hello, WORLD!");
         assert_eq!(won.lines[1].words.iter().map(|w| w.text.as_str()).collect::<String>(), "Hello, WORLD!");
         assert_eq!(won.lines[1].words[1].time_ms, 5300);
+    }
+
+    /// Dry run of the warp over a real library's cached lyrics.
+    /// `LYRICS_DB=path/to/spotify-client.db cargo test --lib live_warp_report -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn live_warp_report() {
+        let path = std::env::var("LYRICS_DB").expect("LYRICS_DB");
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect(&format!("sqlite:{path}?mode=ro")).await.unwrap();
+        let rows: Vec<(String, Option<String>, String, String)> = sqlx::query_as(
+            "SELECT l.track_id, t.name, a.payload, s.payload FROM lyrics l
+             LEFT JOIN tracks t ON t.id = l.track_id
+             JOIN lyrics_alt a ON a.track_id = l.track_id AND a.source = 'applemusic'
+             JOIN lyrics_alt s ON s.track_id = l.track_id AND s.source = 'spotify'
+             ORDER BY l.fetched_at DESC LIMIT 60").fetch_all(&pool).await.unwrap();
+        for (id, name, apple, spotify) in rows {
+            let apple: crate::lyrics::types::Lyrics = serde_json::from_str(&apple).unwrap();
+            let spotify: crate::lyrics::types::Lyrics = serde_json::from_str(&spotify).unwrap();
+            let mut cand = Candidate::new("applemusic", apple.lines.clone());
+            cand.exact = true;
+            let reference = Candidate::new("spotify", spotify.lines.clone());
+            let pairs: Vec<(i64, i64)> = matching_lines(&cand, &reference).into_iter()
+                .map(|(a, r)| (cand.lines[a].time_ms, reference.lines[r].time_ms - cand.lines[a].time_ms)).collect();
+            let label = name.unwrap_or(id);
+            match fit_warp(&pairs) {
+                Some((w, res)) => {
+                    let (t0, t1) = (cand.lines[0].time_ms, cand.lines.last().unwrap().time_ms);
+                    println!("{label:32.32} WARP {:+5} -> {:+5}ms  residual {res}ms  pairs {}", w.shift(t0), w.shift(t1), pairs.len());
+                }
+                None => println!("{label:32.32} leave  pairs {}", pairs.len()),
+            }
+        }
+    }
+
+    /// War Pigs, measured: Apple's ISRC document runs +0.92s late at the
+    /// top and +1.33s by the end against the recording. Spotify's line starts
+    /// carry their usual ±~90ms noise.
+    #[test]
+    fn exact_apple_is_warped_onto_the_recording_offset_and_tempo() {
+        let truth = worded_doc("spotify", 22, 68_000, 12_000);
+        let mut reference = doc("spotify", 22, 68_000, 12_000);
+        for (i, l) in reference.lines.iter_mut().enumerate() {
+            l.time_ms += [0, 80, -60, 40, -90, 20, 70, -30, 10, -80, 50][i % 11];
+        }
+        let mut apple = truth.clone();
+        apple.source = "applemusic";
+        apple.exact = true;
+        for line in &mut apple.lines {
+            let late = |t: i64| t + 920 + (t - 68_000) * 410 / 252_000;
+            line.time_ms = late(line.time_ms);
+            for w in &mut line.words {
+                w.time_ms = late(w.time_ms);
+                w.end_ms = late(w.end_ms);
+            }
+        }
+        let (won, a) = choose(Some(&reference), vec![apple]).unwrap();
+        assert!(a.aligned);
+        for (got, want) in won.lines.iter().zip(&truth.lines) {
+            for (g, w) in got.words.iter().zip(&want.words) {
+                assert!((g.time_ms - w.time_ms).abs() <= 40, "{} vs {}", g.time_ms, w.time_ms);
+                assert!((g.end_ms - w.end_ms).abs() <= 40);
+            }
+        }
+        assert!((a.applied_shift() + 1_120).abs() < 80, "{a:?}");
+    }
+
+    #[test]
+    fn apple_already_on_the_recording_is_not_nudged_by_reference_noise() {
+        let mut reference = doc("spotify", 20, 10_000, 5_000);
+        for (i, l) in reference.lines.iter_mut().enumerate() {
+            l.time_ms += [0, 90, -70, 30, -100][i % 5];
+        }
+        let mut apple = worded_doc("applemusic", 20, 10_000, 5_000);
+        apple.exact = true;
+        let before = format!("{:?}", apple.lines);
+        let (won, _) = choose(Some(&reference), vec![apple]).unwrap();
+        assert_eq!(format!("{:?}", won.lines), before);
+    }
+
+    #[test]
+    fn a_reference_too_sloppy_to_trust_leaves_exact_apple_alone() {
+        // half the reference lines are a second off in no consistent way
+        let mut reference = doc("spotify", 20, 10_000, 5_000);
+        for (i, l) in reference.lines.iter_mut().enumerate() {
+            if i % 2 == 1 { l.time_ms += if i % 4 == 1 { 1_300 } else { -900 }; }
+        }
+        let mut apple = worded_doc("applemusic", 20, 10_000, 5_000);
+        apple.exact = true;
+        let before = format!("{:?}", apple.lines);
+        let (won, _) = choose(Some(&reference), vec![apple]).unwrap();
+        assert_eq!(format!("{:?}", won.lines), before);
     }
 
     #[test]

@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import type { LyricLine } from "../api/lyrics";
 import { usePlayerStore } from "../store/player.store";
 import { getOutputLatencyMs, startLatencyPolling } from "./outputLatency";
+import { anchorPlayhead, playheadMs, playheadPlaying } from "./playClock";
 import { useWindowActive } from "../hooks/useWindowActive";
 import { timedVoices, overlappingVoices, type Row } from "./lyricsRows";
 
@@ -26,72 +27,37 @@ export function mapWords(line: LyricLine): RenderWord[] {
 }
 
 
-// interpolated clock
+// lyric clock
 
-/* a smooth monotonic clock the lyric offset rides on top of. the player only
-reports whole-second positions, so we run a free interpolated clock and only
-soft-correct it toward the reported position (hard resync on a real seek /
-track jump). resync lets a consumer snap it after a click-to-seek. */
+/* The lyric clock is the shared playhead (lib/playClock) shifted onto what the
+listener hears. It holds no state of its own, so a view that mounts late -
+reopening the panel, entering immersive, coming back from another window -
+reads exactly the same time as one that has been open all along. resync lets
+a click-to-seek move it before the player confirms. */
 export function useLyricClock() {
-  const initial = usePlayerStore.getState();
-  const baseRef = useRef({ pos: initial.positionMs, at: performance.now() });
-  const playingRef = useRef(initial.isPlaying);
-  const offsetRef = useRef(initial.lyricsOffsetMs);
+  const offsetRef = useRef(usePlayerStore.getState().lyricsOffsetMs);
 
   // ref-counted, shared with any other lyric surface; polls slowly in the
   // background and never re-renders us
   useEffect(() => startLatencyPolling(), []);
 
   useEffect(() => {
-    const init = usePlayerStore.getState();
-    baseRef.current = { pos: init.positionMs, at: performance.now() };
-    playingRef.current = init.isPlaying;
-    offsetRef.current = init.lyricsOffsetMs;
-
-    return usePlayerStore.subscribe((state, prev) => {
+    offsetRef.current = usePlayerStore.getState().lyricsOffsetMs;
+    return usePlayerStore.subscribe((state) => {
       offsetRef.current = state.lyricsOffsetMs;
-
-      if (state.positionMs !== prev.positionMs) {
-        const now = performance.now();
-        const predicted = playingRef.current
-          ? baseRef.current.pos + (now - baseRef.current.at)
-          : baseRef.current.pos;
-        const drift = state.positionMs - predicted;
-        if (Math.abs(drift) > 1200) {
-          baseRef.current = { pos: state.positionMs, at: now }; // seek / track change
-        } else {
-          baseRef.current = { pos: predicted + drift * 0.2, at: now }; // gentle pull
-        }
-      }
-
-      // Match the original effects: correct position using the previous play
-      // state before rebasing a simultaneous pause/resume update.
-      if (state.isPlaying !== prev.isPlaying) {
-        const now = performance.now();
-        baseRef.current = {
-          pos: playingRef.current
-            ? baseRef.current.pos + (now - baseRef.current.at)
-            : baseRef.current.pos,
-          at: now,
-        };
-        playingRef.current = state.isPlaying;
-      }
     });
   }, []);
 
   const getClock = useCallback(() => {
-    const c = playingRef.current
-      ? baseRef.current.pos + (performance.now() - baseRef.current.at)
-      : baseRef.current.pos;
-    /* the reported position is where the DECODER is; the listener is hearing
-       whatever left it a buffer ago. subtracting the measured output latency is
-       what actually puts the highlight on the beat - the manual offset on top
-       is now purely taste, not compensation. */
-    return c - getOutputLatencyMs() + offsetRef.current;
+    /* the reported position is where the player is; the listener hears it a
+       device buffer later. subtracting the measured output latency puts the
+       highlight on the beat - the manual offset on top is purely taste. */
+    return playheadMs() - getOutputLatencyMs() + offsetRef.current;
   }, []);
 
   const resync = useCallback((ms: number) => {
-    baseRef.current = { pos: ms, at: performance.now() };
+    const s = usePlayerStore.getState();
+    anchorPlayhead(ms, playheadPlaying(), s.playbackRate || 1);
   }, []);
 
   return { getClock, resync };
@@ -445,12 +411,6 @@ function charPos(t: number, toks: RenderWord[], starts: number[], lens: number[]
   return total;
 }
 
-/* Time constant for the filter that chases it. The light is pulled toward the
-   true position rather than snapped to it, so a word with a very short or badly
-   quantised duration becomes a quick glide instead of a jump. It costs about
-   this much lag against the vocal, which is small enough to read as the light
-   having weight. */
-const CHASE_MS = 80;
 
 /* A lyric line, lit or not.
  *
@@ -526,16 +486,14 @@ export const LyricRowText = memo(function LyricRowText({
 
     let raf = 0;
     let pos = charPos(getClock(), toks, starts, lens, total); // start where we are, not at zero
-    let last = performance.now();
     lastProps.current = [];
 
-    const tick = (now: number) => {
-      const t = getClock();
-      const dt = Math.min(now - last, 64); // a dropped frame must not overshoot
-      last = now;
-
-      // critically-damped chase, frame-rate independent
-      pos += (charPos(t, toks, starts, lens, total) - pos) * (1 - Math.exp(-dt / CHASE_MS));
+    const tick = () => {
+      /* The light sits exactly where the clock says. It used to chase that
+         point through an 80ms filter, which put every word ~80ms behind the
+         vocal - visibly late on fast lines. The clock is already smooth
+         (performance.now() between reports), so there is nothing to filter. */
+      pos = charPos(getClock(), toks, starts, lens, total);
 
       for (let i = 0; i < toks.length; i++) {
         const el = spans.current[i];

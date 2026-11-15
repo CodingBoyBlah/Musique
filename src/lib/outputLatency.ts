@@ -41,10 +41,11 @@ let consumers = 0;
 
 async function poll(): Promise<void> {
   try {
-    const v = await invoke<number>("get_output_latency_ms");
-    // 0 means "no sink" (not initialised, or the silent fallback) - keep the
-    // last good reading rather than snapping the clock to no correction at all
-    if (typeof v === "number" && v > 0 && v <= MAX_PLAUSIBLE_MS) {
+    const v = await invoke<number | null>("get_output_latency_ms");
+    // null means "no reading" (not initialised, or the silent fallback) - keep
+    // the last good figure. 0 is a real answer (Soloist reports heard
+    // positions) and has to replace the placeholder, or lyrics run 250ms late
+    if (typeof v === "number" && v >= 0 && v <= MAX_PLAUSIBLE_MS) {
       latencyMs = v;
     }
   } catch {

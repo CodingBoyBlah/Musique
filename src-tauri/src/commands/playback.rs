@@ -2105,32 +2105,29 @@ pub async fn set_audio_cache_limit(app: AppHandle, limit_mb: u64) -> Result<(), 
 /// Returns the current audio output latency in milliseconds.
 ///
 /// Accounts for both the audio chunks queued in rodio's sink and the
-/// negotiated hardware buffer duration granted to cpal. Returns 0 when
-/// playback is not initialized or when running through the null sink.
+/// negotiated hardware buffer duration granted to cpal. `None` means "no
+/// reading" (playback not initialised, or the null sink): the frontend keeps
+/// its last good figure. `Some(0)` is a real answer - Soloist reports
+/// positions as heard - and must not be confused with "unknown", or the
+/// frontend's 250ms placeholder stays in and every lyric runs late.
 #[tauri::command]
-pub async fn get_output_latency_ms(app: AppHandle) -> Result<i64, AppError> {
+pub async fn get_output_latency_ms(app: AppHandle) -> Result<Option<i64>, AppError> {
     // Has to follow the active backend. The librespot sink only updates its
     // figure while it is actually writing audio, so on the YouTube path it
-    // reports 0 - and `lib/outputLatency.ts` reads 0 as "no sink" and keeps its
-    // 250ms placeholder. That placeholder is what was desyncing lyrics, since
-    // the real buffer is nothing like 250ms.
+    // reports 0, which is "no reading", not "no latency".
     if soloist(&app).await.is_some() {
         // Soloist reports positions as it plays them and owns its own output
-        return Ok(0);
+        return Ok(Some(0));
     }
     if uses_youtube(&app).await {
         let yt = app.state::<AppState>().yt.clone();
         let guard = yt.lock().await;
-        return Ok(guard.as_ref().map(|p| p.output_latency_ms()).unwrap_or(0));
+        return Ok(guard.as_ref().map(|p| p.output_latency_ms()).filter(|&ms| ms > 0));
     }
 
     let playback = app.state::<AppState>().playback.clone();
     let guard = playback.lock().await;
-    let latency = guard
-        .as_ref()
-        .map(|inner| inner.output_latency_ms())
-        .unwrap_or(0);
-    Ok(latency)
+    Ok(guard.as_ref().map(|inner| inner.output_latency_ms()).filter(|&ms| ms > 0))
 }
 
 // ── connect-driven playback (spotify jam) ───────────────────────────────────
