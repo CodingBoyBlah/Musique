@@ -1450,7 +1450,21 @@ impl PlayerTrackLoader {
             // the cursor may have been moved by parsing normalisation data. This may not
             // matter for playback (but won't hurt either), but may be useful for the
             // passthrough decoder.
-            let stream_position_ms = match decoder.seek(position_ms) {
+            //
+            // (Musique) Except at the start with Symphonia: a decoder just
+            // opened already stands on the first audio packet, as the Ogg
+            // demuxer goes back there after reading the end, and the
+            // normalisation data was read through another cursor. Seeking
+            // there anyway bisects the whole file, page by page from the
+            // middle, and each page read is a CDN round trip before the first
+            // sample: about a second on a song not yet downloaded.
+            let fresh_at_start = position_ms == 0 && !self.config.passthrough;
+            let seeked = if fresh_at_start {
+                Ok(0)
+            } else {
+                decoder.seek(position_ms)
+            };
+            let stream_position_ms = match seeked {
                 Ok(new_position_ms) => new_position_ms,
                 Err(e) => {
                     error!(
