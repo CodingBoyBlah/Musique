@@ -35,15 +35,30 @@ enum ReceivedData {
 const ONE_SECOND: Duration = Duration::from_secs(1);
 const DOWNLOAD_STATUS_POISON_MSG: &str = "audio download status mutex should not be poisoned";
 
+/// How much of a response is gathered before it is handed on as downloaded.
+const RECEIVE_PIECE: usize = 16 * 1024;
+
+/// Downloads `request`. A `paced` one waits for the file's one download slot,
+/// so that streaming goes one range after another down one connection: the
+/// CDN speaks HTTP/1.1, so a second request at the same time needs a
+/// connection of its own, a new one costing several round trips. A read the
+/// decoder is stuck on while seeking is not paced. Behind the read-ahead it
+/// would wait for thirty seconds of audio to download, at every step of the
+/// seek. (Musique)
 async fn receive_data(
     shared: Arc<AudioFileShared>,
     file_data_tx: mpsc::UnboundedSender<ReceivedData>,
     mut request: StreamingRequest,
+    paced: bool,
 ) -> AudioFileResult {
     let mut offset = request.offset;
     let mut actual_length = 0;
 
-    let permit = shared.download_slots.acquire().await?;
+    let permit = if paced {
+        Some(shared.download_slots.acquire().await?)
+    } else {
+        None
+    };
 
     let request_time = Instant::now();
     let mut measure_ping_time = true;
@@ -98,17 +113,38 @@ async fn receive_data(
             break Err(AudioFileError::StatusCode(code).into());
         }
 
-        let body = response.into_body();
-        let data = match body.collect().await.map(|b| b.to_bytes()) {
-            Ok(bytes) => bytes,
-            Err(e) => break Err(e.into()),
+        // Each piece counts as downloaded as soon as it is in, rather than
+        // once the whole range is: a read waiting on the start of a range of
+        // a megabyte or more (the read-ahead asks for thirty seconds of
+        // audio) can go on after the first few kilobytes. (Musique)
+        let mut body = response.into_body();
+        let mut pending = bytes::BytesMut::new();
+        let failed = loop {
+            let (ended, failed) = match body.frame().await {
+                Some(Ok(frame)) => {
+                    if let Ok(data) = frame.into_data() {
+                        pending.extend_from_slice(&data);
+                    }
+                    (false, None)
+                }
+                Some(Err(e)) => (true, Some(e)),
+                None => (true, None),
+            };
+            // what came before a failure is good, and kept
+            if !pending.is_empty() && (ended || pending.len() >= RECEIVE_PIECE) {
+                let data = pending.split().freeze();
+                let data_size = data.len();
+                file_data_tx.send(ReceivedData::Data(PartialFileData { offset, data }))?;
+                actual_length += data_size;
+                offset += data_size;
+            }
+            if ended {
+                break failed;
+            }
         };
-
-        let data_size = data.len();
-        file_data_tx.send(ReceivedData::Data(PartialFileData { offset, data }))?;
-
-        actual_length += data_size;
-        offset += data_size;
+        if let Some(e) = failed {
+            break Err(e.into());
+        }
     };
 
     drop(request.streamer);
@@ -224,6 +260,7 @@ impl AudioFileFetch {
                 self.shared.clone(),
                 self.file_data_tx.clone(),
                 streaming_request,
+                self.shared.is_download_streaming(),
             ));
         }
 
@@ -439,6 +476,7 @@ pub(super) async fn audio_file_fetch(
         shared.clone(),
         file_data_tx.clone(),
         initial_request,
+        true,
     ));
 
     let params = AudioFetchParams::get();
