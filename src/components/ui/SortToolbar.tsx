@@ -3,7 +3,7 @@ import { Search, X } from "@/lib/icons";
 import { Dropdown, type DropdownOption } from "./Dropdown";
 import { SortDirectionToggle } from "./SortDirectionToggle";
 
-type SortKey = "name" | "popularity";
+type SortKey = "recent" | "name" | "popularity";
 type Dir = "asc" | "desc";
 
 interface NamedPop {
@@ -12,27 +12,52 @@ interface NamedPop {
 }
 
 
-const sortOptions: DropdownOption<SortKey>[] = [
+const recentOption: DropdownOption<SortKey> = { value: "recent", label: "Recently added" };
+const baseOptions: DropdownOption<SortKey>[] = [
   { value: "name",       label: "Name" },
   { value: "popularity", label: "Popularity" },
 ];
+const withRecent = [recentOption, ...baseOptions];
 
+/* With `recent`, `items` must arrive newest-added first (the liked-songs and
+   saved-albums queries order by added_at DESC). "Recently added" sorts on that
+   arrival order, so no timestamp has to ride along on every item. Followed
+   artists leave it off: spotify gives no follow date to sort by. */
 export function useSortTools<T extends NamedPop>(
   items: T[],
   placeholder = "Find",
+  { recent = false }: { recent?: boolean } = {},
 ): { view: T[]; toolbar: ReactNode } {
+  const sortOptions = recent ? withRecent : baseOptions;
   const [query, setQuery] = useState("");
   const [sort,  setSort]  = useState<SortKey>("name");
   const [dir,   setDir]   = useState<Dir>("asc");
+
+  // newest-first is the only useful default for recency, so picking it flips
+  // the arrow to descending; leaving it goes back to A-Z style ascending
+  const changeSort = (next: SortKey) => {
+    if (next === sort) return;
+    setSort(next);
+    if (next === "recent") setDir("desc");
+    else if (sort === "recent") setDir("asc");
+  };
 
   const view = useMemo(() => {
     let arr = items;
     const q = query.trim().toLowerCase();
     if (q) arr = arr.filter((i) => i.name.toLowerCase().includes(q));
 
-    const cmp = sort === "name"
-      ? (a: T, b: T) => a.name.localeCompare(b.name)
-      : (a: T, b: T) => (a.popularity ?? 0) - (b.popularity ?? 0);
+    let cmp: (a: T, b: T) => number;
+    if (sort === "recent") {
+      // ascending = oldest first, so descending reads newest first
+      const rank = new Map<T, number>();
+      items.forEach((it, i) => rank.set(it, i));
+      cmp = (a, b) => (rank.get(b) ?? 0) - (rank.get(a) ?? 0);
+    } else if (sort === "name") {
+      cmp = (a, b) => a.name.localeCompare(b.name);
+    } else {
+      cmp = (a, b) => (a.popularity ?? 0) - (b.popularity ?? 0);
+    }
     arr = [...arr].sort(cmp);
     if (dir === "desc") arr.reverse();
     return arr;
@@ -76,11 +101,11 @@ export function useSortTools<T extends NamedPop>(
       </div>
 
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginLeft: "auto" }}>
-        <Dropdown value={sort} options={sortOptions} onChange={setSort} align="right" minWidth={150} title="Sort by" />
+        <Dropdown value={sort} options={sortOptions} onChange={changeSort} align="right" minWidth={170} title="Sort by" />
         <SortDirectionToggle dir={dir} onChange={setDir} />
       </div>
     </div>
-  ), [query, sort, dir, placeholder]);
+  ), [query, sort, dir, placeholder, sortOptions]);
 
   return { view, toolbar };
 }

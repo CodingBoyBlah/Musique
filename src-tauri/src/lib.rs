@@ -845,11 +845,15 @@ pub fn run() {
     #[cfg(unix)]
     native_crash::install();
 
+    // no --num-raster-threads: pinning it to 1 left every newly exposed tile
+    // (a fast scroll, a page opening) queued behind one worker. Chromium sizes
+    // the pool to the CPU, and scrolling now runs on the compositor and leans
+    // on those workers to keep up with the display.
     #[cfg(target_os = "windows")]
     if std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
         std::env::set_var(
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            "--renderer-process-limit=1 --gpu-rasterization-msaa-sample-count=0 --num-raster-threads=1 --enable-zero-copy --disk-cache-size=33554432 --media-cache-size=33554432 --disable-renderer-accessibility --disable-speech-api --disable-print-preview --enable-features=TrimOnMemoryPressure,NetworkServiceInProcess --disable-background-networking --disable-component-update --disable-domain-reliability --disable-sync --disable-breakpad --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,BackForwardCache,GlobalMediaControls",
+            "--renderer-process-limit=1 --gpu-rasterization-msaa-sample-count=0 --enable-zero-copy --disk-cache-size=33554432 --media-cache-size=33554432 --disable-renderer-accessibility --disable-speech-api --disable-print-preview --enable-features=TrimOnMemoryPressure,NetworkServiceInProcess --disable-background-networking --disable-component-update --disable-domain-reliability --disable-sync --disable-breakpad --disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,BackForwardCache,GlobalMediaControls",
         );
     }
 

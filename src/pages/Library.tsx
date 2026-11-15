@@ -27,6 +27,7 @@ import { LIKED_SONGS_URI, useQueueStore } from "../store/queue.store";
 import { playTrack } from "../api/playback";
 import { useSpeedDialStore } from "../store/speedDial.store";
 import { useReflowPulse } from "../hooks/useReflowPulse";
+import { useStagedList } from "../hooks/useStagedList";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
 
@@ -43,7 +44,8 @@ function LikedSongsTab() {
   const playContext = useQueueStore((s) => s.playContext);
   const toggleLike  = useToggleLike();
 
-  const { view, toolbar } = useSortTools(tracks, "Find in songs");
+  const { view, toolbar } = useSortTools(tracks, "Find in songs", { recent: true });
+  const shown = useStagedList(view);
   const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
   const { data: savedIds = [] } = useSavedTrackIds(trackIds);
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
@@ -86,7 +88,7 @@ function LikedSongsTab() {
         {toolbar}
       </motion.div>
       <div style={{ display: "flex", flexDirection: "column" }}>
-        {view.map((t, i) => (
+        {shown.map((t, i) => (
           <TrackRow
             key={t.id}
             track={t}
@@ -110,7 +112,8 @@ function LikedSongsTab() {
 
 function AlbumsTab() {
   const { data: albums = [], isLoading } = useSavedAlbums();
-  const { view, toolbar } = useSortTools(albums, "Find in albums");
+  const { view, toolbar } = useSortTools(albums, "Find in albums", { recent: true });
+  const shown = useStagedList(view, 36);
 
   if (isLoading) {
     return <div role="status" aria-label="Loading albums"><CardGridSkeleton /></div>;
@@ -141,7 +144,7 @@ function AlbumsTab() {
         {toolbar}
       </motion.div>
       <AlbumGrid>
-        {view.map((al, i) => <AlbumCard key={al.id} album={al} index={i} />)}
+        {shown.map((al, i) => <AlbumCard key={al.id} album={al} index={i} />)}
       </AlbumGrid>
       {view.length === 0 && (
         <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>No albums match your filter.</p>
@@ -155,6 +158,7 @@ function AlbumsTab() {
 function ArtistsTab() {
   const { data: artists = [], isLoading } = useFollowedArtists();
   const { view, toolbar } = useSortTools(artists, "Find in artists");
+  const shown = useStagedList(view, 36);
 
   if (isLoading) {
     return <div role="status" aria-label="Loading artists"><CardGridSkeleton round /></div>;
@@ -185,7 +189,7 @@ function ArtistsTab() {
         {toolbar}
       </motion.div>
       <ArtistGrid>
-        {view.map((a, i) => <ArtistCard key={a.id} artist={a} index={i} />)}
+        {shown.map((a, i) => <ArtistCard key={a.id} artist={a} index={i} />)}
       </ArtistGrid>
       {view.length === 0 && (
         <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>No artists match your filter.</p>

@@ -1,11 +1,11 @@
 import { useMemo } from "react";
-import { coverUrl } from "../lib/coverUrl";
 import { useParams, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Pin, Radio } from "@/lib/icons";
 import { playStation } from "../utils/radio";
 import { useAlbum } from "../hooks/useAlbum";
-import { useArtist } from "../hooks/useArtist";
+import { useArtist, useArtists } from "../hooks/useArtist";
+import { ArtistAvatarStack } from "../components/ui/ArtistAvatarStack";
 import { AlbumCard } from "../components/ui/AlbumCard";
 import { TrackRow } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
@@ -48,6 +48,20 @@ export default function AlbumPage() {
     [artistDetail?.albums, data?.id],
   );
   const carousel = useCarousel([moreBy.length]);
+
+  // portraits for every credited artist (the first one is the query above,
+  // shared through the cache, so it isn't fetched twice)
+  const artistIds = useMemo(() => (data?.artists ?? []).map((a) => a.id).filter(Boolean), [data?.artists]);
+  const artistQueries = useArtists(artistIds);
+  const avatarArtists = (data?.artists ?? []).filter((a) => a.id).map((a, i) => {
+    const q = artistQueries[i];
+    return {
+      id: a.id,
+      name: a.name,
+      // a failed lookup counts as "no portrait" so it shows the initial, not a blank disc forever
+      image_url: q?.data ? q.data.image_url ?? null : q?.isError ? null : undefined,
+    };
+  });
 
   const tracks = data?.tracks ?? [];
   const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
@@ -97,13 +111,7 @@ export default function AlbumPage() {
     >
       <PageHeader imageUrl={data.image_url} eyebrow={data.album_type} title={data.name}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap", fontSize: 14.5 }}>
-          {artistDetail?.image_url && (
-            <img
-              src={coverUrl(artistDetail.image_url, 22) ?? artistDetail.image_url}
-              alt=""
-              style={{ width: 22, height: 22, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
-            />
-          )}
+          <ArtistAvatarStack artists={avatarArtists} />
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 700, color: "#ffffff" }}>
               {data.artists.map((a, i) => (

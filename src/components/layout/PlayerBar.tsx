@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, memo } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, memo } from "react";
 import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence, animate, useMotionValue, useTransform } from "framer-motion";
@@ -25,6 +25,7 @@ import { usePlayerControls } from "../../hooks/usePlayerControls";
 import { gpuLayer, zTransform, EASE_OUT, PRESS } from "../../lib/motion";
 import { SpeedControl, SkipSeconds } from "../ui/SpeedControl";
 import { isEpisodeId } from "../../utils/episode";
+import { playheadMs } from "../../lib/playClock";
 
 /* Transport buttons: they lift a little under the pointer and squash on the
    press, on an underdamped spring so they land with a small bounce - the feel
@@ -442,11 +443,42 @@ const PlayerScrubber = memo(function PlayerScrubber({
   showTimes: boolean;
 }) {
   const positionMs = usePlayerStore((s) => s.positionMs);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const playbackRate = usePlayerStore((s) => s.playbackRate);
   const [isScrubHovered, setIsScrubHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [dragFrac, setDragFrac] = useState<number | null>(null);
   const [hoverFrac, setHoverFrac] = useState<number | null>(null);
   const scrubBarRef = useRef<HTMLDivElement>(null);
+  const fillRef = useRef<HTMLDivElement>(null);
+  const gliding = isPlaying && !isDragging && durationMs > 0;
+
+  /* The played line moves every frame, not once a second. positionMs only
+     changes on the 1s tick, so the fill used to slide for 120ms and then sit
+     still for 880ms - a 1fps bar. Now, while playing, it runs one linear Web
+     Animation from where the play clock is to the end of the song, which the
+     compositor plays at the display's refresh rate with no main-thread work.
+     Every tick or report restarts it from the clock, so it can't drift; a
+     pause, a drag or a track change cancels it and the inline transform
+     below takes over again. */
+  useLayoutEffect(() => {
+    const el = fillRef.current;
+    if (!el || !gliding || typeof el.animate !== "function") return;
+    const at = Math.max(0, Math.min(playheadMs(), durationMs));
+    const left = (durationMs - at) / (playbackRate > 0 ? playbackRate : 1);
+    if (left <= 0) return;
+    const anim = el.animate(
+      [{ transform: `scaleX(${at / durationMs})` }, { transform: "scaleX(1)" }],
+      { duration: left, easing: "linear", fill: "forwards" },
+    );
+    return () => {
+      // leave the line where it was drawn: positionMs can be up to a tick
+      // behind the clock, and on a pause the bar would hop back to it until
+      // the player's own report lands
+      try { anim.commitStyles(); } catch { /* element not rendered */ }
+      anim.cancel();
+    };
+  }, [gliding, positionMs, durationMs, playbackRate]);
   // the pointer handlers read these, not state: pointerup can land before the
   // render that would have carried the last pointermove's value
   const draggingRef = useRef(false);
@@ -607,6 +639,7 @@ const PlayerScrubber = memo(function PlayerScrubber({
           }}
         >
           <div
+            ref={fillRef}
             style={{
               position: "absolute",
               inset: 0,
@@ -614,7 +647,9 @@ const PlayerScrubber = memo(function PlayerScrubber({
               borderRadius: 9999,
               background: "#ffffff",
               transform: `scaleX(${pct / 100})`,
-              transition: isDragging ? "none" : "transform 0.12s linear",
+              // a CSS transition outranks a Web Animation in the cascade, so it
+              // must be off while the glide runs or it would re-step every tick
+              transition: isDragging || gliding ? "none" : "transform 0.12s linear",
               boxShadow: isLineExpanded ? "0 0 8px rgba(255, 255, 255, 0.45)" : "none",
             }}
           />

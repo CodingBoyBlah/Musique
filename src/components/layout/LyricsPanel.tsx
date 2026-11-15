@@ -25,8 +25,11 @@ import {
   romanizeLines,
 } from "../../utils/romanize";
 import {
+  LyricInterlude,
   LyricRowText,
   buildRows,
+  withInterludes,
+  rowDistances,
   voiceLayout,
   lyricTone,
   lyricWords,
@@ -98,7 +101,7 @@ function SongLyricsPanel() {
   const synced = !!data?.lines.length;
 
   // build rows via the shared engine (same grouping the Immersive view uses)
-  const rows = useMemo<Row[]>(() => buildRows(data), [data]);
+  const rows = useMemo<Row[]>(() => withInterludes(buildRows(data)), [data]);
 
   const rowStarts = useMemo(() => rows.map((r) => r.startMs), [rows]);
 
@@ -151,6 +154,7 @@ function SongLyricsPanel() {
   // interpolated clock AND active-row tracking shared with the Immersive view
   const { getClock, resync } = useLyricClock();
   const { active, overlapping, singing } = useActiveLyrics(rows, getClock, synced);
+  const distances = useMemo(() => rowDistances(rows, active), [rows, active]);
 
   /* keep the active row at about 40%. the same follower the immersive view
      uses: a jump for the first placement, one velocity-keeping spring line to
@@ -324,7 +328,7 @@ function SongLyricsPanel() {
               {rows.map((row, ri) => {
                 const isActive = synced && ri === active;
                 const tone = synced
-                  ? lyricTone(Math.abs(ri - active), ri < active, moreContrast)
+                  ? lyricTone(distances[ri], ri < active, moreContrast)
                   : { blur: 0, alpha: 0.92 };
                 const layout = voiceLayout(row);
                 return (
@@ -345,13 +349,14 @@ function SongLyricsPanel() {
                          knowing - which is what ran long lines off the edge of
                          this panel. Emphasis is light only now, the same as the
                          immersive view. */
-                      padding: "8px 10px",
+                      // an interlude carries its own padding inside the fold
+                      padding: row.interlude ? "0 10px" : "8px 10px",
                       position: "relative",
                       cursor: synced ? "pointer" : "default",
                       transition: reduceMotion
                         ? "background-color 0.16s ease"
                         : "background-color 0.16s ease, scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)",
-                      contentVisibility: isActive || overlapping.some((v) => v.row === ri) ? "visible" : "auto",
+                      contentVisibility: isActive || row.interlude || overlapping.some((v) => v.row === ri) ? "visible" : "auto",
                       containIntrinsicSize: "0 40px",
                       display: "flex",
                       flexDirection: "column",
@@ -361,7 +366,18 @@ function SongLyricsPanel() {
                       boxSizing: "border-box",
                     }}
                   >
-                    {row.voices.map((voice, vi) => {
+                    {row.interlude ? (
+                      <LyricInterlude
+                        startMs={row.startMs}
+                        endMs={row.endMs}
+                        active={isActive}
+                        getClock={getClock}
+                        size="1.786rem"
+                        pad="10px"
+                        inkRgb={ink}
+                        glowRgb={glow}
+                      />
+                    ) : row.voices.map((voice, vi) => {
                       // lead left, duet right, a backing vocal on the side of
                       // the singer it's under (lib/lyricsRows voiceLayout)
                       const { side: align, secondary: isSecondary } = layout[vi];

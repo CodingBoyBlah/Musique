@@ -8,7 +8,7 @@ import { useWindowActive } from "../hooks/useWindowActive";
 import { timedVoices, overlappingVoices, type Row } from "./lyricsRows";
 
 
-export { CONCURRENT_TOL_MS, buildRows, voiceLayout, type Row, type VoiceSide } from "./lyricsRows";
+export { CONCURRENT_TOL_MS, buildRows, withInterludes, rowDistances, voiceLayout, type Row, type VoiceSide } from "./lyricsRows";
 
 const cleanSpaces = (s: string) => (s || "").replace(/[\u00A0\u200B\u202F\uFEFF]/g, " ");
 
@@ -570,5 +570,101 @@ export const LyricRowText = memo(function LyricRowText({
         </span>
       ))}
     </p>
+  );
+});
+
+
+/* An instrumental stretch: three dots that fill one after another across the
+ * gap, Apple Music style.
+ *
+ * The row is folded shut (0fr, no padding) whenever it is not the present, so
+ * a passed or upcoming interlude takes no room in the column; the follower
+ * watches every row with a ResizeObserver, so the list glides as it opens and
+ * closes instead of jumping. While open:
+ *
+ * - progress is one number, `--p`, written per frame from the lyric clock. The
+ *   three dots derive their own fill from it in CSS, so each lights over its
+ *   third of the gap and the last one lands as the voice comes back in
+ * - the group breathes on a compositor animation, held while paused
+ * - over the last tenth it swells a touch, a beat of anticipation, and then
+ *   folds away as the next line lights - the same handoff the lines use
+ *
+ * Reduced motion keeps the fill (it says how long until singing resumes) and
+ * drops the breathing, swell and fold. */
+export const LyricInterlude = memo(function LyricInterlude({
+  startMs,
+  endMs,
+  active,
+  getClock,
+  size,
+  pad,
+  align = "left",
+  inkRgb = "255, 255, 255",
+  glowRgb = "255, 255, 255",
+}: {
+  startMs: number;
+  endMs: number;
+  active: boolean;
+  getClock: () => number;
+  /** the lyric font size the dots scale off */
+  size: number | string;
+  /** vertical padding while open */
+  pad: string;
+  align?: "left" | "right" | "center";
+  inkRgb?: string;
+  glowRgb?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const awake = useWindowActive();
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !active) return;
+    const span = Math.max(endMs - startMs, 1);
+    let raf = 0;
+    let last = "";
+    const tick = () => {
+      const p = Math.min(1, Math.max(0, (getClock() - startMs) / span));
+      const v = p.toFixed(4);
+      if (v !== last) {
+        last = v;
+        el.style.setProperty("--p", v);
+      }
+      if (p < 1 && isPlaying && awake) raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [active, startMs, endMs, getClock, isPlaying, awake]);
+
+  return (
+    <div
+      ref={ref}
+      className="lyr-gap"
+      data-open={active}
+      data-playing={isPlaying}
+      role="img"
+      aria-label="Instrumental"
+      aria-hidden={!active || undefined}
+      style={{
+        fontSize: size,
+        ["--ink" as string]: inkRgb,
+        ["--glow" as string]: glowRgb,
+        ["--gap-pad" as string]: pad,
+        ["--gap-origin" as string]: align,
+      }}
+    >
+      <div className="lyr-gap-clip">
+        <div className="lyr-gap-pad" style={{ textAlign: align }}>
+          <span className="lyr-gap-pose">
+            <span className="lyr-gap-breathe">
+              {[0, 1, 2].map((i) => (
+                <span key={i} className="lyr-gap-dot" style={{ ["--i" as string]: i }} />
+              ))}
+            </span>
+          </span>
+        </div>
+      </div>
+    </div>
   );
 });

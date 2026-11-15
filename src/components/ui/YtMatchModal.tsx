@@ -129,7 +129,7 @@ export function YtMatchModal() {
         All search results, including ones automatic matching rejected.
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "0 10px 10px" }}>
+      <div className="gpu-scroll" style={{ flex: 1, overflowY: "auto", padding: "0 10px 10px" }}>
         {isLoading ? (
           <p style={hint}>Searching YouTube Music…</p>
         ) : isError ? (

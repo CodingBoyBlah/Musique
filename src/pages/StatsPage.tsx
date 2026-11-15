@@ -51,7 +51,7 @@ function Heatmap({ grid }: { grid: number[][] }) {
   return (
     <section aria-labelledby="stats-when">
       <SectionTitle id="stats-when">When you listen</SectionTitle>
-      <div style={{ overflowX: "auto", paddingBottom: 4 }}>
+      <div className="gpu-scroll" style={{ overflowX: "auto", paddingBottom: 4 }}>
         <div role="grid" aria-label="Plays by day and hour" style={{ display: "grid", gridTemplateColumns: "36px repeat(24, minmax(14px, 1fr))", gap: 3, minWidth: 420 }}>
           <span />
           {Array.from({ length: 24 }, (_, h) => (

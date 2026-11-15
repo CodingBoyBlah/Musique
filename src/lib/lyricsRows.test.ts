@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRows, voiceLayout, timedVoices, timedSecondaryVoices, overlappingVoices, CONCURRENT_TOL_MS, type Row } from "./lyricsRows";
+import { buildRows, withInterludes, rowDistances, voiceLayout, timedVoices, timedSecondaryVoices, overlappingVoices, CONCURRENT_TOL_MS, type Row } from "./lyricsRows";
 import type { LyricLine } from "../api/lyrics";
 
 // line-level helper (no word timings, like LRCLIB)
@@ -301,5 +301,43 @@ describe("overlapping main singers", () => {
     const [row] = buildRows([W(1000, "one", 1000, "main"), W(1040, "two", 3000, "main")]);
     expect(voiceLayout(row).every((v) => !v.secondary)).toBe(true);
     expect(timedVoices([row]).map((v) => v.endMs)).toEqual([2000, 4040]);
+  });
+});
+
+describe("withInterludes", () => {
+  const shape = (rows: Row[]) => rows.map((r) => (r.interlude ? `~${r.startMs}-${r.endMs}` : lead(r).text));
+
+  it("turns a run of ♪ / blank lines into one interlude spanning to the next line", () => {
+    const rows = withInterludes(buildRows([L(0, "a"), L(4000, "♪"), L(9000, ""), L(16000, "b")]));
+    expect(shape(rows)).toEqual(["a", "~4000-16000", "b"]);
+  });
+
+  it("drops interludes too short to read as a pause, and the outro", () => {
+    const rows = withInterludes(buildRows([L(0, "a"), L(4000, ""), L(5000, "b"), L(9000, "♪")]));
+    expect(shape(rows)).toEqual(["a", "b"]);
+  });
+
+  it("adds an intro before a late first line, and starts a leading marker at 0", () => {
+    expect(shape(withInterludes(buildRows([L(12000, "a"), L(14000, "b")])))).toEqual(["~0-12000", "a", "b"]);
+    expect(shape(withInterludes(buildRows([L(800, "♪"), L(9000, "a")])))).toEqual(["~0-9000", "a"]);
+    expect(shape(withInterludes(buildRows([L(1500, "a")])))).toEqual(["a"]);
+  });
+
+  it("opens a word-timed silence where the singing stopped", () => {
+    const rows = withInterludes(buildRows([W(0, "sing", 3000), W(20000, "again", 1000)]));
+    expect(shape(rows)).toEqual(["sing", "~3000-20000", "again"]);
+    // line-level lines say nothing about when singing stops
+    expect(shape(withInterludes(buildRows([L(0, "a"), L(20000, "b")])))).toEqual(["a", "b"]);
+  });
+
+  it("leaves unsynced lyrics alone", () => {
+    const rows = buildRows([L(-1, "x"), L(-1, ""), L(-1, "y")]);
+    expect(withInterludes(rows)).toBe(rows);
+  });
+
+  it("measures focus distance without counting folded interludes", () => {
+    const rows = withInterludes(buildRows([L(0, "a"), L(4000, ""), L(12000, "b"), L(14000, "c")]));
+    expect(rowDistances(rows, 0)).toEqual([0, 1, 1, 2]);
+    expect(rowDistances(rows, 1)).toEqual([1, 0, 1, 2]);
   });
 });

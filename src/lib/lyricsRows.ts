@@ -9,6 +9,8 @@ export type Row = {
   startMs: number;
   endMs: number;
   voices: LyricLine[];
+  /** an instrumental stretch, drawn as three breathing dots - see withInterludes */
+  interlude?: boolean;
 };
 
 const cleanSpaces = (s: string) => (s || "").replace(/[\u00A0\u200B\u202F\uFEFF]/g, " ");
@@ -151,4 +153,93 @@ export function timedSecondaryVoices(rows: Row[]): OverlappingVoice[] {
 
 export function overlappingVoices(voices: OverlappingVoice[], active: number, timeMs: number) {
   return voices.filter((v) => v.row < active && v.startMs <= timeMs && timeMs < v.endMs);
+}
+
+/* Instrumental stretches, the way Apple Music draws them.
+ *
+ * Sources mark a gap in the vocal three ways, and none of them is a line anyone
+ * wants to read: Spotify sends a "♪" line, LRCLIB a blank one, and a word-timed
+ * source just stops having words for a while. All three become one interlude
+ * row, which the views draw as three dots that fill across the gap and fold
+ * away when the voice comes back.
+ *
+ * - a run of marker/blank lines collapses to one interlude
+ * - a long silence inside word-timed lyrics gets one, starting where the
+ *   singing actually stopped rather than where the next line starts
+ * - a long intro before the first line gets one at 0:00
+ * - an interlude too short to read as a pause, or one with nothing after it
+ *   (the outro), is dropped: dots racing to fill in a second look like a glitch
+ *
+ * Kept apart from buildRows so the grouping stays testable on its own. */
+export const INTERLUDE_MIN_MS = 2500;
+export const INTRO_MIN_MS = 3000;
+export const SILENCE_MIN_MS = 7000;
+
+const MARKER_ONLY = /^[\s♪♫♬\u{1F3B5}\u{1F3B6}]*$/u; // blank, ♪ ♫ ♬ 🎵 🎶
+
+function isMarkerRow(row: Row): boolean {
+  return row.voices.every(
+    (v) => MARKER_ONLY.test(v.text) && v.words.every((w) => MARKER_ONLY.test(w.text)),
+  );
+}
+
+/** when a row's singing really stops, or null if it has no word timings to say */
+function sungEnd(row: Row): number | null {
+  let end: number | null = null;
+  for (const v of row.voices) {
+    for (const w of v.words) end = Math.max(end ?? w.time_ms, w.time_ms, w.end_ms);
+  }
+  return end;
+}
+
+const gapRow = (startMs: number): Row => ({
+  startMs,
+  endMs: startMs,
+  voices: [{ time_ms: startMs, text: "", words: [] }],
+  interlude: true,
+});
+
+export function withInterludes(rows: Row[]): Row[] {
+  if (!rows.length || rows[0].startMs < 0) return rows; // unsynced: nothing to time
+
+  const out: Row[] = [];
+  for (const row of rows) {
+    const last = out[out.length - 1];
+    if (isMarkerRow(row)) {
+      if (!last?.interlude) out.push(gapRow(row.startMs));
+      continue;
+    }
+    if (last && !last.interlude) {
+      const end = sungEnd(last);
+      if (end != null && row.startMs - end >= SILENCE_MIN_MS) out.push(gapRow(end));
+    }
+    out.push(row);
+  }
+
+  if (out.length) {
+    if (out[0].interlude) out[0] = gapRow(0);
+    else if (out[0].startMs >= INTRO_MIN_MS) out.unshift(gapRow(0));
+  }
+
+  return out.filter((row, i) => {
+    if (!row.interlude) return true;
+    const next = out[i + 1];
+    if (!next) return false;
+    row.endMs = next.startMs;
+    return row.endMs - row.startMs >= INTERLUDE_MIN_MS;
+  });
+}
+
+/* How far each row sits from the active one, counting only rows on screen.
+   A folded interlude takes no space, so it must not push the line after it a
+   step further out of focus than it looks. */
+export function rowDistances(rows: Row[], active: number): number[] {
+  const pos: number[] = [];
+  let p = 0;
+  for (let i = 0; i < rows.length; i++) {
+    pos.push(p);
+    if (!rows[i].interlude || i === active) p++;
+  }
+  const at = active < 0 ? -1 : pos[active];
+  return pos.map((x) => Math.abs(x - at));
 }

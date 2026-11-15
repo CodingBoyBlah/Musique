@@ -219,6 +219,7 @@ function DevicesPopoverCard({
 
       {/* Device List */}
       <div
+        className="gpu-scroll"
         style={{
           display: "flex",
           flexDirection: "column",

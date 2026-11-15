@@ -138,6 +138,23 @@ main,
     scrollbar-gutter: stable;
 }
 
+/* Compositor-thread scrolling for every scroll box.
+   At a 100% display scale Chromium (WebView2 included) keeps a scroller with
+   a see-through background on the main thread, to protect subpixel text it
+   could not keep on a separate layer. Every one of ours is see-through (the
+   card colour is a sibling layer, the window is Mica), so every scroll frame
+   re-ran style, paint and layerize for the whole visible page: a 250-track
+   playlist scrolled at ~30fps. With its own scroll layer the GPU just moves
+   the already-painted content, and scrolling holds the display's refresh
+   rate (0 dropped frames on the same playlist). Any new scroll box should
+   carry `scroll-y`, `ovs-hide` or `gpu-scroll`. */
+main,
+.scroll-y,
+.ovs-hide,
+.gpu-scroll {
+    will-change: scroll-position;
+}
+
 
 ::-webkit-scrollbar {
     width: 10px;

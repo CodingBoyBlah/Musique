@@ -24,8 +24,11 @@ import "../../styles/lyrics.css";
 import { PlayerBar } from "./PlayerBar";
 import { MeshRoom } from "./MeshRoom";
 import {
+  LyricInterlude,
   LyricRowText,
   buildRows,
+  withInterludes,
+  rowDistances,
   voiceLayout,
   lyricTone,
   lyricWords,
@@ -263,12 +266,13 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
   const { data, isLoading } = useLyrics(track);
   const { seek } = usePlayerControls();
 
-  const rows = useMemo(() => buildRows(data), [data]);
+  const rows = useMemo(() => withInterludes(buildRows(data)), [data]);
   const rowStarts = useMemo(() => rows.map((r) => r.startMs), [rows]);
   const synced = !!data?.lines.length;
 
   const { getClock, resync } = useLyricClock();
   const { active, overlapping, singing } = useActiveLyrics(rows, getClock, synced);
+  const distances = useMemo(() => rowDistances(rows, active), [rows, active]);
 
   const followTrackId = usePlayerStore((s) => s.currentTrack?.id);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -315,10 +319,10 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
 
   return (
     <div style={{ position: "relative", height: "100%" }}>
-    <div ref={scrollRef} className="lyr-scroll" style={lyricsScroll}>
+    <div ref={scrollRef} className="lyr-scroll gpu-scroll" style={lyricsScroll}>
       {rows.map((row, ri) => {
         const isActive = synced && ri === active;
-        const tone = synced ? lyricTone(Math.abs(ri - active), ri < active, moreContrast) : { blur: 0, alpha: 0.9 };
+        const tone = synced ? lyricTone(distances[ri], ri < active, moreContrast) : { blur: 0, alpha: 0.9 };
         const layout = voiceLayout(row);
         const ease = "0.45s cubic-bezier(0.22, 1, 0.36, 1)";
         return (
@@ -345,13 +349,25 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                  early to fund. This way the widest thing on screen is always
                  the thing the layout measured, and nothing can clip however
                  large the ratio gets. */
-              padding: "11px 0",
+              // an interlude carries its own padding inside the fold
+              padding: row.interlude ? 0 : "11px 0",
               // Voice emphasis animates below; `scale` here is only the press.
               transition: reduceMotion ? undefined : "scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)",
               display: "flex", flexDirection: "column", ["--lyr-voice-gap" as string]: "6px",
             }}
           >
-            {row.voices.map((voice, vi) => {
+            {row.interlude ? (
+              <LyricInterlude
+                startMs={row.startMs}
+                endMs={row.endMs}
+                active={isActive}
+                getClock={getClock}
+                size="clamp(2rem, 0.4rem + 2.75vw, 4.15rem)"
+                pad="14px"
+                inkRgb={ink}
+                glowRgb={glow}
+              />
+            ) : row.voices.map((voice, vi) => {
               // lead left, duet right, a backing vocal on the side of the
               // singer it's under (lib/lyricsRows voiceLayout)
               const { side: align, secondary: isSecondary } = layout[vi];

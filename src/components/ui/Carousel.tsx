@@ -135,7 +135,7 @@ export function CarouselTrack<T>({
       ref={carousel.ref}
       role="list"
       aria-label={label}
-      className="edge-fade-x"
+      className="edge-fade-x gpu-scroll"
       data-fade-start={carousel.canPrev || undefined}
       data-fade-end={carousel.canNext || undefined}
       style={{

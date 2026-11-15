@@ -108,7 +108,7 @@ export function AddToPlaylistModal() {
       </div>
 
       {/* 8 + the rows' 10px = the 18px edge the title and search box sit on */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 10px" }}>
+      <div className="gpu-scroll" style={{ flex: 1, overflowY: "auto", padding: "0 8px 10px" }}>
         <button onClick={createAndAdd} disabled={busy} className="row-btn" style={rowBtn}>
           <span style={{ ...thumb, background: "var(--color-accent-dim)", color: "var(--color-accent)" }}><Plus size={18} /></span>
           <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--color-text-hi)" }}>

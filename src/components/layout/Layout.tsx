@@ -43,11 +43,29 @@ const CreditsModal = memo(CreditsView);
 const YtMatchModal = memo(YtMatchView);
 const DevicesPopover = memo(DevicesView);
 
+/* The routed page, cut off from Layout's own renders. A bare <Outlet/>
+   re-renders the whole page every time Layout does - a panel toggle, a
+   play/pause, a new cover tint - because each Layout render hands the page a
+   fresh route context. On an album that was every track row and tooltip
+   rendering on the first frame of a panel slide. Memoised, the page renders
+   when its route does and when its own state changes, never for the shell. */
+const PageOutlet = memo(function PageOutlet() {
+  return <Outlet />;
+});
+
 /* collapsed sidebar. on mac the native traffic lights live in this column at
    their fixed OS positions (12px dots, 20px pitch, first centre at x=20), so
    the collapsed rail has to stay wide enough to hold all three. */
 const COLLAPSED_SIDEBAR_W = 64;
 const MAC_COLLAPSED_SIDEBAR_W = 72;
+
+/* the page's cover-art wash: concentrated behind the header (cover, title,
+   buttons), then a long ease-out tail that thins to nothing toward the
+   bottom. many stops on a quadratic curve so the fade has no visible edge. */
+const BLOOM_MASK =
+  "linear-gradient(180deg, #000 0%, rgba(0,0,0,0.96) 12%, rgba(0,0,0,0.8) 24%, " +
+  "rgba(0,0,0,0.58) 34%, rgba(0,0,0,0.38) 44%, rgba(0,0,0,0.23) 54%, " +
+  "rgba(0,0,0,0.12) 64%, rgba(0,0,0,0.05) 76%, rgba(0,0,0,0.015) 88%, transparent 100%)";
 
 export default function Layout() {
   const queueOpen = usePlayerStore((s) => s.queueOpen);
@@ -301,7 +319,7 @@ export default function Layout() {
                     key={pageTint}
                     aria-hidden
                     initial={{ opacity: 0 }}
-                    animate={{ opacity: 0.18 }}
+                    animate={{ opacity: 0.4 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.7, ease: "easeOut" }}
                     style={{
@@ -327,20 +345,27 @@ export default function Layout() {
                         backgroundImage: `url(${pageTint})`,
                         backgroundSize: "cover",
                         backgroundPosition: "center top",
-                        filter: "blur(72px) saturate(1.7)",
+                        /* brightness pulls pale covers down so white type
+                           on top keeps its contrast at the higher opacity */
+                        filter: "blur(80px) saturate(1.6) brightness(0.85)",
                         transform: "scale(1.6)",
                         transformOrigin: "center top",
-                        maskImage:
-                          "radial-gradient(75% 70% at 50% 0%, #000 0%, rgba(0,0,0,0.5) 42%, transparent 78%)",
-                        WebkitMaskImage:
-                          "radial-gradient(75% 70% at 50% 0%, #000 0%, rgba(0,0,0,0.5) 42%, transparent 78%)",
+                        /* a full-width wash that eases out down the page
+                           (many stops so the fade has no visible edge),
+                           rather than a spotlight in the middle */
+                        maskImage: BLOOM_MASK,
+                        WebkitMaskImage: BLOOM_MASK,
                       }}
                     />
+                    {/* grain breaks up the banding a smooth dark gradient
+                        gets on 8-bit panels */}
                     <div
                       style={{
                         position: "absolute",
                         inset: 0,
-                        opacity: 0.05,
+                        maskImage: BLOOM_MASK,
+                        WebkitMaskImage: BLOOM_MASK,
+                        opacity: 0.07,
                         mixBlendMode: "overlay",
                         backgroundRepeat: "repeat",
                         backgroundImage:
@@ -372,7 +397,7 @@ export default function Layout() {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     transition={{ duration: 0.18, ease: EASE_OUT }}
                   >
-                    <Outlet />
+                    <PageOutlet />
                   </motion.div>
                 </main>
               </div>

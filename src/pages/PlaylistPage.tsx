@@ -18,6 +18,7 @@ import { usePinsStore } from "../store/pins.store";
 import { useSpeedDialStore } from "../store/speedDial.store";
 import { useAuthStore } from "../store/auth.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
+import { useStagedList } from "../hooks/useStagedList";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -103,6 +104,7 @@ export default function PlaylistPage() {
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
 
   const { view, keys, toolbar } = useTrackTools(tracks, "Playlist order");
+  const shown = useStagedList(view);
 
   if (isLoading) {
     return <Loader label="Loading playlist" />;
@@ -267,7 +269,7 @@ export default function PlaylistPage() {
           transition={{ layout: REFLOW }}
           className="flex flex-col"
         >
-          {view.map((t, i) => (
+          {shown.map((t, i) => (
             <TrackRow
               key={keys[i]}
               track={t}
