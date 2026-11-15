@@ -1,21 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCanvas } from "../../hooks/useCanvas";
 import { useVideoAmbient } from "../../hooks/useVideoAmbient";
-import { CreditsList } from "../ui/CreditsList";
-import { PodcastStage, EpisodeAbout } from "../podcast/PodcastStage";
+import { PodcastStage } from "../podcast/PodcastStage";
 import { TranscriptView } from "../podcast/TranscriptView";
 import { isEpisodeId } from "../../utils/episode";
 import type { Canvas } from "../../api/internal";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Minimize2, Captions, Queue, Music, Info } from "@/lib/icons";
+import { Minimize2 } from "@/lib/icons";
 import { useUIStore } from "../../store/ui.store";
 import { usePlayerStore } from "../../store/player.store";
-import { useQueueStore } from "../../store/queue.store";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
 import { useLyrics } from "../../hooks/useLyrics";
 import { useAmbient } from "../../hooks/useAmbient";
 import { useWindowActive } from "../../hooks/useWindowActive";
+import { useIdleControls } from "../../hooks/useIdleControls";
 import { useLyricFollow } from "../../hooks/useLyricFollow";
 import { ReturnPill } from "./LyricReturnPill";
 import { usePrefsStore } from "../../store/prefs.store";
@@ -23,7 +22,7 @@ import { EASE_OUT } from "../../lib/motion";
 import { type Ambient } from "../../lib/ambient";
 import "../../styles/lyrics.css";
 import { PlayerBar } from "./PlayerBar";
-import { playTrack } from "../../api/playback";
+import { MeshRoom } from "./MeshRoom";
 import {
   LyricRowText,
   buildRows,
@@ -35,84 +34,24 @@ import {
   useMoreContrast,
 } from "../../lib/lyrics";
 
-/* The room the record is playing in.
+/* The room the record is playing in: a moving mesh of the cover's colours
+ * (MeshRoom), with the sharp sleeve drawn over it by Sleeve below, feathered at
+ * its right edge and corners, so what shows through around the artwork - the
+ * corners, and the whole right side the lyrics sit on - is the mesh moving.
  *
- * One copy of the cover, blurred once into a bitmap by lib/ambient, drifting on
- * transform alone. The sharp sleeve is drawn over it by Sleeve below, feathered
- * at its right edge and corners, so what shows through around the artwork - the
- * corners, and the whole right side the lyrics sit on - is this layer moving.
+ * A playing canvas video lends its palette too (useVideoAmbient, re-read every
+ * couple of seconds) and the mesh glides to it. It used to be the video itself,
+ * blurred live, which brought back exactly what the mesh is for getting rid
+ * of: shapes you could make out behind the lyrics.
  *
- * Everything expensive that used to live here is gone, and none of it was ever
- * needed for the look. The first version blurred two full-window copies of the
- * cover live, on every frame, under a `backdrop-filter` panel that re-blurred
- * half the window again - a backdrop-filter's input is whatever is behind it,
- * and that was moving, so it could never be cached. A later pass added a
- * full-window `mix-blend-mode: overlay` grain tile, which forces the whole
- * subtree onto a render surface that has to be re-blended on every frame the
- * ambient moves. Blurring once into a bitmap and then only transforming it
- * costs nothing per frame, and the artwork now supplies its own texture. */
-/* The room, live off a playing video (canvas / podcast preview).
- *
- * Every new video frame is drawn into a tiny 96x54 canvas - blurred and
- * saturated there, where it costs next to nothing - and the canvas is scaled up
- * to fill the window, which the bilinear upscale turns into a soft wash. So the
- * backdrop moves with the video in real time instead of re-reading one frame
- * every couple of seconds. It sits inside the drifting layer, so the drift and
- * the "animated background" setting still apply. */
-function LiveVideoRoom({ video }: { video: HTMLVideoElement }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  const [shown, setShown] = useState(false);
-  useEffect(() => {
-    const cv = ref.current;
-    const ctx = cv?.getContext("2d");
-    if (!cv || !ctx) return;
-    setShown(false);
-    let dead = false;
-    let drewOnce = false;
-    let handle = 0;
-    const W = cv.width;
-    const H = cv.height;
-    // drawn oversize so the blur has real pixels at the edges (no dark rim)
-    const over = 0.4;
-    const hasRvfc = "requestVideoFrameCallback" in video;
-    const draw = () => {
-      if (dead) return;
-      if (video.readyState >= 2 && !document.hidden) {
-        ctx.filter = "blur(4px) saturate(1.75)";
-        ctx.drawImage(video, (-W * over) / 2, (-H * over) / 2, W * (1 + over), H * (1 + over));
-        if (!drewOnce) {
-          drewOnce = true;
-          setShown(true);
-        }
-      }
-      handle = hasRvfc
-        ? (video as HTMLVideoElement & { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(draw)
-        : requestAnimationFrame(draw);
-    };
-    draw();
-    return () => {
-      dead = true;
-      if (hasRvfc) (video as HTMLVideoElement & { cancelVideoFrameCallback: (h: number) => void }).cancelVideoFrameCallback(handle);
-      else cancelAnimationFrame(handle);
-    };
-  }, [video]);
-  return (
-    <motion.canvas
-      ref={ref}
-      width={96}
-      height={54}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: shown ? 1 : 0 }}
-      transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
-      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 100000, transform: "scale(1.08)" }}
-    />
-  );
-}
-
-function AmbientBg({ url, override, video }: { url: string | null | undefined; override?: Ambient | null; video?: HTMLVideoElement | null }) {
+ * The first version of this room blurred two full-window copies of the cover
+ * live, on every frame, under a `backdrop-filter` panel; a later one laid a
+ * `mix-blend-mode: overlay` grain tile over the whole window. Both made the
+ * compositor re-blend the full window every frame. The mesh is one small
+ * canvas, stretched. */
+function AmbientBg({ url, override }: { url: string | null | undefined; override?: Ambient | null }) {
   const cover = useAmbient(url);
-  // reduced motion keeps the calm, slowly-resampled room instead of a live one
-  const reduceLive = useReducedMotion();
+  const reduceMotion = useReducedMotion();
   // a playing canvas lights the room from its own frames
   const ambient = override ? { ...override, ready: true } : cover;
   const { base, glow, ready } = ambient;
@@ -122,51 +61,21 @@ function AmbientBg({ url, override, video }: { url: string | null | undefined; o
   // the room moves with the music: paused, it holds still where it is
   const playing = usePlayerStore((s) => s.isPlaying);
 
-  /* Track changes crossfade rather than cut. The rooms are stacked inside the
-     one drifting layer, so the drift itself never restarts; the new room fades
-     up over the old one, which is held opaque underneath until it is covered
-     (fading both at once dips the whole window through the floor colour
-     halfway across). Each room carries its own floor colour, so each is opaque
-     on its own. Nothing is drawn until the first cover has actually been read -
-     lighting the room off the fallback palette for a frame read as a purple
-     flash on every open. */
-  const key = roomKey(ambient);
-  // the newest room is always on top, whatever order the exits leave the DOM in
-  const layers = useRef({ key: "", z: 0 });
-  if (layers.current.key !== key) layers.current = { key, z: layers.current.z + 1 };
-  const z = layers.current.z;
-
+  /* Nothing is drawn until the first cover has actually been read - lighting
+     the room off the fallback palette for a frame read as a purple flash on
+     every open. */
   return (
     <div
       aria-hidden
       style={{ position: "absolute", inset: 0, overflow: "hidden", background: base, pointerEvents: "none", contain: "strict" }}
     >
-      <div className={awake && drift && playing ? "amb-layer amb-1" : "amb-layer amb-1 amb-parked"}>
-        <div className="amb-y">
-          <AnimatePresence initial={false}>
-            {ready && (
-              <motion.div
-                key={key}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                // stay put under the incoming room until it is fully up
-                exit={{ opacity: 0, transition: { delay: ROOM_FADE_S, duration: 0 } }}
-                transition={{ duration: ROOM_FADE_S, ease: [0.4, 0, 0.2, 1] }}
-                style={{ position: "absolute", inset: 0, zIndex: z, backgroundSize: "cover", backgroundPosition: "center", ...roomFill(ambient) }}
-              />
-            )}
-          </AnimatePresence>
-          {video && !reduceLive && <LiveVideoRoom video={video} />}
-        </div>
-      </div>
+      <MeshRoom mesh={ambient.mesh} ready={ready} moving={awake && drift && playing && !reduceMotion} />
 
-{/* One element, two stacked gradients: the light the sleeve pools into
+      {/* One element, two stacked gradients: the light the sleeve pools into
           the room, and the scrim over the strips the window chrome and the dock
-          actually sit on. Kept on a single div because every full-window layer
-          here is another full-window blend on every frame the backdrop moves.
-          The scrim stays off the middle of the frame - an earlier pass laid a
-          vignette and a full-height wash over this and turned a hot pink sleeve
-          into dead maroon. */}
+          actually sit on. The scrim stays off the middle of the frame - an
+          earlier pass laid a vignette and a full-height wash over this and
+          turned a hot pink sleeve into dead maroon. */}
       <div
         style={{
           position: "absolute", inset: 0,
@@ -181,16 +90,58 @@ function AmbientBg({ url, override, video }: { url: string | null | undefined; o
 
 const ROOM_FADE_S = 0.6;
 
-const roomKey = (a: Ambient) => a.art || `${a.base}|${a.blobs.join("|")}`;
+// the dock leaving, and coming back: out unhurried, back at once
+const HIDE_S = 0.4;
+const HIDE_EASE = "cubic-bezier(0.4, 0, 0.2, 1)";
+const SHOW_S = 0.12;
 
-function roomFill(a: Ambient): React.CSSProperties {
-  return a.art
-    ? { backgroundColor: a.base, backgroundImage: `url("${a.art}")` }
-    : // unreadable artwork: light the room off the palette instead
-      {
-        backgroundColor: a.base,
-        backgroundImage: `radial-gradient(circle at 34% 40%, rgba(${a.blobs[0]}, 0.75) 0%, rgba(${a.blobs[1]}, 0.35) 52%, rgba(${a.blobs[2]}, 0) 78%)`,
-      };
+/* How much shade the lyric side needs, from how bright the room is there.
+ *
+ * Aims the backdrop at a relative luminance of 0.15, about where white type
+ * clears 5:1 and the dimmed lines either side of it still read. Shading by `a`
+ * scales each sRGB channel by (1 - a), which is roughly (1 - a)^2.2 in linear
+ * light, hence the inverse power. Capped so a white sleeve deepens rather than
+ * turning into a black wall. */
+const SHADE_TARGET = 0.15;
+function lyricShade(light: number): number {
+  if (light <= SHADE_TARGET) return 0;
+  return Math.min(0.62, 1 - (SHADE_TARGET / light) ** (1 / 2.2));
+}
+
+/* Smoothstep from 28% to 66% of the window, written out as stops - a plain two
+   stop gradient is linear, and its start and end read as edges. */
+const SHADE_RAMP = Array.from({ length: 9 }, (_, i) => {
+  const t = i / 8;
+  return { at: 28 + 38 * t, a: t * t * (3 - 2 * t) };
+});
+
+/* Shade under the lyrics, only as deep as this record needs.
+ *
+ * A dark sleeve gets none and looks exactly as it did; a pale one is brought
+ * down to where white type reads, and only on the lyric side, so the artwork
+ * keeps its full brightness. Tinted with the room's own floor colour rather
+ * than black, so a yellow room deepens to amber instead of going grey.
+ *
+ * It sits OVER the sleeve, not in the room under it. Under it, the sleeve's
+ * feathered edge stayed bright while the room behind went dark, and the point
+ * where the feather ran out showed as a hard step. Over it, sleeve and room are
+ * darkened by the same eased ramp, so there is one transition and no seam. One
+ * static layer, faded on opacity alone. */
+function LyricShade({ base, light, ready }: { base: string; light: number; ready: boolean }) {
+  const n = parseInt(base.slice(1), 16);
+  const rgb = Number.isNaN(n) ? "0, 0, 0" : `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+  const stops = SHADE_RAMP.map((s) => `rgba(${rgb}, ${s.a.toFixed(3)}) ${s.at.toFixed(1)}%`).join(", ");
+  return (
+    <div
+      aria-hidden
+      style={{
+        position: "absolute", inset: 0, pointerEvents: "none",
+        background: `linear-gradient(90deg, ${stops})`,
+        opacity: ready ? lyricShade(light) : 0,
+        transition: `opacity ${ROOM_FADE_S}s cubic-bezier(0.4, 0, 0.2, 1)`,
+      }}
+    />
+  );
 }
 
 /* The sleeve, full bleed down the left.
@@ -237,8 +188,10 @@ function Sleeve({
 const SLEEVE_MASK = [
   /* Falloff across the sleeve. These percentages are relative to the 62%-wide
      container, which makes them easy to misread - in window terms the artwork
-     stays solid to about 31% and has dissolved completely by 57%. */
-  "radial-gradient(ellipse 90% 150% at 11.5% 50%, #000 0%, #000 42%, transparent 89%)",
+     stays solid to about 29% and has dissolved completely by about 60%. */
+  /* eased out, not linear: a straight ramp from solid to clear reads as a
+     band where it starts and ends, worst on a pale sleeve over a dark room */
+  "radial-gradient(ellipse 90% 150% at 11.5% 50%, #000 0%, #000 38%, rgba(0,0,0,0.86) 48%, rgba(0,0,0,0.62) 58%, rgba(0,0,0,0.38) 67%, rgba(0,0,0,0.18) 76%, rgba(0,0,0,0.06) 85%, transparent 94%)",
   // the window's top-left corner
   "radial-gradient(ellipse 44% 36% at 0% 0%, transparent 6%, #000 94%)",
   // and its bottom-left
@@ -481,14 +434,19 @@ function secondaryInset(side: "left" | "right", indent: number, pad: number): Re
     : { marginLeft: indent, borderLeft: rule, paddingLeft: pad };
 }
 
+const LYRIC_MASK =
+  "linear-gradient(to bottom, transparent 0, #000 9%, #000 calc(84% - var(--lyr-dock, 0px)), transparent calc(100% - var(--lyr-dock, 0px)))";
+
 const lyricsScroll: React.CSSProperties = {
   height: "100%", overflowY: "auto", overflowX: "hidden",
   /* Real gutters. The text used to sit 8px off the panel edge and then get
      scaled 12% wider from that edge, so long lines ran off the right of the
      window entirely. */
   padding: "10vh clamp(16px, 1.8vw, 30px) 32vh clamp(14px, 1.6vw, 26px)",
-  WebkitMaskImage: "linear-gradient(to bottom, transparent 0, #000 9%, #000 84%, transparent 100%)",
-  maskImage: "linear-gradient(to bottom, transparent 0, #000 9%, #000 84%, transparent 100%)",
+  /* The bottom fade ends at the dock's top edge, or the window's bottom while
+     the dock is hidden (--lyr-dock, set by Immersive). */
+  WebkitMaskImage: LYRIC_MASK,
+  maskImage: LYRIC_MASK,
 };
 
 
@@ -500,57 +458,11 @@ function Centered({ children }: { children: React.ReactNode }) {
   );
 }
 
-// immersive queue
-
-function ImmersiveQueue() {
-  const queue = useQueueStore((s) => s.queue);
-  const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
-
-  if (queue.length === 0) return <Centered>Nothing queued.</Centered>;
-
-  function jump(i: number) {
-    /*drop everything before the picked track, then play it
-     ( 827cd1 used to splice in place, this is simpler) */
-    const picked = queue[i];
-    useQueueStore.setState({ queue: queue.slice(i + 1) });
-    setCurrentTrack(picked);
-    usePlayerStore.getState().setPlaying(true);
-    usePlayerStore.getState().setTargetState("playing");
-    playTrack(picked.id).catch(() => {});
-  }
-
-  return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "12px 4px 30vh" }}>
-      <p style={{ margin: "0 0 12px", fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.62)" }}>Up next</p>
-      {queue.map((t, i) => (
-        <button
-          key={`${t.id}-${i}`}
-          onClick={() => jump(i)}
-          // hover, press and focus from .row-btn - CSS, so a re-render can't wipe them
-          className="row-btn"
-          style={{ gap: 12, padding: "8px 10px", borderRadius: 10 }}
-        >
-          {t.album?.image_url
-            ? <img src={coverUrl(t.album.image_url, 44) ?? t.album.image_url} alt="" style={{ width: 44, height: 44, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
-            : <div style={{ width: 44, height: 44, borderRadius: 6, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Music size={18} style={{ color: "rgba(255,255,255,0.4)" }} /></div>}
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</p>
-            <p className="t-caption" style={{ margin: 0, fontSize: 12.5, color: "rgba(255,255,255,0.64)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artists.map((a) => a.name).join(", ")}</p>
-          </div>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-
 // immersive view
 
 export function Immersive() {
   const open     = usePlayerStore((s) => s.immersiveOpen);
   const setOpen  = usePlayerStore((s) => s.setImmersiveOpen);
-  const panel    = usePlayerStore((s) => s.immersivePanel);
-  const setPanel = usePlayerStore((s) => s.setImmersivePanel);
   const track    = usePlayerStore((s) => s.currentTrack);
   // the same cached read AmbientBg does: the lyric ink and glow come off the
   // cover, so the type is lit by the record it belongs to
@@ -564,6 +476,40 @@ export function Immersive() {
   const videoAmbient = useVideoAmbient(liveVideo);
   // lyric ink and glow follow the video too, so type and room stay one hue
   const { glow, ink } = videoAmbient ?? coverAmbient;
+  const reduceMotion = useReducedMotion();
+
+  /* The controls step back while you just listen: the dock and the exit
+     button fade out a moment after the mouse stops and come back the instant
+     it moves. Paused, they stay - a stopped player with no visible way to
+     start it again reads as broken. The cursor goes with them. */
+  const playing = usePlayerStore((s) => s.isPlaying);
+  const idle = useIdleControls(open);
+  const hideControls = idle && playing;
+  const controlsFade: React.CSSProperties = {
+    opacity: hideControls ? 0 : 1,
+    pointerEvents: hideControls ? "none" : undefined,
+    // out slow, back fast: waking should feel instant, leaving should not be noticed
+    transition: hideControls
+      ? `opacity ${HIDE_S}s ${HIDE_EASE}, transform ${HIDE_S}s ${HIDE_EASE}`
+      : `opacity ${SHOW_S}s ease-out, transform ${SHOW_S}s ease-out`,
+  };
+
+  /* The lyrics run the full height of the column, under the dock. Their fade
+     out ends at the dock's top edge while it is up (--lyr-dock, the dock's
+     height plus the gap) and slides down to the window's bottom once it hides,
+     on the dock's own timing - so the space it leaves is filled by lyrics, not
+     left empty. The scroller's own size never changes, so nothing reflows and
+     the sung line does not move. */
+  const dockRef = useRef<HTMLDivElement>(null);
+  const [dockH, setDockH] = useState(0);
+  useEffect(() => {
+    const el = dockRef.current;
+    if (!open || !el) return;
+    const ro = new ResizeObserver(() => setDockH(el.offsetHeight));
+    ro.observe(el);
+    setDockH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, [open, !!track]);
 
   // esc closes
   useEffect(() => {
@@ -595,14 +541,19 @@ export function Immersive() {
           onAnimationComplete={() => {
             if (usePlayerStore.getState().immersiveOpen) useUIStore.getState().setImmersiveCovered(true);
           }}
-          style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b" }}
+          style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b", cursor: hideControls ? "none" : undefined }}
         >
-          <AmbientBg url={track.album?.image_url} override={videoAmbient} video={liveVideo} />
+          <AmbientBg url={track.album?.image_url} override={videoAmbient} />
           {podcast ? (
             <PodcastStage track={track} onVideo={setVideoEl} />
           ) : (
             <Sleeve url={track.album?.image_url} alt={track.name} canvas={canvas} onVideo={setVideoEl} />
           )}
+          <LyricShade
+            base={(videoAmbient ?? coverAmbient).base}
+            light={(videoAmbient ?? coverAmbient).light}
+            ready={!!videoAmbient || coverAmbient.ready}
+          />
 
           {/* window drag strip immersive covers the whole window (titlebar
               included) so without this you couldnt drag the window here. BUT this sits OVER
@@ -632,16 +583,19 @@ export function Immersive() {
           >
             <div
               style={{
+                position: "relative",
                 width: "min(50%, 760px)",
                 minWidth: 360,
                 display: "flex",
                 flexDirection: "column",
-                gap: "clamp(12px, 1.6vh, 20px)",
                 minHeight: 0,
+                ["--lyr-dock" as string]: hideControls ? "0px" : `calc(${dockH}px + clamp(12px, 1.6vh, 20px))`,
+                transition: hideControls ? `--lyr-dock ${HIDE_S}s ${HIDE_EASE}` : `--lyr-dock ${SHOW_S}s ease-out`,
               }}
             >
+              {/* The lyrics sit straight on the room - no card, no tabs. The
+                  exit button keeps its old spot at the top right of the column. */}
               <motion.div
-                className="glass-solid-fallback"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 /* leaves the way the dock came in: settling back down toward
@@ -654,22 +608,9 @@ export function Immersive() {
                   display: "flex",
                   flexDirection: "column",
                   minHeight: 0,
-                  borderRadius: 26,
-                  /* Dark, not pale. The reference card is a shade dropped over the
-                     ambient, which is what keeps white type readable while the
-                     field behind it keeps moving and changing colour. */
-                  background: "linear-gradient(180deg, rgba(10, 8, 14, 0.30) 0%, rgba(10, 8, 14, 0.42) 100%)",
-                  border: "1px solid rgba(255, 255, 255, 0.11)",
-                  boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 30px 80px rgba(0, 0, 0, 0.30)",
-                  padding: "20px clamp(20px, 2vw, 36px)",
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
-                  <div className="lyr-tabs">
-                    <PanelTab active={panel === "lyrics"} onClick={() => setPanel("lyrics")} icon={<Captions size={14} active={panel === "lyrics"} />} label={podcast ? "Transcript" : "Lyrics"} />
-                    <PanelTab active={panel === "queue"} onClick={() => setPanel("queue")} icon={<Queue size={14} active={panel === "queue"} />} label="Queue" />
-                    <PanelTab active={panel === "credits"} onClick={() => setPanel("credits")} icon={<Info size={14} active={panel === "credits"} />} label={podcast ? "About" : "Credits"} />
-                  </div>
+                <div data-idle-hold style={{ display: "flex", justifyContent: "flex-end", alignSelf: "flex-end", ...controlsFade }}>
                   <button
                     className="imm-close"
                     onClick={() => setOpen(false)}
@@ -679,37 +620,14 @@ export function Immersive() {
                     <Minimize2 size={16} strokeWidth={2.2} />
                   </button>
                 </div>
-                {/* A crossfade, both panels at once - "wait" held the new tab
-                    back until the old one had finished leaving, ~320ms of
-                    nothing. The drift is sideways, toward the tab picked,
-                    because the tabs sit side by side. */}
-                <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-                  <AnimatePresence initial={false} custom={panel === "lyrics" ? -1 : 1}>
-                    <motion.div
-                      key={panel}
-                      custom={panel === "lyrics" ? -1 : 1}
-                      variants={TAB_VARIANTS}
-                      initial="enter"
-                      animate="center"
-                      exit="exit"
-                      transition={{ duration: 0.15, ease: EASE_OUT }}
-                      style={{ position: "absolute", inset: 0 }}
-                    >
-                      {panel === "lyrics" && podcast ? (
-                        <TranscriptView episodeId={track.id} size="stage" ink={ink} />
-                      ) : panel === "lyrics" ? (
-                        <ImmersiveLyrics glow={glow} ink={ink} />
-                      ) : panel === "credits" && podcast ? (
-                        <EpisodeAbout track={track} ink={ink} />
-                      ) : panel === "credits" ? (
-                        <div className="scroll-y" style={{ position: "absolute", inset: 0, overflowY: "auto", paddingRight: 6 }}>
-                          <CreditsList trackId={track.id} onNavigate={() => setOpen(false)} dark />
-                        </div>
-                      ) : (
-                        <ImmersiveQueue />
-                      )}
-                    </motion.div>
-                  </AnimatePresence>
+                {/* inset from the column's left edge, so the lyrics sit further
+                    right than the dock below them */}
+                <div style={{ flex: 1, minHeight: 0, position: "relative", marginLeft: "clamp(24px, 6vw, 120px)" }}>
+                  {podcast ? (
+                    <TranscriptView episodeId={track.id} size="stage" ink={ink} />
+                  ) : (
+                    <ImmersiveLyrics glow={glow} ink={ink} />
+                  )}
                 </div>
               </motion.div>
 
@@ -722,9 +640,15 @@ export function Immersive() {
                 // the same path out as in
                 exit={{ opacity: 0, y: 14, transition: { duration: 0.18, ease: EASE_OUT } }}
                 transition={{ duration: 0.3, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}
-                style={{ flexShrink: 0 }}
+                style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}
               >
-                <PlayerBar immersive />
+                <div
+                  ref={dockRef}
+                  data-idle-hold
+                  style={{ ...controlsFade, transform: hideControls && !reduceMotion ? "translateY(10px)" : "none" }}
+                >
+                  <PlayerBar immersive />
+                </div>
               </motion.div>
             </div>
           </div>
@@ -734,22 +658,4 @@ export function Immersive() {
   );
 }
 
-const TAB_VARIANTS = {
-  enter: (dir: number) => ({ opacity: 0, x: dir * 10 }),
-  center: { opacity: 1, x: 0 },
-  exit: (dir: number) => ({ opacity: 0, x: -dir * 10 }),
-};
-
-function PanelTab({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
-  return (
-    <button
-      className={active ? "lyr-tab lyr-tab-on" : "lyr-tab"}
-      onClick={onClick}
-      aria-pressed={active}
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
 

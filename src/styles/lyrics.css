@@ -80,7 +80,8 @@
 .lyr-return {
     position: absolute;
     left: 50%;
-    bottom: 18px;
+    /* clear of the immersive dock, which floats over the bottom of the lyrics */
+    bottom: calc(18px + var(--lyr-dock, 0px));
     z-index: 3;
     height: 32px;
     padding: 0 14px;

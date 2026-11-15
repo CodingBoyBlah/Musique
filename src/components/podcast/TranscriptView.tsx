@@ -241,8 +241,8 @@ export function TranscriptView({
           height: "100%",
           overflowY: "auto",
           padding: big ? "18vh 6px 42vh" : "18px 14px 55%",
-          maskImage: "linear-gradient(180deg, transparent 0, #000 10%, #000 82%, transparent 100%)",
-          WebkitMaskImage: "linear-gradient(180deg, transparent 0, #000 10%, #000 82%, transparent 100%)",
+          maskImage: "linear-gradient(180deg, transparent 0, #000 10%, #000 calc(82% - var(--lyr-dock, 0px)), transparent calc(100% - var(--lyr-dock, 0px)))",
+          WebkitMaskImage: "linear-gradient(180deg, transparent 0, #000 10%, #000 calc(82% - var(--lyr-dock, 0px)), transparent calc(100% - var(--lyr-dock, 0px)))",
         }}
       >
         {ready && turns.map((turn, ti) => {

@@ -18,7 +18,7 @@ export function useVideoAmbient(video: HTMLVideoElement | null): Ambient | null 
     const sample = () => {
       if (dead || video.paused || document.hidden) return;
       const a = ambientFromFrame(video);
-      if (a && a.art) setAmbient(a);
+      if (a) setAmbient(a);
     };
     const onReady = () => sample();
     video.addEventListener("loadeddata", onReady);

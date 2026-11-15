@@ -322,77 +322,15 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
     }
 }
 
-/* ── immersive ambient ────────────────────────────────────────────────────
- *
- * A pre-blurred copy of the cover drifting slowly behind the view, which is
- * what makes the colour flow rather than sit there.
- *
- * The motion is the same idea the first version of this view had. What was
- * wrong with it was never the look, it was that each layer carried a live
- * `filter: blur(60px)` while it animated, so WebView2 re-ran a gaussian over a
- * layer one and a half times the size of the window on every frame - with a
- * `backdrop-filter: blur(48px)` panel on top re-blurring half the window again,
- * because a backdrop-filter's input is whatever is behind it and that was
- * moving, so it could never be cached.
- *
- * lib/ambient now blurs the artwork once into a bitmap. Rotating and
- * translating a plain image is compositor work, so all three layers together
- * cost nothing per frame, and the motion can be as generous as it likes.
- */
-
-.amb-layer {
-    position: absolute;
-    /* 124% of the window. This is the texture Chromium holds and re-blends on
-     * every frame, and what matters is the box times the largest scale the
-     * keyframes reach - 1.12 here, so about 1.39x the window each way. The
-     * margin keeps the corners covered through 5% of travel plus a 2deg turn. */
-    inset: -12%;
-    background-size: cover;
-    background-position: center;
-    will-change: transform;
-    backface-visibility: hidden;
-    pointer-events: none;
+/* Registered so it can transition: the immersive lyrics' bottom fade follows
+   the dock out and back in (components/layout/Immersive). An unregistered
+   custom property would just jump. */
+@property --lyr-dock {
+    syntax: "<length>";
+    inherits: true;
+    initial-value: 0px;
 }
 
-/* the second axis of the drift, nested so each can run its own clock */
-.amb-y {
-    position: absolute;
-    inset: 0;
-    will-change: transform;
-    backface-visibility: hidden;
-}
-
-/* Two sine-like axes on periods that never line up.
- *
- * The first version ran one 17s loop through three keyframes, eased in and
- * out of each, so the field came to a dead stop every five or six seconds and
- * only moved 3% between them - too slow to be seen. Each axis here alternates
- * on its own ease-in-out, which is as close to a sine as CSS gets, and the two
- * turn at different moments, so while one is easing through a turn the other
- * is at full speed: the field never rests. Speed is free - the frame is
- * recomposited at 60fps for as long as anything animates at all. */
-.amb-1 { animation: amb-sway 6.2s ease-in-out infinite alternate; }
-.amb-1 > .amb-y { animation: amb-swell 4.4s ease-in-out infinite alternate; }
-
-/* Paused music, or nobody looking: hold the field exactly where it is, so it
-   picks up from there rather than jumping. See hooks/useWindowActive - an
-   unfocused window is not a hidden one, and Chromium keeps its animations
-   running at full rate. */
-.amb-parked,
-.amb-parked > .amb-y { animation-play-state: paused; }
-
-/* No full rotation and a bounded scale: this layer fills the whole window, and
-   a full-viewport field that spins is exactly the kind of motion that
-   unsettles people. The drift can be turned off in Settings
-   (prefs.ambientMotion) and stops for reduced motion or reduced transparency. */
-@keyframes amb-sway {
-    from { transform: translate3d(-5%, 0, 0) rotate(-2deg); }
-    to   { transform: translate3d(5%, 0, 0) rotate(2deg); }
-}
-@keyframes amb-swell {
-    from { transform: translate3d(0, 4%, 0) scale(1.04); }
-    to   { transform: translate3d(0, -4%, 0) scale(1.12); }
-}
 
 /* ── lyrics ───────────────────────────────────────────────────────────────
  *
@@ -540,9 +478,6 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
     height: 0;
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .amb-layer, .amb-y { animation: none !important; }
-}
 
 
 /* ── top bar controls ─────────────────────────────────────────────────────
@@ -1067,9 +1002,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
         background: var(--color-popover-solid) !important;
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;
-    }
-    .amb-layer, .amb-y {
-        animation: none !important;
     }
 }
 
