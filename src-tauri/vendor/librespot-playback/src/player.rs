@@ -115,6 +115,11 @@ struct PlayerInternal {
 
     local_file_lookup: Arc<LocalFileLookup>,
     prefetches: Prefetches,
+    /// What Spirc last asked to prefetch, and what the application asked for
+    /// beside it (Musique: its queue is its own, so Spirc's list is empty and
+    /// would otherwise cancel the application's every time it is sent).
+    prefetch_named: Vec<SpotifyUri>,
+    prefetch_also: Vec<SpotifyUri>,
 }
 
 /// A track's metadata, resolved to the file that will be played.
@@ -184,6 +189,7 @@ enum PlayerCommand {
         track_id: SpotifyUri,
     },
     Prefetch(Vec<SpotifyUri>),
+    PrefetchAlso(Vec<SpotifyUri>),
     Play,
     Pause,
     Stop,
@@ -595,6 +601,8 @@ impl Player {
 
                 local_file_lookup: Arc::new(local_file_lookup),
                 prefetches: Arc::default(),
+                prefetch_named: Vec::new(),
+                prefetch_also: Vec::new(),
             };
 
             // While PlayerInternal is written as a future, it still contains blocking code.
@@ -649,6 +657,13 @@ impl Player {
     /// decoded and only the head of each file is downloaded.
     pub fn prefetch(&self, track_ids: Vec<SpotifyUri>) {
         self.command(PlayerCommand::Prefetch(track_ids));
+    }
+
+    /// Like [`Player::prefetch`], for tracks the application expects to play
+    /// that Spirc's queue does not name. Kept apart from Spirc's list, which
+    /// replaces only itself; these come first. Each call replaces the last.
+    pub fn prefetch_also(&self, track_ids: Vec<SpotifyUri>) {
+        self.command(PlayerCommand::PrefetchAlso(track_ids));
     }
 
     pub fn play(&self) {
@@ -2457,6 +2472,11 @@ impl PlayerInternal {
         }
     }
 
+    fn apply_prefetches(&mut self) {
+        let combined = self.prefetch_also.iter().chain(&self.prefetch_named).cloned().collect();
+        self.handle_command_prefetch(combined);
+    }
+
     fn handle_command_prefetch(&mut self, track_ids: Vec<SpotifyUri>) {
         let wanted = tracks_to_prefetch(track_ids);
 
@@ -2627,7 +2647,15 @@ impl PlayerInternal {
 
             PlayerCommand::Preload { track_id } => self.handle_command_preload(track_id),
 
-            PlayerCommand::Prefetch(track_ids) => self.handle_command_prefetch(track_ids),
+            PlayerCommand::Prefetch(track_ids) => {
+                self.prefetch_named = track_ids;
+                self.apply_prefetches();
+            }
+
+            PlayerCommand::PrefetchAlso(track_ids) => {
+                self.prefetch_also = track_ids;
+                self.apply_prefetches();
+            }
 
             PlayerCommand::Seek(position_ms) => self.handle_command_seek(position_ms)?,
 
@@ -2752,6 +2780,14 @@ impl PlayerInternal {
             .expect(PREFETCHES_POISON_MSG)
             .remove(&spotify_uri)
             .map(Prefetch::into_prefetched);
+        // What the app expected to play next was this song, now taken, or one
+        // a load has made stale. Left on the list, the next prefetch list would
+        // fetch it again, and its audio key, asked for one at a time, would
+        // hold back this song's. (Musique)
+        if !self.prefetch_also.is_empty() {
+            self.prefetch_also.clear();
+            self.apply_prefetches();
+        }
 
         let (result_tx, result_rx) = oneshot::channel();
 
@@ -2839,6 +2875,9 @@ impl fmt::Debug for PlayerCommand {
             }
             PlayerCommand::Prefetch(track_ids) => {
                 f.debug_tuple("Prefetch").field(&track_ids).finish()
+            }
+            PlayerCommand::PrefetchAlso(track_ids) => {
+                f.debug_tuple("PrefetchAlso").field(&track_ids).finish()
             }
             PlayerCommand::Play => f.debug_tuple("Play").finish(),
             PlayerCommand::Pause => f.debug_tuple("Pause").finish(),

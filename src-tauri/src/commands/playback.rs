@@ -106,7 +106,7 @@ async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), App
         let vol   = read_vol(&db).await;
         // a probe run while something else is playing must not be heard
         let muted = read_muted(&db).await || std::env::var_os("MUSIQUE_PROBE_SILENT").is_some();
-        let inner = crate::playback::create_inner(app.clone(), db, auth, vol, muted, media_tx, interactive).await?;
+        let inner = crate::playback::create_inner(app.clone(), db.clone(), auth, vol, muted, media_tx, interactive).await?;
         if !crate::auth::epoch_is_current(epoch) {
             inner.shutdown().await;
             return Err(AppError::Auth("Account changed; playback cancelled".into()));
@@ -124,9 +124,26 @@ async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), App
             old.stop_playing();
             tauri::async_runtime::spawn(async move { old.shutdown().await });
         }
+        warm_last_played(&db, &inner).await;
         *guard = Some(inner);
     }
     Ok(())
+}
+
+/// On a new session, fetches ahead the start of the song last played: its
+/// metadata, first bytes and audio key. Pressing play on it then starts at
+/// once, and whatever is played first finds the CDN connection and the key
+/// channel already open, which on a cold session cost a few hundred ms more.
+async fn warm_last_played(pool: &sqlx::SqlitePool, inner: &crate::playback::PlaybackInner) {
+    let last: Option<(String,)> =
+        sqlx::query_as("SELECT track_id FROM recently_played ORDER BY played_at DESC LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    if let Some(id) = last.and_then(|(id,)| crate::playback::parse_track_id(&id).ok()) {
+        inner.player.prefetch_also(vec![id]);
+    }
 }
 
 // picking playback back up after the session drops
