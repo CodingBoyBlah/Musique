@@ -375,6 +375,10 @@ pub async fn start_probe(app: AppHandle) -> i32 {
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+        if sound.is_none() {
+            let state = probe_inner(&app, |inner| inner.probe_state()).await;
+            eprintln!("[start-probe] {id} never sounded: {state:?}");
+        }
         eprintln!(
             "[start-probe] {id}: checks {}ms, playing event {:?}ms, first sound {:?}ms",
             checks.as_millis(),
@@ -385,6 +389,10 @@ pub async fn start_probe(app: AppHandle) -> i32 {
             said.push(p.as_millis());
             heard.push(s.as_millis());
         }
+        // a jump well past what has been fetched (the player logs how long it took)
+        log::info!(target: "librespot_probe", "seek {id}");
+        let _ = probe_inner(&app, |inner| inner.seek(90_000)).await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
         let _ = probe_inner(&app, |inner| inner.pause()).await;
         tokio::time::sleep(Duration::from_millis(800)).await;
     }

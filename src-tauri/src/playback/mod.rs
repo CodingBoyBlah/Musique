@@ -406,6 +406,19 @@ impl PlaybackInner {
         self.is_playing_atomic.load(Ordering::Relaxed)
     }
 
+    /// What the output is doing, for a probe that heard nothing.
+    pub fn probe_state(&self) -> String {
+        format!(
+            "held {}, tag {}, heard {:?}, sounding {}, underruns {}, connect position {}",
+            self.playout.ring.held(),
+            self.playout.current_tag(),
+            self.playout.heard_now(),
+            crate::playout::sounding(std::time::Duration::from_millis(500)),
+            self.playout.ring.underruns(),
+            self.connect_state().position_ms,
+        )
+    }
+
     pub fn position_ms(&self) -> u32 {
         self.playout.heard_now().unwrap_or_else(|| {
             self.connect_state().position_ms.max(0).min(u32::MAX as i64) as u32
