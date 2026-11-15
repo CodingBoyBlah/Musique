@@ -885,6 +885,21 @@ impl PlayerState {
         matches!(self, Loading { .. })
     }
 
+    fn stream_loader_controller(&self) -> Option<&StreamLoaderController> {
+        use self::PlayerState::*;
+        match self {
+            Paused {
+                stream_loader_controller,
+                ..
+            }
+            | Playing {
+                stream_loader_controller,
+                ..
+            } => Some(stream_loader_controller),
+            _ => None,
+        }
+    }
+
     fn decoder(&mut self) -> Option<&mut Decoder> {
         use self::PlayerState::*;
         match *self {
@@ -1488,6 +1503,7 @@ impl PlayerTrackLoader {
             let seeked = if fresh_at_start {
                 Ok(0)
             } else {
+                stream_loader_controller.set_random_access_mode();
                 decoder.seek(position_ms)
             };
             let stream_position_ms = match seeked {
@@ -2590,8 +2606,17 @@ impl PlayerInternal {
             );
         }
 
+        let seeking = Instant::now();
+        // (Musique) The decoder finds the place by reading a page here and
+        // there across the file; each read should fetch that page, not the
+        // thirty seconds after it that streaming asks for.
+        if let Some(controller) = self.state.stream_loader_controller() {
+            controller.set_random_access_mode();
+        }
         if let Some(decoder) = self.state.decoder() {
-            match decoder.seek(position_ms) {
+            let seeked = decoder.seek(position_ms);
+            debug!("Seeked to {position_ms}ms in {}ms", seeking.elapsed().as_millis());
+            match seeked {
                 Ok(new_position_ms) => {
                     if let PlayerState::Playing {
                         ref mut stream_position_ms,
@@ -2621,8 +2646,13 @@ impl PlayerInternal {
             error!("Player::seek called from invalid state: {:?}", self.state);
         }
 
+        if let Some(controller) = self.state.stream_loader_controller() {
+            controller.set_stream_mode();
+        }
+
         // ensure we have a bit of a buffer of downloaded data
         self.preload_data_before_playback()?;
+        debug!("Ready at {position_ms}ms in {}ms", seeking.elapsed().as_millis());
 
         if let PlayerState::Playing {
             ref mut reported_nominal_start_time,
@@ -2826,8 +2856,12 @@ impl PlayerInternal {
                 (read_ahead_during_playback.as_secs_f32() * bytes_per_second as f32) as usize;
 
             // Request the part we want to wait for blocking. This effectively means we wait for the previous request to partially complete.
+            // (Musique) Only what playback needs to start, as before 0.8:
+            // waiting for all thirty seconds held the player, and every
+            // command behind it, for as long as they took to download.
+            let read_ahead_before_playback = AudioFetchParams::get().read_ahead_before_playback;
             let wait_for_data_length =
-                (read_ahead_during_playback.as_secs_f32() * bytes_per_second as f32) as usize;
+                (read_ahead_before_playback.as_secs_f32() * bytes_per_second as f32) as usize;
 
             stream_loader_controller.fetch_next_and_wait(request_data_length, wait_for_data_length)
         } else {
