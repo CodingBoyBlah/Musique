@@ -345,7 +345,7 @@ function SongLyricsPanel() {
                          knowing - which is what ran long lines off the edge of
                          this panel. Emphasis is light only now, the same as the
                          immersive view. */
-                      padding: "6px 10px",
+                      padding: "8px 10px",
                       position: "relative",
                       cursor: synced ? "pointer" : "default",
                       transition: reduceMotion
@@ -414,7 +414,7 @@ function SongLyricsPanel() {
                               glowRgb={glow}
                               inkRgb={ink}
                               align={align}
-                              tracking={isSecondary ? "-0.01em" : undefined}
+                              tracking={isSecondary ? "0em" : undefined}
                             />
                             {/* what the source itself shipped, in the same
                                 quiet key as the pronunciation line that was

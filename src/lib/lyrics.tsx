@@ -437,7 +437,7 @@ export const LyricRowText = memo(function LyricRowText({
   glowRgb = "255, 255, 255",
   inkRgb = "255, 255, 255",
   align = "left",
-  tracking = "-0.022em",
+  tracking = "0em",
 }: {
   words: RenderWord[];
   active: boolean;
@@ -451,7 +451,8 @@ export const LyricRowText = memo(function LyricRowText({
   /** near-white carrying the cover's hue - see lib/ambient */
   inkRgb?: string;
   align?: "left" | "right" | "center";
-  /** letter-spacing. tight for lead lines; smaller secondary voices open up */
+  /** letter-spacing. Host Grotesk is set at its own spacing, as Cider does -
+   *  the -0.022em Inter wanted jams its counters together */
   tracking?: string;
 }) {
   const spans = useRef<(HTMLSpanElement | null)[]>([]);

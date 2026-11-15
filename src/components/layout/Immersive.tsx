@@ -345,7 +345,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                  early to fund. This way the widest thing on screen is always
                  the thing the layout measured, and nothing can clip however
                  large the ratio gets. */
-              padding: "5px 0",
+              padding: "11px 0",
               // Voice emphasis animates below; `scale` here is only the press.
               transition: reduceMotion ? undefined : "scale 0.12s cubic-bezier(0.23, 1, 0.32, 1)",
               display: "flex", flexDirection: "column", ["--lyr-voice-gap" as string]: "6px",
@@ -370,11 +370,11 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
               const originY = n === 1 ? "center" : vi === 0 ? "bottom" : vi === n - 1 ? "top" : "center";
 
               /* rem-anchored, so the user's text size carries through; the vw
-                 term still lets the column breathe with the window. Same
-                 21-34 / 24-40 / 28-46px range as before at the default size. */
+                 term still lets the column breathe with the window. The lead
+                 tops out at ~58px, where Cider sets it on a wide window. */
               const size = isSecondary
-                ? "clamp(1.5rem, 0.5rem + 1.66vw, 2.43rem)"
-                : "clamp(2rem, 0.6rem + 2.3vw, 3.286rem)";
+                ? "clamp(1.5rem, 0.4rem + 1.95vw, 2.9rem)"
+                : "clamp(2rem, 0.4rem + 2.75vw, 4.15rem)";
               const weight = isSecondary ? 700 : 800;
               // built for every row, not just the lit one: both states render
               // the same spans so the line can never re-wrap when it lights up
@@ -411,7 +411,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
                       glowRgb={glow}
                       inkRgb={ink}
                       align={align}
-                      tracking={isSecondary ? "-0.01em" : undefined}
+                      tracking={isSecondary ? "-0.01em" : "-0.022em"}
                     />
                   </div>
                 </div>
@@ -436,6 +436,15 @@ function secondaryInset(side: "left" | "right", indent: number, pad: number): Re
 
 const LYRIC_MASK =
   "linear-gradient(to bottom, transparent 0, #000 9%, #000 calc(84% - var(--lyr-dock, 0px)), transparent calc(100% - var(--lyr-dock, 0px)))";
+
+/* The room is set in Inter (self-hosted in fonts.css) while the rest of the app
+   uses Host Grotesk - a heavier, tighter face for big lyrics. cv11/ss01 are
+   Inter's single-storey a and open digits; tracking matches the lyric lines. */
+const IMMERSIVE_TYPE: React.CSSProperties = {
+  fontFamily: '"Inter", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif',
+  fontFeatureSettings: '"cv11", "ss01"',
+  letterSpacing: "-0.011em",
+};
 
 const lyricsScroll: React.CSSProperties = {
   height: "100%", overflowY: "auto", overflowX: "hidden",
@@ -541,7 +550,7 @@ export function Immersive() {
           onAnimationComplete={() => {
             if (usePlayerStore.getState().immersiveOpen) useUIStore.getState().setImmersiveCovered(true);
           }}
-          style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b", cursor: hideControls ? "none" : undefined }}
+          style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b", cursor: hideControls ? "none" : undefined, ...IMMERSIVE_TYPE }}
         >
           <AmbientBg url={track.album?.image_url} override={videoAmbient} />
           {podcast ? (
@@ -584,7 +593,7 @@ export function Immersive() {
             <div
               style={{
                 position: "relative",
-                width: "min(50%, 760px)",
+                width: "min(50%, 860px)",
                 minWidth: 360,
                 display: "flex",
                 flexDirection: "column",
