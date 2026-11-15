@@ -149,11 +149,15 @@ impl AudioKeyManager {
             return Err(e);
         }
 
+        let asked = Instant::now();
         for nudge in 0..=MAX_NUDGES {
             // `rx` is Unpin, so `&mut rx` can be awaited repeatedly across the
             // timeout loop without consuming the single pending entry.
             match tokio::time::timeout(NUDGE_INTERVAL, &mut rx).await {
-                Ok(Ok(Ok(key))) => return Ok(key),
+                Ok(Ok(Ok(key))) => {
+                    debug!("Audio key in {}ms after {nudge} nudges", asked.elapsed().as_millis());
+                    return Ok(key);
+                }
                 Ok(Ok(Err(e))) => return Err(e), // server AesKeyError: definitive
                 Ok(Err(_recv)) => {
                     // Sender dropped by dispatch - can't recover this seq.

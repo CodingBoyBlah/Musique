@@ -287,6 +287,102 @@ async fn probe_wait(
     }
 }
 
+/// `MUSIQUE_ENGINE_PROBE=1 MUSIQUE_START_PROBE=1 spotify.exe` times how long
+/// a clicked song takes to be heard: six saved songs picked at random, each
+/// started the way the interface starts one, from the click to the player
+/// saying it plays and to the first 30 ms coming out of the device.
+pub async fn start_probe(app: AppHandle) -> i32 {
+    use std::time::{Duration, Instant};
+    use tauri::Listener;
+    let pool = app.state::<AppState>().db.clone();
+    if backend(&pool).await != Backend::Spotify {
+        eprintln!("[start-probe] the built-in Spotify player is not the selected backend");
+        return 2;
+    }
+    // the song last played first: the new session fetched its start ahead
+    let mut tracks: Vec<(String,)> =
+        sqlx::query_as("SELECT track_id FROM recently_played ORDER BY played_at DESC LIMIT 1")
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+    tracks.extend(
+        sqlx::query_as::<_, (String,)>("SELECT track_id FROM saved_tracks ORDER BY RANDOM() LIMIT 6")
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default(),
+    );
+    if tracks.len() < 3 {
+        eprintln!("[start-probe] needs saved tracks");
+        return 2;
+    }
+    let (tx, mut events) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
+    app.listen("player:event", move |event| {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(event.payload()) {
+            let _ = tx.send(value);
+        }
+    });
+    let warm = Instant::now();
+    if let Err(e) = ensure_inner_with(&app, false).await {
+        eprintln!("[start-probe] no session: {e}");
+        return 3;
+    }
+    eprintln!("[start-probe] session up in {}ms", warm.elapsed().as_millis());
+    // as a listener would: the app is up a moment before the first click
+    tokio::time::sleep(Duration::from_secs(4)).await;
+
+    let (mut said, mut heard) = (Vec::new(), Vec::new());
+    for (id,) in &tracks {
+        let Ok(uri) = crate::playback::track_uri(id) else { continue };
+        while events.try_recv().is_ok() {}
+        // what the click costs before the player is asked: the backend checks
+        let click = Instant::now();
+        let _ = soloist(&app).await;
+        let _ = uses_youtube(&app).await;
+        let _ = ensure_inner_with(&app, false).await;
+        let checks = click.elapsed();
+        log::info!(target: "librespot_probe", "click {id}");
+        let asked = probe_inner(&app, |inner| inner.play_requested(uri.clone(), None)).await;
+        if !matches!(asked, Some(Ok(()))) {
+            eprintln!("[start-probe] could not start {id}: {asked:?}");
+            continue;
+        }
+        let playing = probe_wait(&mut events, "playing", id, Duration::from_secs(20)).await.map(|_| click.elapsed());
+        let mut sound = None;
+        while click.elapsed() < Duration::from_secs(20) {
+            let heard_ms = probe_inner(&app, |inner| inner.position_ms()).await.unwrap_or(0);
+            let current = probe_inner(&app, |inner| inner.current_uri()).await.flatten();
+            if heard_ms >= 30 && current.as_deref() == Some(uri.as_str()) {
+                sound = Some(click.elapsed().saturating_sub(Duration::from_millis(30)));
+                log::info!(target: "librespot_probe", "heard {id}");
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        eprintln!(
+            "[start-probe] {id}: checks {}ms, playing event {:?}ms, first sound {:?}ms",
+            checks.as_millis(),
+            playing.map(|d| d.as_millis()),
+            sound.map(|d| d.as_millis()),
+        );
+        if let (Some(p), Some(s)) = (playing, sound) {
+            said.push(p.as_millis());
+            heard.push(s.as_millis());
+        }
+        let _ = probe_inner(&app, |inner| inner.pause()).await;
+        tokio::time::sleep(Duration::from_millis(800)).await;
+    }
+    let playback = app.state::<AppState>().playback.clone();
+    if let Some(inner) = playback.lock().await.take() {
+        inner.shutdown().await;
+    }
+    if heard.is_empty() {
+        return 5;
+    }
+    let median = |v: &mut Vec<u128>| { v.sort_unstable(); v[v.len() / 2] };
+    eprintln!("[start-probe] median: playing event {}ms, first sound {}ms", median(&mut said), median(&mut heard));
+    0
+}
+
 pub async fn engine_probe(app: AppHandle) -> i32 {
     use tauri::Listener;
     use std::time::{Duration, Instant};

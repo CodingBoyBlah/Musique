@@ -804,15 +804,29 @@ fn log_sink() -> &'static std::sync::mpsc::SyncSender<String> {
     })
 }
 
+/// `MUSIQUE_LOG_DEBUG=1`: librespot's debug lines too, each stamped with the
+/// milliseconds since start, to see where a load spends its time.
+fn log_debug() -> bool {
+    static DEBUG: OnceLock<bool> = OnceLock::new();
+    *DEBUG.get_or_init(|| std::env::var_os("MUSIQUE_LOG_DEBUG").is_some())
+}
+
 impl log::Log for PlaybackLog {
     fn enabled(&self, m: &log::Metadata) -> bool {
-        m.target().starts_with("librespot") && m.level() <= log::Level::Info
+        let level = if log_debug() { log::Level::Debug } else { log::Level::Info };
+        m.target().starts_with("librespot") && m.level() <= level
     }
     fn log(&self, r: &log::Record) {
         if !self.enabled(r.metadata()) {
             return;
         }
-        let line = format!("[{}] {}: {}\n", r.level(), r.target(), r.args());
+        let line = if log_debug() {
+            static START: OnceLock<std::time::Instant> = OnceLock::new();
+            let ms = START.get_or_init(std::time::Instant::now).elapsed().as_millis();
+            format!("{ms:>7} [{}] {}: {}\n", r.level(), r.target(), r.args())
+        } else {
+            format!("[{}] {}: {}\n", r.level(), r.target(), r.args())
+        };
         // never block a player/session thread on disk or on a full queue
         let _ = log_sink().try_send(line);
     }
@@ -823,7 +837,7 @@ static PLAYBACK_LOG: PlaybackLog = PlaybackLog;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = log::set_logger(&PLAYBACK_LOG);
-    log::set_max_level(log::LevelFilter::Info);
+    log::set_max_level(if log_debug() { log::LevelFilter::Debug } else { log::LevelFilter::Info });
 
     install_panic_logger();
 
@@ -993,7 +1007,9 @@ pub fn run() {
             if std::env::var_os("MUSIQUE_ENGINE_PROBE").is_some() {
                 let probe = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    let code = if std::env::var_os("MUSIQUE_SEARCH_PROBE").is_some() {
+                    let code = if std::env::var_os("MUSIQUE_START_PROBE").is_some() {
+                        commands::playback::start_probe(probe.clone()).await
+                    } else if std::env::var_os("MUSIQUE_SEARCH_PROBE").is_some() {
                         commands::spotify::search_probe(probe.clone()).await
                     } else {
                         commands::playback::engine_probe(probe.clone()).await
