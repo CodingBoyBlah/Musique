@@ -155,9 +155,6 @@ pub struct AudioFileHead {
     url: String,
     file_size: usize,
     data: Bytes,
-    /// The file's last bytes ([`TAIL_LEN`]) and where they start, which the
-    /// decoder reads before the first sample.
-    tail: Option<(usize, Bytes)>,
 }
 
 impl std::fmt::Debug for AudioFileHead {
@@ -178,14 +175,13 @@ impl AudioFileHead {
         let mut last_error = None;
         for url in &urls {
             match Self::fetch_from(session, url, length).await {
-                Ok((file_size, data, tail)) => {
+                Ok((file_size, data)) => {
                     return Ok(Self {
                         file_id,
                         url: url.to_string(),
                         cdn_url: cdn_url.clone(),
                         file_size,
                         data,
-                        tail,
                     });
                 }
                 Err(e) => {
@@ -201,32 +197,8 @@ impl AudioFileHead {
         session: &Session,
         url: &str,
         length: usize,
-    ) -> Result<(usize, Bytes, Option<(usize, Bytes)>), Error> {
-        let (file_size, data) = Self::fetch_range(session, url, 0, length).await?;
-        if data.len() > file_size {
-            return Err(AudioFileError::NoData.into());
-        }
-        // the tail is only known to exist once the head has said how big the
-        // file is; without it the file still opens, a round trip later
-        let tail = match tail_start(file_size, data.len()) {
-            Some(start) => Self::fetch_range(session, url, start, file_size - start)
-                .await
-                .ok()
-                .filter(|(size, tail)| *size == file_size && tail.len() == file_size - start)
-                .map(|(_, tail)| (start, tail)),
-            None => None,
-        };
-        Ok((file_size, data, tail))
-    }
-
-    /// `length` bytes from `offset`, and the size of the whole file.
-    async fn fetch_range(
-        session: &Session,
-        url: &str,
-        offset: usize,
-        length: usize,
     ) -> Result<(usize, Bytes), Error> {
-        let mut streamer = session.spclient().stream_from_cdn(url, offset, length)?;
+        let mut streamer = session.spclient().stream_from_cdn(url, 0, length)?;
         let response = tokio::time::timeout(Duration::from_secs(10), streamer.next())
             .await
             .map_err(|_| Error::from(AudioFileError::WaitTimeout))?
@@ -240,7 +212,7 @@ impl AudioFileHead {
             .collect()
             .await
             .map(http_body_util::Collected::to_bytes)?;
-        if data.is_empty() {
+        if data.is_empty() || data.len() > file_size {
             return Err(AudioFileError::NoData.into());
         }
         Ok((file_size, data))
@@ -266,21 +238,6 @@ impl AudioFileHead {
             .try_get_urls()
             .is_ok_and(|urls| urls.contains(&self.url.as_str()))
     }
-}
-
-/// How much of a file's end is fetched with its start. To learn a stream's
-/// length and where seeks may land, the Ogg demuxer reads the last pages
-/// before it hands out the first sample, first looking back from the end by
-/// the largest page there can be (65 307 bytes). Fetched only when that read
-/// comes, it is a second CDN round trip between a click and the sound.
-/// (Musique)
-const TAIL_LEN: usize = 64 * 1024;
-
-/// Where the tail fetched with a file's start begins, if past what the start
-/// already holds.
-fn tail_start(file_size: usize, head_end: usize) -> Option<usize> {
-    let start = file_size.saturating_sub(TAIL_LEN);
-    (start > head_end).then_some(start)
 }
 
 /// The last byte a `206 Partial Content` response holds and the size of the
@@ -708,9 +665,11 @@ impl AudioFileStreaming {
         };
 
         debug!(
-            "Streaming {file_id}: resolved in {}ms, CDN answered by {}ms",
+            "Streaming {file_id}: resolved in {}ms, CDN answered by {}ms over {:?} from {}",
             resolved.as_millis(),
-            started.elapsed().as_millis()
+            started.elapsed().as_millis(),
+            response.version(),
+            url.split('/').nth(2).unwrap_or("?")
         );
         trace!("Streaming from {url}");
 
@@ -753,7 +712,6 @@ impl AudioFileStreaming {
             url,
             file_size,
             data,
-            tail,
             ..
         } = head;
         let shared = Arc::new(AudioFileShared::new(url, file_size, bytes_per_second));
@@ -761,16 +719,6 @@ impl AudioFileStreaming {
         let mut write_file = NamedTempFile::new_in(session.config().tmp_dir.clone())?;
         write_file.as_file().set_len(file_size as u64)?;
         write_file.write_all(&data)?;
-        if let Some((start, tail)) = &tail {
-            write_file.seek(SeekFrom::Start(*start as u64))?;
-            write_file.write_all(tail)?;
-            shared
-                .download_status
-                .lock()
-                .expect(DOWNLOAD_STATUS_POISON_MSG)
-                .downloaded
-                .add_range(&Range::new(*start, tail.len()));
-        }
         shared
             .download_status
             .lock()
@@ -806,24 +754,6 @@ impl AudioFileStreaming {
 
         let (stream_loader_command_tx, stream_loader_command_rx) =
             mpsc::unbounded_channel::<StreamLoaderCommand>();
-
-        // the end of the file, which the decoder reads before the first
-        // sample, alongside its start rather than after it
-        let head_end = initial_request.offset + initial_request.length;
-        if let Some(start) = tail_start(shared.file_size, head_end) {
-            let missing = !shared
-                .download_status
-                .lock()
-                .expect(DOWNLOAD_STATUS_POISON_MSG)
-                .downloaded
-                .contains(start);
-            if missing {
-                let _ = stream_loader_command_tx.send(StreamLoaderCommand::Fetch(Range::new(
-                    start,
-                    shared.file_size - start,
-                )));
-            }
-        }
 
         session.spawn(audio_file_fetch(
             session.clone(),
@@ -1007,18 +937,10 @@ mod tests {
             url: "http://127.0.0.1:9/audio".into(),
             file_size: 256 * 1024,
             data: Bytes::from(data.clone()),
-            tail: Some((192 * 1024, Bytes::from(data.clone()))),
         };
         let (complete_tx, _complete_rx) = oneshot::channel();
         let mut file =
             AudioFileStreaming::open_after_head(session, complete_tx, 40 * 1024, head).unwrap();
-
-        // the end, which the demuxer reads first, is there too
-        file.seek(SeekFrom::Start(192 * 1024)).unwrap();
-        let mut end = vec![0; data.len()];
-        file.read_exact(&mut end).unwrap();
-        assert_eq!(end, data);
-        file.seek(SeekFrom::Start(0)).unwrap();
 
         let mut read = vec![0; data.len()];
         let mut filled = 0;
@@ -1034,13 +956,6 @@ mod tests {
     }
 
     #[test]
-    fn the_tail_is_fetched_only_past_the_start() {
-        assert_eq!(tail_start(10 * 1024 * 1024, 64 * 1024), Some(10 * 1024 * 1024 - TAIL_LEN));
-        assert_eq!(tail_start(100 * 1024, 64 * 1024), None);
-        assert_eq!(tail_start(1000, 1000), None);
-    }
-
-    #[test]
     fn an_unresolved_head_is_not_fresh() {
         let file_id = FileId::from_raw(&[7; 20]);
         let head = AudioFileHead {
@@ -1049,7 +964,6 @@ mod tests {
             url: "https://audio.example/file".into(),
             file_size: 2,
             data: Bytes::from_static(b"x"),
-            tail: None,
         };
         assert!(!head.is_fresh());
     }

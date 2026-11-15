@@ -269,3 +269,45 @@ impl AudioDecoder for SymphoniaDecoder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two seconds and a bit of a tone, Vorbis at 44.1 kHz, 100 003 frames: a
+    /// length no block size divides, so the last page ends in padding.
+    const ODD_LENGTH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/odd-length.ogg");
+    const FRAMES: usize = 100_003;
+
+    fn open() -> SymphoniaDecoder {
+        let file = std::fs::File::open(ODD_LENGTH).unwrap();
+        let mut hint = Hint::new();
+        hint.with_extension("ogg");
+        SymphoniaDecoder::new(file, hint).unwrap()
+    }
+
+    fn frames_to_end(decoder: &mut SymphoniaDecoder) -> usize {
+        let mut frames = 0;
+        while let Some((_, packet)) = decoder.next_packet().unwrap() {
+            frames += packet.samples().unwrap().len() / NUM_CHANNELS as usize;
+        }
+        frames
+    }
+
+    #[test]
+    fn a_stream_played_through_stops_on_its_last_sample() {
+        // the demuxer no longer reads the end on opening; the last page
+        // still has its padding cut off
+        assert_eq!(frames_to_end(&mut open()), FRAMES);
+    }
+
+    #[test]
+    fn a_seek_finds_the_end_it_had_not_looked_for_yet() {
+        let mut decoder = open();
+        let at = decoder.seek(1000).unwrap();
+        assert!((950..=1000).contains(&at), "landed at {at}ms");
+        let left = frames_to_end(&mut decoder);
+        let expected = FRAMES - at as usize * SAMPLE_RATE as usize / 1000;
+        assert!(left.abs_diff(expected) < 2048, "{left} frames left, about {expected} expected");
+    }
+}

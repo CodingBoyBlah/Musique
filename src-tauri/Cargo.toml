@@ -151,6 +151,12 @@ librespot-playback = { path = "vendor/librespot-playback" }
 # restarted), the app needs Spirc's queue to show it, and hosts add to the Jam
 # queue through Spirc. See vendor/librespot-connect/src/spirc.rs ("jam:").
 librespot-connect = { path = "vendor/librespot-connect" }
+# Vendored symphonia-format-ogg 0.5.5 that looks for the end of a stream only
+# when it first has to seek, not when it opens: the end of a streamed song is
+# a CDN round trip, often a slow one, before the first sample. The final page
+# is trimmed from its own granule position instead. See
+# vendor/symphonia-format-ogg/src/demuxer.rs ("Musique").
+symphonia-format-ogg = { path = "vendor/symphonia-format-ogg" }
 
 [profile.dev]
 incremental = true
