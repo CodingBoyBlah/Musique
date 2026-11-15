@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./host-grotesk.css";
 @import "./fonts.css";
 
 
@@ -95,8 +96,8 @@ body,
     background: transparent;
     color: var(--color-text);
     font-family:
+        "Host Grotesk",
         "Inter",
-        "Inter Variable",
         "Segoe UI Variable",
         "Segoe UI",
         system-ui,
@@ -104,8 +105,6 @@ body,
         sans-serif;
     font-size: 14px;
     font-weight: 400;
-    font-feature-settings: "cv11", "ss01";
-    letter-spacing: -0.011em;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     overflow: hidden;
