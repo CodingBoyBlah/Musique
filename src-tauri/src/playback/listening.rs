@@ -79,6 +79,8 @@ struct Report {
 enum Cmd {
     Report(Box<Report>),
     Flush(oneshot::Sender<()>),
+    /// Report through this session from now on.
+    Session(Session),
 }
 
 struct State {
@@ -95,6 +97,9 @@ struct State {
     last_files: Option<(SpotifyUri, AudioFiles)>,
     last_track_done: Option<Instant>,
     tx:        Option<mpsc::UnboundedSender<Cmd>>,
+    // the next play request for the track being listened to takes it over
+    // where it is (a new session carrying on): the same listen goes on
+    carry_on:  bool,
 }
 
 pub struct ListenTracker {
@@ -120,6 +125,7 @@ impl ListenTracker {
                 last_files:      None,
                 last_track_done: None,
                 tx:              Some(tx),
+                carry_on:        false,
             }),
             frames,
             formats: format_order(bitrate),
@@ -133,6 +139,19 @@ impl ListenTracker {
     pub fn set_requested(&self, track_uri: &str, context: Option<String>) {
         let context = context.filter(|c| c.starts_with("spotify:") && c.len() > "spotify:".len());
         self.state.lock().unwrap().requested = Some((track_uri.to_string(), context));
+    }
+
+    /// The player carries on with a new session: listens go out through it.
+    pub fn set_session(&self, session: Session) {
+        if let Some(tx) = &self.state.lock().unwrap().tx {
+            let _ = tx.send(Cmd::Session(session));
+        }
+    }
+
+    /// The play request about to take over the track being listened to,
+    /// where it is, is the same listen and not a new one.
+    pub fn carry_on(&self) {
+        self.state.lock().unwrap().carry_on = true;
     }
 
     pub fn on_event(&self, event: &PlayerEvent) {
@@ -192,7 +211,11 @@ impl ListenTracker {
         if s.closed == Some(play_request_id) {
             return;
         }
+        let carry_on = std::mem::take(&mut s.carry_on);
         if let Some(cur) = s.current.as_mut() {
+            if carry_on && cur.uri == *track_id {
+                cur.play_request_id = play_request_id;
+            }
             if cur.play_request_id == play_request_id {
                 if playing && cur.started_at.is_none() {
                     cur.started_at = Some(now);
@@ -307,7 +330,7 @@ fn format_label(format: AudioFileFormat) -> &'static str {
 
 // reporter
 
-async fn run_reporter(session: Session, mut rx: mpsc::UnboundedReceiver<Cmd>) {
+async fn run_reporter(mut session: Session, mut rx: mpsc::UnboundedReceiver<Cmd>) {
     let mut sender = EventSender::new();
     while let Some(cmd) = rx.recv().await {
         match cmd {
@@ -327,6 +350,7 @@ async fn run_reporter(session: Session, mut rx: mpsc::UnboundedReceiver<Cmd>) {
             Cmd::Flush(done) => {
                 let _ = done.send(());
             }
+            Cmd::Session(next) => session = next,
         }
     }
 }
@@ -731,6 +755,30 @@ mod tests {
         t.close();
         let r = next_report(&mut rx).expect("partial listen reported on close");
         assert_eq!((r.reason_start, r.reason_end, r.ms_played), ("trackdone", "endplay", 1_000));
+    }
+
+    #[test]
+    fn a_new_session_taking_the_track_over_keeps_one_listen() {
+        let (t, mut rx) = tracker();
+        t.set_requested(A, Some("spotify:album:1".into()));
+        play(&t, 1, A);
+        render(&t, 20_000);
+        // the session drops; the new one's spirc takes the track over under
+        // a new play request, where the decoder is
+        t.carry_on();
+        play(&t, 2, A);
+        assert!(next_report(&mut rx).is_none(), "the takeover split the listen in two");
+        render(&t, 10_000);
+        t.on_event(&PlayerEvent::EndOfTrack { play_request_id: 2, track_id: uri(A) });
+        let r = next_report(&mut rx).expect("listen reported");
+        assert_eq!((r.uri, r.ms_played, r.reason_end), (uri(A), 30_000, "trackdone"));
+        assert_eq!(r.context.as_deref(), Some("spotify:album:1"));
+        // and only that once: a later play of another track is a new listen
+        t.carry_on();
+        play(&t, 3, B);
+        render(&t, 1_000);
+        t.close();
+        assert_eq!(next_report(&mut rx).unwrap().uri, uri(B));
     }
 
     #[test]

@@ -370,6 +370,10 @@ impl Advance {
 // playbackinner
 
 pub struct PlaybackInner {
+    /// This one took over the player of a session that dropped, which may
+    /// still be playing (see `carry_on`).
+    pub kept_player:       bool,
+    bitrate:               (Bitrate, Arc<std::sync::atomic::AtomicU64>),
     pub player:            Arc<Player>,
     pub volume:            SharedVolume,
     pub loaded:            Arc<AtomicBool>,
@@ -437,6 +441,71 @@ impl PlaybackInner {
     /// replaced, before its slower `shutdown`.
     pub fn stop_playing(&self) {
         self.player.stop();
+    }
+
+    /// What a session built next can carry on with: the player, its output
+    /// and queue, and what the app knows of what it plays.
+    pub fn player_parts(&self) -> PlayerParts {
+        PlayerParts {
+            player:            Arc::clone(&self.player),
+            volume:            self.volume.clone(),
+            output_latency:    Arc::clone(&self.output_latency),
+            playout:           Arc::clone(&self.playout),
+            bitrate:           self.bitrate.clone(),
+            listens:           Some(Arc::clone(&self.listens)),
+            advance:           Some(Arc::clone(&self.advance)),
+            current_uri:       Some(Arc::clone(&self.current_uri)),
+            is_ended:          Some(Arc::clone(&self.is_ended)),
+            is_playing_atomic: Some(Arc::clone(&self.is_playing_atomic)),
+            loaded:            Some(Arc::clone(&self.loaded)),
+        }
+    }
+
+    /// Lets go of the session, spirc and their tasks, and leaves the player
+    /// playing for the session that took it over (`player_parts`).
+    pub async fn shutdown_session(&self) {
+        if let Err(e) = self.spirc.shutdown() {
+            eprintln!("[playback] spirc shutdown request failed: {e}");
+        }
+        // the new one reports what this one was listening to
+        self._event_task.abort();
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        self._spirc_task.abort();
+        self._dealer_task.abort();
+        self._state_task.abort();
+    }
+
+    /// The next load of `uri` takes over what the kept player is on, where
+    /// it is, rather than starting it again (see `carry_on`).
+    pub fn mark_carry_on(&self, uri: &str) {
+        if let Ok(track) = parse_track_id(uri) {
+            self.player.carry_on(track);
+            self.playout.carry_on();
+            self.listens.carry_on();
+        }
+    }
+
+    /// A new spirc takes over the track the kept player plays (or holds
+    /// paused), from wherever the decoder is: no reload, no seek, and what is
+    /// queued in front of the speaker plays on. Spirc is told `position_ms`,
+    /// where the listener is.
+    pub fn carry_on(&self, uri: String, position_ms: u32, playing: bool) -> Result<(), AppError> {
+        eprintln!("[playback] carry_on uri={uri} pos={position_ms} playing={playing}");
+        self.mark_carry_on(&uri);
+        self.spirc.activate().map_err(spirc_err)?;
+        self.spirc.load(LoadRequest::from_tracks(
+            vec![uri.clone()],
+            LoadRequestOptions {
+                start_playing: playing,
+                seek_to: position_ms,
+                ..Default::default()
+            },
+        )).map_err(spirc_err)?;
+        *self.current_uri.lock().unwrap() = Some(uri);
+        self.loaded.store(true, Ordering::Relaxed);
+        self.is_ended.store(false, Ordering::Relaxed);
+        self.is_playing_atomic.store(playing, Ordering::Relaxed);
+        Ok(())
     }
 
     pub async fn shutdown(&self) {
@@ -834,6 +903,142 @@ pub enum PlayerMsg {
 
 // session / player init stuff
 
+/// The player, its output and the queue in front of it, which can outlive a
+/// session (see `PlaybackInner::player_parts`).
+async fn build_player(
+    pool: &SqlitePool,
+    session: Session,
+    initial_volume: f64,
+    initial_muted: bool,
+) -> PlayerParts {
+    let volume    = SharedVolume::new(initial_volume, initial_muted);
+    let vol_clone = volume.clone();
+
+    let output_latency = Arc::new(AtomicI64::new(0));
+    let latency_sink = Arc::clone(&output_latency);
+    let playout = crate::sink::Playout::new();
+    let sink_playout = Arc::clone(&playout);
+    let event_slot: crate::sink::EventSlot = Arc::new(Mutex::new(None));
+    let sink_events = Arc::clone(&event_slot);
+    // Count samples pulled by the output, not seconds waiting in its queue.
+    let rendered_frames = Arc::clone(&playout.ring.rendered_frames);
+
+    #[cfg(target_os = "macos")]
+    let force_null_sink = running_under_hypervisor() || !audio_device_safe();
+    #[cfg(not(target_os = "macos"))]
+    let force_null_sink = false;
+    if force_null_sink {
+        eprintln!("[playback] audio device unavailable/unsafe - using silent sink");
+    }
+
+    let make_sink = move || {
+        if force_null_sink {
+            return Box::new(NullSink) as Box<dyn Sink>;
+        }
+        eprintln!("[playback] STEP opening audio device via RodioSink");
+        let on_err: crate::sink::ErrorHook = Arc::new(|msg| {
+            eprintln!("[playback error] {msg}");
+        });
+        let rodio = crate::sink::RodioSink::new(
+            None,
+            on_err,
+            Box::new(vol_clone),
+            crate::sink::DEFAULT_BUFFER_MS,
+            Arc::clone(&sink_playout),
+            Arc::clone(&sink_events),
+        ).with_latency_tracker(Arc::clone(&latency_sink));
+        // the silent fallback above is deliberately NOT counted: nobody heard it
+        Box::new(rodio) as Box<dyn Sink>
+    };
+
+    let bitrate_setting: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM settings WHERE key = 'audio_quality'",
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    let bitrate = match bitrate_setting.as_ref().map(|(v,)| v.as_str()) {
+        Some("96") => Bitrate::Bitrate96,
+        Some("160") => Bitrate::Bitrate160,
+        _ => Bitrate::Bitrate320,
+    };
+    eprintln!("[playback] configured bitrate = {bitrate:?}");
+
+    // loudness normalisation: every track brought to the same level from the
+    // gain spotify publishes for it, so a quiet album and a loud single don't
+    // have the listener reaching for the volume. off unless turned on
+    let normalisation = auth::get_setting_value(pool, "audio_normalisation")
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|v| v == "1");
+    eprintln!("[playback] loudness normalisation = {normalisation}");
+
+    // a folder of the listener's own music. the player reads its tags when it
+    // starts, and can then play the spotify:local: rows of a playlist from it
+    let local_files: Vec<std::path::PathBuf> = auth::get_setting_value(pool, "local_files_dir")
+        .await
+        .ok()
+        .flatten()
+        .map(|dir| std::path::PathBuf::from(dir.trim()))
+        .filter(|dir| dir.is_dir())
+        .into_iter()
+        .collect();
+
+    let player_config = PlayerConfig {
+        bitrate,
+        gapless: true,
+        local_file_directories: local_files,
+        normalisation,
+        normalisation_type: librespot_playback::config::NormalisationType::Auto,
+        ..Default::default()
+    };
+    let player = Player::new(
+        player_config,
+        session.clone(),
+        Box::new(librespot_playback::mixer::NoOpVolume),
+        make_sink,
+    );
+    eprintln!("[playback] STEP player built");
+    // Subscribed before anything can be loaded, so the sink sees every event.
+    // Commands reach the player in order and none has been sent yet.
+    *event_slot.lock().unwrap() = Some(player.get_player_event_channel());
+    let rendered = rendered_frames;
+    PlayerParts {
+        player,
+        volume,
+        output_latency,
+        playout,
+        listens: None,
+        advance: None,
+        current_uri: None,
+        is_ended: None,
+        is_playing_atomic: None,
+        loaded: None,
+        bitrate: (bitrate, rendered),
+    }
+}
+
+/// What of a `PlaybackInner` goes on from one session to the next when the
+/// player is kept. The first five are the player's own; the rest are `None`
+/// for a player just built.
+#[derive(Clone)]
+pub struct PlayerParts {
+    player:            Arc<Player>,
+    volume:            SharedVolume,
+    output_latency:    Arc<AtomicI64>,
+    playout:           Arc<crate::sink::Playout>,
+    bitrate:           (Bitrate, Arc<std::sync::atomic::AtomicU64>),
+    listens:           Option<Arc<listening::ListenTracker>>,
+    advance:           Option<Arc<Advance>>,
+    current_uri:       Option<Arc<Mutex<Option<String>>>>,
+    is_ended:          Option<Arc<AtomicBool>>,
+    is_playing_atomic: Option<Arc<AtomicBool>>,
+    loaded:            Option<Arc<AtomicBool>>,
+}
+
 pub async fn create_inner(
     app:            AppHandle,
     pool:           SqlitePool,
@@ -845,6 +1050,8 @@ pub async fn create_inner(
     // a browser authorization tab the user didn't ask for. When no silent
     // credential works they fail instead and the next real play recovers.
     interactive:    bool,
+    // the player of a session that dropped, to carry on with
+    reuse:          Option<PlayerParts>,
 ) -> Result<PlaybackInner, AppError> {
     let _ = auth::get_valid_token(&pool, &auth_state).await
         .map_err(|e| { eprintln!("[playback] auth token error: {e}"); e })?;
@@ -932,100 +1139,26 @@ pub async fn create_inner(
     let mut session = Session::new(session_config.clone(), cache);
     eprintln!("[playback] librespot session client_id = {}", session.client_id());
 
-    let volume    = SharedVolume::new(initial_volume, initial_muted);
-    let vol_clone = volume.clone();
-
-    let output_latency = Arc::new(AtomicI64::new(0));
-    let latency_sink = Arc::clone(&output_latency);
-    let playout = crate::sink::Playout::new();
-    let sink_playout = Arc::clone(&playout);
-    let event_slot: crate::sink::EventSlot = Arc::new(Mutex::new(None));
-    let sink_events = Arc::clone(&event_slot);
-    // Count samples pulled by the output, not seconds waiting in its queue.
-    let rendered_frames = Arc::clone(&playout.ring.rendered_frames);
-
-    #[cfg(target_os = "macos")]
-    let force_null_sink = running_under_hypervisor() || !audio_device_safe();
-    #[cfg(not(target_os = "macos"))]
-    let force_null_sink = false;
-    if force_null_sink {
-        eprintln!("[playback] audio device unavailable/unsafe - using silent sink");
-    }
-
-    let make_sink = move || {
-        if force_null_sink {
-            return Box::new(NullSink) as Box<dyn Sink>;
-        }
-        eprintln!("[playback] STEP opening audio device via RodioSink");
-        let on_err: crate::sink::ErrorHook = Arc::new(|msg| {
-            eprintln!("[playback error] {msg}");
-        });
-        let rodio = crate::sink::RodioSink::new(
-            None,
-            on_err,
-            Box::new(vol_clone),
-            crate::sink::DEFAULT_BUFFER_MS,
-            Arc::clone(&sink_playout),
-            Arc::clone(&sink_events),
-        ).with_latency_tracker(Arc::clone(&latency_sink));
-        // the silent fallback above is deliberately NOT counted: nobody heard it
-        Box::new(rodio) as Box<dyn Sink>
+    // the player, its output and its queue: kept from the last session when
+    // that one dropped while it played, so the music never stops for it
+    let kept_player = reuse.is_some();
+    let parts = match reuse {
+        Some(parts) => parts,
+        None => build_player(&pool, session.clone(), initial_volume, initial_muted).await,
     };
-
-    let bitrate_setting: Option<(String,)> = sqlx::query_as(
-        "SELECT value FROM settings WHERE key = 'audio_quality'",
-    )
-    .fetch_optional(&pool)
-    .await
-    .ok()
-    .flatten();
-
-    let bitrate = match bitrate_setting.as_ref().map(|(v,)| v.as_str()) {
-        Some("96") => Bitrate::Bitrate96,
-        Some("160") => Bitrate::Bitrate160,
-        _ => Bitrate::Bitrate320,
-    };
-    eprintln!("[playback] configured bitrate = {bitrate:?}");
-
-    // loudness normalisation: every track brought to the same level from the
-    // gain spotify publishes for it, so a quiet album and a loud single don't
-    // have the listener reaching for the volume. off unless turned on
-    let normalisation = auth::get_setting_value(&pool, "audio_normalisation")
-        .await
-        .ok()
-        .flatten()
-        .is_some_and(|v| v == "1");
-    eprintln!("[playback] loudness normalisation = {normalisation}");
-
-    // a folder of the listener's own music. the player reads its tags when it
-    // starts, and can then play the spotify:local: rows of a playlist from it
-    let local_files: Vec<std::path::PathBuf> = auth::get_setting_value(&pool, "local_files_dir")
-        .await
-        .ok()
-        .flatten()
-        .map(|dir| std::path::PathBuf::from(dir.trim()))
-        .filter(|dir| dir.is_dir())
-        .into_iter()
-        .collect();
-
-    let player_config = PlayerConfig {
+    let PlayerParts {
+        player,
+        volume,
+        output_latency,
+        playout,
+        listens: kept_listens,
+        advance: kept_advance,
+        current_uri: kept_current_uri,
+        is_ended: kept_is_ended,
+        is_playing_atomic: kept_is_playing,
+        loaded: kept_loaded,
         bitrate,
-        gapless: true,
-        local_file_directories: local_files,
-        normalisation,
-        normalisation_type: librespot_playback::config::NormalisationType::Auto,
-        ..Default::default()
-    };
-    let player = Player::new(
-        player_config,
-        session.clone(),
-        Box::new(librespot_playback::mixer::NoOpVolume),
-        make_sink,
-    );
-    eprintln!("[playback] STEP player built");
-    // Subscribed before anything can be loaded, so the sink sees every event.
-    // Commands reach the player in order and none has been sent yet.
-    *event_slot.lock().unwrap() = Some(player.get_player_event_channel());
+    } = parts;
     // Connect reports this device's position to Spotify (and, in a Jam, to
     // everyone in it). The decoder runs seconds ahead of the speaker, so
     // report what is being heard.
@@ -1136,6 +1269,9 @@ pub async fn create_inner(
     })?;
     let spirc = Arc::new(spirc);
     eprintln!("[playback] STEP spirc connected (Connect device 'Musique' registered)");
+    // the credential recovery may have swapped the session, and a kept player
+    // still has the one that dropped
+    player.set_session(session.clone());
     let spirc_task = tauri::async_runtime::spawn(spirc_task);
     // spirc has the dealer connected now; tap it for device/jam/playlist pushes
     let dealer_task = crate::internal::dealer::spawn(app.clone(), session.clone());
@@ -1176,16 +1312,24 @@ pub async fn create_inner(
 
     // built on the FINAL session: the credential recovery above may have
     // swapped it for a fresh one
-    let listens       = listening::ListenTracker::new(session.clone(), bitrate, rendered_frames);
+    let (bitrate, rendered_frames) = bitrate;
+    let listens = match kept_listens {
+        Some(listens) => {
+            listens.set_session(session.clone());
+            listens
+        }
+        None => listening::ListenTracker::new(session.clone(), bitrate, Arc::clone(&rendered_frames)),
+    };
     let listens_event = Arc::clone(&listens);
 
-    let current_uri: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let advance           = Arc::new(Advance::default());
+    let current_uri: Arc<Mutex<Option<String>>> =
+        kept_current_uri.unwrap_or_else(|| Arc::new(Mutex::new(None)));
+    let advance           = kept_advance.unwrap_or_default();
     let event_advance     = Arc::clone(&advance);
     let event_spirc       = Arc::clone(&spirc);
     let event_current_uri = Arc::clone(&current_uri);
-    let is_ended          = Arc::new(AtomicBool::new(false));
-    let is_playing_atomic = Arc::new(AtomicBool::new(false));
+    let is_ended          = kept_is_ended.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    let is_playing_atomic = kept_is_playing.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
 
     let is_ended_clone          = is_ended.clone();
     let is_playing_atomic_clone = is_playing_atomic.clone();
@@ -1249,14 +1393,19 @@ pub async fn create_inner(
             // positions as heard rather than as decoded
             let position = match &event {
                 PlayerEvent::Paused { play_request_id, position_ms, .. } => {
-                    let heard = playout.ring.heard(*play_request_id).unwrap_or(*position_ms);
+                    let heard = playout
+                        .ring
+                        .heard(*play_request_id)
+                        .or_else(|| playout.take_carried_heard(*play_request_id))
+                        .unwrap_or(*position_ms);
                     paused_at = Some((*play_request_id, heard));
                     Some(heard)
                 }
                 PlayerEvent::Playing { play_request_id, position_ms, .. } => Some(match paused_at.take() {
                     Some((request, heard)) if request == *play_request_id => heard,
-                    // a new track, or a seek: the queue was flushed there
-                    _ => *position_ms,
+                    // a new track, or a seek: the queue was flushed there.
+                    // or a new spirc took the track over, and the queue was not
+                    _ => playout.take_carried_heard(*play_request_id).unwrap_or(*position_ms),
                 }),
                 PlayerEvent::PositionChanged { play_request_id, position_ms, .. } =>
                     Some(playout.ring.heard(*play_request_id).unwrap_or(*position_ms)),
@@ -1348,7 +1497,9 @@ pub async fn create_inner(
     Ok(PlaybackInner {
         player,
         volume,
-        loaded:            Arc::new(AtomicBool::new(false)),
+        loaded:            kept_loaded.unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
+        bitrate:           (bitrate, rendered_frames),
+        kept_player,
         current_uri,
         is_ended,
         is_playing_atomic,

@@ -61,6 +61,12 @@ pub struct Playout {
     /// The play whose tail is still being heard while the player is already
     /// on the one after it (see `playback::Advance`).
     tail_of:     AtomicU64,
+    /// The next play request takes over the one playing where it is, rather
+    /// than starting afresh (`carry_on`): what is queued stays.
+    carry_on:    AtomicBool,
+    /// The play taken over that way, until its successor first says where it
+    /// is: from the decoder, seconds ahead of what is heard.
+    carried:     AtomicU64,
 }
 
 /// How long audio is dropped waiting for the player to confirm a seek. It
@@ -79,7 +85,32 @@ impl Playout {
             seeking:    Mutex::new(None),
             decoded_end: AtomicU64::new(u64::MAX),
             tail_of:     AtomicU64::new(u64::MAX),
+            carry_on:    AtomicBool::new(false),
+            carried:     AtomicU64::new(u64::MAX),
         })
+    }
+
+    /// A new Spirc is taking over the player, which played on through the
+    /// loss of its session. The play request it starts carries on from where
+    /// the decoder is, behind what is already queued, which is heard out
+    /// first: nothing is flushed, and until the new request is heard, where
+    /// the listener is comes from the old one.
+    pub fn carry_on(&self) {
+        let current = self.current.load(Ordering::Relaxed);
+        self.carried.store(current, Ordering::Relaxed);
+        self.tail_of.store(current, Ordering::Relaxed);
+        self.carry_on.store(true, Ordering::SeqCst);
+    }
+
+    /// For the first report of where play `request` is: where the listener
+    /// is in the play it took over, if it took one over.
+    pub fn take_carried_heard(&self, request: u64) -> Option<u32> {
+        let carried = self.carried.load(Ordering::Relaxed);
+        if carried == u64::MAX || carried == request {
+            return None;
+        }
+        self.carried.store(u64::MAX, Ordering::Relaxed);
+        self.ring.heard(carried)
     }
 
     /// The play the player is on, as far as the audio reaching the sink goes.
@@ -461,7 +492,10 @@ impl RodioSink {
                     // the next; anything the user picked starts right away
                     let rolling_on = self.track.at_end
                         && self.playout.user_loads() == self.track.loads_at_end;
-                    flush |= !rolling_on;
+                    // a new spirc taking over: the decoder goes on from
+                    // where it is, after what is queued
+                    let carrying_on = self.playout.carry_on.swap(false, Ordering::SeqCst);
+                    flush |= !rolling_on && !carrying_on;
                     self.track.tag = play_request_id;
                     self.track.pos_ms = 0.0;
                     self.track.at_end = false;
@@ -943,6 +977,55 @@ mod tests {
         assert!(!playout.ring.push(Chunk {
             samples: vec![1.0; 20], rate: 1000, tag: 1, start_ms: 100.0, end_ms: 110.0,
         }, Some(epoch), 1000, &|| false));
+    }
+
+    #[test]
+    fn a_new_session_taking_the_player_over_keeps_what_is_queued() {
+        use librespot_core::SpotifyUri;
+        let track = SpotifyUri::from_uri("spotify:track:4PTG3Z6ehGkBFwjybzWkR8").unwrap();
+        let playout = Playout::new();
+        let (events, rx) = tokio::sync::mpsc::unbounded_channel();
+        let slot: EventSlot = Arc::new(Mutex::new(Some(rx)));
+        let mut sink = RodioSink::new(
+            None,
+            Arc::new(|_| {}),
+            Box::new(librespot_playback::mixer::NoOpVolume),
+            DEFAULT_BUFFER_MS,
+            Arc::clone(&playout),
+            slot,
+        );
+        let queue = |tag, start_ms: f64| {
+            let epoch = playout.ring.epoch();
+            assert!(playout.ring.push(Chunk {
+                samples: vec![1.0; 200], rate: 1000, tag, start_ms, end_ms: start_ms + 100.0,
+            }, Some(epoch), 10_000, &|| false));
+        };
+        // play 1, a few seconds of it queued and part heard
+        events.send(PlayerEvent::PlayRequestIdChanged { play_request_id: 1 }).unwrap();
+        sink.catch_up();
+        queue(1, 60_000.0);
+        let mut source = RingSource::endless(Arc::clone(&playout.ring), 2, 1000).without_fades();
+        assert!((0..100).all(|_| source.next() == Some(1.0)));
+        let heard = playout.heard_now().unwrap();
+
+        // the new spirc's request takes it over where the decoder is
+        playout.carry_on();
+        events.send(PlayerEvent::PlayRequestIdChanged { play_request_id: 2 }).unwrap();
+        events.send(PlayerEvent::Playing { play_request_id: 2, track_id: track.clone(), position_ms: 60_100 }).unwrap();
+        sink.catch_up();
+        assert_eq!(playout.current_tag(), 2);
+        // where the listener is still comes from what is heard, not the decoder
+        assert_eq!(playout.take_carried_heard(2), Some(heard));
+        assert_eq!(playout.take_carried_heard(2), None, "only for its first report");
+        queue(2, 60_100.0);
+        // nothing was flushed: the rest of play 1, then play 2, without a gap
+        assert!((0..300).all(|_| source.next() == Some(1.0)));
+
+        // an ordinary new request still clears the queue
+        queue(2, 60_200.0);
+        events.send(PlayerEvent::PlayRequestIdChanged { play_request_id: 3 }).unwrap();
+        sink.catch_up();
+        assert!((0..200).all(|_| source.next() == Some(0.0)));
     }
 
     #[test]

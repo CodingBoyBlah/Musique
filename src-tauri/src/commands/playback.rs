@@ -106,10 +106,31 @@ async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), App
         let vol   = read_vol(&db).await;
         // a probe run while something else is playing must not be heard
         let muted = read_muted(&db).await || std::env::var_os("MUSIQUE_PROBE_SILENT").is_some();
-        let inner = crate::playback::create_inner(app.clone(), db.clone(), auth, vol, muted, media_tx, interactive).await?;
+        // the session dropped under a player that is fine: the new session
+        // takes the player over, still playing, instead of building another
+        // and loading the song again on it. (a rebuild asked for, after a
+        // setting the player is built with changed, gets a new player)
+        let carry = guard
+            .as_ref()
+            .filter(|old| old.session_invalid() && !old.needs_rebuild.load(Ordering::Relaxed))
+            .map(Carry::from);
+        let reuse = carry.as_ref().map(|carry| carry.parts.clone());
+        let inner = crate::playback::create_inner(app.clone(), db.clone(), auth, vol, muted, media_tx, interactive, reuse).await?;
         if !crate::auth::epoch_is_current(epoch) {
-            inner.shutdown().await;
+            if inner.kept_player {
+                inner.shutdown_session().await;
+            } else {
+                inner.shutdown().await;
+            }
             return Err(AppError::Auth("Account changed; playback cancelled".into()));
+        }
+        if let Some(carry) = carry.filter(|_| inner.kept_player) {
+            if let Some(old) = guard.take() {
+                tauri::async_runtime::spawn(async move { old.shutdown_session().await });
+            }
+            carry.hand_over(&inner);
+            *guard = Some(inner);
+            return Ok(());
         }
         // the player of a session that died plays on through what it had
         // downloaded, which carries the listener over the reconnect. left
@@ -128,6 +149,58 @@ async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), App
         *guard = Some(inner);
     }
     Ok(())
+}
+
+/// What a player whose session dropped was doing, for the session that takes
+/// it over.
+struct Carry {
+    parts:       crate::playback::PlayerParts,
+    /// The track it is on, unless nothing is loaded or it played to the end.
+    uri:         Option<String>,
+    position_ms: u32,
+    playing:     bool,
+    jam:         bool,
+    snapshot:    Option<std::sync::Arc<librespot_connect::PlaybackSnapshot>>,
+}
+
+impl Carry {
+    fn from(old: &crate::playback::PlaybackInner) -> Self {
+        Carry {
+            parts:       old.player_parts(),
+            uri:         old.current_uri().filter(|_| old.loaded.load(Ordering::Relaxed) && !old.is_ended()),
+            position_ms: old.position_ms(),
+            playing:     old.is_playing(),
+            jam:         old.connect_state().jam_mode,
+            snapshot:    old.disconnected_playback(),
+        }
+    }
+
+    /// Spirc on the new session takes over what the player is on, where it
+    /// is. The music never stopped; spirc and Spotify Connect learn of it.
+    fn hand_over(self, inner: &crate::playback::PlaybackInner) {
+        let Some(uri) = self.uri else {
+            eprintln!("[playback] the player carries on, with nothing loaded, on a new session");
+            return;
+        };
+        if self.jam {
+            // a jam's queue is spirc's: what it kept of it puts it back, and
+            // the track it is on is taken over where it is
+            let restored = self.snapshot.map(|snapshot| {
+                inner.mark_carry_on(&uri);
+                inner.restore_playback(snapshot, uri)
+            });
+            match restored {
+                Some(Ok(())) => eprintln!("[playback] the jam carried on, on a new session"),
+                Some(Err(e)) => eprintln!("[playback] could not put the jam back after reconnecting: {e}"),
+                None => eprintln!("[playback] nothing was kept of the jam to put back"),
+            }
+            return;
+        }
+        match inner.carry_on(uri, self.position_ms, self.playing) {
+            Ok(()) => eprintln!("[playback] the player carried on at {}ms on a new session", self.position_ms),
+            Err(e) => eprintln!("[playback] could not hand the track to the new session: {e}"),
+        }
+    }
 }
 
 /// On a new session, fetches ahead the start of the song last played: its
@@ -222,6 +295,10 @@ pub async fn recover_dropped_sessions(app: AppHandle) {
         let Some(inner) = guard.as_ref() else {
             continue;
         };
+        // the new session took the player over, still playing (`Carry`)
+        if inner.kept_player {
+            continue;
+        }
         // the listener got there first and picked something on the new session
         if inner.loaded.load(Ordering::Relaxed) {
             continue;
@@ -581,6 +658,22 @@ pub async fn engine_probe(app: AppHandle) -> i32 {
     // the session drops mid-song
     let before = probe_inner(&app, |inner| inner.position_ms()).await.unwrap_or(0);
     let dropped_at = Instant::now();
+    // what the device gave out across the reconnect, every 10ms for 10s
+    let silence = tauri::async_runtime::spawn(async move {
+        let (mut longest, mut quiet_since) = (Duration::ZERO, None::<Instant>);
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(10) {
+            if crate::playout::sounding(Duration::from_millis(30)) {
+                if let Some(since) = quiet_since.take() {
+                    longest = longest.max(since.elapsed());
+                }
+            } else {
+                quiet_since.get_or_insert_with(Instant::now);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        quiet_since.map_or(longest, |since| longest.max(since.elapsed()))
+    });
     probe_inner(&app, |inner| inner.session().shutdown()).await;
     eprintln!("[engine-probe] session shut down at {before}ms; waiting for the engine to carry on");
     while events.try_recv().is_ok() {}
@@ -590,12 +683,17 @@ pub async fn engine_probe(app: AppHandle) -> i32 {
     let first = probe_inner(&app, |inner| inner.position_ms()).await.unwrap_or(0);
     tokio::time::sleep(Duration::from_secs(2)).await;
     let second = probe_inner(&app, |inner| inner.position_ms()).await.unwrap_or(0);
+    let kept = probe_inner(&app, |inner| inner.kept_player).await.unwrap_or(false);
+    let quiet = silence.await.unwrap_or(Duration::MAX);
     eprintln!(
-        "[engine-probe] recovery: back after {took}ms on a {} session, at {first}ms (dropped at {before}ms), {second}ms two seconds later",
+        "[engine-probe] recovery: back after {took}ms on a {} session, at {first}ms (dropped at {before}ms), {second}ms two seconds later; player kept {kept}, longest silence {}ms",
         if healthy { "live" } else { "dead" },
+        quiet.as_millis(),
     );
     let _ = probe_inner(&app, |inner| inner.pause()).await;
-    let recovered = back.is_some() && healthy && first + 500 >= before && first < before + 20_000 && second > first + 1200;
+    // a kept player plays straight through the reconnect
+    let recovered = back.is_some() && healthy && first + 500 >= before && first < before + 20_000 && second > first + 1200
+        && (!kept || quiet < Duration::from_millis(250));
     if !recovered {
         eprintln!("[engine-probe] FAILED - playback did not carry on after the session dropped");
         return 7;
