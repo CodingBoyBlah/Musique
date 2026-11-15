@@ -661,6 +661,10 @@ async fn run(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    // all of its logs, in soloist-output.log, to see why it does something
+    if std::env::var_os("MUSIQUE_SOLOIST_VERBOSE").is_some() {
+        command.arg("--verbose");
+    }
     #[cfg(windows)]
     command.creation_flags(0x0800_0000); // no console window
     // Soloist only takes the key as an argument. This command line and what
@@ -676,6 +680,22 @@ async fn run(
     let _ = child.kill().await;
     let _ = child.wait().await;
     outcome
+}
+
+/// How many times a Soloist that is not signed in is signed in by the app,
+/// a tick apart, before it is left to be picked in a Spotify app.
+const PAIR_TRIES: usize = 5;
+
+/// Signs Soloist in with the account the app plays with, over Spotify
+/// Connect's local sign-in, as picking it in a Spotify app's device list
+/// would. A moment after it starts listening it may not be advertised yet,
+/// so this waits a little first.
+fn pair(app: &AppHandle, name: &str) -> tokio::task::JoinHandle<Result<bool, AppError>> {
+    let (app, name) = (app.clone(), name.to_string());
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        crate::commands::receivers::sign_in_local(&app, &name).await
+    })
 }
 
 /// Soloist's stream is fed by threads at normal priority, so on a busy
@@ -737,6 +757,11 @@ async fn drive(
     shared.set_status(app, Status::Pairing { name: name.into(), version: build.version.clone() });
 
     let mut logged_in = false;
+    // until it is signed in, Soloist waits on the network to be picked from a
+    // Spotify app's device list. the playback session signs it in the same
+    // way instead, so it pairs by itself (see `pair`)
+    let mut pairing = Some(pair(app, name));
+    let mut pair_tries = 1usize;
     let mut reconnected: Option<Instant> = None;
     let mut checked = build.checked;
     let mut download: Option<tokio::task::JoinHandle<Result<Build, String>>> = None;
@@ -759,6 +784,18 @@ async fn drive(
             }
             _ = tick.tick() => {
                 send(&mut socket, json!({"command": "get_auth_state"})).await?;
+                if pairing.as_ref().is_some_and(|task| task.is_finished()) {
+                    match pairing.take().expect("finished pairing").await {
+                        Ok(Ok(true)) => eprintln!("[soloist] handed it this account to sign in with"),
+                        Ok(Ok(false)) => eprintln!("[soloist] not on the network yet"),
+                        Ok(Err(error)) => eprintln!("[soloist] could not sign it in: {error}"),
+                        Err(error) => eprintln!("[soloist] sign-in stopped: {error}"),
+                    }
+                }
+                if !logged_in && pairing.is_none() && pair_tries < PAIR_TRIES {
+                    pair_tries += 1;
+                    pairing = Some(pair(app, name));
+                }
                 let mut current = build.clone();
                 current.checked = checked;
                 if current.due(install::now()) && download.is_none() && pending.is_none() {
@@ -819,6 +856,7 @@ async fn drive(
                             send(&mut socket, json!({"command": "get_state"})).await?;
                         } else {
                             shared.set_status(app, Status::Pairing { name: name.into(), version: build.version.clone() });
+                            pair_tries = 0;
                         }
                     }
                     continue;

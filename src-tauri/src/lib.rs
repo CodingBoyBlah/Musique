@@ -1007,7 +1007,9 @@ pub fn run() {
             if std::env::var_os("MUSIQUE_ENGINE_PROBE").is_some() {
                 let probe = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    let code = if std::env::var_os("MUSIQUE_START_PROBE").is_some() {
+                    let code = if std::env::var_os("MUSIQUE_SOLOIST_PROBE").is_some() {
+                        commands::playback::soloist_probe(probe.clone()).await
+                    } else if std::env::var_os("MUSIQUE_START_PROBE").is_some() {
                         commands::playback::start_probe(probe.clone()).await
                     } else if std::env::var_os("MUSIQUE_SEARCH_PROBE").is_some() {
                         commands::spotify::search_probe(probe.clone()).await

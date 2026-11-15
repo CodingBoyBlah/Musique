@@ -485,6 +485,122 @@ pub async fn start_probe(app: AppHandle) -> i32 {
     0
 }
 
+/// What is playing on the account elsewhere, by device name, if anything.
+async fn playing_elsewhere(pool: &sqlx::SqlitePool, auth: &std::sync::Arc<tokio::sync::RwLock<crate::state::AuthState>>) -> Result<Option<String>, String> {
+    let token = crate::auth::get_valid_token(pool, auth).await.map_err(|e| format!("not signed in: {e}"))?;
+    let response = crate::http::client()
+        .get("https://api.spotify.com/v1/me/player")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("could not read the player state: {e}"))?;
+    if response.status().as_u16() == 204 {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(format!("could not read the player state ({})", response.status()));
+    }
+    let body: serde_json::Value = response.json().await.unwrap_or_default();
+    Ok((body["is_playing"] == true).then(|| body["device"]["name"].as_str().unwrap_or("another device").to_string()))
+}
+
+/// `MUSIQUE_ENGINE_PROBE=1 MUSIQUE_SOLOIST_PROBE=1 spotify.exe` runs Soloist
+/// the way the app does, with the key in `MUSIQUE_SOLOIST_KEY` (saved like
+/// one entered in the app) or the one already saved, waits for it to sign in
+/// (the app pairs it by itself), and, when nothing is playing on the
+/// account, plays a saved song on it and checks that it plays and pauses.
+pub async fn soloist_probe(app: AppHandle) -> i32 {
+    use std::time::{Duration, Instant};
+    use tauri::Listener;
+    let state = app.state::<AppState>();
+    let (pool, auth, soloist) = (state.db.clone(), state.auth.clone(), state.soloist.clone());
+    drop(state);
+    // the playback session's account is what Soloist is signed in with
+    if let Err(e) = ensure_inner_with(&app, false).await {
+        eprintln!("[soloist-probe] no playback session: {e}");
+        return 3;
+    }
+    let key = std::env::var("MUSIQUE_SOLOIST_KEY").ok();
+    let started = Instant::now();
+    soloist.start(app.clone(), key).await;
+    let mut last = String::new();
+    let ready = loop {
+        let status = soloist.status();
+        let shown = format!("{status:?}");
+        if shown != last {
+            eprintln!("[soloist-probe] {:>6}ms {shown}", started.elapsed().as_millis());
+            last = shown;
+        }
+        match status {
+            crate::soloist::Status::Ready { .. } => break true,
+            crate::soloist::Status::Failed { .. }
+            | crate::soloist::Status::NeedsKey
+            | crate::soloist::Status::Unsupported => break false,
+            _ if started.elapsed() > Duration::from_secs(240) => break false,
+            _ => tokio::time::sleep(Duration::from_millis(200)).await,
+        }
+    };
+    if !ready {
+        eprintln!("[soloist-probe] FAILED - Soloist did not sign in");
+        soloist.stop().await;
+        return 6;
+    }
+    eprintln!("[soloist-probe] signed in {}ms after starting, without being picked in a Spotify app", started.elapsed().as_millis());
+
+    match playing_elsewhere(&pool, &auth).await {
+        Ok(None) => {}
+        Ok(Some(device)) => {
+            eprintln!("[soloist-probe] \"{device}\" is playing on this account; not taking playback away from it to play on Soloist");
+            soloist.stop().await;
+            return 4;
+        }
+        Err(e) => {
+            eprintln!("[soloist-probe] {e}");
+            soloist.stop().await;
+            return 2;
+        }
+    }
+    let track: Option<(String,)> = sqlx::query_as("SELECT track_id FROM saved_tracks ORDER BY RANDOM() LIMIT 1")
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten();
+    let Some((id,)) = track else {
+        eprintln!("[soloist-probe] needs a saved track");
+        soloist.stop().await;
+        return 2;
+    };
+    let (tx, mut events) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
+    app.listen("player:event", move |event| {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(event.payload()) {
+            let _ = tx.send(value);
+        }
+    });
+    let uri = match crate::playback::track_uri(&id) {
+        Ok(uri) => uri,
+        Err(e) => { eprintln!("[soloist-probe] {e}"); soloist.stop().await; return 2; }
+    };
+    let asked = Instant::now();
+    if let Err(e) = soloist.play(&uri, 0) {
+        eprintln!("[soloist-probe] FAILED - Soloist would not play: {e}");
+        soloist.stop().await;
+        return 5;
+    }
+    let playing = probe_wait(&mut events, "playing", &id, Duration::from_secs(20)).await;
+    let took = asked.elapsed().as_millis();
+    eprintln!("[soloist-probe] play {id}: playing event after {took}ms: {}", playing.is_some());
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let paused = soloist.pause().is_ok() && probe_wait(&mut events, "paused", &id, Duration::from_secs(10)).await.is_some();
+    eprintln!("[soloist-probe] paused: {paused}");
+    soloist.stop().await;
+    if playing.is_none() || !paused {
+        eprintln!("[soloist-probe] FAILED - Soloist did not play and pause the song");
+        return 5;
+    }
+    eprintln!("[soloist-probe] Soloist played and paused a song from the app's own queue");
+    0
+}
+
 pub async fn engine_probe(app: AppHandle) -> i32 {
     use tauri::Listener;
     use std::time::{Duration, Instant};

@@ -223,6 +223,35 @@ async fn activate(app: &AppHandle, receiver: Receiver) -> Result<(), AppError> {
         .map_err(|e| AppError::Playback(format!("{name}: {e:#}")))
 }
 
+/// Signs in the Spotify Connect receiver running on this computer that calls
+/// itself `name`: what picking it in a Spotify app's device list does. False
+/// when none answers to it yet.
+///
+/// Such a receiver (Soloist) advertises itself under its device id, not its
+/// name, and on whichever address the system offers first, which can be a
+/// link-local one nothing answers on. Every advertised port is asked here,
+/// on this computer, for the name it goes by.
+pub(crate) async fn sign_in_local(app: &AppHandle, name: &str) -> Result<bool, AppError> {
+    let wanted = name.to_string();
+    let local = tokio::task::spawn_blocking(move || {
+        let found = crate::zeroconf::discover_with_updates(BROWSE_FOR, |_| {}).ok()?;
+        // on this computer: never through a proxy
+        let http = reqwest::blocking::Client::builder().no_proxy().timeout(Duration::from_secs(3)).build().ok()?;
+        found.into_iter().filter(|receiver| !receiver.cast).find_map(|receiver| {
+            let here = Receiver { address: std::net::Ipv4Addr::LOCALHOST.into(), ..receiver };
+            let info = crate::zeroconf::get_info(&http, &here).ok()?;
+            (info.remote_name == wanted).then(|| Receiver { device_id: Some(info.device_id), ..here })
+        })
+    })
+    .await
+    .map_err(|e| AppError::Network(format!("network scan stopped: {e}")))?;
+    let Some(receiver) = local else {
+        return Ok(false);
+    };
+    activate(app, receiver).await?;
+    Ok(true)
+}
+
 /// Whether `device_id` is a receiver found on the network.
 pub fn knows(device_id: &str) -> bool {
     LAN.receiver(device_id).is_some()
