@@ -545,6 +545,11 @@ impl PlaybackInner {
         eprintln!("[playback] play_uri uri={uri} pos={position_ms}");
         self.advance.reset();
         self.playout.loading();
+        // a load starts playing. a pause held the queue, and the player only
+        // lets go of it when its sink starts, which it skips when it never got
+        // that pause (spirc drops one that comes while it is still loading or
+        // seeking): the new track would then play to a held queue, in silence
+        self.playout.ring.set_held(false);
         self.spirc.activate().map_err(spirc_err)?;
         self.spirc.load(LoadRequest::from_tracks(
             vec![uri.clone()],
