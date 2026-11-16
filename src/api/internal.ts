@@ -86,12 +86,14 @@ export const getExtractedColors = (imageUrls: string[]): Promise<(ExtractedColor
   invoke("get_extracted_colors", { imageUrls });
 
 export interface HomeItem {
-  // "collection" = liked songs; only appears in shortcuts
-  kind: "playlist" | "album" | "artist" | "show" | "episode" | "track" | "collection";
+  // "collection" = liked songs, "your-episodes" = saved episodes; shortcuts only
+  kind: "playlist" | "album" | "artist" | "show" | "episode" | "track" | "collection" | "your-episodes";
   id: string;
   name: string;
   subtitle: string | null;
   image_url: string | null;
+  // episodes only: the show it belongs to
+  show_id?: string;
 }
 
 export interface HomeFeed {

@@ -28,6 +28,9 @@ pub struct HomeItem {
     pub name:      String,
     pub subtitle:  Option<String>,
     pub image_url: Option<String>,
+    /// episodes only: the show it belongs to (there's no episode page to open)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_id:   Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,24 +115,39 @@ pub(crate) fn item_from(v: &Value) -> Option<HomeItem> {
         "episode" => get_str(d, &["podcastV2", "data", "name"]).map(str::to_string),
         _ => None,
     };
-    Some(HomeItem { kind: kind.into(), id: id.to_string(), name, subtitle, image_url: image(d) })
+    let show_id = (kind == "episode")
+        .then(|| get_str(d, &["podcastV2", "data", "uri"]))
+        .flatten()
+        .and_then(|u| u.strip_prefix("spotify:show:"))
+        .map(str::to_string);
+    Some(HomeItem { kind: kind.into(), id: id.to_string(), name, subtitle, image_url: image(d), show_id })
 }
 
-/// a shortcut tile: an ordinary item, or the liked songs collection, whose
-/// uri (`spotify:user:<name>:collection` / `spotify:collection:tracks`) the
-/// plain parser rejects
+/// a shortcut tile: an ordinary item, or one of the user's collections, whose
+/// uris (`spotify:user:<name>:collection`, `spotify:collection:tracks`,
+/// `...:collection:your-episodes`) the plain parser rejects. liked songs is
+/// kind "collection", your episodes is kind "your-episodes".
 fn shortcut_from(v: &Value) -> Option<HomeItem> {
     if let Some(item) = item_from(v) {
         return Some(item);
     }
     let d = get(v, &["content", "data"]).or_else(|| get(v, &["itemV2", "data"])).unwrap_or(v);
     let uri = get_str(d, &["uri"]).or_else(|| get_str(v, &["uri"]))?;
-    uri.contains(":collection").then(|| HomeItem {
-        kind:      "collection".into(),
-        id:        "liked-songs".into(),
-        name:      "Liked Songs".into(),
+    if !uri.contains(":collection") {
+        return None;
+    }
+    let (kind, id, name) = if uri.contains("your-episodes") {
+        ("your-episodes", "your-episodes", "Your Episodes")
+    } else {
+        ("collection", "liked-songs", "Liked Songs")
+    };
+    Some(HomeItem {
+        kind:      kind.into(),
+        id:        id.into(),
+        name:      get_str(d, &["name"]).unwrap_or(name).to_string(),
         subtitle:  None,
-        image_url: None,
+        image_url: image(d),
+        show_id:   None,
     })
 }
 
@@ -217,6 +235,9 @@ mod tests {
                 "data": {"__typename": "HomeShortsSectionData"},
                 "sectionItems": {"items": [
                   {"uri": "spotify:user:me:collection", "content": {"data": {"__typename": "LikedSongs", "uri": "spotify:user:me:collection"}}},
+                  {"uri": "spotify:user:me:collection:your-episodes", "content": {"data": {"uri": "spotify:user:me:collection:your-episodes"}}},
+                  {"uri": "spotify:episode:ep1", "content": {"data": {"uri": "spotify:episode:ep1", "name": "Ep One",
+                    "podcastV2": {"data": {"uri": "spotify:show:sh1", "name": "The Show"}}}}},
                   {"uri": "spotify:playlist:pl1", "content": {"data": {"uri": "spotify:playlist:pl1", "name": "Road Trip",
                     "images": {"items": [{"sources": [{"url": "https://img/p", "width": 300}]}]}}}}
                 ]}
@@ -251,8 +272,10 @@ mod tests {
         assert_eq!(s.items[0].name, "Daily Mix 1");
         assert_eq!(s.items[0].image_url.as_deref(), Some("https://img/300"));
         assert_eq!(s.items[1].subtitle.as_deref(), Some("Band A"));
-        assert_eq!(feed.shortcuts.len(), 2);
+        assert_eq!(feed.shortcuts.len(), 4);
         assert_eq!(feed.shortcuts[0].kind, "collection");
-        assert_eq!(feed.shortcuts[1].name, "Road Trip");
+        assert_eq!(feed.shortcuts[1].kind, "your-episodes");
+        assert_eq!(feed.shortcuts[2].show_id.as_deref(), Some("sh1"));
+        assert_eq!(feed.shortcuts[3].name, "Road Trip");
     }
 }

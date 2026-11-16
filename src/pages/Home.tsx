@@ -12,11 +12,9 @@ import {
   useTopTracks,
   useTopArtists,
   useNewReleases,
-  useMyPlaylists,
 } from "../hooks/useLibrary";
 import { usePlayerStore } from "../store/player.store";
 import { LIKED_SONGS_URI, useQueueStore } from "../store/queue.store";
-import { useSpeedDialStore, type SpeedDialEntry } from "../store/speedDial.store";
 import { playTrack } from "../api/playback";
 import { transportPlay, transportPause } from "../hooks/usePlayerControls";
 import { Loader } from "../components/ui/Loader";
@@ -34,6 +32,7 @@ import { useReflowPulse } from "../hooks/useReflowPulse";
 import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
 import { HomeFeedShelves, useHomeFeed } from "../components/ui/HomeFeedShelves";
+import type { HomeItem } from "../api/internal";
 import { TILE_PAD, TILE_BLEED } from "../lib/layout";
 import { flipChildren, useRailPin } from "../lib/railFlip";
 import { flushSync } from "react-dom";
@@ -56,7 +55,7 @@ interface QuickItem {
   title: string;
   imageUrl?: string | null;
   to: string;
-  type?: "liked-songs" | "playlist" | "album" | "artist" | "track";
+  type?: "liked-songs" | "playlist" | "album" | "artist" | "track" | "show";
   track?: TrackItem;
   albumId?: string;
   playlistId?: string;
@@ -389,23 +388,36 @@ const QuickActionCard = memo(function QuickActionCard({
 });
 
 // speed dial geometry: a card stays at least this wide before the grid drops a
-// column, and the grid shows whole rows of at least 8 cards
+// column. 4 columns at most, like spotify's own grid
 const QUICK_MIN_CARD = 250;
 const QUICK_GAP = 12;
-const QUICK_MAX_COLS = 5;
+const QUICK_MAX_COLS = 4;
 const colsFor = (w: number) =>
   Math.max(1, Math.min(QUICK_MAX_COLS, Math.floor((w + QUICK_GAP) / (QUICK_MIN_CARD + QUICK_GAP))));
-// 5 cols -> 10, 4 -> 8, 3 -> 9, 2 -> 8, 1 -> 6
-const countFor = (cols: number) => (cols === 1 ? 6 : cols * Math.ceil(8 / cols));
 
-// diminishing returns: a context played 30 times shouldn't drown out everything
-const playWeight = (plays: number) => 8 * Math.log2(1 + plays);
-const DAY = 86_400_000;
-const recencyBonus = (at: number) => {
-  if (!at) return 0;
-  const age = Date.now() - at;
-  return age < DAY ? 10 : age < 7 * DAY ? 5 : age < 30 * DAY ? 2 : 0;
-};
+// one of spotify's shortcuts as a card. kinds without a page open the nearest one
+function shortcutItem(it: HomeItem): QuickItem | null {
+  switch (it.kind) {
+    case "collection":
+      return { id: "liked-songs", type: "liked-songs", title: it.name, to: "/library?tab=songs", isLikedSongs: true };
+    case "playlist":
+      return { id: `playlist-${it.id}`, type: "playlist", title: it.name, imageUrl: it.image_url, to: `/playlist/${it.id}`, playlistId: it.id };
+    case "album":
+      return { id: `album-${it.id}`, type: "album", title: it.name, imageUrl: it.image_url, to: `/album/${it.id}`, albumId: it.id };
+    case "artist":
+      return { id: `artist-${it.id}`, type: "artist", title: it.name, imageUrl: it.image_url, to: `/artist/${it.id}`, artistId: it.id };
+    case "track":
+      return { id: `track-${it.id}`, type: "track", title: it.name, imageUrl: it.image_url, to: "/library?tab=songs" };
+    case "show":
+      return { id: `show-${it.id}`, type: "show", title: it.name, imageUrl: it.image_url, to: `/show/${it.id}` };
+    case "episode":
+      return { id: `episode-${it.id}`, type: "show", title: it.name, imageUrl: it.image_url, to: it.show_id ? `/show/${it.show_id}` : "/library?tab=podcasts" };
+    case "your-episodes":
+      return { id: "your-episodes", type: "show", title: it.name, imageUrl: it.image_url, to: "/library?tab=podcasts" };
+    default:
+      return null;
+  }
+}
 
 function QuickActionsShelf() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -458,130 +470,21 @@ function QuickActionsShelf() {
     quickShelfHasEntered = true;
   }, []);
 
-  const speedDialEntries = useSpeedDialStore((s) => s.entries);
-  const { data: playlists = [] } = useMyPlaylists();
   const { data: recentTracks = [] } = useRecentlyPlayed();
-  const { data: topTracks = [] } = useTopTracks("short_term");
-  const { data: topArtists = [] } = useTopArtists("short_term");
   const { data: homeFeed } = useHomeFeed();
-  const count = countFor(cols);
 
-  /* the dial is for places to go back to - playlists, albums, artists, liked
-  songs - not loose songs. sources, strongest first:
-    - spotify's own shortcuts (its server-side speed dial)
-    - what was played in this app, weighted by plays and recency
-    - the user's playlists, made-for-you mixes, top artists, and albums that
-      hold several of their top tracks
-  single tracks only fill in when there aren't enough contexts. */
-  const ranked = useMemo<QuickItem[]>(() => {
-    const inApp = new Map<string, SpeedDialEntry>();
-    for (const e of speedDialEntries) inApp.set(e.id, e);
-
-    const scores = new Map<string, { item: QuickItem; score: number; at: number }>();
-    function add(item: QuickItem, base: number) {
-      const e = inApp.get(item.id);
-      const at = e?.lastPlayedAt || e?.timestamp || 0;
-      const score = base + (e ? playWeight(e.playCount || 0) + recencyBonus(at) : 0);
-      const prev = scores.get(item.id);
-      if (!prev) {
-        scores.set(item.id, { item: { ...item, imageUrl: item.imageUrl || e?.imageUrl }, score, at });
-      } else {
-        // several sources agreeing is itself a signal
-        prev.score = Math.max(prev.score, score) + 2;
-        if (!prev.item.imageUrl && item.imageUrl) prev.item = { ...prev.item, imageUrl: item.imageUrl };
-      }
-    }
-    const playlistItem = (id: string, title: string, imageUrl?: string | null): QuickItem => ({
-      id: `playlist-${id}`, type: "playlist", title, imageUrl, to: `/playlist/${id}`, playlistId: id,
-    });
-    const albumItem = (id: string, title: string, imageUrl?: string | null): QuickItem => ({
-      id: `album-${id}`, type: "album", title, imageUrl, to: `/album/${id}`, albumId: id,
-    });
-    const artistItem = (id: string, title: string, imageUrl?: string | null): QuickItem => ({
-      id: `artist-${id}`, type: "artist", title, imageUrl, to: `/artist/${id}`, artistId: id,
-    });
-    const liked: QuickItem = {
-      id: "liked-songs", title: "Liked Songs", to: "/library?tab=songs", isLikedSongs: true, type: "liked-songs",
-    };
-
-    // liked songs is always a strong pick
-    add(liked, 22);
-
-    // spotify's shortcuts, in its order
-    (homeFeed?.shortcuts ?? []).forEach((it, i) => {
-      const base = 40 - i * 2;
-      if (it.kind === "collection") add(liked, base);
-      else if (it.kind === "playlist") add(playlistItem(it.id, it.name, it.image_url), base);
-      else if (it.kind === "album") add(albumItem(it.id, it.name, it.image_url), base);
-      else if (it.kind === "artist") add(artistItem(it.id, it.name, it.image_url), base);
-    });
-
-    // contexts played in-app. loose tracks roll up into their album, which
-    // only shows when two or more of its songs were played
-    const albumRollup = new Map<string, { title: string; imageUrl?: string | null; tracks: Set<string>; weight: number }>();
-    const rollup = (t: TrackItem, weight: number) => {
-      const a = t.album;
-      if (!a?.id) return;
-      const r = albumRollup.get(a.id) ?? { title: a.name, imageUrl: a.image_url, tracks: new Set<string>(), weight: 0 };
-      r.tracks.add(t.id);
-      r.weight += weight;
-      albumRollup.set(a.id, r);
-    };
-    for (const e of speedDialEntries) {
-      if (e.type === "track") {
-        if (e.track) rollup(e.track, playWeight(e.playCount || 0) / 2);
-        continue;
-      }
-      if (e.id === "liked-songs") continue;
-      add({ id: e.id, type: e.type, title: e.title, imageUrl: e.imageUrl, to: e.to,
-        albumId: e.albumId, playlistId: e.playlistId, artistId: e.artistId }, 0);
-    }
-    topTracks.slice(0, 30).forEach((t, i) => rollup(t, Math.max(2, 10 - i / 2)));
-    for (const [id, r] of albumRollup) {
-      if (r.tracks.size >= 2) add(albumItem(id, r.title, r.imageUrl), Math.min(30, r.weight * 0.8));
-    }
-
-    // the user's playlists (library order: most recently touched first)
-    playlists.slice(0, 10).forEach((pl, i) => add(playlistItem(pl.id, pl.name, pl.image_url), 16 - i));
-
-    // made-for-you mixes from spotify's home shelves (daylist, daily mixes...)
-    (homeFeed?.sections ?? []).slice(0, 4).forEach((sec, si) => {
-      sec.items.filter((it) => it.kind === "playlist").slice(0, 2)
-        .forEach((it, i) => add(playlistItem(it.id, it.name, it.image_url), 13 - si * 2 - i));
-    });
-
-    // top artists
-    topArtists.slice(0, 5).forEach((a, i) => add(artistItem(a.id, a.name, a.image_url), 14 - i * 2));
-
-    // filler only: single top tracks
-    topTracks.slice(0, 10).forEach((t, i) =>
-      add({ id: `track-${t.id}`, type: "track", title: t.name, imageUrl: t.album?.image_url,
-        to: t.album?.id ? `/album/${t.album.id}` : "/library?tab=songs", track: t, albumId: t.album?.id }, 1 - i * 0.05));
-
-    const sorted = [...scores.values()].sort((a, b) => b.score - a.score || b.at - a.at);
-
-    // never a track card next to the album card it belongs to
-    const result: QuickItem[] = [];
-    const albumCards = new Set<string>();
-    for (const { item } of sorted) {
-      if (result.length >= QUICK_MAX_COLS * 2) break;
-      const albumOf = item.type === "track" ? item.track?.album?.id || item.albumId : undefined;
-      if (albumOf && albumCards.has(albumOf)) continue;
-      if (item.type === "album" && item.albumId) {
-        if (result.some((r) => r.type === "track" && (r.track?.album?.id || r.albumId) === item.albumId)) continue;
-        albumCards.add(item.albumId);
-      }
-      result.push(item);
-    }
-    return result;
-  }, [speedDialEntries, playlists, topTracks, topArtists, homeFeed]);
-
-  // whole rows only, once there are enough to fill one
+  /* only spotify's shortcuts, in spotify's order. nothing of our own is ever
+  added; if spotify sends none, the grid stays empty. when they don't fit the
+  width, the tail is cut: at most 3 rows at any width, and only whole rows,
+  so a short last row is dropped rather than padded. */
+  const all = useMemo(
+    () => (homeFeed?.shortcuts ?? []).map(shortcutItem).filter((it): it is QuickItem => it !== null),
+    [homeFeed],
+  );
   const items = useMemo(() => {
-    const n = Math.min(count, ranked.length);
-    const whole = n >= cols ? n - (n % cols) : n;
-    return ranked.slice(0, whole);
-  }, [ranked, count, cols]);
+    const n = Math.min(all.length, cols * 3);
+    return all.slice(0, n >= cols ? n - (n % cols) : n);
+  }, [all, cols]);
 
   return (
     <motion.section
