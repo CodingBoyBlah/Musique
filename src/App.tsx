@@ -10,7 +10,6 @@ import { UpdatePrompt } from "./components/UpdatePrompt";
 and keeps the heavy stuff (kuromoji/romanize via lyrics, charts, etc) off the
 critical path. Home stays eager since it's the landing rou lazying it
 ntoe to self: dont just add a flash */
-import Home from "./pages/Home";
 const Settings = lazy(() => import("./pages/Settings"));
 const Search = lazy(() => import("./pages/Search"));
 const Library = lazy(() => import("./pages/Library"));
@@ -441,7 +440,8 @@ export default function App() {
       <UpdatePrompt />
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<Home />} />
+          {/* Home renders in Layout, kept alive between visits (HomeStage) */}
+          <Route index element={null} />
           {/* suspense fallback covers the quick lazy chunk fetch on first
               visit to a route --- later visits are instant (chunks cached) */}
           <Route

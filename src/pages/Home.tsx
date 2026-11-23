@@ -814,6 +814,9 @@ function ArtistTiles({ artists }: { artists: ArtistItem[] }) {
 
 function TopTracks() {
   const [range, setRange] = useState<TimeRange>("medium_term");
+  // Home is kept alive between visits (Layout's HomeStage); each visit still
+  // opens on the default range, as it did when Home was mounted fresh
+  useEffect(() => () => setRange("medium_term"), []);
   const { data = [], isLoading, isPlaceholderData, isError, refetch } = useTopTracks(range);
   const probe = useTopTracks("medium_term");
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;
@@ -842,6 +845,9 @@ function TopTracks() {
 
 function TopArtists() {
   const [range, setRange] = useState<TimeRange>("medium_term");
+  // Home is kept alive between visits (Layout's HomeStage); each visit still
+  // opens on the default range, as it did when Home was mounted fresh
+  useEffect(() => () => setRange("medium_term"), []);
   const { data = [], isLoading, isPlaceholderData, isError, refetch } = useTopArtists(range);
   const probe = useTopArtists("medium_term");
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;
