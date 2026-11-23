@@ -57,6 +57,10 @@ const PageOutlet = memo(function PageOutlet() {
    their fixed OS positions (12px dots, 20px pitch, first centre at x=20), so
    the collapsed rail has to stay wide enough to hold all three. */
 const COLLAPSED_SIDEBAR_W = 64;
+
+// what sequential focus navigation stops on
+const TABBABLE =
+  'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex],[contenteditable]:not([contenteditable="false"]),audio[controls],video[controls],summary';
 const MAC_COLLAPSED_SIDEBAR_W = 72;
 
 /* the page's cover-art wash: concentrated behind the header (cover, title,
@@ -94,28 +98,42 @@ export default function Layout() {
     ? Math.max(COLLAPSED_SIDEBAR_W, chromePx(MAC_COLLAPSED_SIDEBAR_W, uiZoom))
     : COLLAPSED_SIDEBAR_W;
   const [willCrushMain, setWillCrushMain] = useState(false);
-  const [shellHidden, setShellHidden] = useState(false);
-  const immersiveCovered = useUIStore((s) => s.immersiveCovered);
-  const setImmersiveCovered = useUIStore((s) => s.setImmersiveCovered);
+  const shellRef = useRef<HTMLDivElement>(null);
 
-  /* Hide (and inert) the shell once the immersive overlay fully covers it.
-     The signal is the overlay's own animation completing (Immersive sets
-     immersiveCovered), so the two can never drift apart. The timer is only a
-     backstop in case that signal never arrives - it is well past the 260ms
-     fade, so it never races the real one. */
+  /* While the immersive overlay is up, Tab must not walk into the shell
+     underneath it.
+
+     The shell used to be made `inert` (and before that, hidden) for this.
+     Both are inherited, so flipping either restyled the whole shell - and
+     inert changes the hit-test data recorded in paint, so it repainted it too:
+     a 20-26ms frame on the way in and another on the way out. The overlay is
+     opaque, so the compositor already culls the shell's quads and skips
+     rastering its tiles (measured: the same tile memory hidden or not).
+
+     So the shell stays as it is and only Tab is steered: focus moves through
+     the focusable elements outside the shell in document order, wrapping at
+     either end - the order the browser gives once the shell is inert. On
+     document, in the capture phase, so a modal's own trap (on window) runs
+     first; whatever it has already handled is left alone. */
   useEffect(() => {
-    if (!immersiveOpen) {
-      setShellHidden(false);
-      if (immersiveCovered) setImmersiveCovered(false);
-      return;
-    }
-    if (immersiveCovered) {
-      setShellHidden(true);
-      return;
-    }
-    const t = setTimeout(() => setShellHidden(true), 700);
-    return () => clearTimeout(t);
-  }, [immersiveOpen, immersiveCovered, setImmersiveCovered]);
+    const shell = shellRef.current;
+    if (!immersiveOpen || !shell) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+      const order = Array.from(document.querySelectorAll<HTMLElement>(TABBABLE)).filter(
+        (el) => el.tabIndex >= 0 && !shell.contains(el) && !el.closest("[inert]") && el.getClientRects().length > 0,
+      );
+      e.preventDefault();
+      if (!order.length) return;
+      const at = order.indexOf(document.activeElement as HTMLElement);
+      const next = at === -1
+        ? (e.shiftKey ? order[order.length - 1] : order[0])
+        : order[(at + (e.shiftKey ? -1 : 1) + order.length) % order.length];
+      next.focus();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [immersiveOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -260,9 +278,8 @@ export default function Layout() {
           minHeight: 0,
           overflow: "hidden",
           position: "relative",
-          visibility: shellHidden ? "hidden" : "visible",
         }}
-        inert={shellHidden ? true : undefined}
+        ref={shellRef}
       >
         {/* the sidebar runs the full height of the window */}
         <Sidebar />
@@ -391,10 +408,15 @@ export default function Layout() {
                     paddingBottom: "90px",
                   }}
                 >
+                  {/* `transform` as one string, not framer's y/scale: those
+                      are composed in JS and written every frame on the main
+                      thread - right while the new page mounts - where a
+                      whole transform runs as a Web Animation on the
+                      compositor. Same values, same curve; "none" at rest. */}
                   <motion.div
                     key={location.pathname}
-                    initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.995 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    initial={reduceMotion ? false : { opacity: 0, transform: "translateY(6px) scale(0.995)" }}
+                    animate={{ opacity: 1, transform: "none" }}
                     transition={{ duration: 0.18, ease: EASE_OUT }}
                   >
                     <PageOutlet />

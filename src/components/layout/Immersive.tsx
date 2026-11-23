@@ -8,7 +8,6 @@ import type { Canvas } from "../../api/internal";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Minimize2 } from "@/lib/icons";
-import { useUIStore } from "../../store/ui.store";
 import { usePlayerStore } from "../../store/player.store";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
 import { useLyrics } from "../../hooks/useLyrics";
@@ -561,11 +560,6 @@ export function Immersive() {
           // out faster than in: Esc is a keyboard exit, it should get out of the way
           exit={{ opacity: 0, transition: { duration: 0.18, ease: EASE_OUT } }}
           transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-          // tells Layout the shell is fully covered and can be hidden. fires
-          // for the exit too, so only report the finished open.
-          onAnimationComplete={() => {
-            if (usePlayerStore.getState().immersiveOpen) useUIStore.getState().setImmersiveCovered(true);
-          }}
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b", cursor: hideControls ? "none" : undefined, ...IMMERSIVE_TYPE }}
         >
           <AmbientBg url={track.album?.image_url} override={videoAmbient} />
@@ -625,7 +619,7 @@ export function Immersive() {
                 animate={{ opacity: 1 }}
                 /* leaves the way the dock came in: settling back down toward
                    the bar the view was opened from */
-                exit={{ opacity: 0, y: 10, transition: { duration: 0.18, ease: EASE_OUT } }}
+                exit={{ opacity: 0, transform: "translateY(10px)", transition: { duration: 0.18, ease: EASE_OUT } }}
                 transition={{ duration: 0.28, delay: 0.04, ease: [0.22, 1, 0.36, 1] }}
                 style={{
                   pointerEvents: "auto",
@@ -660,10 +654,10 @@ export function Immersive() {
                   filling the screen behind this. Same component, so transport,
                   scrubber, volume, devices and queue all behave identically. */}
               <motion.div
-                initial={{ opacity: 0, y: 14 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, transform: "translateY(14px)" }}
+                animate={{ opacity: 1, transform: "none" }}
                 // the same path out as in
-                exit={{ opacity: 0, y: 14, transition: { duration: 0.18, ease: EASE_OUT } }}
+                exit={{ opacity: 0, transform: "translateY(14px)", transition: { duration: 0.18, ease: EASE_OUT } }}
                 transition={{ duration: 0.3, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}
                 style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}
               >
