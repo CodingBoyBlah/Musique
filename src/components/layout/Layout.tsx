@@ -100,21 +100,46 @@ export default function Layout() {
   const [willCrushMain, setWillCrushMain] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
 
-  /* While the immersive overlay is up, Tab must not walk into the shell
-     underneath it.
+  const immersiveCovered = useUIStore((s) => s.immersiveCovered);
+  const setImmersiveCovered = useUIStore((s) => s.setImmersiveCovered);
 
-     The shell used to be made `inert` (and before that, hidden) for this.
-     Both are inherited, so flipping either restyled the whole shell - and
-     inert changes the hit-test data recorded in paint, so it repainted it too:
-     a 20-26ms frame on the way in and another on the way out. The overlay is
-     opaque, so the compositor already culls the shell's quads and skips
-     rastering its tiles (measured: the same tile memory hidden or not).
+  /* The shell under the immersive overlay.
 
-     So the shell stays as it is and only Tab is steered: focus moves through
-     the focusable elements outside the shell in document order, wrapping at
-     either end - the order the browser gives once the shell is inert. On
-     document, in the capture phase, so a modal's own trap (on window) runs
-     first; whatever it has already handled is left alone. */
+     Once the overlay has fully faded in, the shell stops rendering
+     (content-visibility: hidden). It matters: the lyric sweep repaints a line
+     every frame, and every repaint re-layerizes the whole document - with the
+     shell still painted underneath that doubled the renderer's CPU for as
+     long as the view stayed up.
+
+     It used to be hidden with visibility (and inerted). Both are inherited,
+     so each flip restyled all ~1500 elements of the shell, and inert changes
+     the hit-test data recorded in paint, so it repainted it too: a 20-26ms
+     frame on the way in and another on the frame the exit fade started.
+     content-visibility is not inherited (one element restyles), keeps the
+     shell's style, layout and scroll positions, and takes its contents out of
+     focus order. It comes back in the same commit the exit fade starts in;
+     the overlay is still opaque there, and its tiles raster under the fade.
+
+     The timer is only a backstop in case the overlay's signal never arrives -
+     it is well past the 260ms fade, so it never races the real one. */
+  const shellHidden = immersiveOpen && immersiveCovered;
+  useEffect(() => {
+    if (!immersiveOpen) {
+      if (immersiveCovered) setImmersiveCovered(false);
+      return;
+    }
+    if (immersiveCovered) return;
+    const t = setTimeout(() => setImmersiveCovered(true), 700);
+    return () => clearTimeout(t);
+  }, [immersiveOpen, immersiveCovered, setImmersiveCovered]);
+
+  /* Tab, before the shell is hidden (the fade in) - content-visibility takes
+     care of it after. Focus moves through the focusable elements outside the
+     shell in document order, wrapping at either end: the order the browser
+     gives once the shell is out of it. On document, in the capture phase, so a
+     modal's own trap (on window) runs first; whatever it has already handled
+     is left alone. Steering Tab costs nothing; inerting the shell for this
+     restyled and repainted all of it. */
   useEffect(() => {
     const shell = shellRef.current;
     if (!immersiveOpen || !shell) return;
@@ -278,6 +303,7 @@ export default function Layout() {
           minHeight: 0,
           overflow: "hidden",
           position: "relative",
+          contentVisibility: shellHidden ? "hidden" : undefined,
         }}
         ref={shellRef}
       >

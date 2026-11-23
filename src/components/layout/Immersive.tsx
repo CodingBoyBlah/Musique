@@ -8,6 +8,7 @@ import type { Canvas } from "../../api/internal";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Minimize2 } from "@/lib/icons";
+import { useUIStore } from "../../store/ui.store";
 import { usePlayerStore } from "../../store/player.store";
 import { usePlayerControls } from "../../hooks/usePlayerControls";
 import { useLyrics } from "../../hooks/useLyrics";
@@ -318,7 +319,7 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
 
   return (
     <div style={{ position: "relative", height: "100%" }}>
-    <div ref={scrollRef} className="lyr-scroll gpu-scroll" style={lyricsScroll}>
+    <div ref={scrollRef} className="lyr-scroll gpu-scroll lyr-dock-sink" style={lyricsScroll}>
       {rows.map((row, ri) => {
         const isActive = synced && ri === active;
         const tone = synced ? lyricTone(distances[ri], ri < active, moreContrast) : { blur: 0, alpha: 0.9 };
@@ -560,6 +561,11 @@ export function Immersive() {
           // out faster than in: Esc is a keyboard exit, it should get out of the way
           exit={{ opacity: 0, transition: { duration: 0.18, ease: EASE_OUT } }}
           transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+          // tells Layout the shell is fully covered and can stop rendering.
+          // fires for the exit too, so only report the finished open.
+          onAnimationComplete={() => {
+            if (usePlayerStore.getState().immersiveOpen) useUIStore.getState().setImmersiveCovered(true);
+          }}
           style={{ position: "fixed", inset: 0, zIndex: 900, overflow: "hidden", color: "#fff", background: "#07070b", cursor: hideControls ? "none" : undefined, ...IMMERSIVE_TYPE }}
         >
           <AmbientBg url={track.album?.image_url} override={videoAmbient} />
