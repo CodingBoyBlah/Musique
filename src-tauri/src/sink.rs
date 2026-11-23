@@ -624,6 +624,9 @@ impl Sink for RodioSink {
         playout::boost_current_thread();
         self.catch_up();
         self.follow_default(true);
+        if let Some(watch) = &self.watch {
+            watch.set_active(true);
+        }
         self.ensure_open()?;
         self.apply_volume();
         self.playout.ring.set_held(false);
@@ -632,6 +635,9 @@ impl Sink for RodioSink {
 
     fn stop(&mut self) -> SinkResult<()> {
         self.catch_up();
+        if let Some(watch) = &self.watch {
+            watch.set_active(false);
+        }
         // Spotify Connect stops the player the moment the last track finishes
         // decoding, seconds before it finishes playing. Holding then would cut
         // off the end of the song.
@@ -779,16 +785,26 @@ fn open_stream(
     builder(SAMPLE_RATE, false)?.open_stream_or_fallback()
 }
 
-struct DefaultWatch(Arc<DefaultName>);
+/// Keeps asking which output the system calls its default, every
+/// `DEFAULT_CHECK_INTERVAL` while the sink is running. Stopped (paused,
+/// ended, another device playing) nothing reads the answer: no audio is
+/// written, and `start` asks for itself before any is. So the thread sleeps
+/// until the sink starts again instead of querying the audio system every two
+/// seconds for as long as the app is open.
+struct DefaultWatch {
+    shared:   Option<Arc<DefaultName>>,
+    watching: Option<thread::Thread>,
+}
 
 struct DefaultName {
     state: Mutex<(u64, Option<String>)>,
     version: AtomicU64,
+    active: AtomicBool,
 }
 
 impl DefaultName {
     fn new() -> Self {
-        Self { state: Mutex::new((1, None)), version: AtomicU64::new(1) }
+        Self { state: Mutex::new((1, None)), version: AtomicU64::new(1), active: AtomicBool::new(true) }
     }
 
     fn update(&self, name: Option<String>) -> (u64, Option<String>) {
@@ -815,28 +831,63 @@ impl DefaultWatch {
             .name("audio-default-watch".into())
             .spawn(move || {
                 while let Some(shared) = weak.upgrade() {
-                    shared.update(default_output_name());
+                    let active = shared.active.load(Ordering::Acquire);
+                    if active {
+                        shared.update(default_output_name());
+                    }
                     // The watcher must not keep the sink alive while sleeping.
                     drop(shared);
-                    thread::sleep(DEFAULT_CHECK_INTERVAL);
+                    if active {
+                        thread::sleep(DEFAULT_CHECK_INTERVAL);
+                    } else {
+                        // woken by `set_active` or by the watch being dropped
+                        thread::park();
+                    }
                 }
             });
-        if let Err(error) = watching {
-            log::warn!("cannot watch the default audio output: {error}");
+        let watching = match watching {
+            Ok(handle) => Some(handle.thread().clone()),
+            Err(error) => {
+                log::warn!("cannot watch the default audio output: {error}");
+                None
+            }
+        };
+        Self { shared: Some(shared), watching }
+    }
+
+    fn shared(&self) -> &DefaultName {
+        self.shared.as_deref().expect("only taken when dropped")
+    }
+
+    /// Whether the sink is running, and so whether to keep asking.
+    fn set_active(&self, active: bool) {
+        if self.shared().active.swap(active, Ordering::AcqRel) != active && active {
+            if let Some(thread) = &self.watching {
+                thread.unpark();
+            }
         }
-        Self(shared)
     }
 
     fn version(&self) -> u64 {
-        self.0.version.load(Ordering::Acquire)
+        self.shared().version.load(Ordering::Acquire)
     }
 
     fn name(&self) -> (u64, Option<String>) {
-        self.0.snapshot()
+        self.shared().snapshot()
     }
 
     fn ask(&self) -> (u64, Option<String>) {
-        self.0.update(default_output_name())
+        self.shared().update(default_output_name())
+    }
+}
+
+impl Drop for DefaultWatch {
+    fn drop(&mut self) {
+        // let go first, so a parked watcher that wakes finds nothing to watch
+        drop(self.shared.take());
+        if let Some(thread) = &self.watching {
+            thread.unpark();
+        }
     }
 }
 
@@ -1137,15 +1188,15 @@ mod tests {
 
     #[test]
     fn unchanged_output_does_not_require_another_name_snapshot() {
-        let watch = DefaultWatch(Arc::new(DefaultName::new()));
+        let watch = DefaultWatch { shared: Some(Arc::new(DefaultName::new())), watching: None };
         assert_eq!(watch.version(), 1);
-        watch.0.update(Some("Speakers".into()));
+        watch.shared().update(Some("Speakers".into()));
         assert_eq!(watch.version(), 2);
-        watch.0.update(Some("Speakers".into()));
+        watch.shared().update(Some("Speakers".into()));
         assert_eq!(watch.version(), 2);
-        watch.0.update(Some("Headphones".into()));
+        watch.shared().update(Some("Headphones".into()));
         assert_eq!(watch.name(), (3, Some("Headphones".into())));
-        watch.0.update(None);
+        watch.shared().update(None);
         assert_eq!(watch.name(), (4, None));
     }
 
