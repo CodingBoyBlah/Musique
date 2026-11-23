@@ -276,13 +276,16 @@ fn replaced_at(uri: &str) -> Option<u32> {
 pub async fn recover_dropped_sessions(app: AppHandle) {
     loop {
         tokio::time::sleep(SESSION_CHECK).await;
+        // the player's own state first: it is in memory, and nearly every
+        // look finds nothing dropped. the backend is read from the database,
+        // and only once there is something to bring back
+        let Some(Interrupted { uri, position_ms, playing, jam, snapshot }) = interrupted(&app).await else {
+            continue;
+        };
         let pool = app.state::<AppState>().db.clone();
         if backend(&pool).await != Backend::Spotify {
             continue;
         }
-        let Some(Interrupted { uri, position_ms, playing, jam, snapshot }) = interrupted(&app).await else {
-            continue;
-        };
         eprintln!("[playback] the session dropped at {position_ms}ms of {uri}; reconnecting");
         // non-interactive: never a browser tab the listener did not ask for
         if let Err(e) = ensure_inner_with(&app, false).await {
