@@ -420,10 +420,19 @@ async fn cached_top_tracks(token: &str, aid: &str) -> Option<Vec<TrackItem>> {
         .collect();
     if let Ok(mut g) = TOP_TRACKS_CACHE.write() {
         let map = g.get_or_insert_with(HashMap::new);
+        forget_stale(map, Duration::from_secs(3600));
         if map.len() > 600 { map.clear(); }
         map.insert(aid.to_string(), (Instant::now(), items.clone()));
     }
     Some(items)
+}
+
+/// Drop answers too old to be served again, so a long session doesn't keep
+/// every artist and album it ever looked at. Only once the map has grown.
+fn forget_stale<T>(map: &mut HashMap<String, (Instant, T)>, ttl: Duration) {
+    if map.len() >= 64 {
+        map.retain(|_, (ts, _)| ts.elapsed() < ttl);
+    }
 }
 
 async fn cached_artist_albums(token: &str, aid: &str) -> Option<Vec<AlbumItem>> {
@@ -443,6 +452,7 @@ async fn cached_artist_albums(token: &str, aid: &str) -> Option<Vec<AlbumItem>> 
     let items: Vec<AlbumItem> = page.items.iter().map(item_from_album_simple).collect();
     if let Ok(mut g) = ARTIST_ALBUMS_CACHE.write() {
         let map = g.get_or_insert_with(HashMap::new);
+        forget_stale(map, Duration::from_secs(6 * 3600));
         if map.len() > 600 { map.clear(); }
         map.insert(aid.to_string(), (Instant::now(), items.clone()));
     }
@@ -487,6 +497,7 @@ async fn cached_album_tracks(token: &str, album_id: &str) -> Option<Vec<TrackIte
         .unwrap_or_default();
     if let Ok(mut g) = ALBUM_TRACKS_CACHE.write() {
         let map = g.get_or_insert_with(HashMap::new);
+        forget_stale(map, Duration::from_secs(6 * 3600));
         if map.len() > 800 { map.clear(); }
         map.insert(album_id.to_string(), (Instant::now(), items.clone()));
     }
