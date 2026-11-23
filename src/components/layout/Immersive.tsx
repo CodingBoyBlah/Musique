@@ -655,7 +655,7 @@ export function Immersive() {
                   scrubber, volume, devices and queue all behave identically. */}
               <motion.div
                 initial={{ opacity: 0, transform: "translateY(14px)" }}
-                animate={{ opacity: 1, transform: "none" }}
+                animate={{ opacity: 1, transform: "translateY(0px)", transitionEnd: { transform: "none" } }}
                 // the same path out as in
                 exit={{ opacity: 0, transform: "translateY(14px)", transition: { duration: 0.18, ease: EASE_OUT } }}
                 transition={{ duration: 0.3, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}

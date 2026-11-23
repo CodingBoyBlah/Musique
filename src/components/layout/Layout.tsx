@@ -412,11 +412,14 @@ export default function Layout() {
                       are composed in JS and written every frame on the main
                       thread - right while the new page mounts - where a
                       whole transform runs as a Web Animation on the
-                      compositor. Same values, same curve; "none" at rest. */}
+                      compositor. Same values, same curve. Back to "none" at
+                      rest (transitionEnd) - framer reads a "none" target as
+                      scale(0), and any leftover transform would make this the
+                      containing block for the pages' unportalled modals. */}
                   <motion.div
                     key={location.pathname}
                     initial={reduceMotion ? false : { opacity: 0, transform: "translateY(6px) scale(0.995)" }}
-                    animate={{ opacity: 1, transform: "none" }}
+                    animate={{ opacity: 1, transform: "translateY(0px) scale(1)", transitionEnd: { transform: "none" } }}
                     transition={{ duration: 0.18, ease: EASE_OUT }}
                   >
                     <PageOutlet />
