@@ -1,6 +1,5 @@
 import { memo, useState } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
 import { Check, Mic, Plus, Link2, Play } from "@/lib/icons";
 import { AnimatedPlayPause } from "../playground/AnimatedIcons";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
@@ -11,7 +10,6 @@ import { episodeProgress, episodeToTrack } from "../../utils/episode";
 import { useQueueStore } from "../../store/queue.store";
 import { shareSpotifyLink } from "../../lib/share";
 import { toast } from "../../store/toast.store";
-import { PRESS, PRESS_TRANSITION } from "../../lib/motion";
 import type { EpisodeItem } from "../../types/podcast";
 
 export function releaseLabel(date: string | null): string | null {
@@ -96,10 +94,8 @@ export const EpisodeRow = memo(function EpisodeRow({
       >
         <div style={{ width: 28, height: 28, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
           {hover || playing ? (
-            <motion.button
-              whileTap={PRESS}
-              transition={PRESS_TRANSITION}
-              className="focus-ring"
+            <button
+              className="focus-ring fx-press"
               onClick={(e) => {
                 e.stopPropagation();
                 onPlay();
@@ -108,7 +104,7 @@ export const EpisodeRow = memo(function EpisodeRow({
               style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "50%", border: "none", background: "transparent", padding: 0, cursor: "pointer" }}
             >
               <AnimatedPlayPause isPlaying={playing} size={15} strokeWidth={2.4} fill={playing ? "var(--color-accent)" : "#ffffff"} />
-            </motion.button>
+            </button>
           ) : index != null ? (
             <span className="tnum" style={{ fontSize: 13, color: active ? "var(--color-accent)" : "var(--color-text-muted)" }}>{index + 1}</span>
           ) : (

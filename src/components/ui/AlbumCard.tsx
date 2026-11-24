@@ -13,7 +13,7 @@ import { useQueueStore } from "../../store/queue.store";
 import { getAlbum } from "../../api/spotify";
 import { playTrack } from "../../api/playback";
 import { transportPlay, transportPause } from "../../hooks/usePlayerControls";
-import { gpuLayer, zTransform, REFLOW_SPRING, getGridItemTransition } from "../../lib/motion";
+import { gpuLayer, zTransform, REFLOW_SPRING, getGridItemTransition, FX_CARD } from "../../lib/motion";
 import "../../styles/ui.css";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
 import { TILE_GRID, TILE_PAD } from "../../lib/layout";
@@ -89,20 +89,13 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
     <MotionLink
       to={`/album/${album.id}`}
       layout="position"
-      className="card-link"
+      className="card-link fx-lift"
       transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchAlbum(qc, album.id); }}
       onMouseLeave={() => setHover(false)}
       onFocus={() => setHover(true)}
       onBlur={() => setHover(false)}
-      whileHover={{ y: -3 }}
-      whileTap={{ scale: 0.98 }}
-      transition={{
-        type: "spring",
-        stiffness: 480,
-        damping: 36,
-        ...getGridItemTransition(index),
-      }}
+      transition={getGridItemTransition(index)}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -114,7 +107,7 @@ function AlbumCardImpl({ album, size = 160, index = 0, style }: Props) {
         textDecoration: "none",
         color: "inherit",
         background: hover ? "var(--color-surface-hover)" : "transparent",
-        transition: "background 0.18s ease",
+        transition: `background 0.18s ease, ${FX_CARD}`,
         position: "relative",
         cursor: "pointer",
         minWidth: 0,

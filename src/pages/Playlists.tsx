@@ -21,7 +21,7 @@ import { usePinsStore } from "../store/pins.store";
 import { useContextMenu, type MenuEntry } from "../components/ui/ContextMenu";
 import type { PlaylistSummary } from "../types/library";
 import { useReflowPulse } from "../hooks/useReflowPulse";
-import { getGridItemTransition } from "../lib/motion";
+import { getGridItemTransition, FX_DEFAULT } from "../lib/motion";
 import { TILE_GRID, TILE_PAD } from "../lib/layout";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
@@ -61,13 +61,12 @@ const PlaylistCard = memo(function PlaylistCard({
   return (
     <MotionLink
       to={`/playlist/${playlist.id}`}
+      className="fx-lift"
       layout="position"
       transition={getGridItemTransition(index)}
       onContextMenu={onContextMenu}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      whileHover={{ y: -3 }}
-      whileTap={{ scale: 0.98 }}
       style={{
         display:        "flex",
         flexDirection:  "column",
@@ -79,7 +78,7 @@ const PlaylistCard = memo(function PlaylistCard({
         textDecoration: "none",
         color:          "inherit",
         background:     hover ? "var(--color-surface-hover)" : "transparent",
-        transition:     "background 0.18s ease",
+        transition:     `background 0.18s ease, ${FX_DEFAULT}`,
         position:       "relative",
         cursor:         "pointer",
         minWidth:       0,
@@ -186,16 +185,15 @@ const FolderCard = memo(function FolderCard({ folder, index = 0 }: { folder: Fol
   return (
     <MotionLink
       to={`/playlists?folder=${encodeURIComponent(folder.id)}`}
+      className="fx-lift"
       layout="position"
       transition={getGridItemTransition(index)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      whileHover={{ y: -3 }}
-      whileTap={{ scale: 0.98 }}
       style={{
         display: "flex", flexDirection: "column", gap: 10, padding: TILE_PAD, borderRadius: 12,
         width: "100%", boxSizing: "border-box", textDecoration: "none", color: "inherit",
-        background: hover ? "var(--color-surface-hover)" : "transparent", transition: "background 0.18s ease", minWidth: 0,
+        background: hover ? "var(--color-surface-hover)" : "transparent", transition: `background 0.18s ease, ${FX_DEFAULT}`, minWidth: 0,
       }}
     >
       <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>

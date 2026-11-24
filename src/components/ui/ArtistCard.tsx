@@ -5,7 +5,7 @@ import { ArrowUpRight, User } from "@/lib/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { CoverArt } from "./CoverArt";
 import { prefetchArtist } from "../../lib/prefetch";
-import { gpuLayer, zTransform, REFLOW_SPRING, SPRING, EASE_OUT, getGridItemTransition } from "../../lib/motion";
+import { gpuLayer, zTransform, REFLOW_SPRING, SPRING, EASE_OUT, getGridItemTransition, FX_ARTIST } from "../../lib/motion";
 import "../../styles/ui.css";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
 import { TILE_GRID, TILE_PAD } from "../../lib/layout";
@@ -45,20 +45,13 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
     <MotionLink
       to={`/artist/${artist.id}`}
       layout="position"
-      className="card-link"
+      className="card-link fx-lift"
       transformTemplate={zTransform}
       onMouseEnter={() => { setHover(true); prefetchArtist(qc, artist.id); }}
       onMouseLeave={() => setHover(false)}
       onFocus={() => setHover(true)}
       onBlur={() => setHover(false)}
-      whileHover={{ y: -3 }}
-      whileTap={{ scale: 0.98 }}
-      transition={{
-        type: "spring",
-        stiffness: 520,
-        damping: 44,
-        ...getGridItemTransition(index),
-      }}
+      transition={getGridItemTransition(index)}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -70,7 +63,7 @@ function ArtistCardImpl({ artist, index = 0, style }: Props) {
         textDecoration: "none",
         color: "inherit",
         background: hover ? "var(--color-surface-hover)" : "transparent",
-        transition: "background 0.18s ease",
+        transition: `background 0.18s ease, ${FX_ARTIST}`,
         position: "relative",
         cursor: "pointer",
         minWidth: 0,

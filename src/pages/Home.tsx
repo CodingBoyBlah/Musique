@@ -27,7 +27,7 @@ import { EvenGrid, EvenGridSkeleton } from "../components/ui/EvenGrid";
 import { CirclePlayButton } from "../components/ui/CirclePlayButton";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { meshGradient } from "../lib/mesh";
-import { gpuLayer, zTransform, EASE_OUT, PRESS } from "../lib/motion";
+import { gpuLayer, zTransform, EASE_OUT } from "../lib/motion";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
@@ -247,11 +247,10 @@ const QuickActionCard = memo(function QuickActionCard({
       transformTemplate={zTransform}
       initial={animateIn ? { opacity: 0, y: 10 } : false}
       animate={{ opacity: 1, y: 0 }}
-      whileTap={PRESS}
+      className="fx-press"
       transition={{
         opacity: { duration: 0.28, delay: index * 0.035, ease: EASE_OUT },
         y: { duration: 0.28, delay: index * 0.035, ease: EASE_OUT },
-        scale: { duration: 0.12, ease: EASE_OUT },
         layout: REFLOW,
       }}
       onClick={() => handlePlay()}
@@ -272,7 +271,7 @@ const QuickActionCard = memo(function QuickActionCard({
           ? "rgba(255, 255, 255, 0.09)"
           : "rgba(255, 255, 255, 0.045)",
         border: "1px solid rgba(255, 255, 255, 0.07)",
-        transition: "background 0.16s ease, box-shadow 0.16s ease",
+        transition: "background 0.16s ease, box-shadow 0.16s ease, scale var(--press-dur) var(--ease-out)",
         boxShadow: lit ? "0 10px 24px rgba(0,0,0,0.42)" : "0 2px 6px rgba(0,0,0,0.18)",
         userSelect: "none",
         minWidth: 0,
@@ -539,7 +538,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
       onClick={onPlay}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      whileTap={{ scale: 0.97 }}
+      className="fx-press-97"
       style={{
         width: "100%",
         overflow: "hidden",
@@ -554,7 +553,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
         background: hover ? "var(--color-surface-hover, rgba(255,255,255,0.06))" : "transparent",
         cursor: "pointer",
         textAlign: "left",
-        transition: "background 0.18s ease",
+        transition: "background 0.18s ease, scale var(--press-dur) var(--ease-out)",
         boxSizing: "border-box",
         ...gpuLayer,
       }}

@@ -30,7 +30,11 @@
 .row-action {
     color: var(--color-text-dim);
     background: transparent;
-    transition: color 0.14s ease, background-color 0.14s ease;
+    transition: color 0.14s ease, background-color 0.14s ease, scale var(--press-dur) var(--ease-out);
+}
+/* the press, in CSS (was framer's whileTap: a gesture per button, per row) */
+.row-action:active {
+    scale: var(--press-scale);
 }
 .row-action[data-active="true"] {
     color: var(--color-accent);

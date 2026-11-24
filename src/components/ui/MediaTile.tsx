@@ -2,7 +2,7 @@ import { memo, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { CoverArt } from "./CoverArt";
-import { getGridItemTransition } from "../../lib/motion";
+import { getGridItemTransition, FX_CARD } from "../../lib/motion";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
 import { TILE_PAD } from "../../lib/layout";
 
@@ -35,15 +35,13 @@ export const MediaTile = memo(function MediaTile({
     <MotionLink
       to={to}
       layout="position"
-      className="card-link"
+      className="card-link fx-lift"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onFocus={() => setHover(true)}
       onBlur={() => setHover(false)}
       onContextMenu={onContextMenu}
-      whileHover={{ y: -3 }}
-      whileTap={{ scale: 0.98 }}
-      transition={{ type: "spring", stiffness: 480, damping: 36, ...getGridItemTransition(index) }}
+      transition={getGridItemTransition(index)}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -55,7 +53,7 @@ export const MediaTile = memo(function MediaTile({
         textDecoration: "none",
         color: "inherit",
         background: hover ? "var(--color-surface-hover)" : "transparent",
-        transition: "background 0.18s ease",
+        transition: `background 0.18s ease, ${FX_CARD}`,
         minWidth: 0,
         overflow: "hidden",
         textAlign: round ? "center" : undefined,

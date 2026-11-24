@@ -714,6 +714,78 @@ input[type="range"].vol:hover::-webkit-slider-thumb {
 }
 
 
+/* ═══ card lift + press, done by the browser ══════════════════════════════
+   Tiles and list buttons used framer's whileHover / whileTap. Each of those
+   wires up gesture handlers when the element mounts and tears them down when
+   it unmounts, and a page of cards mounting and unmounting a few hundred of
+   them was about half of every navigation click's time before the next page
+   could paint. Same values, same curves, no handlers.
+
+   `translate` and `scale` are properties of their own, applied on top of
+   `transform`, so they stack with whatever framer still does to the element
+   (a layout glide, an entrance) instead of fighting its inline style.
+
+   The springs are framer's, sampled into linear(). An element with an inline
+   `transition` lists FX_* from lib/motion in it (an inline transition
+   replaces a class one).
+
+   .fx-lift     card: rises 3px on hover, 0.98 on press
+   .fx-pop      round play button: 1.03 on hover, press scale on press
+   .fx-press    press scale on press
+   .fx-press-97 0.97 on press (wide tiles) */
+:root {
+    /* framer spring, stiffness 480 / damping 36 (the cards' own) */
+    --spring-card: linear(0, 0.0183, 0.0654, 0.1316, 0.2091, 0.2922, 0.3763, 0.4582, 0.5358, 0.6075, 0.6725, 0.7305, 0.7815, 0.8256, 0.8633, 0.8951, 0.9215, 0.9432, 0.9607, 0.9746, 0.9855, 0.9938, 1, 1.0044, 1.0074, 1.0094, 1.0104, 1.0108, 1.0107, 1.0103, 1.0096, 1.0088, 1.0079, 1.007, 1.0061, 1.0052, 1.0044, 1.0037, 1.0031, 1.0025, 1);
+    --spring-card-dur: 369ms;
+    /* framer spring, stiffness 520 / damping 44 (artist cards) */
+    --spring-artist: linear(0, 0.0239, 0.0825, 0.1605, 0.2474, 0.3359, 0.4217, 0.5018, 0.5748, 0.64, 0.6974, 0.7472, 0.7901, 0.8267, 0.8576, 0.8835, 0.9051, 0.9231, 0.9379, 0.95, 0.96, 0.9681, 0.9746, 0.9799, 0.9841, 0.9875, 0.9902, 0.9924, 0.9941, 0.9954, 0.9965, 0.9973, 1);
+    --spring-artist-dur: 331ms;
+    /* framer's default spring for transforms, stiffness 500 / damping 25 */
+    --spring-default: linear(0, 0.0189, 0.0698, 0.1443, 0.2349, 0.3351, 0.4392, 0.5428, 0.642, 0.7342, 0.8175, 0.8906, 0.9528, 1.0042, 1.0451, 1.076, 1.0979, 1.1118, 1.1188, 1.1201, 1.1167, 1.1098, 1.1002, 1.089, 1.0767, 1.0642, 1.0518, 1.0401, 1.0293, 1.0195, 1.0111, 1.0039, 0.9981, 0.9935, 0.9901, 0.9877, 0.9863, 0.9856, 0.9856, 0.9861, 0.9871, 0.9883, 0.9897, 0.9912, 0.9927, 0.9941, 0.9955, 0.9968, 1);
+    --spring-default-dur: 434ms;
+    --press-dur: 0.12s;
+    --pop-dur: 0.16s;
+}
+
+.fx-press,
+.fx-press-97 {
+    transition: scale var(--press-dur) var(--ease-out);
+}
+.fx-pop {
+    transition: scale var(--pop-dur) var(--ease-out);
+}
+@media (hover: hover) {
+    .fx-lift:hover {
+        translate: 0 -3px;
+    }
+    .fx-pop:hover {
+        scale: 1.03;
+    }
+}
+.fx-lift:active {
+    scale: 0.98;
+}
+.fx-press:active,
+.fx-pop:active {
+    scale: var(--press-scale);
+}
+.fx-press-97:active {
+    scale: 0.97;
+}
+
+/* MotionConfig reducedMotion="user" made framer jump these instead of
+   animating them; same here */
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --spring-card-dur: 0s;
+        --spring-artist-dur: 0s;
+        --spring-default-dur: 0s;
+        --press-dur: 0s;
+        --pop-dur: 0s;
+    }
+}
+
+
 /* ═══ shared interaction primitives ══════════════════════════════════════
    Every pressable thing in the app follows the pattern .tb-btn established:
    hover is CSS (never onMouseEnter writing node.style - any re-render while

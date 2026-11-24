@@ -8,7 +8,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TrackItem } from "../../types/spotify";
 import { fmtMs } from "../../utils/fmt";
-import { EASE_OUT, PRESS, PRESS_TRANSITION, gpuLayer, zTransform } from "../../lib/motion";
+import { EASE_OUT, gpuLayer } from "../../lib/motion";
 import { prefetchArtist, prefetchAlbum } from "../../lib/prefetch";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
 import { shareSpotifyLink, shareUniversalLink } from "../../lib/share";
@@ -54,7 +54,7 @@ function ActionBtn({
   accent?:  boolean;
 }) {
   return (
-    <motion.button
+    <button
       onClick={onClick}
       // the label comes from the wrapping <Tooltip>; a native title would
       // pop a second, unstyled tooltip on top of it
@@ -62,9 +62,6 @@ function ActionBtn({
       aria-pressed={active}
       className={`row-action ${className ?? ""}`}
       data-active={Boolean(active || accent)}
-      whileTap={PRESS}
-      transition={PRESS_TRANSITION}
-      transformTemplate={zTransform}
       style={{
         ...gpuLayer,
         display: "flex", alignItems: "center", justifyContent: "center",
@@ -73,7 +70,7 @@ function ActionBtn({
       }}
     >
       {children}
-    </motion.button>
+    </button>
   );
 }
 
@@ -198,10 +195,8 @@ function TrackRowImpl({
         {(index != null || onPlay) && (
           <div style={{ position: "relative", width: 28, height: 28, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             {hover || isThisPlaying ? (
-              <motion.button
-                whileTap={PRESS}
-                transition={PRESS_TRANSITION}
-                className="focus-ring"
+              <button
+                className="focus-ring fx-press"
                 onClick={(e) => {
                   stop(e);
                   handlePlayToggle();
@@ -227,7 +222,7 @@ function TrackRowImpl({
                   strokeWidth={2.4}
                   fill={isThisPlaying ? "var(--color-accent)" : "#ffffff"}
                 />
-              </motion.button>
+              </button>
             ) : (
               <span
                 className="tnum"

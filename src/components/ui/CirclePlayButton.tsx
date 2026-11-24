@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { AnimatedPlayPause } from "../playground/AnimatedIcons";
-import { EASE_OUT, PRESS } from "@/lib/motion";
+import { EASE_OUT } from "@/lib/motion";
 
 export function CirclePlayButton({
   isPlaying,
@@ -27,11 +27,10 @@ export function CirclePlayButton({
     <motion.button
       aria-label={ariaLabel}
       aria-busy={pending || undefined}
-      className="focus-ring"
+      // hover and press scale in CSS (.fx-pop); they stack on the fade-in scale
+      className="focus-ring fx-pop"
       initial={{ opacity: 0, scale: 0.9 }}
       animate={visible ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.9 }}
-      whileHover={{ scale: 1.03 }}
-      whileTap={PRESS}
       transition={{ duration: 0.16, ease: EASE_OUT }}
       onClick={onClick}
       style={{
