@@ -635,6 +635,58 @@ fn select_mmr(pool: &[Scored], limit: usize) -> Vec<Scored> {
 
 // ─── main entry point ────────────────────────────────────────────────────────
 
+// ─── the first home shelf after a launch ────────────────────────────────────
+//
+// Building the home shelf live is a dozen web api calls (650-880 ms measured on
+// a cold start), so the first Home of every launch used to wait on it. Each
+// launch now also builds the NEXT launch's set in the background and stores it;
+// the first Home answers from that stored set. The listener still sees a new
+// set every launch (the stored one was built behind the previous session's and
+// never shown), just without the wait.
+
+const NEXT_HOME_URI: &str = "spotify:me";
+const NEXT_HOME_KIND: &str = "home-recs-next";
+/// older than this, the stored set is too stale to stand in for a live one
+const NEXT_HOME_MAX_AGE_MS: i64 = 3 * 86_400_000;
+
+static FIRST_HOME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct NextHome {
+    explicit_filtered: bool,
+    tracks:            Vec<TrackItem>,
+}
+
+/// the stored next set, minus whatever the last session played, liked or
+/// skipped since it was built (the live build leaves those out too)
+async fn stored_next_home(pool: &SqlitePool, limit: usize, filter_explicit: bool) -> Option<Vec<TrackItem>> {
+    let stored: NextHome =
+        crate::internal::cache::get_json(pool, NEXT_HOME_URI, NEXT_HOME_KIND, NEXT_HOME_MAX_AGE_MS).await?;
+    if stored.explicit_filtered != filter_explicit {
+        return None;
+    }
+    let now = now_ms();
+    let recent: HashSet<String> = sqlx::query_as::<_, (String,)>(
+        "SELECT track_id FROM recently_played WHERE played_at >= ?
+         UNION SELECT track_id FROM listen_events WHERE occurred_at >= ?
+         UNION SELECT track_id FROM saved_tracks",
+    )
+    .bind(now - HOME_RECENT_PLAY_EXCLUDE_DAYS * 86_400_000)
+    .bind(now - SKIP_EXCLUDE_DAYS * 86_400_000)
+    .fetch_all(pool)
+    .await
+    .ok()?
+    .into_iter()
+    .map(|(id,)| id)
+    .collect();
+    let mut tracks: Vec<TrackItem> = stored.tracks.into_iter().filter(|t| !recent.contains(&t.id)).collect();
+    if tracks.len() < limit.min(10) {
+        return None;
+    }
+    tracks.truncate(limit);
+    Some(tracks)
+}
+
 pub async fn recommend(
     token:             &str,
     pool:              &SqlitePool,
@@ -655,8 +707,53 @@ pub async fn recommend(
                 }
             }
         }
+
+        if FIRST_HOME.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            let filter_explicit = crate::auth::get_setting_value(pool, "spotify_explicit_filter")
+                .await
+                .ok()
+                .flatten()
+                .as_deref()
+                == Some("1");
+            let stored = stored_next_home(pool, limit, filter_explicit).await;
+
+            // next launch's set, built behind this one. kept out of the
+            // in-memory cache: that holds what is on screen now
+            let (token, pool2) = (token.to_string(), pool.clone());
+            let epoch = crate::auth::auth_epoch();
+            tokio::spawn(async move {
+                let built = spotify::background(build(&token, &pool2, Vec::new(), HashSet::new(), limit, true, false)).await;
+                if let Ok(tracks) = built {
+                    if !tracks.is_empty() && crate::auth::epoch_is_current(epoch) {
+                        let next = NextHome { explicit_filtered: filter_explicit, tracks };
+                        crate::internal::cache::put_json(&pool2, NEXT_HOME_URI, NEXT_HOME_KIND, &next).await;
+                    }
+                }
+            });
+
+            if let Some(tracks) = stored {
+                if let Ok(mut g) = DEFAULT_RECS_CACHE.write() {
+                    *g = Some((Instant::now(), tracks.clone()));
+                }
+                return Ok(tracks);
+            }
+        }
     }
 
+    build(token, pool, seed_artist_ids, exclude_track_ids, limit, is_default_home, true).await
+}
+
+/// one live build. `remember` puts a default home set in the in-memory cache,
+/// which holds the set on screen
+async fn build(
+    token:             &str,
+    pool:              &SqlitePool,
+    seed_artist_ids:   Vec<String>,
+    exclude_track_ids: HashSet<String>,
+    limit:             usize,
+    is_default_home:   bool,
+    remember:          bool,
+) -> Result<Vec<TrackItem>, AppError> {
     let profile = load_profile(pool).await;
 
     let filter_explicit = crate::auth::get_setting_value(pool, "spotify_explicit_filter")
@@ -782,7 +879,7 @@ pub async fn recommend(
         out = local_fallback(pool, limit).await;
     }
 
-    if is_default_home && !out.is_empty() {
+    if is_default_home && remember && !out.is_empty() {
         if let Ok(mut g) = DEFAULT_RECS_CACHE.write() {
             *g = Some((Instant::now(), out.clone()));
         }
