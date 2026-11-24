@@ -124,7 +124,7 @@ const QuickActionCard = memo(function QuickActionCard({
     // 1. Liked Songs
     if (item.isLikedSongs || item.id === "liked-songs") {
       try {
-        const tracks = await getLikedSongs(100, 0);
+        const tracks = await getLikedSongs(-1, 0);
         if (tracks && tracks.length > 0) {
           const start = playContext(tracks, 0, "liked-songs", LIKED_SONGS_URI);
           if (start) {
