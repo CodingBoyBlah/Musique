@@ -18,7 +18,7 @@ import { usePinsStore } from "../store/pins.store";
 import { useSpeedDialStore } from "../store/speedDial.store";
 import { useAuthStore } from "../store/auth.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
-import { useStagedList } from "../hooks/useStagedList";
+import { WindowedList } from "../components/ui/WindowedList";
 import { cancelHoverPrefetch, prefetchProfile, scheduleHoverPrefetch } from "../lib/prefetch";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -105,7 +105,6 @@ export default function PlaylistPage() {
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
 
   const { view, keys, toolbar } = useTrackTools(tracks, "Playlist order");
-  const shown = useStagedList(view);
   const trackActions = useTrackRowActions(likedSet, toggleLike);
 
   if (isLoading) {
@@ -279,19 +278,25 @@ export default function PlaylistPage() {
           transition={{ layout: REFLOW }}
           className="flex flex-col"
         >
-          {shown.map((t, i) => (
-            <TrackRow
-              key={keys[i]}
-              track={t}
-              index={i}
-              showAlbum
-              liked={likedSet.has(t.id)}
-              onPlay={trackActions.onPlay}
-              onQueue={enqueue}
-              onToggleLike={trackActions.onToggleLike}
-              onRemoveFromPlaylist={canEdit ? trackActions.onRemove : undefined}
-            />
-          ))}
+          <WindowedList
+            items={view}
+            getKey={(_, i) => keys[i]}
+            estimateHeight={59}
+            threshold={60}
+            className="flex flex-col"
+            renderItem={(t, i) => (
+              <TrackRow
+                track={t}
+                index={i}
+                showAlbum
+                liked={likedSet.has(t.id)}
+                onPlay={trackActions.onPlay}
+                onQueue={enqueue}
+                onToggleLike={trackActions.onToggleLike}
+                onRemoveFromPlaylist={canEdit ? trackActions.onRemove : undefined}
+              />
+            )}
+          />
           {view.length === 0 && (
             <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>
               No tracks match your filter.

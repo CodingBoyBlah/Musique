@@ -22,6 +22,7 @@ import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
 import { Tooltip } from "../components/ui/Tooltip";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { useTopArtists, useTopTracks, useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
+import { useStagedList } from "../hooks/useStagedList";
 import { useAuthStore } from "../store/auth.store";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
@@ -35,9 +36,10 @@ import { useReflowPulse } from "../hooks/useReflowPulse";
 type Tab = "overview" | "followers" | "following";
 
 function PeopleGrid({ people }: { people: ProfileCard[] }) {
+  const shown = useStagedList(people, 36);
   return (
     <ArtistGrid>
-      {people.map((p, i) => (
+      {shown.map((p, i) => (
         <MediaTile
           key={`${p.kind}-${p.id}`}
           to={p.kind === "artist" ? `/artist/${p.id}` : `/user/${p.id}`}

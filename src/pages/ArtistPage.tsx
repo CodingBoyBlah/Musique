@@ -73,6 +73,12 @@ export default function ArtistPage() {
   const { data: savedIds = [] } = useSavedTrackIds(topTrackIds);
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
   const trackActions = useTrackRowActions(likedSet, toggleLike);
+  const galleryImages = useMemo(
+    () =>
+      [...(overview?.gallery ?? []), ...(extras?.gallery ?? []), ...(data?.image_url ? [data.image_url] : [])]
+        .filter((v, i, arr) => arr.indexOf(v) === i),
+    [overview?.gallery, extras?.gallery, data?.image_url],
+  );
 
   if (isLoading) return <Loader label="Loading artist" />;
 
@@ -295,7 +301,7 @@ export default function ArtistPage() {
         <ArtistAbout
           name={data.name}
           biography={extras?.biography ?? null}
-          images={[...(overview?.gallery ?? []), ...(extras?.gallery ?? []), ...(data.image_url ? [data.image_url] : [])].filter((v, i, arr) => arr.indexOf(v) === i)}
+          images={galleryImages}
           stats={{
             monthlyListeners: overview?.monthly_listeners,
             followers: overview?.followers,

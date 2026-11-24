@@ -7,16 +7,28 @@ import { Shelf } from "./Shelf";
 import { PRESS, PRESS_TRANSITION } from "../../lib/motion";
 import type { ArtistOverview } from "../../api/internal";
 
-function dateParts(iso: string | null) {
+type DateParts = { month: string; day: string; weekday: string; time: string } | null;
+const datePartsCache = new Map<string, DateParts>();
+
+function dateParts(iso: string | null): DateParts {
   if (!iso) return null;
+  const cached = datePartsCache.get(iso);
+  if (cached !== undefined) return cached;
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return {
-    month: d.toLocaleDateString(undefined, { month: "short" }).toUpperCase(),
-    day: String(d.getDate()),
-    weekday: d.toLocaleDateString(undefined, { weekday: "short" }),
-    time: d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
-  };
+  const result: DateParts = Number.isNaN(d.getTime())
+    ? null
+    : {
+        month: d.toLocaleDateString(undefined, { month: "short" }).toUpperCase(),
+        day: String(d.getDate()),
+        weekday: d.toLocaleDateString(undefined, { weekday: "short" }),
+        time: d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+      };
+  if (datePartsCache.size >= 200) {
+    const oldest = datePartsCache.keys().next().value;
+    if (oldest !== undefined) datePartsCache.delete(oldest);
+  }
+  datePartsCache.set(iso, result);
+  return result;
 }
 
 // upcoming shows as date cards, and the artist's shop as a shelf

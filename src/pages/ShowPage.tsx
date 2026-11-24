@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,6 +10,7 @@ import { ExpandableDescription } from "../components/ui/ExpandableDescription";
 import { Loader } from "../components/ui/Loader";
 import { EmptyState } from "../components/ui/EmptyState";
 import { EpisodeRow } from "../components/ui/EpisodeRow";
+import { WindowedList } from "../components/ui/WindowedList";
 import { Dropdown, type DropdownOption } from "../components/ui/Dropdown";
 import { Tooltip } from "../components/ui/Tooltip";
 import { useContextMenu } from "../components/ui/ContextMenu";
@@ -22,7 +23,7 @@ import { EPISODE_PREFIX, episodeToTrack } from "../utils/episode";
 import { resumeOrPlay, playTrack } from "../api/playback";
 import { PRESS, PRESS_TRANSITION } from "../lib/motion";
 import { useReflowPulse } from "../hooks/useReflowPulse";
-import type { EpisodeItem } from "../types/podcast";
+import type { EpisodeItem, ShowDetail } from "../types/podcast";
 import type { TrackItem } from "../types/spotify";
 
 type Order = "newest" | "oldest" | "unplayed";
@@ -49,25 +50,37 @@ export default function ShowPage() {
     enabled: !!id,
   });
 
-  // the first page comes with the show; further pages append here
-  const [more, setMore] = useState<EpisodeItem[]>([]);
-  const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  useEffect(() => {
-    setMore([]);
-    setNextOffset(data?.next_offset ?? null);
-  }, [data]);
+  const loadingMoreForIdRef = useRef<string | null>(null);
+  const nextOffset = data?.next_offset ?? null;
 
   const [query, setQuery] = useState("");
   const [order, setOrder] = useState<Order>("newest");
-  const all = useMemo(() => [...(data?.episodes ?? []), ...more], [data?.episodes, more]);
+  const all = data?.episodes ?? [];
+  const prepared = useMemo(
+    () =>
+      all.map((ep) => ({
+        ep,
+        nameLower: ep.name.toLowerCase(),
+        descLower: (ep.description ?? "").toLowerCase(),
+      })),
+    [all],
+  );
+  const ordered = useMemo(() => {
+    if (order === "oldest") return [...prepared].reverse();
+    if (order === "unplayed") return [...prepared].sort((a, b) => Number(a.ep.fully_played) - Number(b.ep.fully_played));
+    return prepared;
+  }, [prepared, order]);
   const view = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let arr = q ? all.filter((e) => e.name.toLowerCase().includes(q) || (e.description ?? "").toLowerCase().includes(q)) : all;
-    if (order === "oldest") arr = [...arr].reverse();
-    if (order === "unplayed") arr = [...arr].sort((a, b) => Number(a.fully_played) - Number(b.fully_played));
-    return arr;
-  }, [all, query, order]);
+    if (!q) return ordered.map((item) => item.ep);
+    const out: EpisodeItem[] = [];
+    for (let i = 0; i < ordered.length; i++) {
+      const item = ordered[i];
+      if (item.nameLower.includes(q) || item.descLower.includes(q)) out.push(item.ep);
+    }
+    return out;
+  }, [ordered, query]);
 
   const play = usePlayEpisodes(view, `show-${id}`);
   const currentId = usePlayerStore((s) => s.currentId);
@@ -103,16 +116,31 @@ export default function ShowPage() {
   }
 
   async function loadMore() {
-    if (nextOffset == null || loadingMore) return;
+    if (!id || nextOffset == null || loadingMore) return;
+    const targetId = id;
+    loadingMoreForIdRef.current = targetId;
     setLoadingMore(true);
     try {
-      const page = await getShowEpisodes(id!, nextOffset);
-      setMore((m) => [...m, ...page.episodes]);
-      setNextOffset(page.next_offset);
+      const page = await getShowEpisodes(targetId, nextOffset);
+      qc.setQueryData<ShowDetail>(["show", targetId], (old) => {
+        if (!old) return old;
+        const seen = new Set(old.episodes.map((e) => e.id));
+        const appended = page.episodes.filter((e) => !seen.has(e.id));
+        return {
+          ...old,
+          episodes: [...old.episodes, ...appended],
+          next_offset: page.next_offset,
+        };
+      });
     } catch (e) {
-      toast.error(`Couldn't load more episodes: ${errMsg(e)}`);
+      if (loadingMoreForIdRef.current === id) {
+        toast.error(`Couldn't load more episodes: ${errMsg(e)}`);
+      }
     } finally {
-      setLoadingMore(false);
+      if (loadingMoreForIdRef.current === targetId) {
+        loadingMoreForIdRef.current = null;
+        setLoadingMore(false);
+      }
     }
   }
 
@@ -201,10 +229,16 @@ export default function ShowPage() {
             {all.length === 0 ? "No episodes available in your region." : "No episodes match your filter."}
           </p>
         ) : (
-          view.map((ep, i) => {
-            const active = currentId === `${EPISODE_PREFIX}${ep.id}`;
-            return <EpisodeRow key={ep.id} episode={ep} index={i} active={active} playing={active && isPlaying} onPlay={() => play(i)} />;
-          })
+          <WindowedList
+            items={view}
+            getKey={(ep) => ep.id}
+            estimateHeight={64}
+            threshold={60}
+            renderItem={(ep, i) => {
+              const active = currentId === `${EPISODE_PREFIX}${ep.id}`;
+              return <EpisodeRow episode={ep} index={i} active={active} playing={active && isPlaying} onPlay={() => play(i)} />;
+            }}
+          />
         )}
         {nextOffset != null && !query && (
           <div style={{ display: "flex", justifyContent: "center", padding: "16px 0" }}>

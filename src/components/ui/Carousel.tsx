@@ -51,14 +51,25 @@ export function useCarousel(deps: unknown[] = []): CarouselState {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.addEventListener("scroll", update, { passive: true });
-    const ro = new ResizeObserver(update);
+    let raf = 0;
+    const schedule = () => {
+      if (!raf) {
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          update();
+        });
+      }
+    };
+    el.addEventListener("scroll", schedule, { passive: true });
+    const ro = new ResizeObserver(schedule);
     ro.observe(el);
     return () => {
-      el.removeEventListener("scroll", update);
+      el.removeEventListener("scroll", schedule);
       ro.disconnect();
+      if (raf) cancelAnimationFrame(raf);
     };
-  }, [update]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [update, ...deps]);
 
   const page = useCallback((dir: -1 | 1) => {
     const el = ref.current;

@@ -21,6 +21,7 @@ import {
 import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
 import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
 import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
+import { WindowedList } from "../components/ui/WindowedList";
 import { useSortTools } from "../components/ui/SortToolbar";
 import { usePlayerStore } from "../store/player.store";
 import { LIKED_SONGS_URI, useQueueStore } from "../store/queue.store";
@@ -47,7 +48,6 @@ function LikedSongsTab() {
   const toggleLike  = useToggleLike();
 
   const { view, toolbar } = useSortTools(tracks, "Find in songs", { recent: true });
-  const shown = useStagedList(view);
   const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
   const { data: savedIds = [] } = useSavedTrackIds(trackIds);
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
@@ -91,10 +91,14 @@ function LikedSongsTab() {
       <motion.div layout="position" transition={{ layout: REFLOW }}>
         {toolbar}
       </motion.div>
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        {shown.map((t, i) => (
+      <WindowedList
+        items={view}
+        getKey={(t) => t.id}
+        estimateHeight={59}
+        threshold={60}
+        style={{ display: "flex", flexDirection: "column" }}
+        renderItem={(t, i) => (
           <TrackRow
-            key={t.id}
             track={t}
             index={i}
             showAlbum
@@ -103,8 +107,8 @@ function LikedSongsTab() {
             onQueue={enqueue}
             onToggleLike={trackActions.onToggleLike}
           />
-        ))}
-      </div>
+        )}
+      />
       {view.length === 0 && (
         <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>No songs match your filter.</p>
       )}
