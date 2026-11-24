@@ -37,7 +37,9 @@ type TabKey = (typeof TAB_KEYS)[number];
 // liked songs
 
 function LikedSongsTab() {
-  const { data: tracks = [], isLoading } = useLikedSongs(200, 0);
+  // every liked song (sqlite reads LIMIT -1 as no limit). a fixed 200 here
+  // cut the list off while the header still counted them all
+  const { data: tracks = [], isLoading } = useLikedSongs(-1, 0);
   const { data: count = 0 } = useLikedSongsCount();
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const enqueue     = useQueueStore((s) => s.enqueue);
