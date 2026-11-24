@@ -10,7 +10,6 @@ import { ExpandableDescription } from "../components/ui/ExpandableDescription";
 import { Loader } from "../components/ui/Loader";
 import { EmptyState } from "../components/ui/EmptyState";
 import { EpisodeRow } from "../components/ui/EpisodeRow";
-import { WindowedList } from "../components/ui/WindowedList";
 import { Dropdown, type DropdownOption } from "../components/ui/Dropdown";
 import { Tooltip } from "../components/ui/Tooltip";
 import { useContextMenu } from "../components/ui/ContextMenu";
@@ -229,16 +228,10 @@ export default function ShowPage() {
             {all.length === 0 ? "No episodes available in your region." : "No episodes match your filter."}
           </p>
         ) : (
-          <WindowedList
-            items={view}
-            getKey={(ep) => ep.id}
-            estimateHeight={64}
-            threshold={60}
-            renderItem={(ep, i) => {
-              const active = currentId === `${EPISODE_PREFIX}${ep.id}`;
-              return <EpisodeRow episode={ep} index={i} active={active} playing={active && isPlaying} onPlay={() => play(i)} />;
-            }}
-          />
+          view.map((ep, i) => {
+            const active = currentId === `${EPISODE_PREFIX}${ep.id}`;
+            return <EpisodeRow key={ep.id} episode={ep} index={i} active={active} playing={active && isPlaying} onPlay={() => play(i)} />;
+          })
         )}
         {nextOffset != null && !query && (
           <div style={{ display: "flex", justifyContent: "center", padding: "16px 0" }}>
