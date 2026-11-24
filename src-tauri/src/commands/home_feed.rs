@@ -195,7 +195,7 @@ pub(crate) fn feed_from(data: &Value) -> HomeFeed {
 #[tauri::command]
 pub async fn get_home_feed(app: AppHandle, time_zone: Option<String>) -> Result<HomeFeed, AppError> {
     let pool = app.state::<AppState>().db.clone();
-    let user = spclient::username(&app).await.unwrap_or_else(|_| "me".into());
+    let user = spclient::account_username(&app).await.unwrap_or_else(|_| "me".into());
     let key = format!("spotify:user:{user}");
     cache::cached_json(&pool, &key, "home-feed", 30 * 60_000, || async {
         let data = pathfinder::query(

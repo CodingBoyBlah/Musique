@@ -185,7 +185,7 @@ fn clean_id(id: &str) -> Result<String, AppError> {
 pub async fn get_user_profile(app: AppHandle, id: Option<String>) -> Result<UserProfile, AppError> {
     let id = match id {
         Some(id) => clean_id(&id)?,
-        None => spclient::username(&app).await?,
+        None => spclient::account_username(&app).await?,
     };
     let pool = app.state::<AppState>().db.clone();
     let uri = format!("spotify:user:{id}");
@@ -214,7 +214,7 @@ pub async fn get_user_profile(app: AppHandle, id: Option<String>) -> Result<User
 async fn follow_list(app: &AppHandle, id: Option<String>, which: &str) -> Result<Vec<ProfileCard>, AppError> {
     let id = match id {
         Some(id) => clean_id(&id)?,
-        None => spclient::username(app).await?,
+        None => spclient::account_username(app).await?,
     };
     let pool = app.state::<AppState>().db.clone();
     let uri = format!("spotify:user:{id}");

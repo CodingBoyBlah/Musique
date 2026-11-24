@@ -101,6 +101,22 @@ pub async fn username(app: &AppHandle) -> Result<String, AppError> {
     Ok(session(app).await?.username())
 }
 
+/// the signed-in user's username for keying cached pages, without waiting on
+/// the session. sign-in stores the account id (`spotify_user_id`), the same
+/// canonical username the session reports; a cold start that went through
+/// `username` sat behind the whole access-point connect (the warm-up holds the
+/// playback lock while it connects) just to look up a page it already had.
+pub async fn account_username(app: &AppHandle) -> Result<String, AppError> {
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(Some(id)) = crate::auth::get_setting_value(&state.db, "spotify_user_id").await {
+            if !id.trim().is_empty() {
+                return Ok(id);
+            }
+        }
+    }
+    username(app).await
+}
+
 /// a first-party bearer token (login5) plus the matching client-token. this is
 /// the pair the official client sends to api-partner / pathfinder
 pub async fn first_party_tokens(app: &AppHandle) -> Result<(String, String), AppError> {
