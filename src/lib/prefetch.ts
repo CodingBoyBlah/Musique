@@ -292,7 +292,7 @@ export function prefetchLibrary(qc: QueryClient, tab = "songs") {
   } else if (tab === "podcasts") {
     qc.prefetchQuery({ queryKey: ["library", "shows"], queryFn: getSavedShows, staleTime: 300_000 });
   } else {
-    qc.prefetchQuery({ queryKey: LIBRARY_KEYS.liked(200, 0), queryFn: () => getLikedSongs(200, 0), staleTime: 5 * 60_000 });
+    qc.prefetchQuery({ queryKey: LIBRARY_KEYS.liked(-1, 0), queryFn: () => getLikedSongs(-1, 0), staleTime: 5 * 60_000 });
     qc.prefetchQuery({ queryKey: LIBRARY_KEYS.likedCount, queryFn: getLikedSongsCount, staleTime: 5 * 60_000 });
     qc.prefetchQuery({ queryKey: LIBRARY_KEYS.status, queryFn: getLibraryStatus, staleTime: 5 * 60_000 });
   }

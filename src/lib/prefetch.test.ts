@@ -120,7 +120,7 @@ describe("route & query prefetch", () => {
     prefetchForPath(qc, "/user/u-9");
     prefetchForPath(qc, "/stats");
 
-    expect(qc.getQueryState(LIBRARY_KEYS.liked(200, 0))).toBeDefined();
+    expect(qc.getQueryState(LIBRARY_KEYS.liked(-1, 0))).toBeDefined();
     expect(qc.getQueryState(["library", "shows"])).toBeDefined();
     expect(qc.getQueryState(LIBRARY_KEYS.playlists)).toBeDefined();
     expect(qc.getQueryState(["library", "rootlist"])).toBeDefined();
@@ -129,7 +129,7 @@ describe("route & query prefetch", () => {
     expect(qc.getQueryState(["profile", "view", "u-9"])).toBeDefined();
     expect(qc.getQueryState(["stats", "month"])).toBeDefined();
 
-    expect(libraryApi.getLikedSongs).toHaveBeenCalledWith(200, 0);
+    expect(libraryApi.getLikedSongs).toHaveBeenCalledWith(-1, 0);
     expect(podcastsApi.getSavedShows).toHaveBeenCalledTimes(1);
     expect(internalApi.getPlaylistFolders).toHaveBeenCalledTimes(1);
     expect(podcastsApi.getShow).toHaveBeenCalledWith("sh-9");
