@@ -194,6 +194,112 @@ where
     }
 }
 
+/// whatever is stored for (uri, kind), with its age in ms
+async fn get_with_age(pool: &SqlitePool, uri: &str, kind: &str) -> Option<(Vec<u8>, i64)> {
+    sqlx::query_as::<_, (Vec<u8>, i64)>(
+        "SELECT payload, fetched_at FROM extension_cache WHERE entity_uri = ? AND kind = ?",
+    )
+    .bind(uri)
+    .bind(kind)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .map(|(payload, at)| (payload, now_ms() - at))
+}
+
+/// (kind, uri) pairs being refetched behind a stored copy right now, so a page
+/// asked for twice (an album header prefetching its artist page, a remount)
+/// goes to the network once
+static REFRESHING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// what `swr_json` pushes to the page when a refetch comes back different
+#[derive(serde::Serialize)]
+struct Fresh<'a, T: serde::Serialize> {
+    key:  &'a serde_json::Value,
+    data: &'a T,
+}
+
+// by hand: a derive would demand `T: Clone` for what is only two references
+impl<T: serde::Serialize> Clone for Fresh<'_, T> {
+    fn clone(&self) -> Self {
+        Self { key: self.key, data: self.data }
+    }
+}
+
+/// stale-while-revalidate over the cache. a stored copy answers at once, so a
+/// page opened after a cold start paints from disk instead of waiting on the
+/// network; one older than `revalidate_after_ms` is refetched behind it. when
+/// the refetch differs from what was answered it is stored and pushed to the
+/// page as `query:fresh` under `query_key` (the page's own react-query key), so
+/// the page ends up exactly where its own fetch would have left it. with
+/// nothing stored this simply waits on `fetch`.
+pub async fn swr_json<T, F, Fut>(
+    app: &tauri::AppHandle,
+    pool: &SqlitePool,
+    uri: &str,
+    kind: &str,
+    revalidate_after_ms: i64,
+    query_key: serde_json::Value,
+    fetch: F,
+) -> Result<T, crate::errors::AppError>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<T, crate::errors::AppError>> + Send + 'static,
+{
+    if let Some((stored, age)) = get_with_age(pool, uri, kind).await {
+        // a copy from before a shape change doesn't parse; that is a miss
+        if let Ok(hit) = serde_json::from_slice::<T>(&stored) {
+            if age >= revalidate_after_ms {
+                refresh_behind(app, pool, uri, kind, stored, query_key, fetch);
+            }
+            return Ok(hit);
+        }
+    }
+    let v = fetch().await?;
+    put_json(pool, uri, kind, &v).await;
+    Ok(v)
+}
+
+fn refresh_behind<T, F, Fut>(
+    app: &tauri::AppHandle,
+    pool: &SqlitePool,
+    uri: &str,
+    kind: &str,
+    stored: Vec<u8>,
+    query_key: serde_json::Value,
+    fetch: F,
+) where
+    T: serde::Serialize + Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<T, crate::errors::AppError>> + Send + 'static,
+{
+    use tauri::Emitter;
+    let slot = format!("{kind} {uri}");
+    if !REFRESHING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(slot.clone()) {
+        return;
+    }
+    let (app, pool, uri, kind) = (app.clone(), pool.clone(), uri.to_string(), kind.to_string());
+    // a sign-out while this is in flight purges the cache; the old account's
+    // page must not be written back into it
+    let epoch = crate::auth::auth_epoch();
+    tauri::async_runtime::spawn(async move {
+        if let Ok(v) = fetch().await {
+            if let Ok(bytes) = serde_json::to_vec(&v) {
+                if crate::auth::epoch_is_current(epoch) {
+                    put(&pool, &uri, &kind, &bytes).await;
+                    if bytes != stored {
+                        let _ = app.emit("query:fresh", Fresh { key: &query_key, data: &v });
+                    }
+                }
+            }
+        }
+        REFRESHING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&slot);
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

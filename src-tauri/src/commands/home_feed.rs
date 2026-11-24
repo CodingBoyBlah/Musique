@@ -191,13 +191,17 @@ pub(crate) fn feed_from(data: &Value) -> HomeFeed {
     HomeFeed { greeting, sections, shortcuts }
 }
 
-/// the home feed, cached half an hour and served stale when pathfinder is down
+/// the home feed. the stored copy answers at once; one older than half an hour
+/// is refetched behind it and the page updated when it lands
 #[tauri::command]
 pub async fn get_home_feed(app: AppHandle, time_zone: Option<String>) -> Result<HomeFeed, AppError> {
     let pool = app.state::<AppState>().db.clone();
     let user = spclient::account_username(&app).await.unwrap_or_else(|_| "me".into());
     let key = format!("spotify:user:{user}");
-    cache::cached_json(&pool, &key, "home-feed", 30 * 60_000, || async {
+    let query_key = json!(["library", "home-feed"]);
+    let handle = app.clone();
+    cache::swr_json(&app, &pool, &key, "home-feed", 30 * 60_000, query_key, move || async move {
+        let app = handle;
         let data = pathfinder::query(
             &app,
             "home",

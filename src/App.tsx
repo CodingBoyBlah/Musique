@@ -442,6 +442,16 @@ Home recs so they're cached before the user gets there
     ]);
   }, [invalidateLibrary]);
 
+  // a page the backend answered from its stored copy (home feed, album,
+  // artist, show, profile) gets the refetched copy here, under the page's own
+  // query key, when it comes back different
+  useEffect(() => {
+    return cleanupAsyncListeners([
+      listen<{ key: unknown[]; data: unknown }>("query:fresh", (e) =>
+        queryClient.setQueryData(e.payload.key, e.payload.data)),
+    ]);
+  }, [queryClient]);
+
   // os media control events (tray menu for now)
   useEffect(() => {
     return cleanupAsyncListeners([

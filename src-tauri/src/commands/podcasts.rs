@@ -126,11 +126,14 @@ fn episodes_page(page: &Value, show: Option<&ShowItem>) -> (Vec<EpisodeItem>, Op
 
 #[tauri::command]
 pub async fn get_show(app: AppHandle, id: String) -> Result<ShowDetail, AppError> {
-    let token = tok(&app).await?;
     let pool = app.state::<AppState>().db.clone();
     let uri = format!("spotify:show:{id}");
-    // episode resume points change as you listen, so keep this short
-    cache::cached_json(&pool, &uri, "show", 2 * 60_000, || async {
+    let key = serde_json::json!(["show", id]);
+    let handle = app.clone();
+    // the stored copy answers at once. episode resume points change as you
+    // listen, so one older than two minutes is refetched behind it
+    cache::swr_json(&app, &pool, &uri, "show", 2 * 60_000, key, move || async move {
+        let token = tok(&handle).await?;
         let v: Value = crate::spotify::spotify_get(&token, &format!("{BASE}/shows/{id}?market=from_token")).await?;
         let show = show_from(&v).ok_or_else(|| AppError::NotFound(format!("show {id}")))?;
         let (episodes, next_offset) = v
