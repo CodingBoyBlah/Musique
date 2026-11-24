@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect, memo } from "react";
 import { Link, Navigate, useSearchParams, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
+import { cancelHoverPrefetch, prefetchAlbum, prefetchArtist, prefetchArtistDetails, scheduleHoverPrefetch } from "../lib/prefetch";
 import { useSearch } from "../hooks/useSearch";
 import { useAuth } from "../hooks/useAuth";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -120,6 +122,7 @@ const TopResultCard = memo(function TopResultCard({
   const [hover, setHover] = useState(false);
   const [focused, setFocused] = useState(false);
   const navigate = useNavigate();
+  const qc = useQueryClient();
 
   const isArtist = result.type === "artist";
   const isTrack = result.type === "track";
@@ -175,15 +178,28 @@ const TopResultCard = memo(function TopResultCard({
     borderRadius: 4,
   };
 
+  const warmTarget = () => {
+    if (result.type === "artist") prefetchArtist(qc, result.item.id);
+    else if (result.type === "album") prefetchAlbum(qc, result.item.id);
+    else if (result.item.album?.id) prefetchAlbum(qc, result.item.album.id);
+  };
+
+  const warmPointerTarget = () => {
+    cancelHoverPrefetch();
+    if (result.type === "artist") prefetchArtistDetails(qc, result.item.id);
+    else warmTarget();
+  };
+
   return (
     <motion.div
       layout="position"
       transition={{ layout: REFLOW_SPRING, scale: PRESS_TRANSITION }}
       onClick={handleClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onFocus={() => setFocused(true)}
+      onMouseEnter={() => { setHover(true); scheduleHoverPrefetch(warmTarget); }}
+      onMouseLeave={() => { setHover(false); cancelHoverPrefetch(); }}
+      onFocus={() => { setFocused(true); warmTarget(); }}
       onBlur={() => setFocused(false)}
+      onPointerDown={warmPointerTarget}
       whileTap={{ scale: 0.99 }}
       aria-busy={pending || undefined}
       style={{
@@ -410,6 +426,7 @@ function PlaylistGrid({ children }: { children: React.ReactNode }) {
 
 export default function Search() {
   useReflowPulse();
+  const qc            = useQueryClient();
   const { loggedIn } = useAuth();
   const [params]        = useSearchParams();
   const query           = (params.get("q") ?? "").trim();
@@ -481,8 +498,8 @@ export default function Search() {
     try {
       const tracks =
         topResult.type === "artist"
-          ? (await getArtist(topResult.item.id))?.top_tracks ?? []
-          : (await getAlbum(topResult.item.id))?.tracks ?? [];
+          ? (await qc.ensureQueryData({ queryKey: ["artist", topResult.item.id], queryFn: () => getArtist(topResult.item.id), staleTime: 300_000 }))?.top_tracks ?? []
+          : (await qc.ensureQueryData({ queryKey: ["album", topResult.item.id], queryFn: () => getAlbum(topResult.item.id), staleTime: 300_000 }))?.tracks ?? [];
       if (tracks.length === 0) {
         toast.info(`Nothing to play from ${topResult.item.name}`);
         return;

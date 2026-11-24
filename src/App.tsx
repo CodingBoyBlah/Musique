@@ -10,17 +10,45 @@ import { UpdatePrompt } from "./components/UpdatePrompt";
 and keeps the heavy stuff (kuromoji/romanize via lyrics, charts, etc) off the
 critical path. Home stays eager since it's the landing rou lazying it
 ntoe to self: dont just add a flash */
-const Settings = lazy(() => import("./pages/Settings"));
-const Search = lazy(() => import("./pages/Search"));
-const Library = lazy(() => import("./pages/Library"));
-const Playlists = lazy(() => import("./pages/Playlists"));
-const PlaylistPage = lazy(() => import("./pages/PlaylistPage"));
-const ArtistPage = lazy(() => import("./pages/ArtistPage"));
-const AlbumPage = lazy(() => import("./pages/AlbumPage"));
-const Playground = lazy(() => import("./pages/Playground"));
-const ProfilePage = lazy(() => import("./pages/ProfilePage"));
-const ShowPage = lazy(() => import("./pages/ShowPage"));
-const StatsPage = lazy(() => import("./pages/StatsPage"));
+import { registerRoutePreloaders } from "./lib/prefetch";
+
+const loadSettings = () => import("./pages/Settings");
+const loadSearch = () => import("./pages/Search");
+const loadLibrary = () => import("./pages/Library");
+const loadPlaylists = () => import("./pages/Playlists");
+const loadPlaylistPage = () => import("./pages/PlaylistPage");
+const loadArtistPage = () => import("./pages/ArtistPage");
+const loadAlbumPage = () => import("./pages/AlbumPage");
+const loadPlayground = () => import("./pages/Playground");
+const loadProfilePage = () => import("./pages/ProfilePage");
+const loadShowPage = () => import("./pages/ShowPage");
+const loadStatsPage = () => import("./pages/StatsPage");
+
+registerRoutePreloaders({
+  settings: loadSettings,
+  search: loadSearch,
+  library: loadLibrary,
+  playlists: loadPlaylists,
+  playlist: loadPlaylistPage,
+  artist: loadArtistPage,
+  album: loadAlbumPage,
+  playground: loadPlayground,
+  profile: loadProfilePage,
+  show: loadShowPage,
+  stats: loadStatsPage,
+});
+
+const Settings = lazy(loadSettings);
+const Search = lazy(loadSearch);
+const Library = lazy(loadLibrary);
+const Playlists = lazy(loadPlaylists);
+const PlaylistPage = lazy(loadPlaylistPage);
+const ArtistPage = lazy(loadArtistPage);
+const AlbumPage = lazy(loadAlbumPage);
+const Playground = lazy(loadPlayground);
+const ProfilePage = lazy(loadProfilePage);
+const ShowPage = lazy(loadShowPage);
+const StatsPage = lazy(loadStatsPage);
 import { getCredentials, validateCredentials } from "./api/credentials";
 import { useAuth } from "./hooks/useAuth";
 import { useOwnKeysNudge } from "./hooks/useOwnKeysNudge";

@@ -10,7 +10,7 @@ import { Shelf } from "../components/ui/Shelf";
 import { MediaTile } from "../components/ui/MediaTile";
 import { SectionTitle } from "../components/ui/SectionTitle";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getPlaylist } from "../api/spotify";
+import { cancelHoverPrefetch, prefetchPlaylist, prefetchPlaylistsIndex, scheduleHoverPrefetch } from "../lib/prefetch";
 import { useAuth } from "../hooks/useAuth";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SignInPrompt } from "../components/ui/SignInPrompt";
@@ -37,25 +37,15 @@ const PlaylistCard = memo(function PlaylistCard({
   useReflowPulse();
   const [hover, setHover] = useState(false);
   const qc = useQueryClient();
-  const prefetchTimer = useRef<number | null>(null);
 
   const handleMouseEnter = () => {
     setHover(true);
-    prefetchTimer.current = window.setTimeout(() => {
-      qc.prefetchQuery({
-        queryKey: ["playlist", playlist.id],
-        queryFn: () => getPlaylist(playlist.id),
-        staleTime: 120_000,
-      });
-    }, 40);
+    scheduleHoverPrefetch(() => prefetchPlaylist(qc, playlist.id), 40);
   };
 
   const handleMouseLeave = () => {
     setHover(false);
-    if (prefetchTimer.current) {
-      window.clearTimeout(prefetchTimer.current);
-      prefetchTimer.current = null;
-    }
+    cancelHoverPrefetch();
   };
 
   return (
@@ -67,6 +57,9 @@ const PlaylistCard = memo(function PlaylistCard({
       onContextMenu={onContextMenu}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
+      onFocus={() => { setHover(true); prefetchPlaylist(qc, playlist.id); }}
+      onBlur={() => setHover(false)}
+      onPointerDown={() => { cancelHoverPrefetch(); prefetchPlaylist(qc, playlist.id); }}
       style={{
         display:        "flex",
         flexDirection:  "column",
@@ -240,6 +233,7 @@ const FolderCard = memo(function FolderCard({ folder, index = 0 }: { folder: Fol
 
 export default function Playlists() {
   useReflowPulse();
+  const qc = useQueryClient();
   const layoutGroupId = useId();
   const { loggedIn } = useAuth();
   const { data: synced = [], isLoading } = useMyPlaylists();
@@ -322,7 +316,7 @@ export default function Playlists() {
         <h1 className="t-title" style={{ margin: 0, color: "var(--color-text-hi)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
           {openFolder ? (
             <>
-              <Link to="/playlists" style={{ color: "var(--color-text-dim)", textDecoration: "none" }}>Playlists</Link>
+              <Link to="/playlists" onPointerDown={() => prefetchPlaylistsIndex(qc)} style={{ color: "var(--color-text-dim)", textDecoration: "none" }}>Playlists</Link>
               {openFolder.trail.map((f) => (
                 <span key={f.id} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                   <ChevronRight size={18} style={{ color: "var(--color-text-dim)" }} />

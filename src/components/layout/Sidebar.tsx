@@ -18,7 +18,15 @@ import { useUIStore } from "../../store/ui.store";
 import { useContextMenu } from "../ui/ContextMenu";
 import { gpuLayer, zTransform, EASE_OUT, SPRING, PRESS_TRANSITION } from "../../lib/motion";
 import { useQueryClient } from "@tanstack/react-query";
-import { prefetchPlaylist, prefetchAlbum } from "../../lib/prefetch";
+import {
+  cancelHoverPrefetch,
+  prefetchAlbum,
+  prefetchLibrary,
+  prefetchPlaylist,
+  prefetchPlaylistsIndex,
+  prefetchStats,
+  scheduleHoverPrefetch,
+} from "../../lib/prefetch";
 import { Tooltip } from "../ui/Tooltip";
 import { OverlayScrollbar } from "../ui/OverlayScrollbar";
 import { isMac } from "../../lib/platform";
@@ -39,9 +47,9 @@ const RAIL_COVER = 32;
 // nav item. active state passed in explicitly so we don't get multi highlight
 
 function NavItem({
-  icon: Icon, label, active, onClick, collapsed,
+  icon: Icon, label, active, onClick, onPrefetch, collapsed,
 }: {
-  icon: LucideIcon; label: string; active: boolean; onClick: () => void; collapsed?: boolean;
+  icon: LucideIcon; label: string; active: boolean; onClick: () => void; onPrefetch?: () => void; collapsed?: boolean;
 }) {
   const btn = (
     <motion.button
@@ -52,6 +60,10 @@ function NavItem({
       aria-current={active ? "page" : undefined}
       aria-label={collapsed ? label : undefined}
       onClick={onClick}
+      onPointerEnter={onPrefetch ? () => scheduleHoverPrefetch(onPrefetch, 45) : undefined}
+      onPointerLeave={onPrefetch ? cancelHoverPrefetch : undefined}
+      onPointerDown={onPrefetch ? () => { cancelHoverPrefetch(); onPrefetch(); } : undefined}
+      onFocus={onPrefetch}
       whileTap={{ scale: 0.98 }}
       transition={PRESS_TRANSITION}
       transformTemplate={zTransform}
@@ -485,15 +497,15 @@ export default function Sidebar() {
         {isCollapsed && <RailIndicator top={rail.top} height={rail.height} visible={rail.visible} />}
         <Section label="Discover" first expanded={spotifyOpen} onToggle={() => setSpotifyOpen(v => !v)} collapsed={isCollapsed}>
           <NavItem icon={Home} label="Home"      active={path === "/"}                                          onClick={() => navigate("/")} collapsed={isCollapsed} />
-          <NavItem icon={ListMusic} label="Playlists" active={path === "/playlists" || onPlaylistWithoutRow}           onClick={() => navigate("/playlists")} collapsed={isCollapsed} />
-          {showStats && <NavItem icon={Stats} label="Stats" active={path === "/stats"} onClick={() => navigate("/stats")} collapsed={isCollapsed} />}
+          <NavItem icon={ListMusic} label="Playlists" active={path === "/playlists" || onPlaylistWithoutRow}           onClick={() => navigate("/playlists")} onPrefetch={() => prefetchPlaylistsIndex(qc)} collapsed={isCollapsed} />
+          {showStats && <NavItem icon={Stats} label="Stats" active={path === "/stats"} onClick={() => navigate("/stats")} onPrefetch={() => prefetchStats(qc)} collapsed={isCollapsed} />}
         </Section>
 
         <Section label="Library" expanded={libraryOpen} onToggle={() => setLibraryOpen(v => !v)} collapsed={isCollapsed}>
-          <NavItem icon={Music} label="Songs"   active={onLibrary && tab === "songs"}   onClick={() => navigate("/library?tab=songs")} collapsed={isCollapsed} />
-          <NavItem icon={Disc3} label="Albums"  active={onLibrary && tab === "albums"}  onClick={() => navigate("/library?tab=albums")} collapsed={isCollapsed} />
-          <NavItem icon={User} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} collapsed={isCollapsed} />
-          <NavItem icon={Mic} label="Podcasts" active={(onLibrary && tab === "podcasts") || path.startsWith("/show/")} onClick={() => navigate("/library?tab=podcasts")} collapsed={isCollapsed} />
+          <NavItem icon={Music} label="Songs"   active={onLibrary && tab === "songs"}   onClick={() => navigate("/library?tab=songs")} onPrefetch={() => prefetchLibrary(qc, "songs")} collapsed={isCollapsed} />
+          <NavItem icon={Disc3} label="Albums"  active={onLibrary && tab === "albums"}  onClick={() => navigate("/library?tab=albums")} onPrefetch={() => prefetchLibrary(qc, "albums")} collapsed={isCollapsed} />
+          <NavItem icon={User} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} onPrefetch={() => prefetchLibrary(qc, "artists")} collapsed={isCollapsed} />
+          <NavItem icon={Mic} label="Podcasts" active={(onLibrary && tab === "podcasts") || path.startsWith("/show/")} onClick={() => navigate("/library?tab=podcasts")} onPrefetch={() => prefetchLibrary(qc, "podcasts")} collapsed={isCollapsed} />
         </Section>
 
         <Section label={showAllPlaylists ? "Your playlists" : "Pins"} expanded={pinsOpen} onToggle={() => setPinsOpen(v => !v)} collapsed={isCollapsed}>
@@ -603,7 +615,17 @@ export default function Sidebar() {
                     cursor:        "pointer",
                     textAlign:     isCollapsed ? "center" : "left",
                   }}
-                  onPointerEnter={() => {
+                  onPointerEnter={() => scheduleHoverPrefetch(() => {
+                    if (p.type === "album") prefetchAlbum(qc, p.id);
+                    else prefetchPlaylist(qc, p.id);
+                  }, 50)}
+                  onPointerLeave={cancelHoverPrefetch}
+                  onPointerDown={() => {
+                    cancelHoverPrefetch();
+                    if (p.type === "album") prefetchAlbum(qc, p.id);
+                    else prefetchPlaylist(qc, p.id);
+                  }}
+                  onFocus={() => {
                     if (p.type === "album") prefetchAlbum(qc, p.id);
                     else prefetchPlaylist(qc, p.id);
                   }}

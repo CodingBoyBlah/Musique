@@ -2,8 +2,9 @@ import { useMemo, useRef, useState } from "react";
 import { useEvenColumns } from "../hooks/useEvenColumns";
 import { Link, Navigate } from "react-router-dom";
 import { usePrefsStore } from "../store/prefs.store";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stats } from "@/lib/icons";
+import { cancelHoverPrefetch, prefetchProfile, scheduleHoverPrefetch } from "../lib/prefetch";
 import { getListeningStats, type ListeningStats, type Ranked, type StatsRange } from "../api/stats";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { SectionTitle } from "../components/ui/SectionTitle";
@@ -196,6 +197,7 @@ function StatTiles({ data }: { data: ListeningStats }) {
 
 export default function StatsPage() {
   useReflowPulse();
+  const qc = useQueryClient();
   const [range, setRange] = useState<StatsRange>("month");
   const enabled = usePrefsStore((s) => s.showStats);
   const { data, isLoading, error, refetch } = useQuery({
@@ -259,7 +261,17 @@ export default function StatsPage() {
           <RankedTracks id="stats-discoveries" title="New discoveries" caption="Songs you played for the first time in this period." rows={data.discoveries} contextId={`stats-new-${range}`} />
           <RankedTracks id="stats-forgotten" title="Forgotten favourites" caption="Songs you used to finish every time, not played in two months." rows={data.forgotten} contextId="stats-forgotten" />
           <p className="t-caption" style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
-            Worked out on this device from what you play in Musique. See also your <Link to="/profile" style={{ color: "var(--color-text)" }}>profile</Link>.
+            Worked out on this device from what you play in Musique. See also your{" "}
+            <Link
+              to="/profile"
+              onMouseEnter={() => scheduleHoverPrefetch(() => prefetchProfile(qc, null))}
+              onMouseLeave={cancelHoverPrefetch}
+              onFocus={() => prefetchProfile(qc, null)}
+              onPointerDown={() => { cancelHoverPrefetch(); prefetchProfile(qc, null); }}
+              style={{ color: "var(--color-text)" }}
+            >
+              profile
+            </Link>.
           </p>
         </>
       )}

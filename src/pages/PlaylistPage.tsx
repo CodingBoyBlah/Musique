@@ -19,6 +19,7 @@ import { useSpeedDialStore } from "../store/speedDial.store";
 import { useAuthStore } from "../store/auth.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
 import { useStagedList } from "../hooks/useStagedList";
+import { cancelHoverPrefetch, prefetchProfile, scheduleHoverPrefetch } from "../lib/prefetch";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -202,7 +203,14 @@ export default function PlaylistPage() {
         )}
         <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
           {data.owner_name && (data.owner_id
-            ? <><Link to={`/user/${data.owner_id}`} style={{ color: "var(--color-text-hi)", fontWeight: 600, textDecoration: "none" }}>{data.owner_name}</Link> · </>
+            ? <><Link
+                to={`/user/${data.owner_id}`}
+                onMouseEnter={() => scheduleHoverPrefetch(() => prefetchProfile(qc, data.owner_id!))}
+                onMouseLeave={cancelHoverPrefetch}
+                onFocus={() => prefetchProfile(qc, data.owner_id!)}
+                onPointerDown={() => { cancelHoverPrefetch(); prefetchProfile(qc, data.owner_id!); }}
+                style={{ color: "var(--color-text-hi)", fontWeight: 600, textDecoration: "none" }}
+              >{data.owner_name}</Link> · </>
             : <>{data.owner_name} · </>)}
           {data.collaborative && <>Collaborative · </>}
           {data.public === false && !data.collaborative && isOwner && <>Private · </>}

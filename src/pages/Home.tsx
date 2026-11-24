@@ -2,12 +2,23 @@ import { useState, useRef, useLayoutEffect, useEffect, useMemo, memo } from "rea
 import { coverUrl } from "../lib/coverUrl";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Heart, Music2, ListMusic, Disc3, Users } from "@/lib/icons";
 import { useAuth } from "../hooks/useAuth";
 import { getRecommendations, getAlbum, getArtist, getPlaylist, getTrack } from "../api/spotify";
 import { getLikedSongs } from "../api/library";
 import {
+  cancelHoverPrefetch,
+  prefetchAlbum,
+  prefetchArtist,
+  prefetchForPath,
+  prefetchLibrary,
+  prefetchPlaylist,
+  prefetchTrack,
+  scheduleHoverPrefetch,
+} from "../lib/prefetch";
+import {
+  LIBRARY_KEYS,
   useRecentlyPlayed,
   useTopTracks,
   useTopArtists,
@@ -79,6 +90,7 @@ const QuickActionCard = memo(function QuickActionCard({
   // the click was heard; playback's context is being fetched
   const [pending, setPending] = useState(false);
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const isCurrentTrackMatch = usePlayerStore((s) => Boolean(item.track && s.currentTrack?.id === item.track.id));
   const contextId = useQueueStore((s) => s.contextId);
@@ -124,7 +136,14 @@ const QuickActionCard = memo(function QuickActionCard({
     // 1. Liked Songs
     if (item.isLikedSongs || item.id === "liked-songs") {
       try {
-        const tracks = await getLikedSongs(-1, 0);
+        const cachedFull = qc.getQueryData<TrackItem[]>(LIBRARY_KEYS.liked(-1, 0));
+        const tracks = cachedFull && cachedFull.length > 0
+          ? cachedFull
+          : await qc.ensureQueryData({
+              queryKey: LIBRARY_KEYS.liked(-1, 0),
+              queryFn: () => getLikedSongs(-1, 0),
+              staleTime: 5 * 60_000,
+            });
         if (tracks && tracks.length > 0) {
           const start = playContext(tracks, 0, "liked-songs", LIKED_SONGS_URI);
           if (start) {
@@ -146,7 +165,11 @@ const QuickActionCard = memo(function QuickActionCard({
       let target = item.track;
       if (!target && trackId) {
         try {
-          const detail = await getTrack(trackId);
+          const detail = await qc.ensureQueryData({
+            queryKey: ["track", trackId],
+            queryFn: () => getTrack(trackId),
+            staleTime: 300_000,
+          });
           if (detail) {
             target = {
               id: detail.id,
@@ -176,7 +199,11 @@ const QuickActionCard = memo(function QuickActionCard({
     // 3. Playlist
     if (item.playlistId) {
       try {
-        const pl = await getPlaylist(item.playlistId);
+        const pl = await qc.ensureQueryData({
+          queryKey: ["playlist", item.playlistId],
+          queryFn: () => getPlaylist(item.playlistId!),
+          staleTime: 120_000,
+        });
         const tracks = pl?.tracks ?? [];
         if (tracks.length > 0) {
           const start = playContext(tracks, 0, item.playlistId, `spotify:playlist:${item.playlistId}`);
@@ -196,7 +223,11 @@ const QuickActionCard = memo(function QuickActionCard({
     // 4. Album
     if (item.albumId) {
       try {
-        const full = await getAlbum(item.albumId);
+        const full = await qc.ensureQueryData({
+          queryKey: ["album", item.albumId],
+          queryFn: () => getAlbum(item.albumId!),
+          staleTime: 300_000,
+        });
         const tracks = full?.tracks ?? [];
         if (tracks.length > 0) {
           const start = playContext(tracks, 0, item.albumId, `spotify:album:${item.albumId}`);
@@ -216,7 +247,11 @@ const QuickActionCard = memo(function QuickActionCard({
     // 5. Artist
     if (item.artistId) {
       try {
-        const artist = await getArtist(item.artistId);
+        const artist = await qc.ensureQueryData({
+          queryKey: ["artist", item.artistId],
+          queryFn: () => getArtist(item.artistId!),
+          staleTime: 300_000,
+        });
         const tracks = artist?.top_tracks ?? [];
         if (tracks.length > 0) {
           const start = playContext(tracks, 0, item.artistId, `spotify:artist:${item.artistId}`);
@@ -241,6 +276,15 @@ const QuickActionCard = memo(function QuickActionCard({
   tab straight to the play button, and focusing it lights the card up the same
   way hovering does. */
   const lit = hover || focused;
+  function warmTarget() {
+    if (item.playlistId) prefetchPlaylist(qc, item.playlistId);
+    else if (item.albumId) prefetchAlbum(qc, item.albumId);
+    else if (item.artistId) prefetchArtist(qc, item.artistId);
+    else if (item.isLikedSongs || item.id === "liked-songs") prefetchLibrary(qc, "songs");
+    else if (item.track) prefetchTrack(qc, item.track.id);
+    else prefetchForPath(qc, item.to);
+  }
+
   return (
     <motion.div
       layout="position"
@@ -254,10 +298,11 @@ const QuickActionCard = memo(function QuickActionCard({
         layout: REFLOW,
       }}
       onClick={() => handlePlay()}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onFocus={() => setFocused(true)}
+      onMouseEnter={() => { setHover(true); scheduleHoverPrefetch(warmTarget); }}
+      onMouseLeave={() => { setHover(false); cancelHoverPrefetch(); }}
+      onFocus={() => { setFocused(true); warmTarget(); }}
       onBlur={() => setFocused(false)}
+      onPointerDown={() => { cancelHoverPrefetch(); warmTarget(); }}
       aria-busy={pending || undefined}
       style={{
         display: "flex",

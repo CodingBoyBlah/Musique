@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { TrackItem } from "../../types/spotify";
 import { fmtMs } from "../../utils/fmt";
 import { EASE_OUT, gpuLayer } from "../../lib/motion";
-import { prefetchArtist, prefetchAlbum } from "../../lib/prefetch";
+import { cancelHoverPrefetch, prefetchArtist, prefetchArtistDetails, prefetchAlbum, scheduleHoverPrefetch } from "../../lib/prefetch";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
 import { shareSpotifyLink, shareUniversalLink } from "../../lib/share";
 import { useAddToPlaylistStore } from "../../store/addToPlaylist.store";
@@ -296,7 +296,10 @@ function TrackRowImpl({
                   to={`/artist/${a.id}`}
                   onClick={stop}
                   className="link-inline"
-                  onMouseEnter={() => prefetchArtist(qc, a.id)}
+                  onMouseEnter={() => scheduleHoverPrefetch(() => prefetchArtist(qc, a.id))}
+                  onMouseLeave={cancelHoverPrefetch}
+                  onFocus={() => prefetchArtist(qc, a.id)}
+                  onPointerDown={() => { cancelHoverPrefetch(); prefetchArtistDetails(qc, a.id); }}
                 >
                   {a.name}
                 </Link>
@@ -309,7 +312,10 @@ function TrackRowImpl({
                   to={`/album/${track.album.id}`}
                   onClick={stop}
                   className="link-inline"
-                  onMouseEnter={() => prefetchAlbum(qc, track.album!.id)}
+                  onMouseEnter={() => scheduleHoverPrefetch(() => prefetchAlbum(qc, track.album!.id))}
+                  onMouseLeave={cancelHoverPrefetch}
+                  onFocus={() => prefetchAlbum(qc, track.album!.id)}
+                  onPointerDown={() => { cancelHoverPrefetch(); prefetchAlbum(qc, track.album!.id); }}
                 >
                   {track.album.name}
                 </Link>
