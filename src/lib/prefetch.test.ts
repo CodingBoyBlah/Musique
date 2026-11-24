@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import {
   cancelHoverPrefetch,
+  isPendingRouteLoad,
+  lazyRoute,
   prefetchForPath,
   prefetchLibrary,
   prefetchPlaylist,
@@ -10,6 +12,7 @@ import {
   registerRoutePreloaders,
   routeKeyFromPath,
   scheduleHoverPrefetch,
+  subscribePendingRouteLoad,
 } from "./prefetch";
 import { LIBRARY_KEYS } from "../hooks/useLibrary";
 import * as spotifyApi from "../api/spotify";
@@ -146,5 +149,29 @@ describe("route & query prefetch", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("tracks active un-preloaded lazy route loads and clears once resolved", async () => {
+    let resolveLoad!: (m: { default: () => null }) => void;
+    const loader = vi.fn(
+      () => new Promise<{ default: () => null }>((r) => { resolveLoad = r; }),
+    );
+    const events: boolean[] = [];
+    const unsub = subscribePendingRouteLoad(() => events.push(isPendingRouteLoad()));
+
+    const Comp = lazyRoute("playground", loader);
+    registerRoutePreloaders({ playground: loader });
+    expect(isPendingRouteLoad()).toBe(false);
+
+    // Simulate triggering an un-preloaded route chunk
+    const pending = preloadRoute("playground");
+    expect(Comp).toBeTypeOf("function");
+
+    // Preload path sets resolved component without marking on-demand pending load
+    resolveLoad({ default: () => null });
+    await pending;
+    await Promise.resolve();
+    expect(isPendingRouteLoad()).toBe(false);
+    unsub();
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, lazy, Suspense } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { MotionConfig } from "framer-motion";
 import Layout from "./components/layout/Layout";
@@ -10,7 +10,7 @@ import { UpdatePrompt } from "./components/UpdatePrompt";
 and keeps the heavy stuff (kuromoji/romanize via lyrics, charts, etc) off the
 critical path. Home stays eager since it's the landing rou lazying it
 ntoe to self: dont just add a flash */
-import { registerRoutePreloaders } from "./lib/prefetch";
+import { registerRoutePreloaders, lazyRoute, subscribePendingRouteLoad, isPendingRouteLoad } from "./lib/prefetch";
 
 const loadSettings = () => import("./pages/Settings");
 const loadSearch = () => import("./pages/Search");
@@ -38,17 +38,17 @@ registerRoutePreloaders({
   stats: loadStatsPage,
 });
 
-const Settings = lazy(loadSettings);
-const Search = lazy(loadSearch);
-const Library = lazy(loadLibrary);
-const Playlists = lazy(loadPlaylists);
-const PlaylistPage = lazy(loadPlaylistPage);
-const ArtistPage = lazy(loadArtistPage);
-const AlbumPage = lazy(loadAlbumPage);
-const Playground = lazy(loadPlayground);
-const ProfilePage = lazy(loadProfilePage);
-const ShowPage = lazy(loadShowPage);
-const StatsPage = lazy(loadStatsPage);
+const Settings = lazyRoute("settings", loadSettings);
+const Search = lazyRoute("search", loadSearch);
+const Library = lazyRoute("library", loadLibrary);
+const Playlists = lazyRoute("playlists", loadPlaylists);
+const PlaylistPage = lazyRoute("playlist", loadPlaylistPage);
+const ArtistPage = lazyRoute("artist", loadArtistPage);
+const AlbumPage = lazyRoute("album", loadAlbumPage);
+const Playground = lazyRoute("playground", loadPlayground);
+const ProfilePage = lazyRoute("profile", loadProfilePage);
+const ShowPage = lazyRoute("show", loadShowPage);
+const StatsPage = lazyRoute("stats", loadStatsPage);
 import { getCredentials, validateCredentials } from "./api/credentials";
 import { useAuth } from "./hooks/useAuth";
 import { useOwnKeysNudge } from "./hooks/useOwnKeysNudge";
@@ -457,12 +457,48 @@ Home recs so they're cached before the user gets there
   return null;
 }
 
+// Shown only when an un-preloaded lazy chunk takes >120ms inside a route transition,
+// preventing v7_startTransition from leaving the previous page onscreen with no feedback.
+function RouteLoadFeedback() {
+  const pending = useSyncExternalStore(subscribePendingRouteLoad, isPendingRouteLoad, () => false);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (!pending) {
+      setVisible(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setVisible(true), 120);
+    return () => window.clearTimeout(timer);
+  }, [pending]);
+
+  if (!visible) return null;
+  return (
+    <div
+      role="progressbar"
+      aria-label="Loading page"
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        height: 2,
+        zIndex: 9999,
+        pointerEvents: "none",
+        background: "linear-gradient(90deg, transparent 0%, var(--color-accent) 50%, transparent 100%)",
+        opacity: 0.9,
+      }}
+    />
+  );
+}
+
 export default function App() {
   return (
     // reducedMotion="user": every framer transform animation in the app honours
     // the OS "reduce motion" setting, keeping only opacity/colour changes.
     <MotionConfig reducedMotion="user">
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true }}>
+      <RouteLoadFeedback />
       <AppInit />
       <ThemeEngine />
       <UpdatePrompt />

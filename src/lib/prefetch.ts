@@ -1,3 +1,4 @@
+import { createElement, lazy, type ComponentType } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import { getAlbum, getArtist, getCachedPlaylist, getPlaylist, getTrack, search } from "../api/spotify";
 import {
@@ -31,10 +32,69 @@ export type RouteKey =
   | "stats";
 
 type RouteLoader = () => Promise<unknown>;
+type ComponentModule = { default: ComponentType<any> };
 
 const routeLoaders: Partial<Record<RouteKey, RouteLoader>> = {};
 const routePromises = new Map<RouteKey, Promise<unknown>>();
+const resolvedRouteComponents = new Map<RouteKey, ComponentType<any>>();
+const activeNavigationLoads = new Set<RouteKey>();
+const pendingLoadListeners = new Set<() => void>();
 let idlePreloadStarted = false;
+
+function notifyPendingLoadListeners() {
+  queueMicrotask(() => {
+    pendingLoadListeners.forEach((fn) => fn());
+  });
+}
+
+export function subscribePendingRouteLoad(fn: () => void): () => void {
+  pendingLoadListeners.add(fn);
+  return () => {
+    pendingLoadListeners.delete(fn);
+  };
+}
+
+export function isPendingRouteLoad(): boolean {
+  return activeNavigationLoads.size > 0;
+}
+
+/* Lazy route component wrapper backed by the shared route promise/component cache.
+Once a chunk resolves (via idle preload or hover), subsequent navigations render the
+resolved component directly without React.lazy throwing an extra promise microtask,
+keeping React Router's startTransition instant; while an un-preloaded chunk is being
+fetched on demand, activeNavigationLoads drives the delayed progress indicator. */
+export function lazyRoute(key: RouteKey, loader: () => Promise<ComponentModule>) {
+  const trackedLoader = () => {
+    const cached = routePromises.get(key) as Promise<ComponentModule> | undefined;
+    if (cached) return cached;
+    if (!resolvedRouteComponents.has(key)) {
+      activeNavigationLoads.add(key);
+      notifyPendingLoadListeners();
+    }
+    const p = loader()
+      .then((mod) => {
+        resolvedRouteComponents.set(key, mod.default);
+        return mod;
+      })
+      .catch((err) => {
+        routePromises.delete(key);
+        throw err;
+      })
+      .finally(() => {
+        if (activeNavigationLoads.delete(key)) {
+          notifyPendingLoadListeners();
+        }
+      });
+    routePromises.set(key, p);
+    return p;
+  };
+  const LazyComp = lazy(trackedLoader);
+  return function RouteComponent(props: Record<string, unknown>) {
+    const Resolved = resolvedRouteComponents.get(key);
+    if (Resolved) return createElement(Resolved, props);
+    return createElement(LazyComp, props);
+  };
+}
 
 const IDLE_PRELOAD_ORDER: RouteKey[] = [
   "library",
@@ -91,10 +151,17 @@ export function preloadRoute(keyOrPath: RouteKey | string): Promise<unknown> | u
   if (cached) return cached;
   const loader = routeLoaders[key];
   if (!loader) return undefined;
-  const promise = loader().catch((err) => {
-    routePromises.delete(key);
-    throw err;
-  });
+  const promise = loader()
+    .then((mod) => {
+      if (mod && typeof mod === "object" && "default" in mod) {
+        resolvedRouteComponents.set(key, (mod as ComponentModule).default);
+      }
+      return mod;
+    })
+    .catch((err) => {
+      routePromises.delete(key);
+      throw err;
+    });
   routePromises.set(key, promise);
   return promise;
 }
