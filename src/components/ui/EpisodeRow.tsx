@@ -12,12 +12,28 @@ import { shareSpotifyLink } from "../../lib/share";
 import { toast } from "../../store/toast.store";
 import type { EpisodeItem } from "../../types/podcast";
 
+const releaseLabelCache = new Map<string, string>();
+let releaseLabelYear = new Date().getFullYear();
+
 export function releaseLabel(date: string | null): string | null {
   if (!date) return null;
+  const yearNow = new Date().getFullYear();
+  if (yearNow !== releaseLabelYear) {
+    releaseLabelCache.clear();
+    releaseLabelYear = yearNow;
+  }
+  const hit = releaseLabelCache.get(date);
+  if (hit !== undefined) return hit;
   const d = new Date(`${date}T12:00:00`);
   if (Number.isNaN(d.getTime())) return date;
-  const sameYear = d.getFullYear() === new Date().getFullYear();
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: sameYear ? undefined : "numeric" });
+  const sameYear = d.getFullYear() === yearNow;
+  const formatted = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: sameYear ? undefined : "numeric" });
+  if (releaseLabelCache.size >= 1000) {
+    const oldest = releaseLabelCache.keys().next().value;
+    if (oldest !== undefined) releaseLabelCache.delete(oldest);
+  }
+  releaseLabelCache.set(date, formatted);
+  return formatted;
 }
 
 /* one episode, drawn exactly like a TrackRow: number that turns into play on
@@ -47,7 +63,7 @@ export const EpisodeRow = memo(function EpisodeRow({
   const date = releaseLabel(episode.release_date);
   const baseBg = index != null && index % 2 === 0 ? "rgba(255,255,255,0.032)" : "transparent";
 
-  const menu: MenuEntry[] = [
+  const getMenu = (): MenuEntry[] => [
     { label: playing ? "Pause" : "Play", icon: <Play size={14} />, onSelect: onPlay },
     {
       label: "Add to queue",
@@ -75,7 +91,7 @@ export const EpisodeRow = memo(function EpisodeRow({
         }}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
-        onContextMenu={openMenu(menu)}
+        onContextMenu={openMenu(getMenu)}
         className="group track-row"
         style={{
           position: "relative",
@@ -113,7 +129,7 @@ export const EpisodeRow = memo(function EpisodeRow({
         </div>
 
         {episode.image_url ? (
-          <img src={coverUrl(episode.image_url, 38) ?? episode.image_url} alt="" loading="lazy" decoding="async" style={{ width: 38, height: 38, borderRadius: 6, objectFit: "cover", flexShrink: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.25)" }} />
+          <img src={coverUrl(episode.image_url, 38) ?? episode.image_url} width={38} height={38} alt="" loading="lazy" decoding="async" style={{ width: 38, height: 38, borderRadius: 6, objectFit: "cover", flexShrink: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.25)" }} />
         ) : (
           <div style={{ width: 38, height: 38, borderRadius: 6, background: "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <Mic size={16} style={{ color: "var(--color-text-dim)" }} />

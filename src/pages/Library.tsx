@@ -20,7 +20,7 @@ import {
 } from "../hooks/useLibrary";
 import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
 import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
-import { TrackRow } from "../components/ui/TrackRow";
+import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
 import { useSortTools } from "../components/ui/SortToolbar";
 import { usePlayerStore } from "../store/player.store";
 import { LIKED_SONGS_URI, useQueueStore } from "../store/queue.store";
@@ -51,6 +51,7 @@ function LikedSongsTab() {
   const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
   const { data: savedIds = [] } = useSavedTrackIds(trackIds);
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
+  const trackActions = useTrackRowActions(likedSet, toggleLike);
 
   if (isLoading) {
     return <div role="status" aria-label="Loading liked songs"><TrackRowsSkeleton count={10} /></div>;
@@ -75,6 +76,7 @@ function LikedSongsTab() {
       useSpeedDialStore.getState().recordLikedSongs();
     }
   };
+  trackActions.setHandlers(handlePlay);
 
   return (
     <motion.div layout="position" transition={{ layout: REFLOW }}>
@@ -97,9 +99,9 @@ function LikedSongsTab() {
             index={i}
             showAlbum
             liked={likedSet.has(t.id)}
-            onPlay={() => handlePlay(i)}
-            onQueue={(track) => enqueue(track)}
-            onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
+            onPlay={trackActions.onPlay}
+            onQueue={enqueue}
+            onToggleLike={trackActions.onToggleLike}
           />
         ))}
       </div>

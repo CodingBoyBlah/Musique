@@ -18,7 +18,7 @@ import { Shelf } from "../components/ui/Shelf";
 import { MediaTile } from "../components/ui/MediaTile";
 import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
 import { SectionTitle } from "../components/ui/SectionTitle";
-import { TrackRow } from "../components/ui/TrackRow";
+import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
 import { Tooltip } from "../components/ui/Tooltip";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { useTopArtists, useTopTracks, useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
@@ -95,9 +95,19 @@ export default function ProfilePage() {
   const { data: savedIds = [] } = useSavedTrackIds(shownTrackIds);
   const liked = useMemo(() => new Set(savedIds), [savedIds]);
   const toggleLike = useToggleLike();
+  const trackActions = useTrackRowActions(liked, toggleLike);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext = useQueueStore((s) => s.playContext);
   const enqueue = useQueueStore((s) => s.enqueue);
+
+  const playTopAt = (i: number) => {
+    const start = playContext(topTracks, i, "profile-top");
+    if (start) {
+      setCurrentTrack(start);
+      playTrack(start.id).catch(() => {});
+    }
+  };
+  trackActions.setHandlers(playTopAt);
 
   if (isLoading) return <Loader label="Loading profile" />;
   if (error || !data) {
@@ -218,15 +228,9 @@ export default function ProfilePage() {
                     index={i}
                     showAlbum
                     liked={liked.has(t.id)}
-                    onPlay={() => {
-                      const start = playContext(topTracks, i, "profile-top");
-                      if (start) {
-                        setCurrentTrack(start);
-                        playTrack(start.id).catch(() => {});
-                      }
-                    }}
-                    onQueue={(track) => enqueue(track)}
-                    onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: liked.has(track.id) })}
+                    onPlay={trackActions.onPlay}
+                    onQueue={enqueue}
+                    onToggleLike={trackActions.onToggleLike}
                   />
                 ))}
               </section>

@@ -78,6 +78,18 @@ export function CoverArt({
  * The caller's style lands on the outer box, exactly where it used to land on
  * the <img>, so every existing layout (100% fills, borders, radii, display)
  * keeps working; only the fit and position are forwarded to the image. */
+const MAX_DECODED_COVERS = 500;
+const decodedCoverUrls = new Set<string>();
+
+function rememberDecodedCover(url: string) {
+  if (decodedCoverUrls.has(url)) return;
+  if (decodedCoverUrls.size >= MAX_DECODED_COVERS) {
+    const oldest = decodedCoverUrls.values().next().value;
+    if (oldest !== undefined) decodedCoverUrls.delete(oldest);
+  }
+  decodedCoverUrls.add(url);
+}
+
 function FadeImg({
   src,
   alt,
@@ -95,12 +107,22 @@ function FadeImg({
 }) {
   const ref = useRef<HTMLImageElement>(null);
   // "cached": already decoded on first look - show it with no transition at all
-  const [state, setState] = useState<"waiting" | "loaded" | "cached">("waiting");
+  const [state, setState] = useState<"waiting" | "loaded" | "cached">(() =>
+    decodedCoverUrls.has(src) ? "cached" : "waiting",
+  );
 
   useLayoutEffect(() => {
+    if (decodedCoverUrls.has(src)) {
+      setState("cached");
+      return;
+    }
     const img = ref.current;
-    if (img && img.complete && img.naturalWidth > 0) setState("cached");
-    else setState("waiting");
+    if (img && img.complete && img.naturalWidth > 0) {
+      rememberDecodedCover(src);
+      setState("cached");
+    } else {
+      setState("waiting");
+    }
   }, [src]);
 
   const { objectFit, objectPosition, ...outer } = boxStyle;
@@ -123,7 +145,10 @@ function FadeImg({
         referrerPolicy="no-referrer"
         loading={loading}
         decoding={decoding}
-        onLoad={() => setState((s) => (s === "cached" ? s : "loaded"))}
+        onLoad={() => {
+          rememberDecodedCover(src);
+          setState((s) => (s === "cached" ? s : "loaded"));
+        }}
         style={{
           display: "block",
           width: "100%",

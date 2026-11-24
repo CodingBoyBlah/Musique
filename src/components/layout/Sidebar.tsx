@@ -590,7 +590,7 @@ export default function Sidebar() {
                   onClick={() => navigate(`/${p.type}/${p.id}`)}
                   // pinning means nothing while the sidebar lists every playlist,
                   // so those rows have no menu; a pin row can be unpinned
-                  onContextMenu={showAllPlaylists ? undefined : openMenu([
+                  onContextMenu={showAllPlaylists ? undefined : openMenu(() => [
                     { label: "Unpin", icon: <PinOff size={14} />, onSelect: () => removePin(p.id) },
                   ])}
                   title={isCollapsed ? undefined : p.name}

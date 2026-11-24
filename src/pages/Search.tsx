@@ -18,7 +18,7 @@ import { EpisodeRow } from "../components/ui/EpisodeRow";
 import { usePlayEpisodes } from "../hooks/usePlayEpisodes";
 import { EPISODE_PREFIX } from "../utils/episode";
 import type { EpisodeItem } from "../types/podcast";
-import { TrackRow } from "../components/ui/TrackRow";
+import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { AnimatedPlayPause } from "../components/playground/AnimatedIcons";
 import { getArtist, getAlbum } from "../api/spotify";
@@ -444,6 +444,7 @@ export default function Search() {
   const trackIds = useMemo(() => data?.tracks.map((t) => t.id) ?? [], [data?.tracks]);
   const { data: savedIds = [] } = useSavedTrackIds(trackIds);
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
+  const trackActions = useTrackRowActions(likedSet, toggleLike);
 
   const topResult = useMemo(() => {
     if (!data) return null;
@@ -543,6 +544,7 @@ export default function Search() {
       playTrack(start.id).catch(console.error);
     }
   }
+  trackActions.setHandlers(playFromSearch);
 
   const songRows = (tracks: TrackItem[]) =>
     tracks.map((t, i) => (
@@ -552,9 +554,9 @@ export default function Search() {
         index={i}
         showAlbum
         liked={likedSet.has(t.id)}
-        onPlay={() => playFromSearch(i)}
-        onQueue={(track) => enqueue(track)}
-        onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
+        onPlay={trackActions.onPlay}
+        onQueue={enqueue}
+        onToggleLike={trackActions.onToggleLike}
       />
     ));
 

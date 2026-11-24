@@ -7,7 +7,7 @@ import { useAlbum } from "../hooks/useAlbum";
 import { useArtist, useArtists } from "../hooks/useArtist";
 import { ArtistAvatarStack } from "../components/ui/ArtistAvatarStack";
 import { AlbumCard } from "../components/ui/AlbumCard";
-import { TrackRow } from "../components/ui/TrackRow";
+import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
 import { SaveAlbumButton } from "../components/ui/SaveAlbumButton";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -69,6 +69,7 @@ export default function AlbumPage() {
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
 
   const { view, keys, toolbar } = useTrackTools(tracks, "Album order");
+  const trackActions = useTrackRowActions(likedSet, toggleLike);
 
   if (isLoading) {
     return <Loader label="Loading album" />;
@@ -100,6 +101,7 @@ export default function AlbumPage() {
       }
     }
   }
+  trackActions.setHandlers(startAt);
 
   return (
     <div
@@ -159,9 +161,9 @@ export default function AlbumPage() {
                 index={i}
                 showCover={false}
                 liked={likedSet.has(t.id)}
-                onPlay={() => startAt(i)}
-                onQueue={(track) => enqueue(track)}
-                onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
+                onPlay={trackActions.onPlay}
+                onQueue={enqueue}
+                onToggleLike={trackActions.onToggleLike}
               />
             </motion.div>
           ))}

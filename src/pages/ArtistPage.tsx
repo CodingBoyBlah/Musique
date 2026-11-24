@@ -11,7 +11,7 @@ import { ArtistTour } from "../components/ui/ArtistTour";
 import { ArtistAbout } from "../components/ui/ArtistAbout";
 import { AlbumCard } from "../components/ui/AlbumCard";
 import { ArtistCard } from "../components/ui/ArtistCard";
-import { TrackRow } from "../components/ui/TrackRow";
+import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
 import { PageHeader } from "../components/ui/PageHeader";
 import { PlayActions } from "../components/ui/PlayActions";
 import { Loader } from "../components/ui/Loader";
@@ -72,6 +72,7 @@ export default function ArtistPage() {
   const topTrackIds = useMemo(() => topTracks.map((t) => t.id), [topTracks]);
   const { data: savedIds = [] } = useSavedTrackIds(topTrackIds);
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
+  const trackActions = useTrackRowActions(likedSet, toggleLike);
 
   if (isLoading) return <Loader label="Loading artist" />;
 
@@ -113,6 +114,7 @@ export default function ArtistPage() {
       useSpeedDialStore.getState().recordArtist({ id: data!.id, name: data!.name, image_url: data!.image_url });
     }
   }
+  trackActions.setHandlers(startTop);
 
   const followButton = (
     <Tooltip label={following ? "Unfollow artist" : "Follow artist"} side="top">
@@ -238,11 +240,9 @@ export default function ArtistPage() {
                     index={i}
                     showAlbum
                     liked={likedSet.has(t.id)}
-                    onPlay={() => startTop(i)}
-                    onQueue={(track) => enqueue(track)}
-                    onToggleLike={(track) =>
-                      toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })
-                    }
+                    onPlay={trackActions.onPlay}
+                    onQueue={enqueue}
+                    onToggleLike={trackActions.onToggleLike}
                   />
                 </motion.div>
               ))}

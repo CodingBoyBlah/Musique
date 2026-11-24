@@ -10,6 +10,14 @@ type Dir = "asc" | "desc";
 
 const firstArtist = (t: TrackItem) => t.artists[0]?.name ?? "";
 const albumName   = (t: TrackItem) => t.album?.name ?? "";
+const textCollator = new Intl.Collator();
+
+interface PreparedTrack {
+  track: TrackItem;
+  key: string;
+  nameLower: string;
+  artistsLower: string[];
+}
 
 export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
   view: TrackItem[];
@@ -23,43 +31,59 @@ export function useTrackTools(tracks: TrackItem[], defaultOrderLabel: string): {
   const [dir,   setDir]   = useState<Dir>("asc");
 
   /* identity that survives sorting/filtering: each original track object gets a
-  fixed key (id + its original position, so dupe tracks stay distinct) */
-  const keyOf = useMemo(() => {
-    const m = new Map<TrackItem, string>();
-    tracks.forEach((t, i) => m.set(t, `${t.id}#${i}`));
-    return m;
-  }, [tracks]);
+  fixed key (id + its original position, so dupe tracks stay distinct) and
+  precomputed lowercase fields so filter keystrokes allocate nothing */
+  const prepared = useMemo<PreparedTrack[]>(
+    () =>
+      tracks.map((t, i) => ({
+        track: t,
+        key: `${t.id}#${i}`,
+        nameLower: t.name.toLowerCase(),
+        artistsLower: t.artists.map((a) => a.name.toLowerCase()),
+      })),
+    [tracks],
+  );
 
-  const view = useMemo(() => {
-    let arr = tracks;
-
-    const q = query.trim().toLowerCase();
-    if (q) {
-      arr = arr.filter(
-        (t) =>
-          t.name.toLowerCase().includes(q) ||
-          t.artists.some((a) => a.name.toLowerCase().includes(q)),
-      );
-    }
-
+  const sorted = useMemo(() => {
+    let arr = prepared;
     if (order !== "default") {
-      const cmp: Record<Exclude<OrderKey, "default">, (a: TrackItem, b: TrackItem) => number> = {
-        name:     (a, b) => a.name.localeCompare(b.name),
-        artist:   (a, b) => firstArtist(a).localeCompare(firstArtist(b)),
-        album:    (a, b) => albumName(a).localeCompare(albumName(b)),
-        duration: (a, b) => a.duration_ms - b.duration_ms,
+      const cmp: Record<Exclude<OrderKey, "default">, (a: PreparedTrack, b: PreparedTrack) => number> = {
+        name:     (a, b) => textCollator.compare(a.track.name, b.track.name),
+        artist:   (a, b) => textCollator.compare(firstArtist(a.track), firstArtist(b.track)),
+        album:    (a, b) => textCollator.compare(albumName(a.track), albumName(b.track)),
+        duration: (a, b) => a.track.duration_ms - b.track.duration_ms,
       };
       arr = [...arr].sort(cmp[order]);
+      if (dir === "desc") arr.reverse();
     } else if (dir === "desc") {
       // default order has no comparator, so descending just reverses it
       arr = [...arr].reverse();
     }
-
-    if (order !== "default" && dir === "desc") arr = [...arr].reverse();
     return arr;
-  }, [tracks, query, order, dir]);
+  }, [prepared, order, dir]);
 
-  const keys = useMemo(() => view.map((t) => keyOf.get(t) ?? t.id), [view, keyOf]);
+  const sortedIdentity = useMemo(
+    () => ({
+      view: sorted.map((p) => p.track),
+      keys: sorted.map((p) => p.key),
+    }),
+    [sorted],
+  );
+
+  const { view, keys } = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return sortedIdentity;
+    const filteredView: TrackItem[] = [];
+    const filteredKeys: string[] = [];
+    for (let i = 0; i < sorted.length; i++) {
+      const p = sorted[i];
+      if (p.nameLower.includes(q) || p.artistsLower.some((a) => a.includes(q))) {
+        filteredView.push(p.track);
+        filteredKeys.push(p.key);
+      }
+    }
+    return { view: filteredView, keys: filteredKeys };
+  }, [sorted, sortedIdentity, query]);
 
   const orderOptions = useMemo<DropdownOption<OrderKey>[]>(() => [
     { value: "default",  label: defaultOrderLabel },

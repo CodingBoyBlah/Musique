@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { Pin, Pencil, Trash2, Heart, Radio } from "@/lib/icons";
 import { playStation } from "../utils/radio";
 import { usePlaylist } from "../hooks/usePlaylist";
-import { TrackRow } from "../components/ui/TrackRow";
+import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ExpandableDescription } from "../components/ui/ExpandableDescription";
@@ -106,6 +106,7 @@ export default function PlaylistPage() {
 
   const { view, keys, toolbar } = useTrackTools(tracks, "Playlist order");
   const shown = useStagedList(view);
+  const trackActions = useTrackRowActions(likedSet, toggleLike);
 
   if (isLoading) {
     return <Loader label="Loading playlist" />;
@@ -176,6 +177,7 @@ export default function PlaylistPage() {
       }
     }
   }
+  trackActions.setHandlers(startAt, canEdit ? removeFromPlaylist : undefined);
 
   return (
     <div
@@ -284,10 +286,10 @@ export default function PlaylistPage() {
               index={i}
               showAlbum
               liked={likedSet.has(t.id)}
-              onPlay={() => startAt(i)}
-              onQueue={(track) => enqueue(track)}
-              onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
-              onRemoveFromPlaylist={canEdit ? removeFromPlaylist : undefined}
+              onPlay={trackActions.onPlay}
+              onQueue={enqueue}
+              onToggleLike={trackActions.onToggleLike}
+              onRemoveFromPlaylist={canEdit ? trackActions.onRemove : undefined}
             />
           ))}
           {view.length === 0 && (
