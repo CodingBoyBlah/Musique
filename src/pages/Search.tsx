@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { cancelHoverPrefetch, prefetchAlbum, prefetchArtist, prefetchArtistDetails, scheduleHoverPrefetch } from "../lib/prefetch";
 import { useSearch } from "../hooks/useSearch";
-import { useAuth } from "../hooks/useAuth";
+import { useAuthStore } from "../store/auth.store";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SignInPrompt } from "../components/ui/SignInPrompt";
 import { SectionTitle, ShowAllButton } from "../components/ui/SectionTitle";
@@ -427,12 +427,11 @@ function PlaylistGrid({ children }: { children: React.ReactNode }) {
 export default function Search() {
   useReflowPulse();
   const qc            = useQueryClient();
-  const { loggedIn } = useAuth();
+  const loggedIn      = useAuthStore((s) => s.loggedIn);
   const [params]        = useSearchParams();
   const query           = (params.get("q") ?? "").trim();
   const [cat, setCat]   = useState<Category>("all");
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
-  const isPlaying       = usePlayerStore((s) => s.isPlaying);
   const enqueue         = useQueueStore((s) => s.enqueue);
   const playContext     = useQueueStore((s) => s.playContext);
   const setPageTint     = useUIStore((s) => s.setPageTint);
@@ -480,7 +479,7 @@ export default function Search() {
     }
 
     if (topResult.type === "track") {
-      const curTrack = usePlayerStore.getState().currentTrack;
+      const { currentTrack: curTrack, isPlaying } = usePlayerStore.getState();
       if (curTrack?.id === topResult.item.id && !isPlaying) {
         transportPlay();
         return;

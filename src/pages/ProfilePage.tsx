@@ -88,8 +88,8 @@ export default function ProfilePage() {
   });
 
   // your own page gets your listening too
-  const { data: topArtists = [] } = useTopArtists("short_term");
-  const { data: topTracks = [] } = useTopTracks("short_term");
+  const { data: topArtists = [] } = useTopArtists("short_term", isMe);
+  const { data: topTracks = [] } = useTopTracks("short_term", isMe);
   const shownTop = useMemo(() => (isMe ? topTracks.slice(0, 5) : []), [isMe, topTracks]);
   const shownTrackIds = useMemo(() => shownTop.map((t) => t.id), [shownTop]);
   const { data: savedIds = [] } = useSavedTrackIds(shownTrackIds);
@@ -115,7 +115,7 @@ export default function ProfilePage() {
     qc.setQueryData(key, !following);
     try {
       await setUserFollowed(profileId!, !following);
-      qc.invalidateQueries({ queryKey: ["profile", "view"] });
+      qc.invalidateQueries({ queryKey: ["profile", "view", profileId ?? "me"] });
     } catch (e) {
       qc.setQueryData(key, following);
       toast.error(`Couldn't update follow: ${errMsg(e)}`);

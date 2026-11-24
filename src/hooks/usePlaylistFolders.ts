@@ -4,12 +4,12 @@ import { useAuthStore } from "../store/auth.store";
 
 // the library's folder tree. under ["library"] so a sync refreshes it; a
 // failure just means the flat list is used instead
-export function usePlaylistFolders() {
+export function usePlaylistFolders(enabled = true) {
   const loggedIn = useAuthStore((s) => s.loggedIn);
   return useQuery({
     queryKey: ["library", "rootlist"],
     queryFn: getPlaylistFolders,
-    enabled: loggedIn,
+    enabled: loggedIn && enabled,
     staleTime: 5 * 60_000,
     retry: false,
   });

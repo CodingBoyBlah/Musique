@@ -8,24 +8,54 @@ import { addTrackToPlaylist, createPlaylist } from "../../api/library";
 import { toast } from "../../store/toast.store";
 import { Modal } from "./Modal";
 
+import type { TrackItem } from "../../types/spotify";
+
 /* global "add to playlist" picker. opened from any tracks context menu via
  useAddToPlaylistStore. lists the users playlists -- clicking one writes the
 track through to spotify. can also spin up a new playlist on demand. */
 export function AddToPlaylistModal() {
-  const track   = useAddToPlaylistStore((s) => s.track);
-  const close   = useAddToPlaylistStore((s) => s.close);
+  const track = useAddToPlaylistStore((s) => s.track);
+  const close = useAddToPlaylistStore((s) => s.close);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <Modal
+      open={!!track}
+      onClose={close}
+      labelledBy="add-to-playlist-title"
+      initialFocus={inputRef}
+      panelStyle={{
+        width: "min(400px, calc(100vw - 32px))", maxHeight: "70vh", display: "flex", flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
+      {track && <AddToPlaylistContent track={track} close={close} inputRef={inputRef} />}
+    </Modal>
+  );
+}
+
+function AddToPlaylistContent({
+  track,
+  close,
+  inputRef,
+}: {
+  track: TrackItem;
+  close: () => void;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+}) {
   const { data: playlists = [], isLoading } = useMyPlaylists();
   const qc = useQueryClient();
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const [filter, setFilter] = useState("");
   const [busy, setBusy]     = useState(false);
 
-  const open = !!track;
-  const shown = playlists.filter((p) => p.name.toLowerCase().includes(filter.trim().toLowerCase()));
+  const qLower = filter.trim().toLowerCase();
+  const shown = qLower
+    ? playlists.filter((p) => p.name.toLowerCase().includes(qLower))
+    : playlists;
 
   async function add(playlistId: string, playlistName: string) {
-    if (!track || busy) return;
+    if (busy) return;
     setBusy(true);
     try {
       await addTrackToPlaylist(playlistId, track.id);
@@ -41,7 +71,7 @@ export function AddToPlaylistModal() {
   }
 
   async function createAndAdd() {
-    if (!track || busy) return;
+    if (busy) return;
     const name = filter.trim() || `${track.name} mix`;
     setBusy(true);
     try {
@@ -58,19 +88,10 @@ export function AddToPlaylistModal() {
   }
 
   return (
-    <Modal
-      open={open}
-      onClose={close}
-      labelledBy="add-to-playlist-title"
-      initialFocus={inputRef}
-      panelStyle={{
-        width: "min(400px, calc(100vw - 32px))", maxHeight: "70vh", display: "flex", flexDirection: "column",
-        overflow: "hidden",
-      }}
-    >
+    <>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 18px 12px" }}>
         <h2 id="add-to-playlist-title" style={{ flex: 1, margin: 0, fontSize: 15, fontWeight: 700, color: "var(--color-text-hi)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          Add “{track?.name}” to…
+          Add “{track.name}” to…
         </h2>
         <button onClick={close} aria-label="Close" title="Close" className="btn-icon" style={{ width: 28, height: 28, borderRadius: 6, color: "var(--color-text)" }}>
           <X size={16} />
@@ -134,7 +155,7 @@ export function AddToPlaylistModal() {
           ))
         )}
       </div>
-    </Modal>
+    </>
   );
 }
 

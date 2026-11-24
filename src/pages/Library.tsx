@@ -5,7 +5,7 @@ import { Heart, Users, Disc3, Mic } from "@/lib/icons";
 import { useQuery } from "@tanstack/react-query";
 import { getSavedShows } from "../api/podcasts";
 import { MediaTile } from "../components/ui/MediaTile";
-import { useAuth } from "../hooks/useAuth";
+import { useAuthStore } from "../store/auth.store";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SignInPrompt } from "../components/ui/SignInPrompt";
 import { TrackRowsSkeleton, CardGridSkeleton } from "../components/ui/Skeletons";
@@ -230,7 +230,7 @@ function PodcastsTab() {
 
 export default function Library() {
   useReflowPulse();
-  const { loggedIn } = useAuth();
+  const loggedIn = useAuthStore((s) => s.loggedIn);
   const [params] = useSearchParams();
   const rawTab = params.get("tab");
   const tab: TabKey = (TAB_KEYS as readonly string[]).includes(rawTab ?? "") ? (rawTab as TabKey) : "songs";

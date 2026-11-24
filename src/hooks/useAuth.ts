@@ -1,19 +1,50 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useShallow } from "zustand/react/shallow";
 import { getAuthStatus, getProfile } from "../api/auth";
 import { currentAuthRequest, loginSession, logoutSession } from "../lib/authSession";
 import { errMsg } from "../lib/err";
 import { toast } from "../store/toast.store";
 import { useAuthStore } from "../store/auth.store";
+import type { AuthStatus } from "../types/ipc";
+
+function statusMatchesStore(
+  status: AuthStatus,
+  state: Pick<ReturnType<typeof useAuthStore.getState>, "loggedIn" | "userId" | "displayName" | "email" | "product" | "imageUrl">,
+) {
+  return (
+    status.logged_in === state.loggedIn &&
+    status.user_id === state.userId &&
+    status.display_name === state.displayName &&
+    status.email === state.email &&
+    status.product === state.product &&
+    status.image_url === state.imageUrl
+  );
+}
 
 export function useAuth() {
-  const store = useAuthStore();
+  const store = useAuthStore(
+    useShallow((s) => ({
+      loggedIn: s.loggedIn,
+      userId: s.userId,
+      displayName: s.displayName,
+      email: s.email,
+      product: s.product,
+      imageUrl: s.imageUrl,
+      phase: s.phase,
+      generation: s.generation,
+      loginLinks: s.loginLinks,
+    })),
+  );
   const qc = useQueryClient();
   const { isLoading } = useQuery({
     queryKey: ["auth-status"],
     queryFn: async () => {
       const generation = useAuthStore.getState().generation;
       const status = await getAuthStatus();
-      if (currentAuthRequest(generation)) useAuthStore.getState().setFromStatus(status);
+      const state = useAuthStore.getState();
+      if (currentAuthRequest(generation) && !statusMatchesStore(status, state)) {
+        state.setFromStatus(status);
+      }
       return status;
     },
     enabled: store.phase === "idle",
@@ -28,14 +59,20 @@ export function useAuth() {
     queryFn: async () => {
       const generation = useAuthStore.getState().generation;
       const profile = await getProfile();
-      if (currentAuthRequest(generation) && useAuthStore.getState().loggedIn) {
-        const status = {
+      const state = useAuthStore.getState();
+      if (currentAuthRequest(generation) && state.loggedIn) {
+        const status: AuthStatus = {
           logged_in: true, user_id: profile.id, display_name: profile.display_name,
           email: profile.email, product: profile.product, image_url: profile.image_url,
         };
-        useAuthStore.getState().setFromStatus(status);
-        qc.setQueryData(["auth-status"], status);
-        void qc.invalidateQueries({ queryKey: ["playback-backend"] });
+        const productChanged = profile.product !== state.product;
+        if (!statusMatchesStore(status, state)) {
+          state.setFromStatus(status);
+          qc.setQueryData(["auth-status"], status);
+        }
+        if (productChanged) {
+          void qc.invalidateQueries({ queryKey: ["playback-backend"] });
+        }
       }
       return profile;
     },

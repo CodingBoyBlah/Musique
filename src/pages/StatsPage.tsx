@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { useEvenColumns } from "../hooks/useEvenColumns";
 import { Link, Navigate } from "react-router-dom";
 import { usePrefsStore } from "../store/prefs.store";
@@ -45,10 +45,47 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
 
 /* when you listen: weekday rows x hour columns, one accent hue light -> dark.
 each cell names its own value on hover (and to screen readers). */
+const HeatCell = memo(function HeatCell({
+  day,
+  hour,
+  plays,
+  level,
+  active,
+  onEnter,
+  onLeave,
+}: {
+  day: number;
+  hour: number;
+  plays: number;
+  level: number;
+  active: boolean;
+  onEnter: (day: number, hour: number) => void;
+  onLeave: () => void;
+}) {
+  return (
+    <div
+      role="gridcell"
+      aria-label={`${DAYS[day]} ${hourLabel(hour)}: ${plays} ${plays === 1 ? "play" : "plays"}`}
+      title={`${DAYS[day]} ${hourLabel(hour)} · ${plays} ${plays === 1 ? "play" : "plays"}`}
+      onMouseEnter={() => onEnter(day, hour)}
+      onMouseLeave={onLeave}
+      style={{
+        aspectRatio: "1 / 1",
+        borderRadius: 4,
+        background: level > 0 ? `color-mix(in srgb, var(--color-accent) ${Math.round(level * 100)}%, transparent)` : "rgba(255,255,255,0.05)",
+        outline: active ? "2px solid var(--color-text-hi)" : "none",
+        outlineOffset: 1,
+      }}
+    />
+  );
+});
+
 function Heatmap({ grid }: { grid: number[][] }) {
   const max = useMemo(() => heatMax(grid), [grid]);
   const [hover, setHover] = useState<{ day: number; hour: number } | null>(null);
   const peak = useMemo(() => peakSlot(grid), [grid]);
+  const handleEnter = useCallback((day: number, hour: number) => setHover({ day, hour }), []);
+  const handleLeave = useCallback(() => setHover(null), []);
   return (
     <section aria-labelledby="stats-when">
       <SectionTitle id="stats-when">When you listen</SectionTitle>
@@ -63,27 +100,18 @@ function Heatmap({ grid }: { grid: number[][] }) {
           {ROW_ORDER.map((day) => (
             <div key={day} role="row" style={{ display: "contents" }}>
               <span className="t-caption" style={{ fontSize: 11, color: "var(--color-text-dim)", alignSelf: "center" }}>{DAYS[day]}</span>
-              {grid[day].map((plays, hour) => {
-                const level = heatLevel(plays, max);
-                const on = hover?.day === day && hover?.hour === hour;
-                return (
-                  <div
-                    key={hour}
-                    role="gridcell"
-                    aria-label={`${DAYS[day]} ${hourLabel(hour)}: ${plays} ${plays === 1 ? "play" : "plays"}`}
-                    title={`${DAYS[day]} ${hourLabel(hour)} · ${plays} ${plays === 1 ? "play" : "plays"}`}
-                    onMouseEnter={() => setHover({ day, hour })}
-                    onMouseLeave={() => setHover(null)}
-                    style={{
-                      aspectRatio: "1 / 1",
-                      borderRadius: 4,
-                      background: level > 0 ? `color-mix(in srgb, var(--color-accent) ${Math.round(level * 100)}%, transparent)` : "rgba(255,255,255,0.05)",
-                      outline: on ? "2px solid var(--color-text-hi)" : "none",
-                      outlineOffset: 1,
-                    }}
-                  />
-                );
-              })}
+              {grid[day].map((plays, hour) => (
+                <HeatCell
+                  key={hour}
+                  day={day}
+                  hour={hour}
+                  plays={plays}
+                  level={heatLevel(plays, max)}
+                  active={hover?.day === day && hover?.hour === hour}
+                  onEnter={handleEnter}
+                  onLeave={handleLeave}
+                />
+              ))}
             </div>
           ))}
         </div>

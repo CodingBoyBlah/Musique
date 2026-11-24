@@ -82,20 +82,22 @@ export function useFollowedArtists() {
   });
 }
 
-export function useTopTracks(range: TimeRange = "medium_term") {
+export function useTopTracks(range: TimeRange = "medium_term", enabled = true) {
   return useQuery({
     queryKey: LIBRARY_KEYS.topTracks(range),
     queryFn:  () => getTopTracks(range),
+    enabled,
     // switching range keeps the last range on screen (dimmed) until the new
     // one lands, instead of blanking to a skeleton
     placeholderData: keepPreviousData,
   });
 }
 
-export function useTopArtists(range: TimeRange = "medium_term") {
+export function useTopArtists(range: TimeRange = "medium_term", enabled = true) {
   return useQuery({
     queryKey: LIBRARY_KEYS.topArtists(range),
     queryFn:  () => getTopArtists(range),
+    enabled,
     // switching range keeps the last range on screen (dimmed) until the new
     // one lands, instead of blanking to a skeleton
     placeholderData: keepPreviousData,

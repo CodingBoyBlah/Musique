@@ -12,7 +12,6 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useAuthStore } from "../../store/auth.store";
 import { useCredentialsStore, type ConnectionStatus } from "../../store/credentials.store";
-import { useDevices } from "../../hooks/useDevices";
 import { Tooltip } from "../ui/Tooltip";
 import { isMac } from "../../lib/platform";
 import { usePlayerStore } from "../../store/player.store";
@@ -446,7 +445,10 @@ export function TitleBar() {
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const macSimulated = useUIStore((s) => s.macSimulated);
-  const { activeDevice, isRemotePlayback, devicesOpen, toggleDevices } = useDevices();
+  const activeDevice = usePlayerStore((s) => s.activeDevice);
+  const isRemotePlayback = usePlayerStore((s) => s.isRemotePlayback);
+  const devicesOpen = usePlayerStore((s) => s.devicesOpen);
+  const toggleDevices = usePlayerStore((s) => s.toggleDevices);
   const { back: canGoBack, forward: canGoForward } = useHistoryEdges();
 
   const macChrome = isMac || macSimulated;

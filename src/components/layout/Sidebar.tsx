@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
+import { memo, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence, animate, useMotionValue, useTransform, useReducedMotion, type MotionValue } from "framer-motion";
@@ -46,7 +46,7 @@ const RAIL_COVER = 32;
 
 // nav item. active state passed in explicitly so we don't get multi highlight
 
-function NavItem({
+const NavItem = memo(function NavItem({
   icon: Icon, label, active, onClick, onPrefetch, collapsed,
 }: {
   icon: LucideIcon; label: string; active: boolean; onClick: () => void; onPrefetch?: () => void; collapsed?: boolean;
@@ -124,7 +124,7 @@ function NavItem({
     return <Tooltip label={label} side="right">{btn}</Tooltip>;
   }
   return btn;
-}
+});
 
 /* The collapsed rail's selection highlight: one element for the whole rail
 rather than a pill inside each item handed over by layoutId, which slid as a
@@ -320,7 +320,11 @@ export default function Sidebar() {
   const showAllPlaylists = sidebarMode === "playlists";
   /* with the rootlist, "all playlists" follows spotify's own order and folder
    nesting (folders collapse; the collapsed rail just keeps the order) */
-  const { data: rootTree } = usePlaylistFolders();
+  const pinsNeedMeta = useMemo(
+    () => pins.some((p) => p.type === "playlist" && (!p.image_url || !p.name)),
+    [pins],
+  );
+  const { data: rootTree } = usePlaylistFolders(showAllPlaylists || pinsNeedMeta);
   const [closedFolders, setClosedFolders] = useState<Set<string>>(() => {
     try {
       return new Set(JSON.parse(localStorage.getItem("sidebar-closed-folders") ?? "[]") as string[]);

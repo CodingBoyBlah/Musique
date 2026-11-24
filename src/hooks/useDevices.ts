@@ -22,10 +22,134 @@ let lastPushRefresh = 0;
 
 let inflightDevices: Promise<void> | null = null;
 let inflightPlayback: Promise<void> | null = null;
+let inflightMusiqueId: Promise<void> | null = null;
 
 const clusterListeners = new Set<() => void>();
 let clusterUnlisten: (() => void) | null = null;
 let clusterPending = false;
+
+let coordinatorRefs = 0;
+let coordinatorLastLoggedIn: boolean | null = null;
+let coordinatorDevicesTimer: ReturnType<typeof setInterval> | null = null;
+let coordinatorDevicesIntervalMs = 0;
+let coordinatorPlaybackTimer: ReturnType<typeof setInterval> | null = null;
+let coordinatorPlaybackIntervalMs = 0;
+let coordinatorStoreUnsub: (() => void) | null = null;
+
+function ensureMusiqueDeviceId() {
+  const store = usePlayerStore.getState();
+  if (store.musiqueDeviceId || inflightMusiqueId) return;
+  inflightMusiqueId = getMusiqueDeviceId()
+    .then((id) => {
+      if (id) usePlayerStore.getState().setMusiqueDeviceId(id);
+    })
+    .catch(() => {})
+    .finally(() => {
+      inflightMusiqueId = null;
+    });
+}
+
+function fetchDevicesShared(): Promise<void> {
+  if (!useAuthStore.getState().loggedIn) return Promise.resolve();
+  if (inflightDevices) return inflightDevices;
+  const generation = useAuthStore.getState().generation;
+  inflightDevices = (async () => {
+    try {
+      const payload = await getDevices();
+      if (!useAuthStore.getState().loggedIn || useAuthStore.getState().generation !== generation) return;
+      if (payload) {
+        const st = usePlayerStore.getState();
+        if (payload.musique_device_id && !st.musiqueDeviceId) {
+          st.setMusiqueDeviceId(payload.musique_device_id);
+        }
+        st.setDevices(payload.devices ?? []);
+        const currentActive = payload.devices?.find((d) => d.is_active) ?? null;
+        if (currentActive) st.setActiveDevice(currentActive);
+      }
+    } catch {
+      // Quietly ignore network/auth errors in background poll
+    } finally {
+      inflightDevices = null;
+    }
+  })();
+  return inflightDevices;
+}
+
+function fetchPlaybackShared(): Promise<void> {
+  if (!useAuthStore.getState().loggedIn) return Promise.resolve();
+  if (inflightPlayback) return inflightPlayback;
+  const generation = useAuthStore.getState().generation;
+  inflightPlayback = (async () => {
+    try {
+      const state = await getPlaybackState();
+      if (!useAuthStore.getState().loggedIn || useAuthStore.getState().generation !== generation) return;
+      usePlayerStore.getState().syncRemotePlayback(state);
+    } catch {
+      // Quietly ignore
+    } finally {
+      inflightPlayback = null;
+    }
+  })();
+  return inflightPlayback;
+}
+
+function syncPollingTimers() {
+  if (coordinatorRefs === 0) {
+    if (coordinatorDevicesTimer) {
+      clearInterval(coordinatorDevicesTimer);
+      coordinatorDevicesTimer = null;
+      coordinatorDevicesIntervalMs = 0;
+    }
+    if (coordinatorPlaybackTimer) {
+      clearInterval(coordinatorPlaybackTimer);
+      coordinatorPlaybackTimer = null;
+      coordinatorPlaybackIntervalMs = 0;
+    }
+    return;
+  }
+
+  const loggedIn = useAuthStore.getState().loggedIn;
+  if (coordinatorLastLoggedIn !== loggedIn) {
+    coordinatorLastLoggedIn = loggedIn;
+    fetchDevicesShared();
+    fetchPlaybackShared();
+  }
+
+  const { devicesOpen, isRemotePlayback, isPlaying } = usePlayerStore.getState();
+  const desiredDevicesMs = loggedIn && devicesOpen ? 3000 : 0;
+  if (desiredDevicesMs !== coordinatorDevicesIntervalMs) {
+    if (coordinatorDevicesTimer) {
+      clearInterval(coordinatorDevicesTimer);
+      coordinatorDevicesTimer = null;
+    }
+    coordinatorDevicesIntervalMs = desiredDevicesMs;
+    if (desiredDevicesMs > 0) {
+      fetchDevicesShared();
+      coordinatorDevicesTimer = setInterval(fetchDevicesShared, desiredDevicesMs);
+    }
+  }
+
+  const isPlayingLocal = isPlaying && !isRemotePlayback;
+  const desiredPlaybackMs = !loggedIn || (isPlayingLocal && !devicesOpen)
+    ? 0
+    : pushSeen
+    ? (devicesOpen ? 8000 : isRemotePlayback ? 5000 : 30000)
+    : (devicesOpen ? 2500 : isRemotePlayback ? 3000 : 10000);
+
+  if (desiredPlaybackMs !== coordinatorPlaybackIntervalMs) {
+    if (coordinatorPlaybackTimer) {
+      clearInterval(coordinatorPlaybackTimer);
+      coordinatorPlaybackTimer = null;
+    }
+    coordinatorPlaybackIntervalMs = desiredPlaybackMs;
+    if (desiredPlaybackMs > 0) {
+      coordinatorPlaybackTimer = setInterval(() => {
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+        fetchPlaybackShared();
+      }, desiredPlaybackMs);
+    }
+  }
+}
 
 function setupClusterListener() {
   if (clusterPending || clusterUnlisten) return;
@@ -36,6 +160,7 @@ function setupClusterListener() {
     if (now - lastPushRefresh < 500) return;
     lastPushRefresh = now;
     clusterListeners.forEach((l) => l());
+    syncPollingTimers();
   })
     .then((unlisten) => {
       clusterPending = false;
@@ -53,129 +178,61 @@ function setupClusterListener() {
 export function useDevices() {
   const loggedIn = useAuthStore((s) => s.loggedIn);
   const devices = usePlayerStore((s) => s.devices);
-  const setDevices = usePlayerStore((s) => s.setDevices);
   const activeDevice = usePlayerStore((s) => s.activeDevice);
-  const setActiveDevice = usePlayerStore((s) => s.setActiveDevice);
   const musiqueDeviceId = usePlayerStore((s) => s.musiqueDeviceId);
-  const setMusiqueDeviceId = usePlayerStore((s) => s.setMusiqueDeviceId);
   const isRemotePlayback = usePlayerStore((s) => s.isRemotePlayback);
   const devicesOpen = usePlayerStore((s) => s.devicesOpen);
   const toggleDevices = usePlayerStore((s) => s.toggleDevices);
   const setDevicesOpen = usePlayerStore((s) => s.setDevicesOpen);
-  const syncRemotePlayback = usePlayerStore((s) => s.syncRemotePlayback);
 
   const [transferringId, setTransferringId] = useState<string | null>(null);
 
-  // Initialize Musique device ID once
-  useEffect(() => {
-    if (!musiqueDeviceId) {
-      getMusiqueDeviceId()
-        .then((id) => {
-          if (id) setMusiqueDeviceId(id);
-        })
-        .catch(() => {});
-    }
-  }, [musiqueDeviceId, setMusiqueDeviceId]);
+  const refreshDevices = useCallback(() => fetchDevicesShared(), []);
+  const refreshPlayback = useCallback(() => fetchPlaybackShared(), []);
 
-  const refreshDevices = useCallback(async () => {
-    if (!useAuthStore.getState().loggedIn) return;
-    const generation = useAuthStore.getState().generation;
-    if (inflightDevices) return inflightDevices;
-    inflightDevices = (async () => {
-      try {
-        const payload = await getDevices();
-        if (!useAuthStore.getState().loggedIn || useAuthStore.getState().generation !== generation) return;
-        if (payload) {
-          if (payload.musique_device_id && !usePlayerStore.getState().musiqueDeviceId) {
-            setMusiqueDeviceId(payload.musique_device_id);
-          }
-          setDevices(payload.devices ?? []);
-          const currentActive = payload.devices?.find((d) => d.is_active) ?? null;
-          if (currentActive) {
-            setActiveDevice(currentActive);
-          }
+  useEffect(() => {
+    coordinatorRefs++;
+    ensureMusiqueDeviceId();
+    if (!coordinatorStoreUnsub) {
+      coordinatorStoreUnsub = usePlayerStore.subscribe((next, prev) => {
+        if (
+          next.devicesOpen !== prev.devicesOpen ||
+          next.isRemotePlayback !== prev.isRemotePlayback ||
+          next.isPlaying !== prev.isPlaying
+        ) {
+          syncPollingTimers();
         }
-      } catch {
-        // Quietly ignore network/auth errors in background poll
-      } finally {
-        inflightDevices = null;
-      }
-    })();
-    return inflightDevices;
-  }, [setDevices, setActiveDevice, setMusiqueDeviceId]);
-
-  const refreshPlayback = useCallback(async () => {
-    if (!useAuthStore.getState().loggedIn) return;
-    const generation = useAuthStore.getState().generation;
-    if (inflightPlayback) return inflightPlayback;
-    inflightPlayback = (async () => {
-      try {
-        const state = await getPlaybackState();
-        if (!useAuthStore.getState().loggedIn || useAuthStore.getState().generation !== generation) return;
-        syncRemotePlayback(state);
-      } catch {
-        // Quietly ignore
-      } finally {
-        inflightPlayback = null;
-      }
-    })();
-    return inflightPlayback;
-  }, [syncRemotePlayback]);
-
-  // Initial load on mount
-  useEffect(() => {
-    refreshDevices();
-    refreshPlayback();
-  }, [loggedIn, refreshDevices, refreshPlayback]);
-
-  // live device/playback changes pushed over the dealer
-  const [pushLive, setPushLive] = useState(pushSeen);
-  useEffect(() => {
+      });
+    }
     const onCluster = () => {
-      setPushLive(true);
-      refreshDevices();
-      refreshPlayback();
+      fetchDevicesShared();
+      fetchPlaybackShared();
     };
     clusterListeners.add(onCluster);
     setupClusterListener();
+    syncPollingTimers();
 
     return () => {
+      coordinatorRefs--;
       clusterListeners.delete(onCluster);
       if (clusterListeners.size === 0 && clusterUnlisten) {
         clusterUnlisten();
         clusterUnlisten = null;
       }
+      if (coordinatorRefs === 0) {
+        coordinatorLastLoggedIn = null;
+        if (coordinatorStoreUnsub) {
+          coordinatorStoreUnsub();
+          coordinatorStoreUnsub = null;
+        }
+      }
+      syncPollingTimers();
     };
-  }, [refreshDevices, refreshPlayback]);
+  }, []);
 
-  // Devices panel polling: faster when panel is open
   useEffect(() => {
-    if (!devicesOpen) return;
-    refreshDevices();
-    const timer = setInterval(refreshDevices, 3000);
-    return () => clearInterval(timer);
-  }, [devicesOpen, refreshDevices]);
-
-  // Playback sync polling:
-  // - 2500ms when devices panel is open
-  // - 3000ms when remote playback is active
-  // - 10000ms idle heartbeat when not playing locally, to detect remote playback started elsewhere
-  useEffect(() => {
-    const store = usePlayerStore.getState();
-    const isPlayingLocal = store.isPlaying && !isRemotePlayback;
-    if (isPlayingLocal && !devicesOpen) return;
-
-    // with pushes flowing, polls only keep the remote scrubber honest and
-    // catch anything a push missed
-    const intervalMs = pushLive
-      ? devicesOpen ? 8000 : isRemotePlayback ? 5000 : 30000
-      : devicesOpen ? 2500 : isRemotePlayback ? 3000 : 10000;
-    const timer = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      refreshPlayback();
-    }, intervalMs);
-    return () => clearInterval(timer);
-  }, [isRemotePlayback, devicesOpen, refreshPlayback, pushLive]);
+    syncPollingTimers();
+  }, [loggedIn]);
 
   const transfer = useCallback(
     async (deviceId: string) => {

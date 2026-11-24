@@ -11,7 +11,7 @@ import { MediaTile } from "../components/ui/MediaTile";
 import { SectionTitle } from "../components/ui/SectionTitle";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cancelHoverPrefetch, prefetchPlaylist, prefetchPlaylistsIndex, scheduleHoverPrefetch } from "../lib/prefetch";
-import { useAuth } from "../hooks/useAuth";
+import { useAuthStore } from "../store/auth.store";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SignInPrompt } from "../components/ui/SignInPrompt";
 import { SyncButton } from "../components/ui/SyncButton";
@@ -235,7 +235,7 @@ export default function Playlists() {
   useReflowPulse();
   const qc = useQueryClient();
   const layoutGroupId = useId();
-  const { loggedIn } = useAuth();
+  const loggedIn = useAuthStore((s) => s.loggedIn);
   const { data: synced = [], isLoading } = useMyPlaylists();
   const { data: tree } = usePlaylistFolders();
   /* spotify-made playlists (daily mixes, discover weekly, daylist, radars)

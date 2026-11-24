@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect, useEffect, useMemo, memo } from "react";
+import { useState, useRef, useLayoutEffect, useEffect, useMemo, useCallback, memo } from "react";
 import { coverUrl } from "../lib/coverUrl";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -91,18 +91,16 @@ const QuickActionCard = memo(function QuickActionCard({
   const [pending, setPending] = useState(false);
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
   const isCurrentTrackMatch = usePlayerStore((s) => Boolean(item.track && s.currentTrack?.id === item.track.id));
-  const contextId = useQueueStore((s) => s.contextId);
-
-  const isContextMatch = Boolean(
-    (item.isLikedSongs && (contextId === "liked-songs" || contextId === "liked")) ||
-    (item.playlistId && contextId === item.playlistId) ||
-    (item.albumId && contextId === item.albumId) ||
-    (item.artistId && (contextId === item.artistId || contextId === `artist-top-${item.artistId}`))
+  const isContextMatch = useQueueStore((s) => Boolean(
+    (item.isLikedSongs && (s.contextId === "liked-songs" || s.contextId === "liked")) ||
+    (item.playlistId && s.contextId === item.playlistId) ||
+    (item.albumId && s.contextId === item.albumId) ||
+    (item.artistId && (s.contextId === item.artistId || s.contextId === `artist-top-${item.artistId}`))
+  ));
+  const isThisPlaying = usePlayerStore((s) =>
+    s.isPlaying ? (isContextMatch || Boolean(item.track && s.currentTrack?.id === item.track.id)) : false,
   );
-
-  const isThisPlaying = Boolean(isPlaying && (isContextMatch || isCurrentTrackMatch));
 
   async function handlePlay(e?: React.MouseEvent) {
     if (e) {
@@ -116,7 +114,7 @@ const QuickActionCard = memo(function QuickActionCard({
       return;
     }
 
-    if (isCurrentTrackMatch && !isPlaying) {
+    if (isCurrentTrackMatch && !usePlayerStore.getState().isPlaying) {
       transportPlay();
       return;
     }
@@ -568,11 +566,17 @@ function TileSkeleton() {
 
 // --- recommendation / track tile ---
 
-function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
+const RecTile = memo(function RecTile({
+  track,
+  index,
+  onPlayIndex,
+}: {
+  track: TrackItem;
+  index: number;
+  onPlayIndex: (index: number) => void;
+}) {
   const [hover, setHover] = useState(false);
-  const currentTrack = usePlayerStore((s) => s.currentTrack);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const isThisTrackPlaying = Boolean(currentTrack?.id === track.id && isPlaying);
+  const isThisTrackPlaying = usePlayerStore((s) => Boolean(s.isPlaying && s.currentTrack?.id === track.id));
   const art = track.album?.image_url;
 
   return (
@@ -580,7 +584,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
       layout="position"
       transformTemplate={zTransform}
       transition={{ layout: REFLOW }}
-      onClick={onPlay}
+      onClick={() => onPlayIndex(index)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       className="fx-press-97"
@@ -634,7 +638,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
             if (isThisTrackPlaying) {
               transportPause();
             } else {
-              onPlay();
+              onPlayIndex(index);
             }
           }}
           size={40}
@@ -684,17 +688,17 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
       </span>
     </motion.button>
   );
-}
+});
 
 // row of play-on-click track tiles that all share one playback context
 function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string }) {
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext     = useQueueStore((s) => s.playContext);
 
-  function play(i: number) {
+  const play = useCallback((i: number) => {
     const start = playContext(tracks, i, context);
     if (start) { setCurrentTrack(start); playTrack(start.id).catch(() => {}); }
-  }
+  }, [tracks, context, playContext, setCurrentTrack]);
 
   return (
     <EvenGrid
@@ -705,7 +709,7 @@ function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string 
       maxRows={2}
       getKey={(t) => t.id}
       renderItem={(t, i) => (
-        <RecTile track={t} onPlay={() => play(i)} />
+        <RecTile track={t} index={i} onPlayIndex={play} />
       )}
     />
   );
@@ -726,10 +730,10 @@ function MadeForYou() {
   });
   const carousel = useCarousel([recs.length]);
 
-  function play(i: number) {
+  const play = useCallback((i: number) => {
     const start = playContext(recs, i, "made-for-you");
     if (start) { setCurrentTrack(start); playTrack(start.id).catch(() => {}); }
-  }
+  }, [recs, playContext, setCurrentTrack]);
 
   return (
     <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-labelledby="home-top-picks">
@@ -748,7 +752,7 @@ function MadeForYou() {
           getKey={tileKey}
           itemWidth={TILE_COVER}
           itemHeight={TILE_H}
-          renderItem={(t, i) => <RecTile track={t} onPlay={() => play(i)} />}
+          renderItem={(t, i) => <RecTile track={t} index={i} onPlayIndex={play} />}
         />
       )}
     </motion.section>
@@ -759,13 +763,13 @@ function RecentlyPlayed() {
   const { data = [], isLoading } = useRecentlyPlayed();
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext = useQueueStore((s) => s.playContext);
-  const shown = data.slice(0, 18);
+  const shown = useMemo(() => data.slice(0, 18), [data]);
   const carousel = useCarousel([shown.length]);
 
-  function play(i: number) {
+  const play = useCallback((i: number) => {
     const start = playContext(data, i, "recently-played");
     if (start) { setCurrentTrack(start); playTrack(start.id).catch(() => {}); }
-  }
+  }, [data, playContext, setCurrentTrack]);
 
   if (!isLoading && data.length === 0) return null;
   return (
@@ -783,7 +787,7 @@ function RecentlyPlayed() {
           getKey={tileKey}
           itemWidth={TILE_COVER}
           itemHeight={TILE_H}
-          renderItem={(t, i) => <RecTile track={t} onPlay={() => play(i)} />}
+          renderItem={(t, i) => <RecTile track={t} index={i} onPlayIndex={play} />}
         />
       )}
     </motion.section>
