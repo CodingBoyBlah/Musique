@@ -18,6 +18,9 @@ pub mod wire;
 
 pub mod playback;
 
+#[cfg(test)]
+mod live_tests;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The `settings` row naming which service the signed-in account belongs to: `"apple"` for
