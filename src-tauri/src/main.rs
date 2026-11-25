@@ -15,6 +15,9 @@ fn main() {
     if std::env::args().any(|a| a == "--widevine-probe") {
         std::process::exit(spotify_lib::widevine_probe());
     }
+    if std::env::args().any(|a| a == "--apple-api-probe") {
+        std::process::exit(spotify_lib::apple_api_probe());
+    }
     if std::env::args().any(|a| a == "--apple-playback-probe") {
         std::process::exit(spotify_lib::apple_playback_probe());
     }
