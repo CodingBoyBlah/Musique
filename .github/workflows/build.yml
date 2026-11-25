@@ -97,6 +97,22 @@ jobs:
           tagName: ${{ steps.notes.outputs.tag }}
           releaseName: "Musique ${{ steps.notes.outputs.tag }}"
           releaseBody: ${{ steps.notes.outputs.body }}
+          # a draft while the platforms upload; the publish job below makes it
+          # public once all of them have, so no one sees a half-filled release
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
+
+  publish:
+    # only when every platform built and uploaded; a failed build leaves the draft
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          tag="${RELEASE_TAG:-v$(node -p "require('./package.json').version")}"
+          gh release edit "$tag" --draft=false --latest
