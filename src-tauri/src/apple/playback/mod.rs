@@ -23,8 +23,9 @@ use self::source::AppleSource;
 use self::stream::MediaStream;
 
 /// Maximum prepared tracks held in memory (active + preloaded next).
-// the track before, the one playing and the one after: going back is as instant as going on
-const PREPARED_CAPACITY: usize = 3;
+// the track before, the one playing and the two after: going back, or skipping twice, is as
+// instant as going on
+const PREPARED_CAPACITY: usize = 4;
 
 /// Apple Widevine licenses expire after ~13–15 minutes. Refresh before resuming or seeking
 /// if playback has been paused longer than 5 minutes, or if the license is older than 10 minutes.

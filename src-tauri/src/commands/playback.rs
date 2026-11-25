@@ -1328,6 +1328,7 @@ async fn yt_preload(app: &AppHandle, id: &str) {
 }
 
 async fn apple_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppError> {
+    let asked = std::time::Instant::now();
     let ticket = crate::apple::playback::claim();
     ensure_yt(app).await?;
     let pool = app.state::<AppState>().db.clone();
@@ -1355,11 +1356,18 @@ async fn apple_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), A
         },
     );
     let prepared = prepared?;
+    let loaded = asked.elapsed();
     if !crate::apple::playback::is_current(ticket) {
         eprintln!("[apple] dropping superseded load of {id}");
         return Ok(());
     }
     let (source, started_at) = crate::apple::playback::open_at(&prepared, position_ms).await?;
+    eprintln!(
+        "[apple] {id} ready in {}ms (load {}ms, decoder {}ms)",
+        asked.elapsed().as_millis(),
+        loaded.as_millis(),
+        (asked.elapsed() - loaded).as_millis()
+    );
 
     let yt = app.state::<AppState>().yt.clone();
     let guard = yt.lock().await;
@@ -1465,6 +1473,7 @@ async fn apple_resume_or_play(app: &AppHandle, id: &str, position_ms: u32) -> Re
 }
 
 async fn apple_seek(app: &AppHandle, position_ms: u32) -> Result<(), AppError> {
+    eprintln!("[apple] seek to {position_ms}ms");
     let (ended, track) = {
         let yt = app.state::<AppState>().yt.clone();
         let guard = yt.lock().await;

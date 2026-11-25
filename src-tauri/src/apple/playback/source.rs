@@ -225,9 +225,11 @@ impl Source for AppleSource {
             return Ok(());
         }
 
+        let started = std::time::Instant::now();
         let (new_decoder, _) = open_cenc_trimmed(&self.media, self.duration, pos, true)
             .map_err(|e| SeekError::Other(Box::new(std::io::Error::other(e.to_string()))))?;
         self.decoder = new_decoder;
+        eprintln!("[apple] decoder reopened at {}ms in {}ms", pos.as_millis(), started.elapsed().as_millis());
         Ok(())
     }
 }
