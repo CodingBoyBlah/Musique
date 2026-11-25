@@ -668,6 +668,8 @@ mod soloist;
 mod spotify;
 mod stretch;
 mod youtube;
+mod apple;
+mod widevine;
 mod state;
 mod mem_trim;
 
