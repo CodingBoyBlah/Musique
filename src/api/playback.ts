@@ -38,8 +38,9 @@ const failPlayback = (e: unknown): never => {
   store.setPlaying(false);
   store.setTargetState("paused");
   const message = errMsg(e);
-  // an Apple Music track that needs the Widevine module: offer to install it
-  if (/widevine/i.test(message)) useWidevineStore.getState().show();
+  // an Apple Music track that needs the Widevine module: offer to install it.
+  // other Widevine failures (a refused license) are ordinary errors
+  if (/widevine/i.test(message) && /not installed/i.test(message)) useWidevineStore.getState().show();
   else toast.error(message);
   throw e;
 };
