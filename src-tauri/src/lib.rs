@@ -85,7 +85,12 @@ pub fn apple_playback_probe() -> i32 {
             return 1;
         }
     };
-    match runtime.block_on(apple::playback::probe(&track_id)) {
+    // `low` asks for the 64 kbps HE-AAC encode instead of 256 kbps AAC
+    let quality = match args.next().as_deref() {
+        Some("low") => apple::playback::AppleQuality::Low64,
+        _ => apple::playback::AppleQuality::High256,
+    };
+    match runtime.block_on(apple::playback::probe_at(&track_id, quality)) {
         Ok(report) => {
             println!("{report}");
             0

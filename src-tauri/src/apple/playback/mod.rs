@@ -17,7 +17,8 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::errors::AppError;
 
-use self::resolve::{AppleQuality, ResolvedTrack};
+pub use self::resolve::AppleQuality;
+use self::resolve::ResolvedTrack;
 use self::source::AppleSource;
 use self::stream::MediaStream;
 
@@ -396,6 +397,11 @@ pub fn report_play_async(track_id: &str) {
 ///
 /// Reads `MUSIQUE_APPLE_MEDIA_USER_TOKEN` (or stored keyring credentials via `apple::auth`).
 pub async fn probe(track_id: &str) -> Result<String, AppError> {
+    probe_at(track_id, AppleQuality::High256).await
+}
+
+/// [`probe`] at a chosen quality, so the 64 kbps HE-AAC path can be timed too.
+pub async fn probe_at(track_id: &str, quality: AppleQuality) -> Result<String, AppError> {
     use rodio::Source as _;
 
     let total_start = Instant::now();
@@ -406,7 +412,7 @@ pub async fn probe(track_id: &str) -> Result<String, AppError> {
 
     let t_resolve = Instant::now();
     let resolved =
-        resolve::resolve(http, track_id, &bearer, user_token, AppleQuality::High256).await?;
+        resolve::resolve(http, track_id, &bearer, user_token, quality).await?;
     let resolve_ms = t_resolve.elapsed().as_millis();
 
     if resolved.key.is_some() && !crate::widevine::available() {
