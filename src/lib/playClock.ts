@@ -20,12 +20,27 @@ let anchorRate = 1;
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
-/** Re-anchor on a real position report (or a seek / play-state change). */
-export function anchorPlayhead(posMs: number, playing: boolean, rate = 1): void {
+/* A seek, a track start or a resume anchors the clock where playback was asked
+   to be, the moment it was asked. The audio of it only reaches the speaker once
+   the player has reopened the stream and queued some of it (tens of ms for a
+   seek, more for a track start), and its position stays put until then. So the
+   first reports after an anchor are the truth about that gap, not jitter: they
+   are taken as they are. Slewing them in by halves left a seek's gap (~30-60ms
+   on Apple Music) in the lyrics for seconds after every click. */
+const TRUSTED_AFTER_ANCHOR = 2;
+let trusted = 0;
+
+function setAnchor(posMs: number, playing: boolean, rate: number): void {
   anchorPos = posMs;
   anchorAt = now();
   anchorPlaying = playing;
   anchorRate = rate > 0 ? rate : 1;
+}
+
+/** Re-anchor on a seek / play-state change / track change. */
+export function anchorPlayhead(posMs: number, playing: boolean, rate = 1): void {
+  setAnchor(posMs, playing, rate);
+  trusted = TRUSTED_AFTER_ANCHOR;
 }
 
 /* Reports land about once a second with a few ms of IPC and quantisation
@@ -37,14 +52,20 @@ const SLEW_LIMIT_MS = 120;
 
 /** Take in a position report from the player. */
 export function reportPlayhead(posMs: number, playing: boolean, rate = 1): void {
+  if (playing && anchorPlaying && trusted > 0) {
+    trusted -= 1;
+    setAnchor(posMs, playing, rate);
+    return;
+  }
   if (playing && anchorPlaying) {
     const predicted = playheadMs();
     const drift = posMs - predicted;
     if (Math.abs(drift) < SLEW_LIMIT_MS) {
-      anchorPlayhead(predicted + drift * 0.5, playing, rate);
+      setAnchor(predicted + drift * 0.5, playing, rate);
       return;
     }
   }
+  // a stall or a jump nobody asked for: a discontinuity like any other
   anchorPlayhead(posMs, playing, rate);
 }
 
