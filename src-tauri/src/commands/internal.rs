@@ -77,6 +77,10 @@ async fn fetch_canvas(app: &AppHandle, uri: &str) -> Result<Option<Canvas>, AppE
 /// isn't asked about again for a day.
 #[tauri::command]
 pub async fn get_canvas(app: AppHandle, track_id: String) -> Result<Option<Canvas>, AppError> {
+    // Spotify-only: an Apple Music account has none
+    if crate::apple::is_active() {
+        return Ok(None);
+    }
     use tauri::Manager;
     let id = crate::internal::spclient::uri_id(&track_id).to_string();
     if id.is_empty() || track_id.starts_with("spotify:episode:") {
@@ -328,6 +332,10 @@ async fn fetch_rootlist(app: &AppHandle) -> Result<Vec<RootItem>, AppError> {
 /// and order included. the web api only has a flat list.
 #[tauri::command]
 pub async fn get_playlist_folders(app: AppHandle) -> Result<Vec<RootItem>, AppError> {
+    // Apple Music playlists have no Spotify rootlist: the flat list is used
+    if crate::apple::is_active() {
+        return Err(AppError::NotFound("no playlist folders for Apple Music".into()));
+    }
     use tauri::Manager;
     let pool = app.state::<crate::state::AppState>().db.clone();
     // "rootlist2": older cached trees predate picture_size covers, so they'd

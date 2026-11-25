@@ -184,6 +184,10 @@ pub async fn get_episode(app: AppHandle, id: String) -> Result<EpisodeItem, AppE
 /// every show you follow, newest follow first
 #[tauri::command]
 pub async fn get_saved_shows(app: AppHandle) -> Result<Vec<ShowItem>, AppError> {
+    // Spotify-only: an Apple Music account has none
+    if crate::apple::is_active() {
+        return Ok(Vec::new());
+    }
     let token = tok(&app).await?;
     let pool = app.state::<AppState>().db.clone();
     cache::cached_json(&pool, "spotify:me", "saved-shows", 10 * 60_000, || async {
