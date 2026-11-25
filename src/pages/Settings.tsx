@@ -502,6 +502,13 @@ const QUALITY_OPTIONS: { value: AudioQuality; label: string }[] = [
   { value: "320", label: "Very high · 320 kbps" },
 ];
 
+/* Apple Music serves two encodes; the stored setting keeps Spotify's values,
+   and "96" is the one that asks for the smaller encode. */
+const APPLE_QUALITY_OPTIONS: { value: AudioQuality; label: string }[] = [
+  { value: "96", label: "Normal · 64 kbps" },
+  { value: "320", label: "High · 256 kbps" },
+];
+
 /* Soloist streams what its own preferences ask for. Measured against the real
    player: anything below "very high" is 160 kbps, so there is no 96 here, and
    lossless falls back to 320 kbps on a plan without it. */
@@ -1127,13 +1134,13 @@ function PlaybackCard() {
           label="Audio quality"
           hint={
             isAppleAccount
-              ? "Apple Music streams AAC at 256 kbps on High and above, and 64 kbps below. Applied on next track."
+              ? "Apple Music streams AAC. Normal uses less data but sounds duller. Applied on next track."
               : "Higher bitrates use more data. Applied on next track."
           }
           control={
             <Segmented
-              value={audioQuality}
-              options={QUALITY_OPTIONS}
+              value={isAppleAccount ? (audioQuality === "96" ? "96" : "320") : audioQuality}
+              options={isAppleAccount ? APPLE_QUALITY_OPTIONS : QUALITY_OPTIONS}
               onChange={setAudioQuality}
               layoutId="settings-audio-quality"
             />
