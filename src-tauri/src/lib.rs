@@ -1006,6 +1006,11 @@ pub fn run() {
                 // seed spotify creds from .env on first run, does nothing if theyre already set
                 commands::credentials::seed_credentials_from_env(&pool).await;
                 commands::playback::load_sound_settings(&pool).await;
+                // which service is signed in, and where Apple Music keeps its web token
+                if let Ok(dir) = handle.path().app_local_data_dir() {
+                    apple::auth::init(dir.join("apple"));
+                }
+                apple::load(&pool).await;
                 let auth_state = auth::init_auth_state_with(
                     &pool,
                     tokens.await.unwrap_or(None),
@@ -1179,6 +1184,9 @@ pub fn run() {
             commands::auth::logout,
             commands::auth::get_auth_status,
             commands::auth::get_profile,
+            commands::apple::apple_sign_in,
+            commands::apple::apple_sign_in_with_token,
+            commands::apple::apple_cancel_sign_in,
             commands::spotify::search,
             commands::spotify::get_artist,
             commands::spotify::get_album,
