@@ -1,0 +1,13 @@
+/* Blend playlist header (mobile-style) */
+.blend-header { --blend-face-ring: rgba(18, 18, 18, 0.92); display: flex; flex-direction: column; gap: 14px; }
+.blend-header-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.blend-faces { display: inline-flex; align-items: center; flex-shrink: 0; }
+.blend-madefor {
+  margin: 0; font-size: 14px; font-weight: 700; letter-spacing: -0.01em; color: var(--color-text-hi, #fff);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.blend-meta { margin: 2px 0 0; font-size: 12.5px; color: var(--color-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.blend-match { color: var(--color-text-hi, #fff); font-weight: 600; }
+/* right side of a Blend track row, like desktop Spotify: who it was picked for */
+.blend-track-faces { --blend-face-ring: #1a1a1a; display: inline-flex; align-items: center; flex-shrink: 0; margin-right: 10px; }
+.blend-track-faces > * + * { margin-left: -7px; }

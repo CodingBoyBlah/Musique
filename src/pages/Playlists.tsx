@@ -25,6 +25,8 @@ import { useReflowPulse } from "../hooks/useReflowPulse";
 import { getGridItemTransition, FX_DEFAULT } from "../lib/motion";
 import { TILE_GRID, TILE_PAD } from "../lib/layout";
 import { TilePresence } from "../components/ui/TilePresence";
+import { BlendAvatars, BlendCover, namesFromBlendTitle } from "../components/ui/BlendCover";
+import { getBlendInfo, looksLikeBlend } from "../api/blend";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
 const MotionLink = motion.create(Link);
@@ -150,6 +152,52 @@ const PlaylistCard = memo(function PlaylistCard({
         }}
       >
         {playlist.total_tracks} {playlist.total_tracks === 1 ? "song" : "songs"}
+      </p>
+    </MotionLink>
+  );
+});
+
+/* a Blend in the mobile style: gradient + faces cover, "Blend · Alex + Sam".
+members come from get_blend_info when it answers, else from the list name */
+const BlendCard = memo(function BlendCard({
+  playlist, onCardMenu, index = 0,
+}: {
+  playlist: PlaylistSummary;
+  onCardMenu: (playlist: PlaylistSummary, e: React.MouseEvent) => void;
+  index?: number;
+}) {
+  const qc = useQueryClient();
+  const { data: info } = useQuery({
+    queryKey: ["blend", playlist.id],
+    queryFn: () => getBlendInfo(playlist.id).catch(() => null),
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+  const members = info?.members?.length ? info.members : null;
+  const me = useAuthStore((s) => s.userId);
+  const displayName = useAuthStore((s) => s.displayName);
+  // the other people in it ("Blend · with tharun"), like the mobile library
+  const others = members
+    ? members.filter((m) => m.username !== me).map((m) => m.name || m.username)
+    : namesFromBlendTitle(playlist.name).filter((n) => n !== displayName);
+  const who = others.length > 2 ? `${others[0]} + ${others.length - 1} more` : others.join(" & ");
+  return (
+    <MotionLink
+      to={`/playlist/${playlist.id}`}
+      className="card-link fx-lift blend-card"
+      layout="position"
+      transition={getGridItemTransition(index)}
+      onContextMenu={(e) => onCardMenu(playlist, e)}
+      onMouseEnter={() => scheduleHoverPrefetch(() => prefetchPlaylist(qc, playlist.id), 40)}
+      onMouseLeave={cancelHoverPrefetch}
+      onFocus={() => prefetchPlaylist(qc, playlist.id)}
+      onPointerDown={() => { cancelHoverPrefetch(); prefetchPlaylist(qc, playlist.id); }}
+    >
+      <BlendCover id={playlist.id} name={playlist.name} imageUrl={playlist.image_url} members={members} size={175} />
+      <p className="blend-card__title">{playlist.name}</p>
+      <p className="t-caption blend-card__sub">
+        {members && <BlendAvatars members={members} size={16} className="blend-card__faces" />}
+        <span>{who ? `Blend · with ${who}` : "Blend"}</span>
       </p>
     </MotionLink>
   );
@@ -294,6 +342,10 @@ export default function Playlists() {
     [level, byId, synced],
   );
   const shownPlaylists = useStagedList(playlists, 36);
+  const blends = useMemo(
+    () => (openFolder ? [] : playlists.filter((p) => looksLikeBlend(p.name, p.description, null))),
+    [openFolder, playlists],
+  );
   const { mutate: sync, isPending } = useSyncLibrary();
   const isPinned  = usePinsStore((s) => s.isPinned);
   const togglePin = usePinsStore((s) => s.togglePin);
@@ -384,7 +436,17 @@ export default function Playlists() {
         />
       )}
 
-      {!openFolder && madeForYou.length > 0 && (playlists.length > 0 || folders.length > 0) && (
+      {blends.length > 0 && (
+        <Shelf
+          id="playlists-blends"
+          title="Blends"
+          items={blends}
+          getKey={(p) => p.id}
+          renderItem={(p, i) => <BlendCard playlist={p} index={i} onCardMenu={handleCardMenu} />}
+        />
+      )}
+
+      {!openFolder && (madeForYou.length > 0 || blends.length > 0) && (playlists.length > 0 || folders.length > 0) && (
         <SectionTitle id="playlists-yours">Your playlists</SectionTitle>
       )}
 

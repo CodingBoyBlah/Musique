@@ -39,6 +39,9 @@ interface Props {
   onToggleLike?: (track: TrackItem) => void;
   // when set, the context menu shows "Remove from this playlist"
   onRemoveFromPlaylist?: (track: TrackItem) => void;
+  // right-side slot before the actions (Blend: faces of who it was picked for).
+  // pass a stable element (memoised per track) so the row memo holds
+  trailing?: React.ReactNode;
 }
 
 const stop = (e: React.MouseEvent) => e.stopPropagation();
@@ -79,7 +82,7 @@ function ActionBtn({
 
 function TrackRowImpl({
   track, index, showAlbum = false, showCover = true, striped = true, liked, onPlay, onQueue, onToggleLike,
-  onRemoveFromPlaylist,
+  onRemoveFromPlaylist, trailing,
 }: Props) {
   const [hover, setHover] = useState(false);
   const cover = showCover ? track.album?.image_url : null;
@@ -327,6 +330,8 @@ function TrackRowImpl({
             )}
           </p>
         </div>
+
+        {trailing}
 
         {onToggleLike && (
           <Tooltip label={liked ? "Remove from Liked Songs" : "Save to Liked Songs"} side="top">

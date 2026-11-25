@@ -1194,6 +1194,7 @@ pub fn run() {
             commands::internal::get_canvas,
             commands::internal::get_track_credits,
             commands::internal::get_playlist_folders,
+            commands::internal::get_blend_info,
             commands::internal::get_track_radio,
             commands::internal::get_station,
             commands::internal::get_autoplay_tracks,
