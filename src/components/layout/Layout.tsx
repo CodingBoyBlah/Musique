@@ -1,5 +1,5 @@
 import { Activity, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence, useReducedMotion, MotionGlobalConfig } from "framer-motion";
 import { TitleBar as TitleBarView, WindowCaptionControls as CaptionControlsView } from "./TitleBar";
 import SidebarView from "./Sidebar";
@@ -518,6 +518,20 @@ export default function Layout() {
   }, [setBackdropActive]);
 
   const toggleMacSimulated = useUIStore((s) => s.toggleMacSimulated);
+
+  /* Cmd+, (Ctrl+, off the Mac) opens Settings, the standard preferences key */
+  const navigate = useNavigate();
+  useEffect(() => {
+    function onPrefsKey(e: KeyboardEvent) {
+      const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+      if (mod && !e.altKey && !e.shiftKey && e.key === ",") {
+        e.preventDefault();
+        navigate("/settings");
+      }
+    }
+    window.addEventListener("keydown", onPrefsKey);
+    return () => window.removeEventListener("keydown", onPrefsKey);
+  }, [navigate]);
 
   // Ctrl+K lives with the search field in the top bar (TopSearch).
   // Ctrl+Shift+M (fake mac chrome) is a dev-only layout aid
