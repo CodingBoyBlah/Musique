@@ -1,7 +1,7 @@
 name: Release
 
 # Cut a release + auto-updater feed by pushing a version tag, e.g.:
-#   git tag v1.4.1 && git push origin v1.4.1
+#   git tag v1.4.2 && git push origin v1.4.2
 # Keep app versions in sync and commit changelogs/<tag>.md before tagging.
 on:
   push:
