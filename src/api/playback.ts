@@ -6,6 +6,7 @@ import { errMsg } from "../lib/err";
 import { jamRole } from "../store/jam.store";
 import { jamPlay, jamSetPlaying } from "../lib/jam";
 import { remotePlayTrack } from "./connect";
+import { useWidevineStore } from "../store/widevine.store";
 
 export interface VolumeState { level: number; muted: boolean; }
 
@@ -36,7 +37,11 @@ const failPlayback = (e: unknown): never => {
   const store = usePlayerStore.getState();
   store.setPlaying(false);
   store.setTargetState("paused");
-  toast.error(errMsg(e));
+  const message = errMsg(e);
+  // an Apple Music track that needs the Widevine module: offer to install it.
+  // other Widevine failures (a refused license) are ordinary errors
+  if (/widevine/i.test(message) && /not installed/i.test(message)) useWidevineStore.getState().show();
+  else toast.error(message);
   throw e;
 };
 
@@ -169,7 +174,8 @@ export const setAudioQuality = (quality: AudioQuality): Promise<void> =>
 // `active` is both the backend in use and the selected value - there's no
 // separate stored preference to disagree with it.
 
-export type PlaybackBackend = "spotify" | "soloist" | "youtube";
+// "apple" is reported (never chosen) while an Apple Music account is signed in
+export type PlaybackBackend = "spotify" | "soloist" | "youtube" | "apple";
 
 export interface BackendState {
   active:            PlaybackBackend;

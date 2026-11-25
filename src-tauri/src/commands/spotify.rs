@@ -291,6 +291,14 @@ pub async fn search(
     if let Some(results) = known {
         return Ok(results);
     }
+    if crate::apple::is_active() {
+        let result = crate::apple::api::search(&query, t).await?;
+        searches()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .put(key, result.clone(), std::time::Instant::now());
+        return Ok(result);
+    }
     let token = tok(&app).await?;
 
     let raw = search_split(&token, &query, t).await?;
@@ -431,6 +439,9 @@ const PAGE_REVALIDATE_MS: i64 = 60_000;
 /// start no longer waits on three web api calls) and is refetched behind it
 #[tauri::command]
 pub async fn get_artist(app: AppHandle, id: String) -> Result<ArtistDetail, AppError> {
+    if crate::apple::is_active() {
+        return crate::apple::api::artist(&id).await;
+    }
     let pool = app.state::<AppState>().db.clone();
     let uri = format!("spotify:artist:{id}");
     let key = serde_json::json!(["artist", id]);
@@ -494,6 +505,9 @@ async fn fetch_artist(app: AppHandle, id: String) -> Result<ArtistDetail, AppErr
 /// the album page, answered from its stored copy like `get_artist`
 #[tauri::command]
 pub async fn get_album(app: AppHandle, id: String) -> Result<AlbumDetail, AppError> {
+    if crate::apple::is_active() {
+        return crate::apple::api::album(&id).await;
+    }
     let pool = app.state::<AppState>().db.clone();
     let uri = format!("spotify:album:{id}");
     let key = serde_json::json!(["album", id]);
@@ -554,6 +568,15 @@ async fn fetch_album(app: AppHandle, id: String) -> Result<AlbumDetail, AppError
 
 #[tauri::command]
 pub async fn get_track(app: AppHandle, id: String) -> Result<TrackDetail, AppError> {
+    if crate::apple::is_active() {
+        let (detail, isrc) = tokio::join!(crate::apple::api::track(&id), crate::apple::api::track_isrc(&id));
+        let detail = detail?;
+        // awaited for the same reason as below: the lyrics lookup reads the isrc
+        let pool = app.state::<AppState>().db.clone();
+        let isrc = isrc.ok().flatten();
+        let _ = crate::apple::library::upsert_track_detail(&pool, &detail, isrc.as_deref()).await;
+        return Ok(detail);
+    }
     let token = tok(&app).await?;
     let track: SpTrack = spotify::spotify_get(&token, &format!("{BASE}/tracks/{id}")).await?;
 
@@ -623,6 +646,10 @@ pub async fn get_recommendations(
         exclude_track_ids.unwrap_or_default().into_iter().collect();
     let is_default_home = seeds.is_empty() && excludes.is_empty();
 
+    if crate::apple::is_active() {
+        return apple_recommendations(seeds, excludes, limit).await;
+    }
+
     let token = tok(&app).await?;
     let pool  = app.state::<AppState>().db.clone();
 
@@ -636,6 +663,9 @@ pub async fn get_recommendations(
 //   - changed or never cached -> pull all the pages, save em, return fresh
 #[tauri::command]
 pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, AppError> {
+    if crate::apple::is_active() {
+        return crate::apple::api::playlist(&id).await;
+    }
     let token = tok(&app).await?;
     let pool  = app.state::<AppState>().db.clone();
 
@@ -947,4 +977,43 @@ mod search_tests {
         assert!(searches.get("q0", start).is_none());
         assert!(searches.get(&format!("q{}", SEARCHES_KEPT + 4), start).is_some());
     }
+}
+
+/// Recommendations for an Apple Music account, which has no taste engine to ask: the seed
+/// artists' top songs taken in turn, or with no seeds, heavy rotation followed by the station
+/// its first song seeds.
+async fn apple_recommendations(
+    seeds:    Vec<String>,
+    excludes: HashSet<String>,
+    limit:    usize,
+) -> Result<Vec<TrackItem>, AppError> {
+    let pools: Vec<Vec<TrackItem>> = if seeds.is_empty() {
+        let rotation = crate::apple::api::heavy_rotation_tracks().await.unwrap_or_default();
+        let station = match rotation.first() {
+            Some(first) => crate::apple::api::track_radio(&first.id).await.map(|r| r.tracks).unwrap_or_default(),
+            None => Vec::new(),
+        };
+        vec![rotation, station]
+    } else {
+        let pages = futures_util::future::join_all(
+            seeds.iter().take(5).map(|id| crate::apple::api::artist(id)),
+        )
+        .await;
+        pages.into_iter().filter_map(Result::ok).map(|a| a.top_tracks).collect()
+    };
+    // one from each list in turn, so no single artist fills the row
+    let mut seen = HashSet::new();
+    let mut out = Vec::with_capacity(limit);
+    let longest = pools.iter().map(Vec::len).max().unwrap_or(0);
+    for i in 0..longest {
+        for list in &pools {
+            if let Some(track) = list.get(i) {
+                if !excludes.contains(&track.id) && seen.insert(track.id.clone()) {
+                    out.push(track.clone());
+                }
+            }
+        }
+    }
+    out.truncate(limit);
+    Ok(out)
 }

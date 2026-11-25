@@ -14,6 +14,7 @@ import { Immersive as ImmersiveView } from "./Immersive";
 import { AddToPlaylistModal as AddToPlaylistView } from "../ui/AddToPlaylistModal";
 import { CreditsModal as CreditsView } from "../ui/CreditsModal";
 import { YtMatchModal as YtMatchView } from "../ui/YtMatchModal";
+import { WidevineSetup } from "../ui/WidevineSetup";
 import { DevicesPopover as DevicesView } from "./DevicesPopover";
 import { usePlayerStore } from "../../store/player.store";
 import { useUIStore } from "../../store/ui.store";
@@ -25,6 +26,7 @@ import { chromePx } from "../../lib/zoom";
 import { EASE_OUT, RAIL_CLOSE_S, RAIL_EASE_CSS, RAIL_OPEN_S } from "../../lib/motion";
 import { pinRailGrids } from "../../lib/railFlip";
 import { measurePage, playPage, snapshotPage } from "../../lib/railReflow";
+import { useIsApple } from "../../hooks/useProvider";
 import "../../styles/layout.css";
 import Home from "../../pages/Home";
 
@@ -208,7 +210,9 @@ export default function Layout() {
   // the panel can be switched off in settings; a stale open flag must not keep it
   const friendsFlag = usePlayerStore((s) => s.friendsOpen);
   const friendsOn = usePrefsStore((s) => s.showFriends);
-  const friendsOpen = friendsFlag && friendsOn;
+  const isAppleAccount = useIsApple();
+  // friend activity is Spotify's; an Apple Music account has none to show
+  const friendsOpen = friendsFlag && friendsOn && !isAppleAccount;
   const immersiveOpen = usePlayerStore((s) => s.immersiveOpen);
   // one owner for the playhead clock, whatever else is on screen
   usePositionTicker();
@@ -826,6 +830,7 @@ export default function Layout() {
       <AddToPlaylistModal />
       <CreditsModal />
       <YtMatchModal />
+      <WidevineSetup />
       <Toaster />
       {/* always at the window's own top-right corner, in the top bar's strip,
           so the buttons sit on the OS material and the close button owns the

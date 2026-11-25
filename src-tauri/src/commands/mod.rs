@@ -1,3 +1,4 @@
+pub mod apple;
 pub mod artist_extras;
 pub mod auth;
 pub mod credentials;
@@ -18,6 +19,7 @@ pub mod social;
 pub mod soloist;
 pub mod stats;
 pub mod spotify;
+pub mod widevine;
 pub mod window;
 pub mod theme; 
 pub mod connect; 

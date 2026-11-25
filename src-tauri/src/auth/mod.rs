@@ -23,6 +23,9 @@ pub struct AuthStatus {
     pub email:        Option<String>,
     pub product:      Option<String>,
     pub image_url:    Option<String>,
+    /// `"spotify"` or `"apple"`: which service the signed-in account belongs to.
+    #[serde(default)]
+    pub provider:     String,
 }
 
 pub use redirect::SHARED_CLIENT_ID;
@@ -399,6 +402,7 @@ pub async fn build_auth_status(
             email:        None,
             product:      None,
             image_url:    None,
+            provider:     "spotify".into(),
         });
     }
 
@@ -415,6 +419,7 @@ pub async fn build_auth_status(
         email:        email       .filter(|s| !s.is_empty()),
         product:      product     .filter(|s| !s.is_empty()),
         image_url:    image_url   .filter(|s| !s.is_empty()),
+        provider:     "spotify".into(),
     })
 }
 

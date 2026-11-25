@@ -104,6 +104,9 @@ fn group_ids(groups: &[librespot_protocol::metadata::AlbumGroup], max: usize) ->
 #[tauri::command]
 pub async fn get_artist_extras(app: AppHandle, id: String) -> Result<ArtistExtras, AppError> {
     use tauri::Manager;
+    if crate::apple::is_active() {
+        return crate::apple::api::artist_extras(&id).await;
+    }
     let pool = app.state::<crate::state::AppState>().db.clone();
     let uri = format!("spotify:artist:{id}");
     cache::cached_json(&pool, &uri, "artist-extras", cache::DAY, || async {
@@ -313,6 +316,9 @@ pub(crate) fn overview_from(data: &serde_json::Value) -> ArtistOverview {
 #[tauri::command]
 pub async fn get_artist_overview(app: AppHandle, id: String) -> Result<ArtistOverview, AppError> {
     use tauri::Manager;
+    if crate::apple::is_active() {
+        return crate::apple::api::artist_overview(&id).await;
+    }
     let pool = app.state::<crate::state::AppState>().db.clone();
     let uri = format!("spotify:artist:{id}");
     cache::cached_json(&pool, &uri, "artist-overview-v2", 6 * cache::HOUR, || async {

@@ -33,6 +33,7 @@ import {
   voiceLayout,
   lyricTone,
   lyricWords,
+  lyricSeekTarget,
   useActiveLyrics,
   useLyricClock,
   useMoreContrast,
@@ -171,7 +172,7 @@ function SongLyricsPanel() {
 
   function seekTo(i: number) {
     if (!synced) return;
-    const ms = rowStarts[i];
+    const ms = lyricSeekTarget(rowStarts[i]);
     setPosition(ms);
     resync(ms);
     seekPlayback(ms).catch(() => {});

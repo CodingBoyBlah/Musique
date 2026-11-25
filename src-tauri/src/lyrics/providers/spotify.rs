@@ -68,6 +68,10 @@ struct Syllable {
 // entry point
 
 pub async fn fetch(app: &tauri::AppHandle, track: &TrackRef) -> Option<Candidate> {
+    // an Apple Music track id means nothing to Spotify's lyrics service
+    if crate::apple::is_active() {
+        return None;
+    }
     let session = live_session(app).await?;
     let Ok(id) = SpotifyId::from_base62(&track.id) else {
         return None;

@@ -12,4 +12,8 @@ export interface AuthStatus {
   email:        string | null;
   product:      string | null;
   image_url:    string | null;
+  /** which service the account belongs to; absent on older builds = spotify */
+  provider?:    Provider;
 }
+
+export type Provider = "spotify" | "apple";

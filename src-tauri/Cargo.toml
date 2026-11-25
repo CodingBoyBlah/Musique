@@ -11,6 +11,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# Compiles the Widevine CDM host shim (src/widevine/shim/host.cc). Already in the tree.
+cc = "1"
 
 [dependencies]
 # macos-private-api: REQUIRED for `transparent: true` to work on macOS.
@@ -64,6 +66,10 @@ librespot-audio = { version = "0.8", default-features = false }
 # backend forces 44100, which trips a SIGSEGV bug in cpal 0.16's macOS
 # set_sample_rate() when the device runs at 48000. Same version librespot pulls.
 rodio = "0.21"
+# HE-AAC v1/v2 (SBR+PS) decoding for Apple Music's 32:ctrp64 flavor alongside
+# Symphonia's built-in AAC-LC decoder and MP4 probe already pulled in via rodio.
+rusty_aac = "2.1"
+symphonia = { version = "0.5", default-features = false, features = ["aac", "isomp4"] }
 cpal = "0.16"
 # Discord Rich Presence - connects to the local Discord IPC socket. Pure Rust,
 # cross-platform, no system deps. All calls degrade silently if Discord is closed.
@@ -174,6 +180,19 @@ debug = 1
 [profile.dev.package."*"]
 debug = 0
 
+# Apple Music decodes AAC through symphonia (and HE-AAC through rusty_aac) on every play and
+# every seek, which decodes the part of a fragment before the target. Unoptimized, that is
+# tens of milliseconds per second of audio skipped, heard as a pause on a lyric click.
+[profile.dev.package.symphonia-core]
+opt-level = 3
+[profile.dev.package.symphonia-codec-aac]
+opt-level = 3
+[profile.dev.package.symphonia-format-isomp4]
+opt-level = 3
+[profile.dev.package.rusty_aac]
+opt-level = 3
+[profile.dev.package.rodio]
+opt-level = 3
 [profile.dev.package."librespot-playback"]
 opt-level = 2
 [profile.dev.package."librespot-core"]

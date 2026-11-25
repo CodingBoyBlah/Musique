@@ -35,6 +35,7 @@ import {
   useActiveLyrics,
   useLyricClock,
   useMoreContrast,
+  lyricSeekTarget,
 } from "../../lib/lyrics";
 
 /* The room the record is playing in: a moving mesh of the cover's colours
@@ -307,7 +308,8 @@ function ImmersiveLyrics({ glow, ink }: { glow: string; ink: string }) {
 
   function seekTo(i: number) {
     if (!synced) return;
-    const ms = rowStarts[i];
+    // where the line's start is heard, under the listener's lyric offset
+    const ms = lyricSeekTarget(rowStarts[i]);
     setPosition(ms);
     resync(ms);
     seek(ms);

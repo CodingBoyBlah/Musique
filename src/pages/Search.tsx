@@ -41,6 +41,7 @@ import type {
 import { TILE_GRID } from "../lib/layout";
 import { TilePresence } from "../components/ui/TilePresence";
 import { topResult as getTopResult, type TopResult } from "../lib/searchRank";
+import { useIsApple } from "../hooks/useProvider";
 
 const CATEGORIES = ["all", "songs", "artists", "albums", "playlists", "podcasts"] as const;
 type Category = (typeof CATEGORIES)[number];
@@ -390,6 +391,8 @@ export default function Search() {
   useReflowPulse();
   const qc            = useQueryClient();
   const loggedIn      = useAuthStore((s) => s.loggedIn);
+  // an Apple Music account has no podcasts to search
+  const isAppleAccount = useIsApple();
   const [params]        = useSearchParams();
   const query           = (params.get("q") ?? "").trim();
   const [cat, setCat]   = useState<Category>("all");
@@ -482,8 +485,8 @@ export default function Search() {
     return (
       <SignInPrompt
         heading="Search"
-        title="Sign in to search Spotify"
-        description="Log in with your Spotify account to search for songs, albums, and artists."
+        title="Sign in to search"
+        description="Log in with Spotify or Apple Music to search for songs, albums, and artists."
       />
     );
   }
@@ -575,7 +578,7 @@ export default function Search() {
 
         <div role="group" aria-label="Filter results" style={{ maxWidth: "100%" }}>
           <SegmentedControl
-            options={CATEGORIES.map((c) => CATEGORY_LABEL[c])}
+            options={CATEGORIES.filter((c) => !(isAppleAccount && c === "podcasts")).map((c) => CATEGORY_LABEL[c])}
             value={CATEGORY_LABEL[cat]}
             onChange={(label) => setCat(LABEL_TO_CATEGORY[label] ?? "all")}
             layoutId="search-category"

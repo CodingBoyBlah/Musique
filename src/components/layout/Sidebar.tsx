@@ -32,6 +32,7 @@ import { OverlayScrollbar } from "../ui/OverlayScrollbar";
 import { isMac } from "../../lib/platform";
 import { usePrefsStore } from "../../store/prefs.store";
 import { chromePx } from "../../lib/zoom";
+import { useIsApple } from "../../hooks/useProvider";
 
 /* collapsed rail geometry: one 40px square target per row, centred in the
 rail, 10px corners. Every icon and pinned cover sits on this same grid, so the
@@ -307,6 +308,8 @@ export default function Sidebar() {
   const removePin   = usePinsStore((s) => s.removePin);
   const sidebarMode = usePrefsStore((s) => s.sidebarMode);
   const showStats   = usePrefsStore((s) => s.showStats);
+  // podcasts come from Spotify; an Apple Music account has none
+  const isAppleAccount = useIsApple();
   const { data: myPlaylists = [], isLoading: playlistsLoading } = useMyPlaylists();
   const qc          = useQueryClient();
   const { open: openMenu, element: menuEl } = useContextMenu();
@@ -512,7 +515,7 @@ export default function Sidebar() {
           <NavItem icon={Music} label="Songs"   active={onLibrary && tab === "songs"}   onClick={() => navigate("/library?tab=songs")} onPrefetch={() => prefetchLibrary(qc, "songs")} collapsed={isCollapsed} />
           <NavItem icon={Disc3} label="Albums"  active={onLibrary && tab === "albums"}  onClick={() => navigate("/library?tab=albums")} onPrefetch={() => prefetchLibrary(qc, "albums")} collapsed={isCollapsed} />
           <NavItem icon={User} label="Artists" active={onLibrary && tab === "artists"} onClick={() => navigate("/library?tab=artists")} onPrefetch={() => prefetchLibrary(qc, "artists")} collapsed={isCollapsed} />
-          <NavItem icon={Mic} label="Podcasts" active={(onLibrary && tab === "podcasts") || path.startsWith("/show/")} onClick={() => navigate("/library?tab=podcasts")} onPrefetch={() => prefetchLibrary(qc, "podcasts")} collapsed={isCollapsed} />
+          {!isAppleAccount && <NavItem icon={Mic} label="Podcasts" active={(onLibrary && tab === "podcasts") || path.startsWith("/show/")} onClick={() => navigate("/library?tab=podcasts")} onPrefetch={() => prefetchLibrary(qc, "podcasts")} collapsed={isCollapsed} />}
         </Section>
 
         <Section label={showAllPlaylists ? "Your playlists" : "Pins"} expanded={pinsOpen} onToggle={() => setPinsOpen(v => !v)} collapsed={isCollapsed}>

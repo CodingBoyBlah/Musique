@@ -1,0 +1,58 @@
+{
+  "results": {
+    "albums": [
+      {
+        "chart": "most-played",
+        "name": "Top Albums",
+        "data": [
+          {
+            "id": "9991",
+            "type": "albums",
+            "attributes": {
+              "name": "Chart Topper",
+              "artistName": "Star",
+              "releaseDate": "2026-10-01",
+              "artwork": { "url": "https://is1-ssl.mzstatic.com/ch/{w}x{h}bb.{f}" }
+            },
+            "relationships": {
+              "artists": { "data": [{ "id": "8881", "type": "artists", "attributes": { "name": "Star" } }] }
+            }
+          }
+        ]
+      }
+    ],
+    "songs": [
+      {
+        "chart": "most-played",
+        "name": "Top Songs",
+        "data": [
+          {
+            "id": "9992",
+            "type": "songs",
+            "attributes": {
+              "name": "Hit Single",
+              "artistName": "Star",
+              "durationInMillis": 180000
+            }
+          }
+        ]
+      }
+    ],
+    "playlists": [
+      {
+        "chart": "most-played",
+        "name": "Top Playlists",
+        "data": [
+          {
+            "id": "pl.top1",
+            "type": "playlists",
+            "attributes": {
+              "name": "Top 100: Global",
+              "curatorName": "Apple Music"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

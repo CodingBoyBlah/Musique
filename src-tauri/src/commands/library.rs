@@ -33,6 +33,11 @@ pub async fn sync_library(app: AppHandle) -> Result<SyncResult, AppError> {
     let gate = s.sync_gate.clone();
     drop(s);
 
+    if crate::apple::is_active() {
+        let _syncing = gate.read().await;
+        return crate::apple::library::sync_all(&pool, &crate::library::emit_steps(&app)).await;
+    }
+
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     // held for the whole sync so a sign-out waits for it instead of purging
     // underneath it - see `AppState::sync_gate`
@@ -288,6 +293,20 @@ pub async fn save_track(app: AppHandle, id: String) -> Result<(), AppError> {
     let auth = s.auth.clone();
     drop(s);
 
+    if crate::apple::is_active() {
+        crate::apple::api::save_track(&id).await?;
+        // the row the liked list joins on may not be stored yet: fetch and mirror it
+        match crate::apple::api::tracks(std::slice::from_ref(&id)).await {
+            Ok(found) => {
+                for track in &found {
+                    let _ = crate::apple::library::mirror_saved_track(&pool, track, true).await;
+                }
+            }
+            Err(e) => eprintln!("[apple] liked {id} but could not mirror it: {e}"),
+        }
+        return Ok(());
+    }
+
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     crate::spotify::spotify_write(
         &token,
@@ -314,6 +333,15 @@ pub async fn unsave_track(app: AppHandle, id: String) -> Result<(), AppError> {
     let auth = s.auth.clone();
     drop(s);
 
+    if crate::apple::is_active() {
+        crate::apple::api::unsave_track(&id).await?;
+        let _ = sqlx::query("DELETE FROM saved_tracks WHERE track_id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await;
+        return Ok(());
+    }
+
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     crate::spotify::spotify_write(
         &token,
@@ -337,6 +365,16 @@ pub async fn follow_artist(app: AppHandle, id: String) -> Result<(), AppError> {
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
+
+    if crate::apple::is_active() {
+        crate::apple::api::follow_artist(&id).await?;
+        let _ = sqlx::query("INSERT OR IGNORE INTO followed_artists (artist_id, followed_at) VALUES (?, ?)")
+            .bind(&id)
+            .bind(now_ms())
+            .execute(&pool)
+            .await;
+        return Ok(());
+    }
 
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     crate::spotify::spotify_write(
@@ -365,6 +403,15 @@ pub async fn unfollow_artist(app: AppHandle, id: String) -> Result<(), AppError>
     let auth = s.auth.clone();
     drop(s);
 
+    if crate::apple::is_active() {
+        crate::apple::api::unfollow_artist(&id).await?;
+        let _ = sqlx::query("DELETE FROM followed_artists WHERE artist_id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await;
+        return Ok(());
+    }
+
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     crate::spotify::spotify_write(
         &token,
@@ -388,6 +435,16 @@ pub async fn save_album(app: AppHandle, id: String) -> Result<(), AppError> {
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
+
+    if crate::apple::is_active() {
+        crate::apple::api::save_album(&id).await?;
+        let _ = sqlx::query("INSERT OR IGNORE INTO saved_albums (album_id, added_at) VALUES (?, ?)")
+            .bind(&id)
+            .bind(now_ms())
+            .execute(&pool)
+            .await;
+        return Ok(());
+    }
 
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     crate::spotify::spotify_write(
@@ -415,6 +472,15 @@ pub async fn unsave_album(app: AppHandle, id: String) -> Result<(), AppError> {
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
+
+    if crate::apple::is_active() {
+        crate::apple::api::unsave_album(&id).await?;
+        let _ = sqlx::query("DELETE FROM saved_albums WHERE album_id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await;
+        return Ok(());
+    }
 
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     crate::spotify::spotify_write(
@@ -448,10 +514,15 @@ pub async fn is_album_saved(app: AppHandle, id: String) -> Result<bool, AppError
         .await?
         .is_some();
 
-    let Ok(token) = crate::auth::get_valid_token(&pool, &auth).await else {
-        return Ok(local);
+    let live = if crate::apple::is_active() {
+        crate::apple::api::is_album_saved(&id).await.map(|saved| vec![saved])
+    } else {
+        let Ok(token) = crate::auth::get_valid_token(&pool, &auth).await else {
+            return Ok(local);
+        };
+        crate::spotify::spotify_get::<Vec<bool>>(&token, &format!("{BASE}/me/albums/contains?ids={id}")).await
     };
-    match crate::spotify::spotify_get::<Vec<bool>>(&token, &format!("{BASE}/me/albums/contains?ids={id}")).await {
+    match live {
         Ok(v) => {
             let live = v.first().copied().unwrap_or(local);
             if live && !local {
@@ -524,6 +595,26 @@ pub async fn update_playlist_details(
     let auth = s.auth.clone();
     drop(s);
 
+    if crate::apple::is_active() {
+        let trimmed = name.as_ref().map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+        let described = description.as_ref().map(|d| d.trim().to_string());
+        crate::apple::api::update_playlist(&id, trimmed.as_deref(), described.as_deref(), public).await?;
+        let _ = sqlx::query(
+            "UPDATE playlists SET
+                 name        = COALESCE(?, name),
+                 description = COALESCE(?, description),
+                 updated_at  = ?
+             WHERE id = ?",
+        )
+        .bind(trimmed)
+        .bind(described)
+        .bind(now_ms())
+        .bind(&id)
+        .execute(&pool)
+        .await;
+        return Ok(());
+    }
+
     let mut body = serde_json::Map::new();
     if let Some(n) = name.as_ref().map(|n| n.trim()).filter(|n| !n.is_empty()) {
         body.insert("name".into(), n.into());
@@ -593,6 +684,10 @@ pub async fn follow_playlist(app: AppHandle, id: String) -> Result<(), AppError>
     let auth = s.auth.clone();
     drop(s);
 
+    if crate::apple::is_active() {
+        return crate::apple::api::follow_playlist(&id).await;
+    }
+
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     crate::spotify::spotify_write_json(
         &token,
@@ -612,6 +707,12 @@ pub async fn unfollow_playlist(app: AppHandle, id: String) -> Result<(), AppErro
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
+
+    if crate::apple::is_active() {
+        crate::apple::api::unfollow_playlist(&id).await?;
+        let _ = crate::apple::library::mirror_deleted_playlist(&pool, &id).await;
+        return Ok(());
+    }
 
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     crate::spotify::spotify_write(
@@ -641,6 +742,10 @@ pub async fn is_playlist_followed(app: AppHandle, id: String) -> Result<bool, Ap
     let auth = s.auth.clone();
     drop(s);
 
+    if crate::apple::is_active() {
+        return crate::apple::api::is_playlist_followed(&id).await;
+    }
+
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     let v: Vec<bool> =
         crate::spotify::spotify_get(&token, &format!("{BASE}/playlists/{id}/followers/contains")).await?;
@@ -661,6 +766,12 @@ pub async fn add_track_to_playlist(
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
+
+    if crate::apple::is_active() {
+        // Apple Music only appends: an undo puts the track back at the end
+        let _ = position;
+        return crate::apple::api::add_track_to_playlist(&playlist_id, &track_id).await;
+    }
 
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     let mut body = serde_json::json!({ "uris": [format!("spotify:track:{track_id}")] });
@@ -689,6 +800,12 @@ pub async fn remove_track_from_playlist(
     let pool = s.db.clone();
     let auth = s.auth.clone();
     drop(s);
+
+    if crate::apple::is_active() {
+        crate::apple::api::remove_track_from_playlist(&playlist_id, &track_id).await?;
+        let _ = crate::apple::library::mirror_playlist_track_removed(&pool, &playlist_id, &track_id).await;
+        return Ok(());
+    }
 
     let token = crate::auth::get_valid_token(&pool, &auth).await?;
     crate::spotify::spotify_write_json(
@@ -726,6 +843,11 @@ pub async fn create_playlist(
     let name = name.trim();
     if name.is_empty() {
         return Err(AppError::InvalidInput("Playlist name is required".into()));
+    }
+
+    if crate::apple::is_active() {
+        let described = description.as_deref().map(str::trim).filter(|d| !d.is_empty());
+        return crate::apple::api::create_playlist(name, described, public).await;
     }
 
     let user_id = crate::auth::get_setting_value(&pool, "spotify_user_id")

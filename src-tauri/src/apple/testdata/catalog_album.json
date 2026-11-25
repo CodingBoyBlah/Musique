@@ -1,0 +1,68 @@
+{
+  "data": [
+    {
+      "id": "1691419979",
+      "type": "albums",
+      "attributes": {
+        "name": "Midnight Run - Single",
+        "artistName": "Synth Wave",
+        "isSingle": false,
+        "isCompilation": false,
+        "releaseDate": "2024-05-17",
+        "trackCount": 2,
+        "genreNames": ["Electronic", "Music"],
+        "artwork": {
+          "url": "https://is1-ssl.mzstatic.com/image/thumb/Single/{w}x{h}bb.{f}"
+        }
+      },
+      "relationships": {
+        "artists": {
+          "data": [
+            {
+              "id": "777",
+              "type": "artists",
+              "attributes": { "name": "Synth Wave" }
+            }
+          ]
+        },
+        "tracks": {
+          "data": [
+            {
+              "id": "1691419980",
+              "type": "songs",
+              "attributes": {
+                "name": "Midnight Run",
+                "artistName": "Synth Wave",
+                "albumName": "Midnight Run - Single",
+                "durationInMillis": 195000,
+                "trackNumber": 1,
+                "discNumber": 1,
+                "contentRating": "clean",
+                "isrc": "USXYZ2400001",
+                "playParams": { "id": "1691419980", "kind": "song" }
+              },
+              "relationships": {
+                "artists": {
+                  "data": [
+                    { "id": "777", "type": "artists", "attributes": { "name": "Synth Wave" } }
+                  ]
+                }
+              }
+            },
+            {
+              "id": "1691419981",
+              "type": "songs",
+              "attributes": {
+                "name": "Midnight Run (Instrumental)",
+                "artistName": "Synth Wave",
+                "durationInMillis": 194000,
+                "trackNumber": 2,
+                "discNumber": 1
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

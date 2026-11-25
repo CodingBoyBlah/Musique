@@ -4850,6 +4850,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
+name = "rusty_aac"
+version = "2.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14ac298203e6a625fa1cc37e33d6f245824bda8f1ef4541ffb6b9b2646c9309b"
+
+[[package]]
 name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5433,6 +5439,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bytes",
+ "cc",
  "cipher",
  "cpal",
  "ctr",
@@ -5465,12 +5472,14 @@ dependencies = [
  "roxmltree",
  "rustls 0.23.40",
  "rustls-webpki 0.103.13",
+ "rusty_aac",
  "serde",
  "serde_json",
  "sha1",
  "sha2",
  "souvlaki",
  "sqlx",
+ "symphonia",
  "sysinfo",
  "tar",
  "tauri",

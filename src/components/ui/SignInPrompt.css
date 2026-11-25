@@ -383,3 +383,61 @@
     padding: 0 12px;
   }
 }
+
+/* Apple Music: a second, quieter way in under the Spotify actions */
+.sign-in-apple {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+.sign-in-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  color: var(--color-text-dim);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.sign-in-or::before,
+.sign-in-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.sign-in-apple-login.btn-pill {
+  height: 42px;
+  padding: 0 18px;
+  gap: 8px;
+}
+.sign-in-apple-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.sign-in-apple-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary, var(--color-text-dim));
+  font-size: 12.5px;
+}
+.sign-in-apple-waiting svg {
+  animation: sign-in-spin 0.9s linear infinite;
+}
+.sign-in-apple-cancel.btn-pill {
+  height: 34px;
+  padding: 0 14px;
+}
+@keyframes sign-in-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sign-in-apple-waiting svg { animation: none; }
+}

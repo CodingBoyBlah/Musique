@@ -86,6 +86,11 @@ pub(crate) async fn warm_session(app: &AppHandle) -> Result<(), AppError> {
 
 /// `interactive = false` never opens a browser authorization; see `create_inner`.
 async fn ensure_inner_with(app: &AppHandle, interactive: bool) -> Result<(), AppError> {
+    if crate::apple::is_active() {
+        return Err(AppError::Auth(
+            "Apple Music is active; Spotify playback session disabled".into(),
+        ));
+    }
     let epoch = crate::auth::auth_epoch();
     let s        = app.state::<AppState>();
     let db       = s.db.clone();
@@ -276,6 +281,9 @@ fn replaced_at(uri: &str) -> Option<u32> {
 pub async fn recover_dropped_sessions(app: AppHandle) {
     loop {
         tokio::time::sleep(SESSION_CHECK).await;
+        if crate::apple::is_active() {
+            continue;
+        }
         // the player's own state first: it is in memory, and nearly every
         // look finds nothing dropped. the backend is read from the database,
         // and only once there is something to bring back
@@ -881,6 +889,8 @@ pub enum Backend {
     YouTube,
     /// Spotify's own Soloist player, run beside the app (see `crate::soloist`).
     Soloist,
+    /// Apple Music Widevine/CENC local playback (see `crate::apple::playback`).
+    Apple,
 }
 
 async fn setting_value(pool: &sqlx::SqlitePool, key: &str) -> Option<String> {
@@ -914,6 +924,9 @@ pub(crate) async fn spotify_available(pool: &sqlx::SqlitePool) -> bool {
 /// used to accept) falls through to that default, so old settings rows resolve
 /// sensibly instead of needing a migration.
 async fn backend(pool: &sqlx::SqlitePool) -> Backend {
+    if crate::apple::is_active() {
+        return Backend::Apple;
+    }
     if !spotify_available(pool).await {
         return Backend::YouTube;
     }
@@ -964,7 +977,10 @@ pub(crate) async fn silence(app: &AppHandle, which: Backend) {
                 }
             }
         }
-        Backend::YouTube => {
+        Backend::YouTube | Backend::Apple => {
+            if which == Backend::Apple {
+                crate::apple::playback::claim();
+            }
             let yt = app.state::<AppState>().yt.clone();
             let guard = yt.lock().await;
             // a player that failed to load, or never played, would report
@@ -972,8 +988,12 @@ pub(crate) async fn silence(app: &AppHandle, which: Backend) {
             // a load still downloading was cancelled by `yt_claim`
             if let Some(player) = guard.as_ref().filter(|player| player.is_playing()) {
                 if let Err(e) = player.pause() {
-                    eprintln!("[playback] pausing youtube on backend switch: {e}");
+                    eprintln!("[playback] pausing local player on backend switch: {e}");
                 }
+            }
+            drop(guard);
+            if which == Backend::Apple {
+                crate::apple::playback::note_paused().await;
             }
         }
         Backend::Soloist => {
@@ -992,7 +1012,7 @@ async fn backend_playing(app: &AppHandle, which: Backend) -> bool {
             let guard = playback.lock().await;
             guard.as_ref().is_some_and(|inner| inner.is_playing())
         }
-        Backend::YouTube => {
+        Backend::YouTube | Backend::Apple => {
             let yt = app.state::<AppState>().yt.clone();
             let guard = yt.lock().await;
             guard.as_ref().is_some_and(|player| player.is_playing())
@@ -1307,6 +1327,179 @@ async fn yt_preload(app: &AppHandle, id: &str) {
     }
 }
 
+async fn apple_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppError> {
+    let asked = std::time::Instant::now();
+    let ticket = crate::apple::playback::claim();
+    ensure_yt(app).await?;
+    let pool = app.state::<AppState>().db.clone();
+
+    {
+        let yt = app.state::<AppState>().yt.clone();
+        let guard = yt.lock().await;
+        if !crate::apple::playback::is_current(ticket) {
+            return Ok(());
+        }
+        if let Some(player) = guard.as_ref() {
+            player.pause()?;
+        }
+    }
+
+    // the catalog's loudness comes alongside, so a track lands near the same level as the last
+    let (prepared, lufs) = tokio::join!(
+        crate::apple::playback::load_prepared(&pool, id),
+        // never worth holding the start for: preload usually fetched it already
+        async {
+            tokio::time::timeout(std::time::Duration::from_millis(400), crate::apple::api::track_loudness_lufs(id))
+                .await
+                .ok()
+                .flatten()
+        },
+    );
+    let prepared = prepared?;
+    let loaded = asked.elapsed();
+    if !crate::apple::playback::is_current(ticket) {
+        eprintln!("[apple] dropping superseded load of {id}");
+        return Ok(());
+    }
+    let (source, started_at) = crate::apple::playback::open_at(&prepared, position_ms).await?;
+    eprintln!(
+        "[apple] {id} ready in {}ms (load {}ms, decoder {}ms)",
+        asked.elapsed().as_millis(),
+        loaded.as_millis(),
+        (asked.elapsed() - loaded).as_millis()
+    );
+
+    let yt = app.state::<AppState>().yt.clone();
+    let guard = yt.lock().await;
+    if !crate::apple::playback::is_current(ticket) {
+        eprintln!("[apple] dropping superseded load of {id}");
+        return Ok(());
+    }
+    if let Some(player) = guard.as_ref() {
+        player.play_source(id, source, prepared.duration_ms(), apple_loudness_gain(lufs), started_at);
+    }
+    drop(guard);
+
+    crate::apple::playback::set_active(prepared).await;
+    crate::apple::playback::report_play_async(id);
+    Ok(())
+}
+
+/// The gain that brings a track at `lufs` to the -14 LUFS the other local sources aim for, by
+/// no more than 6 dB either way, the same bounds YouTube's correction keeps.
+fn apple_loudness_gain(lufs: Option<f64>) -> f32 {
+    match lufs {
+        Some(lufs) if lufs.is_finite() => 10f64.powf((-14.0 - lufs).clamp(-6.0, 6.0) / 20.0) as f32,
+        _ => 1.0,
+    }
+}
+
+async fn apple_pause(app: &AppHandle) -> Result<(), AppError> {
+    crate::apple::playback::claim();
+    let yt = app.state::<AppState>().yt.clone();
+    let guard = yt.lock().await;
+    if let Some(player) = guard.as_ref() {
+        player.pause()?;
+    }
+    drop(guard);
+    crate::apple::playback::note_paused().await;
+    Ok(())
+}
+
+async fn apple_resume(app: &AppHandle) -> Result<(), AppError> {
+    let (ended, track, pos_ms) = {
+        let yt = app.state::<AppState>().yt.clone();
+        let guard = yt.lock().await;
+        match guard.as_ref() {
+            Some(p) => (p.is_ended(), p.current_track(), p.position_ms()),
+            None => (false, None, 0),
+        }
+    };
+
+    match (ended, track) {
+        (true, Some(id)) => apple_play(app, &id, 0).await,
+        (false, Some(id)) => {
+            if crate::apple::playback::refresh_before_resume(&id).await
+                == crate::apple::playback::RefreshOutcome::NeedsReload
+            {
+                return apple_play(app, &id, pos_ms).await;
+            }
+            crate::apple::playback::claim();
+            let yt = app.state::<AppState>().yt.clone();
+            let guard = yt.lock().await;
+            if let Some(player) = guard.as_ref() {
+                player.resume()?;
+            }
+            Ok(())
+        }
+        (_, None) => Ok(()),
+    }
+}
+
+async fn apple_resume_or_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), AppError> {
+    let resumable = {
+        let yt = app.state::<AppState>().yt.clone();
+        let guard = yt.lock().await;
+        guard.as_ref().is_some_and(|p| {
+            p.current_track().as_deref() == Some(id) && !p.is_ended()
+        })
+    };
+
+    if !resumable {
+        return apple_play(app, id, position_ms).await;
+    }
+
+    if crate::apple::playback::refresh_before_resume(id).await
+        == crate::apple::playback::RefreshOutcome::NeedsReload
+    {
+        return apple_play(app, id, position_ms).await;
+    }
+
+    crate::apple::playback::claim();
+    let yt = app.state::<AppState>().yt.clone();
+    let drifted = yt
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|p| position_ms > 0 && p.position_ms().abs_diff(position_ms) > 2000);
+    if drifted {
+        apple_seek(app, position_ms).await?;
+    }
+    let guard = yt.lock().await;
+    if let Some(player) = guard.as_ref() {
+        player.resume()?;
+    }
+    Ok(())
+}
+
+async fn apple_seek(app: &AppHandle, position_ms: u32) -> Result<(), AppError> {
+    eprintln!("[apple] seek to {position_ms}ms");
+    let (ended, track) = {
+        let yt = app.state::<AppState>().yt.clone();
+        let guard = yt.lock().await;
+        match guard.as_ref() {
+            Some(p) => (p.is_ended(), p.current_track()),
+            None => return Ok(()),
+        }
+    };
+
+    if let Some(id) = track {
+        if ended
+            || crate::apple::playback::refresh_before_seek(&id).await
+                == crate::apple::playback::RefreshOutcome::NeedsReload
+        {
+            return apple_play(app, &id, position_ms).await;
+        }
+    }
+
+    let yt = app.state::<AppState>().yt.clone();
+    let guard = yt.lock().await;
+    if let Some(player) = guard.as_ref() {
+        player.seek(position_ms)?;
+    }
+    Ok(())
+}
+
 // backend / match inspection commands
 //
 // These exist so the YouTube path is never a black box to the user. When audio
@@ -1344,11 +1537,13 @@ pub async fn get_playback_backend(app: AppHandle) -> Result<BackendState, AppErr
             Backend::Spotify => "spotify".into(),
             Backend::Soloist => "soloist".into(),
             Backend::YouTube => "youtube".into(),
+            Backend::Apple   => "apple".into(),
         },
         engine: match backend {
             Backend::Spotify => "librespot".into(),
             Backend::Soloist => "soloist".into(),
             Backend::YouTube => "youtube".into(),
+            Backend::Apple   => "apple".into(),
         },
         product:           setting_value(&pool, "spotify_product").await,
         spotify_available: spotify_available(&pool).await,
@@ -1367,6 +1562,11 @@ pub async fn set_playback_backend(app: AppHandle, mode: String) -> Result<(), Ap
 /// or stopped with its choice. The interface carries the track on through
 /// the new backend from where it was.
 pub(crate) async fn switch_backend(app: &AppHandle, mode: &str) -> Result<(), AppError> {
+    if crate::apple::is_active() {
+        return Err(AppError::InvalidInput(
+            "Apple Music uses its own playback backend".into(),
+        ));
+    }
     if !matches!(mode, "spotify" | "soloist" | "youtube") {
         return Err(AppError::InvalidInput(format!(
             "unknown playback backend {mode:?}; expected spotify, soloist or youtube"
@@ -1521,6 +1721,19 @@ pub async fn forget_yt_match(app: AppHandle, track_id: String) -> Result<(), App
 // call it after login. idempotent so its safe to call over and over
 #[tauri::command]
 pub async fn warmup_playback(app: AppHandle) -> Result<(), AppError> {
+    if crate::apple::is_active() {
+        if let Err(e) = ensure_yt(&app).await {
+            eprintln!("[playback] apple warmup failed: {e}");
+        }
+        // the account's session and the CDM host, so the first play pays for neither
+        tokio::spawn(async {
+            let _ = crate::apple::client::current().await;
+            if crate::widevine::available() {
+                let _ = tokio::task::spawn_blocking(|| crate::widevine::Cdm::open().map(drop)).await;
+            }
+        });
+        return Ok(());
+    }
     if uses_youtube(&app).await {
         // Scraping the visitor id costs a ~380 KB page fetch, measured at
         // ~630ms. Cached process-wide once fetched, so doing it here moves it
@@ -1554,6 +1767,10 @@ pub async fn warmup_playback(app: AppHandle) -> Result<(), AppError> {
 /// unprompted; if no silent credential works, the user's first play recovers.
 pub async fn warm_session_if_possible(app: AppHandle) {
     use tauri::Manager;
+
+    if crate::apple::is_active() {
+        return;
+    }
 
     let s = app.state::<AppState>();
     let db = s.db.clone();
@@ -1593,7 +1810,9 @@ pub async fn play_track(app: AppHandle, id: String, context_uri: Option<String>)
     refuse_while_probing()?;
     eprintln!("[playback cmd] play_track id={id} context={context_uri:?}");
 
-    if let Some(soloist) = soloist(&app).await {
+    if crate::apple::is_active() {
+        apple_play(&app, &id, 0).await?;
+    } else if let Some(soloist) = soloist(&app).await {
         soloist.play(&app, &crate::playback::track_uri(&id)?, 0).await?;
     } else if uses_youtube(&app).await {
         // A resolution failure here is a real, expected outcome (no acceptable
@@ -1639,6 +1858,10 @@ pub async fn play_track(app: AppHandle, id: String, context_uri: Option<String>)
 #[tauri::command]
 pub async fn retry_play_track(app: AppHandle, id: String, context_uri: Option<String>) -> Result<(), AppError> {
     refuse_while_probing()?;
+    if crate::apple::is_active() {
+        crate::apple::playback::evict_prepared(&id).await;
+        return apple_play(&app, &id, 0).await;
+    }
     if let Some(soloist) = soloist(&app).await {
         // Soloist keeps its own session; there is nothing of ours to rebuild
         return soloist.play(&app, &crate::playback::track_uri(&id)?, 0).await;
@@ -1664,6 +1887,9 @@ pub async fn retry_play_track(app: AppHandle, id: String, context_uri: Option<St
 #[tauri::command]
 pub async fn pause_playback(app: AppHandle) -> Result<(), AppError> {
     refuse_while_probing()?;
+    if crate::apple::is_active() {
+        return apple_pause(&app).await;
+    }
     if let Some(soloist) = soloist(&app).await {
         return soloist.pause();
     }
@@ -1689,6 +1915,9 @@ pub async fn pause_playback(app: AppHandle) -> Result<(), AppError> {
 #[tauri::command]
 pub async fn resume_playback(app: AppHandle) -> Result<(), AppError> {
     refuse_while_probing()?;
+    if crate::apple::is_active() {
+        return apple_resume(&app).await;
+    }
     if let Some(soloist) = soloist(&app).await {
         // un-pauses a loaded track, or starts the app's track again from
         // where it was (from the top once it played to its end)
@@ -1749,6 +1978,9 @@ pub async fn resume_or_play(
     refuse_while_probing()?;
     eprintln!("[playback cmd] resume_or_play id={id} pos={position_ms}");
 
+    if crate::apple::is_active() {
+        return apple_resume_or_play(&app, &id, position_ms).await;
+    }
     if let Some(soloist) = soloist(&app).await {
         let uri = crate::playback::track_uri(&id)?;
         if !soloist.resumable(&uri) {
@@ -1831,6 +2063,9 @@ pub async fn resume_or_play(
 #[tauri::command]
 pub async fn stop_playback(app: AppHandle) -> Result<(), AppError> {
     refuse_while_probing()?;
+    if crate::apple::is_active() {
+        return apple_pause(&app).await;
+    }
     if let Some(soloist) = soloist(&app).await {
         return soloist.pause();
     }
@@ -1861,6 +2096,9 @@ pub async fn stop_playback(app: AppHandle) -> Result<(), AppError> {
 #[tauri::command]
 pub async fn seek_playback(app: AppHandle, position_ms: u32) -> Result<(), AppError> {
     refuse_while_probing()?;
+    if crate::apple::is_active() {
+        return apple_seek(&app, position_ms).await;
+    }
     if let Some(soloist) = soloist(&app).await {
         return soloist.seek(position_ms);
     }
@@ -1880,6 +2118,16 @@ pub async fn seek_playback(app: AppHandle, position_ms: u32) -> Result<(), AppEr
 #[tauri::command]
 pub async fn preload_track(app: AppHandle, id: String) -> Result<(), AppError> {
     refuse_while_probing()?;
+    if crate::apple::is_active() {
+        let pool = app.state::<AppState>().db.clone();
+        tokio::spawn(async move {
+            tokio::join!(
+                crate::apple::playback::preload(&pool, &id),
+                crate::apple::api::track_loudness_lufs(&id),
+            );
+        });
+        return Ok(());
+    }
     if soloist(&app).await.is_some() {
         // Soloist fetches what it plays itself, and anything put in its
         // queue could never be taken out again if the app's queue changed
@@ -2025,6 +2273,11 @@ pub async fn set_audio_quality(app: AppHandle, quality: String) -> Result<(), Ap
     drop(s);
 
     save_setting(&pool, "audio_quality", val).await?;
+
+    if crate::apple::is_active() {
+        crate::apple::playback::clear_prepared().await;
+        return Ok(());
+    }
 
     // Reset playback session if idle so the new bitrate takes effect on next playback.
     // If music is actively playing, keep the session so it doesn't cut off mid-track.
@@ -2196,7 +2449,7 @@ pub async fn get_output_latency_ms(app: AppHandle) -> Result<Option<i64>, AppErr
         // it reports reaches the speaker this much later
         return Ok(Some(crate::soloist::OUTPUT_LATENCY_MS));
     }
-    if uses_youtube(&app).await {
+    if crate::apple::is_active() || uses_youtube(&app).await {
         let yt = app.state::<AppState>().yt.clone();
         let guard = yt.lock().await;
         return Ok(guard.as_ref().map(|p| p.output_latency_ms()).filter(|&ms| ms > 0));
@@ -2217,6 +2470,11 @@ async fn with_spirc<T>(
     app: &AppHandle,
     f: impl FnOnce(&crate::playback::PlaybackInner) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
+    if crate::apple::is_active() {
+        return Err(AppError::Playback(
+            "Jams play through Spotify and are unavailable while signed into Apple Music.".into(),
+        ));
+    }
     if uses_youtube(app).await {
         return Err(AppError::Playback(
             "Jams play through Spotify. Switch the audio source to Spotify in Settings.".into(),
@@ -2239,6 +2497,10 @@ async fn with_spirc<T>(
 /// the queue, current track and context this device last reported
 #[tauri::command]
 pub async fn get_connect_state(app: AppHandle) -> Result<Option<crate::playback::ConnectStateMsg>, AppError> {
+    // Spotify Connect state: an Apple Music account has none
+    if crate::apple::is_active() {
+        return Ok(None);
+    }
     let playback = app.state::<AppState>().playback.clone();
     let guard = playback.lock().await;
     Ok(guard.as_ref().map(|inner| inner.connect_state()))

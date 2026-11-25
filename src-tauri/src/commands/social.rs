@@ -68,6 +68,10 @@ pub(crate) fn friends_from(v: &Value) -> Vec<FriendActivity> {
 /// what the people you follow are listening to, most recent first
 #[tauri::command]
 pub async fn get_friend_activity(app: AppHandle) -> Result<Vec<FriendActivity>, AppError> {
+    // Spotify-only: an Apple Music account has none
+    if crate::apple::is_active() {
+        return Ok(Vec::new());
+    }
     let v = spclient::get_json_value(&app, "/presence-view/v1/buddylist").await?;
     Ok(friends_from(&v))
 }
@@ -334,6 +338,10 @@ async fn join_token_from(link: &str) -> Result<String, AppError> {
 /// the jam you're in, if any
 #[tauri::command]
 pub async fn get_jam(app: AppHandle) -> Result<Option<JamSession>, AppError> {
+    // Spotify-only: an Apple Music account has none
+    if crate::apple::is_active() {
+        return Ok(None);
+    }
     let device = local_device(&app).await?;
     match social_connect(
         &app,

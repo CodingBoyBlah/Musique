@@ -10,6 +10,8 @@ mod auth;
 mod commands;
 mod diagnostics;
 pub use diagnostics::sync_probe;
+pub use lyrics::sync_probe::apple_sync_probe;
+pub use widevine::{probe as widevine_probe, serve_host as widevine_host, HOST_ARG as WIDEVINE_HOST_ARG};
 
 pub fn connect_probe() -> i32 {
     use librespot_core::{authentication::Credentials, config::SessionConfig, session::Session};
@@ -64,6 +66,153 @@ pub fn connect_probe() -> i32 {
         tokio::time::sleep(std::time::Duration::from_secs(6)).await;
         eprintln!("[connect-probe] SURVIVED - account accepted as premium");
         0
+    })
+}
+
+/// `spotify.exe --apple-playback-probe <catalog song id>` with
+/// `MUSIQUE_APPLE_MEDIA_USER_TOKEN` set (or a signed-in Apple account in the
+/// keyring): resolves, licenses, downloads, decrypts and decodes the start of the
+/// track, and prints the timings. Read-only; nothing is played aloud.
+pub fn apple_playback_probe() -> i32 {
+    let mut args = std::env::args().skip_while(|a| a != "--apple-playback-probe").skip(1);
+    let Some(track_id) = args.next().filter(|id| !id.starts_with("--")) else {
+        eprintln!("usage: --apple-playback-probe <apple music catalog song id>");
+        return 2;
+    };
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("apple probe: cannot start a runtime: {e}");
+            return 1;
+        }
+    };
+    // `low` asks for the 64 kbps HE-AAC encode instead of 256 kbps AAC
+    let quality = match args.next().as_deref() {
+        Some("low") => apple::playback::AppleQuality::Low64,
+        _ => apple::playback::AppleQuality::High256,
+    };
+    // MUSIQUE_APPLE_PROBE_ALSO=<song id>: probe a second track at the same time, the way the
+    // app preloads the next track while one plays
+    if let Some(other) = std::env::var("MUSIQUE_APPLE_PROBE_ALSO").ok().filter(|v| !v.is_empty()) {
+        let (a, b) = runtime.block_on(async {
+            tokio::join!(apple::playback::probe_at(&track_id, quality), apple::playback::probe_at(&other, quality))
+        });
+        println!("{a:?}
+{b:?}");
+        return 0;
+    }
+    match runtime.block_on(apple::playback::probe_at(&track_id, quality)) {
+        Ok(report) => {
+            println!("{report}");
+            0
+        }
+        Err(e) => {
+            eprintln!("apple probe failed: {e}");
+            1
+        }
+    }
+}
+
+/// `spotify.exe --apple-api-probe` with `MUSIQUE_APPLE_MEDIA_USER_TOKEN` set (or a
+/// signed-in Apple account): runs every read the app makes against Apple Music —
+/// account, library, search, pages, home and radio — and prints what each found and
+/// how long it took. Read-only.
+/// `spotify.exe --apple-signin-probe` with `MUSIQUE_APPLE_SIGNIN_COOKIES` holding a Cookie
+/// header (or a bare media-user-token): runs the sign-in the app's window ends in — parse the
+/// cookie, connect, check the subscription, store the token, read the account — then signs out
+/// again so nothing is left behind.
+pub fn apple_signin_probe() -> i32 {
+    let Some(cookies) = std::env::var("MUSIQUE_APPLE_SIGNIN_COOKIES").ok().filter(|c| !c.is_empty()) else {
+        eprintln!("set MUSIQUE_APPLE_SIGNIN_COOKIES to a Cookie header holding media-user-token");
+        return 2;
+    };
+    let Ok(runtime) = tokio::runtime::Runtime::new() else { return 1 };
+    runtime.block_on(async {
+        let result = apple::client::sign_in(&cookies).await;
+        let stored = apple::auth::load_user_token().is_some();
+        let code = match result {
+            Ok(account) => {
+                println!("signed in: storefront {}, name {:?}, token stored: {stored}", account.storefront, account.display_name);
+                0
+            }
+            Err(e) => {
+                eprintln!("sign-in failed: {e}");
+                1
+            }
+        };
+        apple::client::reset();
+        println!("signed out, token still stored: {}", apple::auth::load_user_token().is_some());
+        code
+    })
+}
+
+pub fn apple_api_probe() -> i32 {
+    use std::time::Instant;
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("apple api probe: cannot start a runtime: {e}");
+            return 1;
+        }
+    };
+    runtime.block_on(async {
+        let mut failed = 0;
+        macro_rules! step {
+            ($label:expr, $call:expr, $show:expr) => {{
+                let started = Instant::now();
+                match $call.await {
+                    Ok(value) => {
+                        println!("ok   {:<22} {:>5} ms  {}", $label, started.elapsed().as_millis(), $show(&value));
+                        Some(value)
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        println!("FAIL {:<22} {:>5} ms  {e}", $label, started.elapsed().as_millis());
+                        None
+                    }
+                }
+            }};
+        }
+        let account = step!("account", apple::api::profile(), |a: &apple::client::AppleAccount| format!("storefront {}", a.storefront));
+        if account.is_none() {
+            return 1;
+        }
+        let liked = step!("library songs", apple::api::liked_songs(), |v: &Vec<spotify::types::TrackItem>| format!("{} songs", v.len()));
+        let playlists = step!("library playlists", apple::api::library_playlists(), |v: &Vec<commands::library::PlaylistSummary>| format!("{} playlists", v.len()));
+        step!("library albums", apple::api::library_albums(), |v: &Vec<spotify::types::AlbumItem>| format!("{} albums", v.len()));
+        step!("library artists", apple::api::library_artists(), |v: &Vec<spotify::types::ArtistItem>| format!("{} artists", v.len()));
+        step!("recently played", apple::api::recently_played(), |v: &Vec<spotify::types::TrackItem>| format!("{} songs", v.len()));
+        step!("heavy rotation", apple::api::heavy_rotation_tracks(), |v: &Vec<spotify::types::TrackItem>| format!("{} songs", v.len()));
+        step!("new releases", apple::api::new_releases(), |v: &Vec<spotify::types::AlbumItem>| format!("{} albums", v.len()));
+        step!("home feed", apple::api::home_feed(), |f: &commands::home_feed::HomeFeed| format!("{} sections", f.sections.len()));
+        let found = step!("search", apple::api::search("daft punk", "track,artist,album,playlist"), |r: &spotify::types::SearchResults| format!(
+            "{} songs, {} artists, {} albums, {} playlists", r.tracks.len(), r.artists.len(), r.albums.len(), r.playlists.len()));
+        if let Some(found) = found {
+            if let Some(track) = found.tracks.first() {
+                step!("track", apple::api::track(&track.id), |t: &spotify::types::TrackDetail| t.name.clone());
+                step!("isrc", apple::api::track_isrc(&track.id), |i: &Option<String>| format!("{i:?}"));
+                step!("radio", apple::api::track_radio(&track.id), |r: &commands::internal::RadioResult| format!("{} songs", r.tracks.len()));
+            }
+            if let Some(album) = found.albums.first() {
+                step!("album", apple::api::album(&album.id), |a: &spotify::types::AlbumDetail| format!("{} ({} tracks)", a.name, a.tracks.len()));
+            }
+            if let Some(artist) = found.artists.first() {
+                step!("artist", apple::api::artist(&artist.id), |a: &spotify::types::ArtistDetail| format!(
+                    "{}: {} top songs, {} albums, {} singles", a.name, a.top_tracks.len(), a.albums.len(), a.singles.len()));
+                step!("artist extras", apple::api::artist_extras(&artist.id), |x: &commands::artist_extras::ArtistExtras| format!(
+                    "{} related, bio {}", x.related.len(), x.biography.is_some()));
+            }
+            if let Some(pl) = found.playlists.first() {
+                step!("catalog playlist", apple::api::playlist(&pl.id), |p: &spotify::types::PlaylistDetail| format!("{} ({} tracks)", p.name, p.tracks.len()));
+            }
+        }
+        if let Some(pl) = playlists.as_ref().and_then(|v| v.first()) {
+            step!("library playlist", apple::api::playlist(&pl.id), |p: &spotify::types::PlaylistDetail| format!("{} ({} tracks)", p.name, p.tracks.len()));
+        }
+        if let Some(ids) = liked.map(|v| v.iter().take(5).map(|t| t.id.clone()).collect::<Vec<_>>()) {
+            step!("saved check", apple::api::saved_track_ids(&ids), |v: &Vec<String>| format!("{}/{} saved", v.len(), ids.len()));
+        }
+        if failed == 0 { 0 } else { 1 }
     })
 }
 
@@ -668,6 +817,8 @@ mod soloist;
 mod spotify;
 mod stretch;
 mod youtube;
+mod apple;
+mod widevine;
 mod state;
 mod mem_trim;
 
@@ -1003,6 +1154,11 @@ pub fn run() {
                 // seed spotify creds from .env on first run, does nothing if theyre already set
                 commands::credentials::seed_credentials_from_env(&pool).await;
                 commands::playback::load_sound_settings(&pool).await;
+                // which service is signed in, and where Apple Music keeps its web token
+                if let Ok(dir) = handle.path().app_local_data_dir() {
+                    apple::auth::init(dir.join("apple"));
+                }
+                apple::load(&pool).await;
                 let auth_state = auth::init_auth_state_with(
                     &pool,
                     tokens.await.unwrap_or(None),
@@ -1176,6 +1332,13 @@ pub fn run() {
             commands::auth::logout,
             commands::auth::get_auth_status,
             commands::auth::get_profile,
+            commands::apple::apple_sign_in,
+            commands::apple::apple_sign_in_with_token,
+            commands::apple::apple_cancel_sign_in,
+            commands::widevine::widevine_status,
+            commands::widevine::widevine_license_text,
+            commands::widevine::widevine_install,
+            commands::widevine::widevine_uninstall,
             commands::spotify::search,
             commands::spotify::get_artist,
             commands::spotify::get_album,

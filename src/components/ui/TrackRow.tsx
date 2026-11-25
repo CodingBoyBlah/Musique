@@ -11,7 +11,8 @@ import { fmtMs } from "../../utils/fmt";
 import { EASE_OUT, gpuLayer } from "../../lib/motion";
 import { cancelHoverPrefetch, prefetchArtist, prefetchArtistDetails, prefetchAlbum, scheduleHoverPrefetch } from "../../lib/prefetch";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
-import { shareSpotifyLink, shareUniversalLink } from "../../lib/share";
+import { serviceLinkLabel, shareSpotifyLink, shareUniversalLink } from "../../lib/share";
+import { isApple } from "../../hooks/useProvider";
 import { useAddToPlaylistStore } from "../../store/addToPlaylist.store";
 import { useYtMatchStore } from "../../store/ytMatch.store";
 import { getPlaybackBackend } from "../../api/playback";
@@ -144,7 +145,8 @@ function TrackRowImpl({
     });
     if (!track.id.startsWith("spotify:")) {
       entries.push({ label: "Start radio", icon: <Radio size={14} />, onSelect: () => { playTrackRadio(track); } });
-      entries.push({ label: "Show credits", icon: <Info size={14} />, onSelect: () => useCreditsStore.getState().open(track) });
+      // credits come from Spotify's own catalogue
+      if (!isApple()) entries.push({ label: "Show credits", icon: <Info size={14} />, onSelect: () => useCreditsStore.getState().open(track) });
     }
     if (track.artists[0]) entries.push({ label: "Go to artist", icon: <User size={14} />, onSelect: () => navigate(`/artist/${track.artists[0].id}`) });
     if (track.album) entries.push({ label: "Go to album", icon: <Disc3 size={14} />, onSelect: () => navigate(`/album/${track.album!.id}`) });
@@ -160,7 +162,7 @@ function TrackRowImpl({
         onSelect: () => openYtMatch(track.id, track.name),
       });
     }
-    entries.push({ label: "Copy Spotify link",   icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("track", track.id) });
+    entries.push({ label: serviceLinkLabel(),   icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("track", track.id) });
     entries.push({ label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("track", track.id) });
     return entries;
   }

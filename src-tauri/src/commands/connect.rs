@@ -200,6 +200,10 @@ struct RawPlaybackResponse {
 
 #[tauri::command]
 pub async fn get_devices(app: AppHandle) -> Result<DevicesPayload, AppError> {
+    // Spotify-only: an Apple Music account has none
+    if crate::apple::is_active() {
+        return Ok(DevicesPayload { devices: Vec::new(), musique_device_id: String::new() });
+    }
     let token = tok(&app).await?;
     let db = app.state::<AppState>().db.clone();
     let device_name = crate::auth::get_setting_value(&db, "device_name")
@@ -243,6 +247,10 @@ pub async fn get_devices(app: AppHandle) -> Result<DevicesPayload, AppError> {
 
 #[tauri::command]
 pub async fn get_playback_state(app: AppHandle) -> Result<Option<RemotePlaybackState>, AppError> {
+    // Spotify-only: an Apple Music account has none
+    if crate::apple::is_active() {
+        return Ok(None);
+    }
     let seq = PLAYBACK_POLL.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     LAN.connect.poll_sent(seq, None);
     let state = playback_state(&app).await;

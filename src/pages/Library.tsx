@@ -28,6 +28,7 @@ import { playTrack } from "../api/playback";
 import { useSpeedDialStore } from "../store/speedDial.store";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 import { useStagedList } from "../hooks/useStagedList";
+import { useIsApple } from "../hooks/useProvider";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
 
@@ -234,15 +235,18 @@ export default function Library() {
   useReflowPulse();
   const loggedIn = useAuthStore((s) => s.loggedIn);
   const [params] = useSearchParams();
+  // an Apple Music account has no podcasts: a stale link to that tab lands on songs
+  const isAppleAccount = useIsApple();
   const rawTab = params.get("tab");
-  const tab: TabKey = (TAB_KEYS as readonly string[]).includes(rawTab ?? "") ? (rawTab as TabKey) : "songs";
+  const known = (TAB_KEYS as readonly string[]).includes(rawTab ?? "") && !(isAppleAccount && rawTab === "podcasts");
+  const tab: TabKey = known ? (rawTab as TabKey) : "songs";
 
   if (!loggedIn) {
     return (
       <SignInPrompt
         heading="Your library"
         title="Sign in to view your library"
-        description="Log in with Spotify to access your saved playlists, albums, and tracks."
+        description="Log in with Spotify or Apple Music to access your saved playlists, albums, and tracks."
       />
     );
   }

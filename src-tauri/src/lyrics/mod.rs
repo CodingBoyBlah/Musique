@@ -6,6 +6,7 @@ pub mod align;
 pub mod cache;
 pub mod parse;
 pub mod providers;
+pub mod sync_probe;
 pub mod ttml;
 pub mod types;
 pub mod voices;
@@ -176,8 +177,16 @@ fn looks_cjk(track: &TrackRef) -> bool {
 }
 
 /// Primary Apple lookup, falling back to the second Apple TTML endpoint.
+///
+/// While Apple Music plays, the catalog's own document for the song being streamed
+/// comes first: it is keyed by that song id, so it is exact even when the ISRC lookup
+/// is slow or misses. A non-exact Apple document gets its lines moved onto other
+/// providers' timings (`align::sync_apple`), which is what put lyrics off the audio.
 async fn stage_apple(app: &AppHandle, pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
     let apple = try_provider!(pool, track, "applemusic", async {
+        if let Some(native) = providers::applemusic_native::fetch(track).await {
+            return Some(native);
+        }
         let enriched = with_recording_isrc(app, pool, track).await;
         providers::applemusic::fetch(&enriched).await
     });
@@ -205,6 +214,17 @@ fn recording_isrc(track: &librespot_protocol::metadata::Track) -> Option<String>
 async fn with_recording_isrc(app: &AppHandle, pool: &SqlitePool, track: &TrackRef) -> TrackRef {
     let mut enriched = track.clone();
     if track.isrc.as_deref().is_some_and(|id| !id.trim().is_empty()) {
+        return enriched;
+    }
+    // an Apple Music song carries its isrc in the catalog; Spotify's metadata
+    // service has never heard of its id
+    if crate::apple::is_active() {
+        let lookup = crate::apple::api::track_isrc(&track.id);
+        if let Ok(Ok(Some(isrc))) = tokio::time::timeout(std::time::Duration::from_secs(3), lookup).await {
+            let _ = sqlx::query("UPDATE tracks SET isrc = ? WHERE id = ? AND (isrc IS NULL OR TRIM(isrc) = '')")
+                .bind(&isrc).bind(&track.id).execute(pool).await;
+            enriched.isrc = Some(isrc);
+        }
         return enriched;
     }
     let lookup = crate::internal::metadata::track_protos(app, std::slice::from_ref(&track.id));
@@ -264,6 +284,38 @@ async fn stage_lrclib(pool: &SqlitePool, track: &TrackRef) -> Vec<Candidate> {
 
 // entry point
 
+/// The cached lyrics, unless they are an Apple Music song's Apple document whose lines
+/// were moved off Apple's own timings.
+///
+/// Before the catalog lookup came first, an Apple song whose ISRC lookup missed got a
+/// non-exact Apple document, and other providers' line timings were written over it.
+/// The untouched document is kept as the source's alternate; when the shown lines no
+/// longer start where it says, the row is fetched again rather than shown.
+async fn usable_hit(pool: &SqlitePool, track_id: &str) -> Option<Lyrics> {
+    let hit = cache::read(pool, track_id).await?;
+    if !crate::apple::is_active() || !hit.found || !is_apple_source(&hit.source) {
+        return Some(hit);
+    }
+    let Some(original) = cache::read_alt(pool, track_id, &hit.source).await else {
+        return Some(hit);
+    };
+    if timings_moved(&hit.lines, &original.lines) {
+        eprintln!("[lyrics] {track_id}: cached Apple lines were moved off Apple's timings, fetching again");
+        return None;
+    }
+    Some(hit)
+}
+
+/// Whether `shown` starts its lines anywhere other than `original` does.
+fn timings_moved(shown: &[LyricLine], original: &[LyricLine]) -> bool {
+    let starts = |lines: &[LyricLine]| {
+        let mut v: Vec<i64> = lines.iter().map(|l| l.time_ms).collect();
+        v.sort_unstable();
+        v
+    };
+    !original.is_empty() && starts(shown) != starts(original)
+}
+
 /// Fetch (or read from cache) the lyrics for a track.
 ///
 /// Fetch Apple lyrics alongside the Spotify sync reference. If Apple is missing
@@ -279,7 +331,7 @@ pub async fn get_or_fetch(
             .bind(&track.id).execute(pool).await?;
     }
     if !force {
-        if let Some(mut hit) = cache::read(pool, &track.id).await {
+        if let Some(mut hit) = usable_hit(pool, &track.id).await {
             hit.alternates = cache::list_alts(pool, &track.id).await;
             // only resume an upgrade that never settled (e.g. the app closed
             // mid-race). a finished race writes upgrading=false, and so does a
@@ -302,7 +354,7 @@ pub async fn get_or_fetch(
     let lock = inflight().track_lock(&track.id);
     let _guard = lock.mutex.lock().await;
     if !force {
-        if let Some(mut hit) = cache::read(pool, &track.id).await {
+        if let Some(mut hit) = usable_hit(pool, &track.id).await {
             hit.alternates = cache::list_alts(pool, &track.id).await;
             return Ok(hit);
         }
@@ -534,6 +586,21 @@ pub async fn switch_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apple_lines_moved_off_their_document_are_caught() {
+        let doc = vec![LyricLine::line(30_237, "a"), LyricLine::line(33_100, "b"), LyricLine::line(36_800, "c")];
+        // words donated, order changed by sorting: still Apple's timing
+        let mut same = doc.clone();
+        same.reverse();
+        assert!(!timings_moved(&same, &doc));
+        // one line moved onto another provider's timing
+        let mut moved = doc.clone();
+        moved[1].time_ms += 180;
+        assert!(timings_moved(&moved, &doc));
+        // no document to compare with: nothing to say
+        assert!(!timings_moved(&moved, &[]));
+    }
 
     #[test]
     fn recording_identifier_comes_from_isrc_metadata_only() {

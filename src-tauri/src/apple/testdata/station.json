@@ -1,0 +1,32 @@
+{
+  "results": {
+    "station": {
+      "id": "ra.1440857781",
+      "type": "stations",
+      "attributes": {
+        "name": "Blue Monday Station"
+      }
+    },
+    "tracks": [
+      {
+        "id": "1001",
+        "type": "songs",
+        "attributes": {
+          "name": "Enjoy the Silence",
+          "artistName": "Depeche Mode",
+          "albumName": "Violator",
+          "durationInMillis": 257000
+        }
+      },
+      {
+        "id": "1440857781",
+        "type": "songs",
+        "attributes": {
+          "name": "Blue Monday",
+          "artistName": "New Order",
+          "durationInMillis": 447000
+        }
+      }
+    ]
+  }
+}

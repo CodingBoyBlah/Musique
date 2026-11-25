@@ -773,7 +773,17 @@ pub async fn library_sync_loop(app: tauri::AppHandle) {
         let gate = s.sync_gate.clone();
         drop(s);
 
-        if let Ok(token) = crate::auth::get_valid_token(&pool, &auth).await {
+        if crate::apple::is_active() {
+            if crate::apple::auth::load_user_token().is_some() {
+                let _syncing = gate.read().await;
+                match crate::apple::library::sync_all(&pool, &emit_steps(&app)).await {
+                    Ok(result) => {
+                        let _ = app.emit("library:synced", result);
+                    }
+                    Err(e) => eprintln!("[library] apple sync failed: {e}"),
+                }
+            }
+        } else if let Ok(token) = crate::auth::get_valid_token(&pool, &auth).await {
             let _syncing = gate.read().await;
             match sync_all(&pool, &token, &emit_steps(&app)).await {
                 Ok(result) => {

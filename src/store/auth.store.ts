@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AuthStatus } from "../types/ipc";
+import type { AuthStatus, Provider } from "../types/ipc";
 import type { LoginLinks } from "../api/auth";
 
 interface AuthStore {
@@ -15,6 +15,7 @@ interface AuthStore {
   email:       string | null;
   product:     string | null;
   imageUrl:    string | null;
+  provider:    Provider;
   setFromStatus: (s: AuthStatus) => void;
   clear: () => void;
 }
@@ -41,16 +42,19 @@ export const useAuthStore = create<AuthStore>((set) => ({
   email:       null,
   product:     null,
   imageUrl:    null,
+  provider:    "spotify",
 
   setFromStatus: (s) =>
-    set({
+    set((state) => ({
       loggedIn:    s.logged_in,
       userId:      s.user_id,
       displayName: s.display_name,
       email:       s.email,
       product:     s.product,
       imageUrl:    s.image_url,
-    }),
+      // a status built from the profile carries no provider: keep the one we have
+      provider:    s.provider ?? (s.logged_in ? state.provider : "spotify"),
+    })),
 
   clear: () =>
     set({
@@ -61,5 +65,6 @@ export const useAuthStore = create<AuthStore>((set) => ({
       email:       null,
       product:     null,
       imageUrl:    null,
+      provider:    "spotify",
     }),
 }));

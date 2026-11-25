@@ -183,6 +183,9 @@ fn clean_id(id: &str) -> Result<String, AppError> {
 /// the profile page. `id` is a spotify username / user id; omitted means you
 #[tauri::command]
 pub async fn get_user_profile(app: AppHandle, id: Option<String>) -> Result<UserProfile, AppError> {
+    if crate::apple::is_active() {
+        return apple_profile().await;
+    }
     // the page's react-query key, which uses the id exactly as it asked
     let key = serde_json::json!(["profile", "view", id.as_deref().unwrap_or("me")]);
     let id = match id {
@@ -218,6 +221,10 @@ pub async fn get_user_profile(app: AppHandle, id: Option<String>) -> Result<User
 }
 
 async fn follow_list(app: &AppHandle, id: Option<String>, which: &str) -> Result<Vec<ProfileCard>, AppError> {
+    // Apple Music has no follower graph to list
+    if crate::apple::is_active() {
+        return Ok(Vec::new());
+    }
     let id = match id {
         Some(id) => clean_id(&id)?,
         None => spclient::account_username(app).await?,
@@ -247,6 +254,9 @@ pub async fn get_user_following(app: AppHandle, id: Option<String>) -> Result<Ve
 /// follow / unfollow another user (web api, needs user-follow-modify)
 #[tauri::command]
 pub async fn set_user_followed(app: AppHandle, id: String, follow: bool) -> Result<(), AppError> {
+    if crate::apple::is_active() {
+        return Err(AppError::InvalidInput("Apple Music has no people to follow".into()));
+    }
     let id = clean_id(&id)?;
     let token = tok(&app).await?;
     let method = if follow { reqwest::Method::PUT } else { reqwest::Method::DELETE };
@@ -261,6 +271,9 @@ pub async fn set_user_followed(app: AppHandle, id: String, follow: bool) -> Resu
 
 #[tauri::command]
 pub async fn is_user_followed(app: AppHandle, id: String) -> Result<bool, AppError> {
+    if crate::apple::is_active() {
+        return Ok(false);
+    }
     let id = clean_id(&id)?;
     let token = tok(&app).await?;
     let v: Vec<bool> =
@@ -307,4 +320,37 @@ mod tests {
         let c = card_from_view(&v).unwrap();
         assert_eq!((c.kind.as_str(), c.name.as_str()), ("user", "y"));
     }
+}
+
+/// The profile page for an Apple Music account: its name and picture, and its own
+/// playlists. Apple keeps no followers or listening history to show on it.
+async fn apple_profile() -> Result<UserProfile, AppError> {
+    let (account, playlists) = tokio::join!(
+        crate::apple::api::profile(),
+        crate::apple::api::library_playlists(),
+    );
+    let account = account?;
+    let playlists: Vec<PlaylistCard> = playlists
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| PlaylistCard {
+            id:          p.id,
+            name:        p.name,
+            description: p.description,
+            image_url:   p.image_url,
+            owner_name:  account.display_name.clone(),
+        })
+        .collect();
+    Ok(UserProfile {
+        id:                      account.handle.clone().unwrap_or_else(|| format!("apple-{}", account.storefront)),
+        name:                    account.display_name.clone().or(account.handle.clone()).unwrap_or_else(|| "Apple Music".into()),
+        image_url:               account.image_url.clone(),
+        followers:               None,
+        following:               None,
+        total_public_playlists:  Some(playlists.len() as i64),
+        playlists,
+        recently_played_artists: crate::apple::api::heavy_rotation_artists().await.unwrap_or_default(),
+        is_verified:             false,
+        spotify_url:             "https://music.apple.com/".into(),
+    })
 }

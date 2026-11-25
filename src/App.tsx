@@ -96,6 +96,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useJamSync } from "./hooks/useJamSync";
 import { jamRole } from "./store/jam.store";
 import { cleanupAsyncListeners } from "./lib/asyncListeners";
+import { isApple } from "./hooks/useProvider";
 
 function AppInit() {
   const setFromCredentials = useCredentialsStore((s) => s.setFromCredentials);
@@ -333,6 +334,10 @@ Home recs so they're cached before the user gets there
                 const playing = usePlayerStore.getState().currentTrack;
                 if (!jamRole() && playing?.id === currentTrack.id && useQueueStore.getState().peek(playing)?.id === next.id) {
                   preloadTrack(next.id).catch(() => {});
+                  // Apple Music starts a cold track in about a second; the one after next is
+                  // fetched too, so skipping twice in a row is as instant as skipping once
+                  const after = useQueueStore.getState().queue[1];
+                  if (isApple() && after && after.id !== next.id) preloadTrack(after.id).catch(() => {});
                 }
               }, 0);
             }

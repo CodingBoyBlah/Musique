@@ -60,6 +60,10 @@ import { useReflowPulse } from "../hooks/useReflowPulse";
 import { EASE_OUT, PRESS_TRANSITION, REFLOW_SPRING } from "../lib/motion";
 import "../styles/ui.css";
 import { Switch } from "../components/ui/Switch";
+import { useIsApple } from "../hooks/useProvider";
+import { widevineStatus, widevineUninstall } from "../api/widevine";
+import { WIDEVINE_STATUS_KEY } from "../components/ui/WidevineSetup";
+import { useWidevineStore } from "../store/widevine.store";
 
 const REFLOW = REFLOW_SPRING;
 
@@ -498,6 +502,13 @@ const QUALITY_OPTIONS: { value: AudioQuality; label: string }[] = [
   { value: "320", label: "Very high · 320 kbps" },
 ];
 
+/* Apple Music serves two encodes; the stored setting keeps Spotify's values,
+   and "96" is the one that asks for the smaller encode. */
+const APPLE_QUALITY_OPTIONS: { value: AudioQuality; label: string }[] = [
+  { value: "96", label: "Normal · 64 kbps" },
+  { value: "320", label: "High · 256 kbps" },
+];
+
 /* Soloist streams what its own preferences ask for. Measured against the real
    player: anything below "very high" is 160 kbps, so there is no 96 here, and
    lossless falls back to 320 kbps on a plan without it. */
@@ -890,7 +901,56 @@ function soloistQualityHint(data: SoloistState | undefined, appliesNext: boolean
     : "What's streaming shows here once a song plays.";
 }
 
+/** Apple Music's own settings: the Widevine module its protected tracks need. */
+function AppleMusicCard() {
+  const qc = useQueryClient();
+  const showSetup = useWidevineStore((s) => s.show);
+  const [removing, setRemoving] = useState(false);
+  const { data: status } = useQuery({ queryKey: WIDEVINE_STATUS_KEY, queryFn: widevineStatus, staleTime: 60_000 });
+
+  const remove = async () => {
+    setRemoving(true);
+    try {
+      await widevineUninstall();
+      await qc.invalidateQueries({ queryKey: WIDEVINE_STATUS_KEY });
+    } catch (e) {
+      toast.error(errMsg(e));
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  const hint = !status
+    ? "Checking..."
+    : !status.supported
+    ? "Widevine isn't available for this system, so Apple Music tracks can't play here."
+    : status.installed
+    ? `Installed${status.version ? ` (version ${status.version})` : ""}. Apple Music tracks are decrypted on this computer as they play.`
+    : "Apple Music's tracks are protected. Install Google's Widevine module to play them.";
+
+  return (
+    <Card title="Apple Music">
+      <SettingRow
+        label="Widevine"
+        hint={hint}
+        control={
+          status?.supported ? (
+            status.installed ? (
+              <GhostBtn subtle onClick={() => void remove()} disabled={removing}>
+                {removing ? "Removing..." : "Remove"}
+              </GhostBtn>
+            ) : (
+              <PrimaryBtn onClick={showSetup}>Install</PrimaryBtn>
+            )
+          ) : null
+        }
+      />
+    </Card>
+  );
+}
+
 function PlaybackCard() {
+  const isAppleAccount = useIsApple();
   const audioQuality = usePrefsStore((s) => s.audioQuality);
   const setAudioQuality = usePrefsStore((s) => s.setAudioQuality);
   const audioCacheLimitMb = usePrefsStore((s) => s.audioCacheLimitMb);
@@ -1003,7 +1063,7 @@ function PlaybackCard() {
 
   return (
     <Card title="Playback">
-      <SettingRow
+      {!isAppleAccount && <SettingRow
         label="Audio source"
         hint={
           backend && !backend.spotify_available
@@ -1022,9 +1082,9 @@ function PlaybackCard() {
             layoutId="settings-playback-backend"
           />
         }
-      />
+      />}
       <AnimatePresence initial={false}>
-        {showPanel && soloist && (
+        {showPanel && soloist && !isAppleAccount && (
           <motion.div
             key="soloist-panel"
             initial={{ height: 0, opacity: 0 }}
@@ -1056,7 +1116,7 @@ function PlaybackCard() {
           </motion.div>
         )}
       </AnimatePresence>
-      {onSoloist && soloist ? (
+      {onSoloist && soloist && !isAppleAccount ? (
         <SettingRow
           label="Audio quality"
           hint={soloistQualityHint(soloist, qualityNext)}
@@ -1072,18 +1132,22 @@ function PlaybackCard() {
       ) : (
         <SettingRow
           label="Audio quality"
-          hint="Higher bitrates use more data. Applied on next track."
+          hint={
+            isAppleAccount
+              ? "Apple Music streams AAC. Normal uses less data but sounds duller. Applied on next track."
+              : "Higher bitrates use more data. Applied on next track."
+          }
           control={
             <Segmented
-              value={audioQuality}
-              options={QUALITY_OPTIONS}
+              value={isAppleAccount ? (audioQuality === "96" ? "96" : "320") : audioQuality}
+              options={isAppleAccount ? APPLE_QUALITY_OPTIONS : QUALITY_OPTIONS}
               onChange={setAudioQuality}
               layoutId="settings-audio-quality"
             />
           }
         />
       )}
-      <SettingRow
+      {!isAppleAccount && <SettingRow
         label="Disk cache limit"
         hint={
           onSoloist
@@ -1135,7 +1199,7 @@ function PlaybackCard() {
             </Tooltip>
           </div>
         }
-      />
+      />}
     </Card>
   );
 }
@@ -1605,6 +1669,7 @@ function Divider() {
 
 export default function Settings() {
   useReflowPulse();
+  const isAppleAccount = useIsApple();
   const qc = useQueryClient();
   const { status, setStatus, setFromCredentials, clear, isCustom } =
     useCredentialsStore();
@@ -1689,6 +1754,7 @@ export default function Settings() {
         Settings
       </h1>
 
+      {isAppleAccount && <AppleMusicCard />}
       <PlaybackCard />
       <GeneralCard />
       <FeaturesCard />
@@ -1697,7 +1763,7 @@ export default function Settings() {
       <LastfmCard />
 
       {/* spotify API & authentication card (collapsible at the very end) */}
-      <motion.section
+      {!isAppleAccount && <motion.section
         layout="position"
         transition={{ layout: REFLOW }}
         style={{
@@ -1918,7 +1984,7 @@ export default function Settings() {
             </motion.div>
           )}
         </AnimatePresence>
-      </motion.section>
+      </motion.section>}
     </div>
   );
 }
