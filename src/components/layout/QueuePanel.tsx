@@ -1,6 +1,6 @@
 import { memo, useMemo } from "react";
 import { coverUrl } from "../../lib/coverUrl";
-import { motion, AnimatePresence, Reorder } from "framer-motion";
+import { AnimatePresence, Reorder } from "framer-motion";
 import { X, GripVertical, Queue } from "@/lib/icons";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
@@ -9,7 +9,7 @@ import { fmtMs } from "../../utils/fmt";
 import { meshGradient } from "../../lib/mesh";
 import type { TrackItem } from "../../types/spotify";
 import { Tooltip } from "../ui/Tooltip";
-import { EASE_DRAWER, EASE_OUT, RAIL_CLOSE, RAIL_OPEN } from "../../lib/motion";
+import { EASE_DRAWER, EASE_OUT } from "../../lib/motion";
 import { useQuery } from "@tanstack/react-query";
 import { getRemoteQueue } from "../../api/connect";
 import { useJamStore } from "../../store/jam.store";
@@ -337,22 +337,13 @@ export function QueuePanel() {
   }
 
   return (
-    <motion.div
-      // in-flow rail below the title bar; slides via transform. width is reserved
-      // by the spacer in Layout.tsx so the grid reflows once, both ways.
-      // in from the right, out to the right, on the sheet curve both ways.
-      // (the exit used to be an ease-in, which starts slow at the exact moment
-      // the user is watching for the panel to respond.)
-      initial={{ x: WIDTH }}
-      animate={{ x: 0 }}
-      exit={{ x: WIDTH, transition: RAIL_CLOSE }}
-      transition={RAIL_OPEN}
+    // slid in and out by Layout (the rail) on a wrapper
+    <div
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH, maxWidth: "100vw", display: "flex", flexDirection: "column", overflow: "hidden",
         background: "transparent", borderLeft: "none",
         boxShadow: "none",
-        willChange: "transform",
       }}
     >
       <div style={{ width: WIDTH, flexShrink: 0, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -442,6 +433,6 @@ export function QueuePanel() {
           )}
         </div>
       </div>
-    </motion.div>
+    </div>
   );
 }

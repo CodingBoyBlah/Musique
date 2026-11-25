@@ -1,0 +1,91 @@
+/* Artist page: the Latest release / Popular pair. */
+
+/* ---------- Latest release + Popular ---------- */
+
+.artist-top {
+    container-type: inline-size;
+}
+.artist-top__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+}
+
+.latest-release {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+    color: inherit;
+    text-decoration: none;
+    border-radius: 12px;
+}
+.latest-release__cover {
+    width: 88px;
+    aspect-ratio: 1;
+    flex-shrink: 0;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+    transition: transform 0.3s var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), box-shadow 0.3s var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+@media (hover: hover) and (pointer: fine) {
+    .latest-release:hover .latest-release__cover {
+        transform: translateY(-2px);
+        box-shadow: 0 16px 38px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    .latest-release:hover .latest-release__name {
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        text-decoration-color: rgba(255, 255, 255, 0.4);
+    }
+}
+.latest-release__text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+.latest-release__date {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-text-dim);
+}
+.latest-release__name {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    color: var(--color-text-hi, #fff);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.latest-release__type {
+    margin: 0;
+    font-size: 13px;
+    color: var(--color-text-dim);
+    text-transform: capitalize;
+}
+
+/* wide: the release stands beside Popular as a large cover, the way the
+   newest thing an artist put out deserves */
+@container (min-width: 760px) {
+    .artist-top__grid[data-latest="true"] {
+        grid-template-columns: clamp(170px, 19cqi, 220px) minmax(0, 1fr);
+        gap: clamp(24px, 3.4cqi, 44px);
+    }
+    .latest-release {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+    .latest-release__cover {
+        width: 100%;
+    }
+}

@@ -230,7 +230,11 @@ fn first_source(v: &serde_json::Value) -> Option<String> {
     v.get("sources")?
         .as_array()?
         .iter()
-        .filter_map(|s| Some((s.get("url")?.as_str()?, s.get("width").and_then(|w| w.as_i64()).unwrap_or(0))))
+        .filter_map(|s| {
+            // older images say `width`; the v2 header image says `maxWidth`
+            let w = s.get("width").or_else(|| s.get("maxWidth")).and_then(|w| w.as_i64()).unwrap_or(0);
+            Some((s.get("url")?.as_str()?, w))
+        })
         .max_by_key(|(_, w)| *w)
         .map(|(u, _)| u.to_string())
 }
@@ -246,7 +250,12 @@ pub(crate) fn overview_from(data: &serde_json::Value) -> ArtistOverview {
         monthly_listeners: n(&["stats", "monthlyListeners"]),
         followers: n(&["stats", "followers"]),
         world_rank: n(&["stats", "worldRank"]).filter(|r| *r > 0),
-        verified: get(&a, &["profile", "verified"]).and_then(|x| x.as_bool()).unwrap_or(false),
+        // moved out of `profile` into the reputation trait (seen nov 2026);
+        // the old place is kept for older persisted-query hashes
+        verified: get(&a, &["onPlatformReputationTrait", "verification", "isVerified"])
+            .or_else(|| get(&a, &["profile", "verified"]))
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
         top_cities: arr(&a, &["stats", "topCities", "items"])
             .into_iter()
             .filter_map(|c| {
@@ -257,7 +266,10 @@ pub(crate) fn overview_from(data: &serde_json::Value) -> ArtistOverview {
                 })
             })
             .collect(),
-        header_image: get(&a, &["visuals", "headerImage"]).and_then(first_source),
+        // `artistUnion.headerImage.data` now; it used to be `visuals.headerImage`
+        header_image: get(&a, &["headerImage", "data"])
+            .and_then(first_source)
+            .or_else(|| get(&a, &["visuals", "headerImage"]).and_then(first_source)),
         gallery: arr(&a, &["visuals", "gallery", "items"]).into_iter().filter_map(first_source).collect(),
         external_links: arr(&a, &["profile", "externalLinks", "items"])
             .into_iter()
@@ -303,7 +315,7 @@ pub async fn get_artist_overview(app: AppHandle, id: String) -> Result<ArtistOve
     use tauri::Manager;
     let pool = app.state::<crate::state::AppState>().db.clone();
     let uri = format!("spotify:artist:{id}");
-    cache::cached_json(&pool, &uri, "artist-overview", 6 * cache::HOUR, || async {
+    cache::cached_json(&pool, &uri, "artist-overview-v2", 6 * cache::HOUR, || async {
         let data = crate::internal::pathfinder::query(
             &app,
             "queryArtistOverview",
@@ -318,6 +330,26 @@ pub async fn get_artist_overview(app: AppHandle, id: String) -> Result<ArtistOve
 #[cfg(test)]
 mod overview_tests {
     use super::*;
+
+    // the shape pathfinder returns since late 2026: banner under
+    // artistUnion.headerImage.data sized by maxWidth, verification in the
+    // reputation trait, nothing under visuals.headerImage / profile.verified
+    #[test]
+    fn parses_v2_header_and_verified() {
+        let v = serde_json::json!({"artistUnion": {
+            "profile": {"name": "Weezer"},
+            "onPlatformReputationTrait": {"verification": {"isRegistered": true, "isVerified": true}},
+            "headerImage": {"data": {"sources": [
+                {"maxHeight": 640, "maxWidth": 1494, "url": "https://h/small"},
+                {"maxHeight": 1140, "maxWidth": 2660, "url": "https://h/wide"},
+                {"maxHeight": 1080, "maxWidth": 1920, "url": "https://h/169"}
+            ]}},
+            "visuals": {"avatarImage": {"sources": []}, "gallery": {"items": []}}
+        }});
+        let o = overview_from(&v);
+        assert!(o.verified);
+        assert_eq!(o.header_image.as_deref(), Some("https://h/wide"));
+    }
 
     #[test]
     fn parses_overview() {

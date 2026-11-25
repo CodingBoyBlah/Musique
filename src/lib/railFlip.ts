@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { RAIL_EASE_CSS } from "./motion";
+import { cornerScale } from "./railReflow";
 
 /* Tile grids through a right-rail slide.
 
@@ -20,26 +21,35 @@ column count comes from JS (EvenGrid, the quick actions, the stat tiles)
 registers useRailPin, and is told synchronously, between the pin and the
 second measure, so it has re-rendered its columns by the time it is read.
 
-On a close the pinned width is wider than the page still is, for the length of
-the slide. The page clips it, and the edge sliding away reveals cards already
-sitting in their final cells. */
+The page itself only changes width at rest (Layout, "The right rail slides"):
+during a slide it is laid out at its widest and the card's travelling edge
+clips it. So an opening grid is pinned narrower than the page around it, and a
+closing one already has the full width - its cards sitting in their final
+cells, uncovered as the edge moves off them. */
 
 const RAIL_PIN = "railpin";
 
 /** Pin every rail-locked grid under `root` to its width after the page has
  * grown by `grow` px (negative while a panel opens), FLIP its cards over `ms`,
- * and return a function that releases the pins. Must not be called during a
- * React render or commit - JS grids re-render synchronously from inside it. */
-export function pinRailGrids(root: HTMLElement, grow: number, ms: number): () => void {
+ * and return a function that releases the pins. `change`, if given, runs
+ * between reading where the cards are and reading the grids' widths - the
+ * layout change of the slide itself (and the release of a slide it cuts
+ * short), so `grow` is measured from the page as it is after it. Must not be
+ * called during a React render or commit - JS grids re-render synchronously
+ * from inside it. */
+export function pinRailGrids(root: HTMLElement, grow: number, ms: number, change?: () => void): () => void {
   const grids = Array.from(root.querySelectorAll<HTMLElement>("[data-rail-lock]"));
+  // where the cards are on screen now - mid-FLIP included, getBoundingClientRect
+  // reads through running animations
+  const before = new Map<Element, DOMRect>();
+  for (const g of grids) for (const c of Array.from(g.children)) before.set(c, c.getBoundingClientRect());
+  change?.();
   if (grids.length === 0) return () => {};
   const view = root.getBoundingClientRect();
 
   // read everything, then write, then read again: one forced layout for the
   // whole page rather than one per card
   const widths = grids.map((g) => g.getBoundingClientRect().width);
-  const before = new Map<Element, DOMRect>();
-  for (const g of grids) for (const c of Array.from(g.children)) before.set(c, c.getBoundingClientRect());
 
   const prev = grids.map((g) => g.style.width);
   grids.forEach((g, i) => {
@@ -104,8 +114,8 @@ function playFrom(card: HTMLElement, a: DOMRect | undefined, mode: FlipMode, vie
   }
   card.animate(
     [
-      { transformOrigin: "0 0", transform: `translate(${dx}px, ${dy}px) scale(${s})` },
-      { transformOrigin: "0 0", transform: "none" },
+      { transform: cornerScale(card, dx, dy, s) },
+      { transform: "none" },
     ],
     opts,
   );

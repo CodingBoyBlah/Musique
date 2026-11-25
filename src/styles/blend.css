@@ -1,0 +1,134 @@
+/* Spotify Blend tiles: two-tone gradient cover, overlapping member avatars, wordmark pill */
+.blend-cover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  overflow: hidden;
+  isolation: isolate;
+  outline: 1px solid rgba(255, 255, 255, 0.08);
+  outline-offset: -1px;
+}
+.blend-cover__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.blend-cover__bg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.blend-cover__bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 80% at 50% 110%, rgba(0, 0, 0, 0.28), transparent 60%);
+  pointer-events: none;
+}
+.blend-cover__pill {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 1;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 99px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: rgba(10, 10, 14, 0.42);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.blend-cover__wordmark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 9%;
+  z-index: 1;
+  text-align: center;
+  font-size: clamp(13px, 1.1vw, 16px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #fff;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.3);
+}
+
+.blend-avatars {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+.blend-avatar {
+  position: relative;
+  flex-shrink: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #fff;
+  background: var(--color-surface-2);
+  box-shadow: 0 0 0 var(--blend-ring-w, 2px) var(--blend-ring, var(--color-bg, #121212));
+}
+.blend-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.blend-avatar--more {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--color-text-hi);
+}
+
+.blend-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  text-decoration: none;
+  color: inherit;
+  min-width: 0;
+  overflow: hidden;
+  background: transparent;
+  transition: background 0.18s ease, translate var(--spring-default-dur) var(--spring-default), scale var(--spring-default-dur) var(--spring-default);
+}
+.blend-card:hover,
+.blend-card:focus-visible {
+  background: var(--color-surface-hover);
+}
+.blend-card__title,
+.blend-card__sub {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.blend-card__title {
+  font-size: clamp(13px, 0.9vw, 14px);
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--color-text-hi);
+}
+.blend-card__sub {
+  font-size: 12px;
+  line-height: 15px;
+  color: var(--color-text-dim);
+}
+.blend-card__sub { display: flex; align-items: center; gap: 6px; }
+.blend-card__sub > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.blend-card__faces { flex-shrink: 0; }

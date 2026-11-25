@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Pin, Pencil, Trash2, Heart, Radio } from "@/lib/icons";
@@ -37,6 +37,9 @@ import { toast } from "../store/toast.store";
 import type { TrackItem } from "../types/spotify";
 import { errMsg } from "../lib/err";
 import { useReflowPulse } from "../hooks/useReflowPulse";
+import { getBlendInfo, looksLikeBlend, type BlendMember } from "../api/blend";
+import { BlendHeader, TrackFaces } from "../components/ui/BlendHeader";
+import "../styles/blend-page.css";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
 
@@ -98,6 +101,36 @@ export default function PlaylistPage() {
     }
   }
   const { open: openMenu, element: menuEl } = useContextMenu();
+
+  /* Blends: spotify-owned "A + B" lists. read members/picks off playlist4;
+  until that lands (or if it fails) the name alone still gets the Blend look */
+  const blendGuess = !!data && looksLikeBlend(data.name, data.description, data.owner_id);
+  const { data: blend } = useQuery({
+    queryKey: ["blend", id],
+    queryFn: () => getBlendInfo(id!),
+    enabled: !!id && !!data && (blendGuess || data.owner_id === "spotify" || !data.owner_id),
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+  const isBlend = !!blend?.isBlend || blendGuess;
+  const blendMembers = useMemo<BlendMember[]>(() => {
+    if (blend?.members?.length) return blend.members;
+    if (!isBlend || !data) return [];
+    // "Alex + Sam" -> faces with initials until the real profiles arrive
+    return data.name.split(/\s\+\s|,\s/).map((n) => n.trim()).filter((n) => n && !/more$|blend/i.test(n))
+      .map((n) => ({ username: n, name: n, imageUrl: null }));
+  }, [blend, isBlend, data]);
+  const contributors = blend?.contributors;
+  const faceByTrack = useMemo(() => {
+    const out = new Map<string, ReactNode>();
+    if (!contributors) return out;
+    const byName = new Map(blendMembers.map((m) => [m.username, m]));
+    for (const [tid, users] of Object.entries(contributors)) {
+      const ms = users.map((u) => byName.get(u)).filter((m): m is BlendMember => !!m);
+      if (ms.length) out.set(tid, <TrackFaces members={ms} />);
+    }
+    return out;
+  }, [contributors, blendMembers]);
 
   const tracks = data?.tracks ?? [];
   const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
@@ -199,11 +232,18 @@ export default function PlaylistPage() {
             ]),
       ])}
     >
-      <PageHeader imageUrl={data.image_url} eyebrow="Playlist" title={data.name}>
-        {data.description && (
+      <PageHeader imageUrl={data.image_url} eyebrow={isBlend ? "Blend" : "Playlist"} title={data.name}>
+        {isBlend && (
+          <BlendHeader
+            members={blendMembers}
+            tasteMatch={blend?.tasteMatch ?? null}
+            trackCount={data.total_tracks}
+          />
+        )}
+        {data.description && !isBlend && (
           <ExpandableDescription text={data.description} />
         )}
-        <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
+        {!isBlend && <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
           {data.owner_name && (data.owner_id
             ? <><Link
                 to={`/user/${data.owner_id}`}
@@ -222,7 +262,7 @@ export default function PlaylistPage() {
           <span className="tnum" style={{ textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>
             {data.total_tracks} {data.total_tracks === 1 ? "track" : "tracks"}
           </span>
-        </p>
+        </p>}
         <PlayActions
           tracks={tracks}
           contextId={data.id}
@@ -290,6 +330,7 @@ export default function PlaylistPage() {
                 onQueue={enqueue}
                 onToggleLike={trackActions.onToggleLike}
                 onRemoveFromPlaylist={canEdit ? trackActions.onRemove : undefined}
+                trailing={faceByTrack.get(t.id)}
               />
           ))}
           {view.length === 0 && (

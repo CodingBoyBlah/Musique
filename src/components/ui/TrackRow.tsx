@@ -30,12 +30,18 @@ interface Props {
   index?:        number;
   showAlbum?:    boolean;
   showCover?:    boolean;   // per-track cover art (off for album pages, shared art)
+  // zebra tint on even rows. off where a short list stands on its own (artist
+  // Popular), where alternating fills read as a stack of cards
+  striped?:      boolean;
   liked?:        boolean;
   onPlay?:       (track: TrackItem, index?: number) => void;
   onQueue?:      (track: TrackItem) => void;
   onToggleLike?: (track: TrackItem) => void;
   // when set, the context menu shows "Remove from this playlist"
   onRemoveFromPlaylist?: (track: TrackItem) => void;
+  // right-side slot before the actions (Blend: faces of who it was picked for).
+  // pass a stable element (memoised per track) so the row memo holds
+  trailing?: React.ReactNode;
 }
 
 const stop = (e: React.MouseEvent) => e.stopPropagation();
@@ -75,8 +81,8 @@ function ActionBtn({
 }
 
 function TrackRowImpl({
-  track, index, showAlbum = false, showCover = true, liked, onPlay, onQueue, onToggleLike,
-  onRemoveFromPlaylist,
+  track, index, showAlbum = false, showCover = true, striped = true, liked, onPlay, onQueue, onToggleLike,
+  onRemoveFromPlaylist, trailing,
 }: Props) {
   const [hover, setHover] = useState(false);
   const cover = showCover ? track.album?.image_url : null;
@@ -159,7 +165,7 @@ function TrackRowImpl({
     return entries;
   }
 
-  const baseBg = index != null && index % 2 === 0 ? "rgba(255,255,255,0.032)" : "transparent";
+  const baseBg = striped && index != null && index % 2 === 0 ? "rgba(255,255,255,0.032)" : "transparent";
 
   return (
     <>
@@ -325,6 +331,8 @@ function TrackRowImpl({
           </p>
         </div>
 
+        {trailing}
+
         {onToggleLike && (
           <Tooltip label={liked ? "Remove from Liked Songs" : "Save to Liked Songs"} side="top">
             <ActionBtn
@@ -429,6 +437,7 @@ export const TrackRow = memo(TrackRowImpl, (prev, next) => {
     prev.liked === next.liked &&
     prev.showCover === next.showCover &&
     prev.showAlbum === next.showAlbum &&
+    prev.striped === next.striped &&
     prev.onPlay === next.onPlay &&
     prev.onQueue === next.onQueue &&
     prev.onToggleLike === next.onToggleLike &&
