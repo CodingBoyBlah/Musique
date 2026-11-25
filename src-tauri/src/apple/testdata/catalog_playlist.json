@@ -1,0 +1,18 @@
+{
+  "data": [
+    {
+      "id": "pl.f4d106fed2bd41149aaacabb233eb5eb",
+      "type": "playlists",
+      "attributes": {
+        "name": "Today's Hits",
+        "curatorName": "Apple Music Hits",
+        "description": {
+          "standard": "The biggest songs right now."
+        },
+        "artwork": {
+          "url": "https://is1-ssl.mzstatic.com/pl/{w}x{h}bb.{f}"
+        }
+      }
+    }
+  ]
+}

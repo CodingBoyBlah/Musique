@@ -1,0 +1,43 @@
+{
+  "meta": { "total": 2 },
+  "next": null,
+  "data": [
+    {
+      "id": "p.own1",
+      "type": "library-playlists",
+      "attributes": {
+        "name": "Late Night Drive",
+        "description": { "standard": "Cruising tunes" },
+        "canEdit": true,
+        "isPublic": false,
+        "hasCollaboration": false,
+        "lastModifiedDate": "2026-05-12T22:57:25Z",
+        "artwork": { "url": "https://is1-ssl.mzstatic.com/own/{w}x{h}bb.{f}" }
+      }
+    },
+    {
+      "id": "p.followed1",
+      "type": "library-playlists",
+      "attributes": {
+        "name": "Today's Hits",
+        "canEdit": false,
+        "dateAdded": "2026-05-01T10:00:00Z"
+      },
+      "relationships": {
+        "catalog": {
+          "data": [
+            {
+              "id": "pl.f4d106fed2bd41149aaacabb233eb5eb",
+              "type": "playlists",
+              "attributes": {
+                "name": "Today's Hits",
+                "curatorName": "Apple Music Hits",
+                "artwork": { "url": "https://is1-ssl.mzstatic.com/pl/{w}x{h}bb.{f}" }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

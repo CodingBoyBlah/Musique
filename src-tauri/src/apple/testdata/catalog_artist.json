@@ -1,0 +1,136 @@
+{
+  "data": [
+    {
+      "id": "5468295",
+      "type": "artists",
+      "attributes": {
+        "name": "Daft Punk",
+        "genreNames": ["Electronic", "Music"],
+        "artistBio": "<p>French electronic duo formed in <b>Paris</b>.</p>",
+        "editorialNotes": {
+          "standard": "Pioneers of French house."
+        },
+        "artwork": {
+          "url": "https://is1-ssl.mzstatic.com/daft/{w}x{h}bb.{f}"
+        },
+        "editorialArtwork": {
+          "bannerUber": {
+            "url": "https://is1-ssl.mzstatic.com/banner/{w}x{h}{c}.{f}",
+            "width": 4320,
+            "height": 1080
+          },
+          "superHeroWide": {
+            "url": "https://is1-ssl.mzstatic.com/hero/{w}x{h}bb.{f}",
+            "width": 1600,
+            "height": 900
+          }
+        }
+      },
+      "views": {
+        "top-songs": {
+          "data": [
+            {
+              "id": "1001",
+              "type": "songs",
+              "attributes": {
+                "name": "One More Time",
+                "artistName": "Daft Punk",
+                "albumName": "Discovery",
+                "durationInMillis": 320000
+              },
+              "relationships": {
+                "artists": { "data": [{ "id": "5468295", "type": "artists", "attributes": { "name": "Daft Punk" } }] },
+                "albums": { "data": [{ "id": "2001", "type": "albums", "attributes": { "name": "Discovery" } }] }
+              }
+            }
+          ]
+        },
+        "full-albums": {
+          "data": [
+            {
+              "id": "2001",
+              "type": "albums",
+              "attributes": {
+                "name": "Discovery",
+                "artistName": "Daft Punk",
+                "releaseDate": "2001-03-12",
+                "trackCount": 14,
+                "artwork": { "url": "https://is1-ssl.mzstatic.com/disc/{w}x{h}bb.{f}" }
+              }
+            }
+          ]
+        },
+        "singles": {
+          "data": [
+            {
+              "id": "2002",
+              "type": "albums",
+              "attributes": {
+                "name": "Get Lucky - Single",
+                "artistName": "Daft Punk",
+                "releaseDate": "2013-04-19",
+                "isSingle": true,
+                "trackCount": 1
+              }
+            }
+          ]
+        },
+        "compilation-albums": {
+          "data": [
+            {
+              "id": "2003",
+              "type": "albums",
+              "attributes": {
+                "name": "Musique Vol. 1",
+                "artistName": "Daft Punk",
+                "releaseDate": "2006-03-29",
+                "isCompilation": true,
+                "trackCount": 15
+              }
+            }
+          ]
+        },
+        "live-albums": {
+          "data": [
+            {
+              "id": "2004",
+              "type": "albums",
+              "attributes": {
+                "name": "Alive 2007",
+                "artistName": "Daft Punk",
+                "releaseDate": "2007-11-19",
+                "trackCount": 13
+              }
+            }
+          ]
+        },
+        "appears-on-albums": {
+          "data": [
+            {
+              "id": "3001",
+              "type": "albums",
+              "attributes": {
+                "name": "Tron Soundtrack",
+                "artistName": "Various Artists",
+                "releaseDate": "2010-12-06",
+                "trackCount": 22
+              }
+            }
+          ]
+        },
+        "similar-artists": {
+          "data": [
+            {
+              "id": "5468296",
+              "type": "artists",
+              "attributes": {
+                "name": "Justice",
+                "artwork": { "url": "https://is1-ssl.mzstatic.com/just/{w}x{h}bb.{f}" }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

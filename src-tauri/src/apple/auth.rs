@@ -270,6 +270,14 @@ fn save_disk_bearer(dir: &Path, token: &str) {
     }
 }
 
+#[cfg(test)]
+pub(crate) async fn scrape_bearer_from_test(
+    http: &reqwest::Client,
+    origin: &str,
+) -> Result<String, AppError> {
+    scrape_bearer_from(http, origin).await
+}
+
 async fn scrape_bearer_from(http: &reqwest::Client, origin: &str) -> Result<String, AppError> {
     let origin = origin.trim_end_matches('/');
     let html_resp = http

@@ -1,0 +1,50 @@
+{
+  "data": [
+    {
+      "id": "rec-recent",
+      "type": "personal-recommendation",
+      "attributes": {
+        "kind": "recently-played",
+        "title": { "stringForDisplay": "Recently Played" }
+      },
+      "relationships": {
+        "contents": {
+          "data": [
+            {
+              "id": "617154241",
+              "type": "albums",
+              "attributes": {
+                "name": "Substance",
+                "artistName": "New Order",
+                "artwork": { "url": "https://is1-ssl.mzstatic.com/al/{w}x{h}bb.{f}" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rec-mixes",
+      "type": "personal-recommendation",
+      "attributes": {
+        "kind": "personal-mixes",
+        "title": { "stringForDisplay": "Made for You" }
+      },
+      "relationships": {
+        "contents": {
+          "data": [
+            {
+              "id": "pl.pm-123",
+              "type": "playlists",
+              "attributes": {
+                "name": "Get Up! Mix",
+                "curatorName": "Apple Music",
+                "artwork": { "url": "https://is1-ssl.mzstatic.com/mix/{w}x{h}bb.{f}" }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

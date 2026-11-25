@@ -1,0 +1,60 @@
+{
+  "meta": { "total": 3 },
+  "next": null,
+  "data": [
+    {
+      "id": "l.alb1",
+      "type": "library-albums",
+      "attributes": {
+        "name": "Substance",
+        "artistName": "New Order",
+        "dateAdded": "2025-10-14",
+        "trackCount": 12
+      },
+      "relationships": {
+        "catalog": {
+          "data": [
+            {
+              "id": "617154241",
+              "type": "albums",
+              "attributes": {
+                "name": "Substance",
+                "artistName": "New Order",
+                "trackCount": 24,
+                "releaseDate": "1987-08-17",
+                "isCompilation": true,
+                "artwork": { "url": "https://is1.mzstatic.com/sub/{w}x{h}bb.{f}" }
+              },
+              "relationships": {
+                "artists": {
+                  "data": [
+                    { "id": "555", "type": "artists", "attributes": { "name": "New Order" } }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "l.only1",
+      "type": "library-albums",
+      "attributes": {
+        "name": "Bootleg EP",
+        "artistName": "Live Crew",
+        "trackCount": 4,
+        "releaseDate": "2019"
+      }
+    },
+    {
+      "id": "l.ghost",
+      "type": "library-albums",
+      "attributes": {
+        "name": "Empty Shell",
+        "artistName": "Ghost",
+        "trackCount": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "results": {
+    "songs": {
+      "data": [
+        {
+          "id": "1440857781",
+          "type": "songs",
+          "attributes": {
+            "name": "Blue Monday",
+            "artistName": "New Order",
+            "albumName": "Substance",
+            "durationInMillis": 447000,
+            "contentRating": "explicit",
+            "artwork": { "url": "https://is1-ssl.mzstatic.com/s/{w}x{h}bb.{f}" }
+          },
+          "relationships": {
+            "artists": { "data": [{ "id": "555", "type": "artists", "attributes": { "name": "New Order" } }] },
+            "albums": { "data": [{ "id": "617154241", "type": "albums", "attributes": { "name": "Substance" } }] }
+          }
+        }
+      ]
+    },
+    "albums": {
+      "data": [
+        {
+          "id": "617154241",
+          "type": "albums",
+          "attributes": {
+            "name": "Substance",
+            "artistName": "New Order",
+            "isCompilation": true,
+            "releaseDate": "1987-08-17",
+            "artwork": { "url": "https://is1-ssl.mzstatic.com/al/{w}x{h}bb.{f}" }
+          }
+        }
+      ]
+    },
+    "artists": {
+      "data": [
+        {
+          "id": "555",
+          "type": "artists",
+          "attributes": {
+            "name": "New Order",
+            "artwork": { "url": "https://is1-ssl.mzstatic.com/ar/{w}x{h}bb.{f}" }
+          }
+        }
+      ]
+    },
+    "playlists": {
+      "data": [
+        {
+          "id": "pl.u-123",
+          "type": "playlists",
+          "attributes": {
+            "name": "80s Synth",
+            "curatorName": "Apple Music",
+            "artwork": { "url": "https://is1-ssl.mzstatic.com/pl/{w}x{h}bb.{f}" }
+          }
+        }
+      ]
+    }
+  }
+}

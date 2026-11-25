@@ -1,0 +1,125 @@
+{
+  "meta": { "total": 4 },
+  "next": null,
+  "data": [
+    {
+      "id": "i.matched1",
+      "type": "library-songs",
+      "attributes": {
+        "name": "Blue Monday",
+        "artistName": "New Order",
+        "albumName": "Substance",
+        "durationInMillis": 447000,
+        "trackNumber": 3,
+        "discNumber": 1,
+        "dateAdded": "2025-02-13T10:04:40Z",
+        "playParams": {
+          "id": "i.matched1",
+          "catalogId": "1440857781",
+          "isLibrary": true
+        },
+        "artwork": {
+          "url": "https://is1-ssl.mzstatic.com/image/thumb/Lib/{w}x{h}bb.{f}"
+        }
+      },
+      "relationships": {
+        "catalog": {
+          "data": [
+            {
+              "id": "1440857781",
+              "type": "songs",
+              "attributes": {
+                "name": "Blue Monday",
+                "artistName": "New Order",
+                "albumName": "Substance",
+                "durationInMillis": 447000,
+                "contentRating": "explicit",
+                "isrc": "GBAAP8300001",
+                "playParams": { "id": "1440857781", "kind": "song" },
+                "artwork": {
+                  "url": "https://is1-ssl.mzstatic.com/image/thumb/Cat/{w}x{h}bb.{f}"
+                }
+              },
+              "relationships": {
+                "artists": {
+                  "data": [
+                    {
+                      "id": "555",
+                      "type": "artists",
+                      "attributes": { "name": "New Order" }
+                    }
+                  ]
+                },
+                "albums": {
+                  "data": [
+                    {
+                      "id": "617154241",
+                      "type": "albums",
+                      "attributes": { "name": "Substance", "isCompilation": true }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "albums": {
+          "data": [
+            { "id": "l.libalb1", "type": "library-albums" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "i.upload1",
+      "type": "library-songs",
+      "attributes": {
+        "name": "Basement Demo",
+        "artistName": "Local Band",
+        "albumName": "Tape 1",
+        "durationInMillis": 182000,
+        "trackNumber": 1,
+        "discNumber": 1,
+        "dateAdded": "2025-01-10T00:00:00Z",
+        "playParams": { "id": "i.upload1", "isLibrary": true }
+      }
+    },
+    {
+      "id": "i.replaced1",
+      "type": "library-songs",
+      "attributes": {
+        "name": "Reissued Song",
+        "artistName": "Artist X",
+        "albumName": "Album X",
+        "durationInMillis": 210000,
+        "playParams": {
+          "id": "i.replaced1",
+          "catalogId": "900001",
+          "reportingId": "900002",
+          "isLibrary": true
+        }
+      },
+      "relationships": {
+        "catalog": {
+          "data": [
+            {
+              "id": "900001",
+              "type": "songs",
+              "attributes": {
+                "name": "Reissued Song",
+                "artistName": "Artist X",
+                "durationInMillis": 210000,
+                "playParams": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": 12345,
+      "type": "library-songs",
+      "attributes": "corrupt-row-should-be-skipped"
+    }
+  ]
+}

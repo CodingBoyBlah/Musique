@@ -1,0 +1,61 @@
+{
+  "data": [
+    {
+      "id": "1440857781",
+      "type": "songs",
+      "attributes": {
+        "name": "Blue Monday",
+        "artistName": "New Order",
+        "albumName": "Substance",
+        "durationInMillis": 447000,
+        "trackNumber": 3,
+        "discNumber": 1,
+        "contentRating": "explicit",
+        "isrc": "GBAAP8300001",
+        "releaseDate": "1987-08-17",
+        "genreNames": ["Alternative", "Music"],
+        "previews": [
+          { "url": "https://audio-ssl.itunes.apple.com/preview/blue-monday.m4a" }
+        ],
+        "playParams": { "id": "1440857781", "kind": "song" },
+        "artwork": {
+          "url": "https://is1-ssl.mzstatic.com/image/thumb/Music/{w}x{h}bb.{f}",
+          "width": 3000,
+          "height": 3000
+        }
+      },
+      "relationships": {
+        "artists": {
+          "data": [
+            {
+              "id": "555",
+              "type": "artists",
+              "attributes": {
+                "name": "New Order",
+                "artwork": {
+                  "url": "https://is1-ssl.mzstatic.com/image/thumb/Artist/{w}x{h}bb.{f}"
+                }
+              }
+            }
+          ]
+        },
+        "albums": {
+          "data": [
+            {
+              "id": "617154241",
+              "type": "albums",
+              "attributes": {
+                "name": "Substance",
+                "releaseDate": "1987-08-17",
+                "isCompilation": true,
+                "artwork": {
+                  "url": "https://is1-ssl.mzstatic.com/image/thumb/Album/{w}x{h}bb.{f}"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
