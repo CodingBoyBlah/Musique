@@ -520,9 +520,32 @@ cold skip, host warm: load {:?}, ready to sound {:?} (sample {first})", loaded, 
                 let per_tick = rate as usize * channels as usize / 100; // 10 ms
                 let started = Instant::now();
                 let mut ticks = 0u64;
+                // MUSIQUE_APPLE_PROBE_RING_SEEKS=1: seek every 4 s, as a lyric click would, and time
+                // when the new position is heard. The first loud sample can still be the old position's
+                // fade, so read the underrun count (one short gap per seek) more than the timings
+                let ring_seeks = std::env::var_os("MUSIQUE_APPLE_PROBE_RING_SEEKS").is_some();
+                let targets = [95u64, 268, 12, 151, 212, 30, 300, 60];
+                let mut next_seek = 0usize;
+                let mut seek_asked: Option<Instant> = None;
                 while started.elapsed() < Duration::from_secs(secs) {
+                    if ring_seeks && seek_asked.is_none() && next_seek < targets.len()
+                        && started.elapsed() >= Duration::from_secs(2 + 4 * next_seek as u64)
+                    {
+                        ring.request_seek(Duration::from_secs(targets[next_seek]));
+                        seek_asked = Some(Instant::now());
+                    }
+                    let mut sounded = false;
                     for _ in 0..per_tick {
-                        let _ = ring_source.next();
+                        if ring_source.next().is_some_and(|v| v.abs() > 1e-4) {
+                            sounded = true;
+                        }
+                    }
+                    if let (Some(asked), true) = (seek_asked, sounded) {
+                        if asked.elapsed() > Duration::from_millis(5) || ticks > 0 {
+                            eprintln!("ring seek to {}s: audible after {:?}, heard clock {}ms", targets[next_seek], asked.elapsed(), ring.heard_ms());
+                            seek_asked = None;
+                            next_seek += 1;
+                        }
                     }
                     ticks += 1;
                     let due = started + Duration::from_millis(ticks * 10);
