@@ -10,6 +10,7 @@ mod auth;
 mod commands;
 mod diagnostics;
 pub use diagnostics::sync_probe;
+pub use lyrics::sync_probe::apple_sync_probe;
 pub use widevine::{probe as widevine_probe, serve_host as widevine_host, HOST_ARG as WIDEVINE_HOST_ARG};
 
 pub fn connect_probe() -> i32 {
