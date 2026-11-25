@@ -20,6 +20,7 @@ import { useUIStore } from "../../store/ui.store";
 import { TopSearch } from "./TopSearch";
 import { EASE_OUT } from "../../lib/motion";
 import { prefetchProfile, preloadRoute } from "../../lib/prefetch";
+import { useIsApple } from "../../hooks/useProvider";
 
 /* size of the windows caption cluster, measured from the window's top-right
    corner. the top bar is exactly this tall, so the buttons and the bar share
@@ -440,7 +441,9 @@ export function TitleBar() {
   const toggleQueue = usePlayerStore((s) => s.toggleQueue);
   const friendsOpen = usePlayerStore((s) => s.friendsOpen);
   const toggleFriends = usePlayerStore((s) => s.toggleFriends);
-  const showFriends = usePrefsStore((s) => s.showFriends);
+  const isAppleAccount = useIsApple();
+  // friend activity and Connect devices are Spotify's
+  const showFriends = usePrefsStore((s) => s.showFriends) && !isAppleAccount;
   const hasTrack = usePlayerStore((s) => s.currentTrack !== null);
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
@@ -561,9 +564,9 @@ export function TitleBar() {
             <Users size={17} strokeWidth={1.75} active={friendsOpen} />
           </CapsuleButton>}
 
-          <span className="tb-sep" aria-hidden />
+          {!isAppleAccount && <span className="tb-sep" aria-hidden />}
 
-          <CapsuleButton
+          {!isAppleAccount && <CapsuleButton
             label={isRemotePlayback && activeDevice ? `Playing on ${activeDevice.name}` : devicesOpen ? "Hide devices" : "Devices"}
             onClick={toggleDevices}
             on={devicesOpen && !isRemotePlayback}
@@ -574,7 +577,7 @@ export function TitleBar() {
             data-devices-trigger="true"
           >
             <Devices size={17} strokeWidth={1.75} active={devicesOpen || isRemotePlayback} />
-          </CapsuleButton>
+          </CapsuleButton>}
         </div>
       </div>
     </div>

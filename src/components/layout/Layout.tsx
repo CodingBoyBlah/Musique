@@ -25,6 +25,7 @@ import { chromePx } from "../../lib/zoom";
 import { EASE_OUT, RAIL_CLOSE_S, RAIL_EASE_CSS, RAIL_OPEN_S } from "../../lib/motion";
 import { pinRailGrids } from "../../lib/railFlip";
 import { measurePage, playPage, snapshotPage } from "../../lib/railReflow";
+import { useIsApple } from "../../hooks/useProvider";
 import "../../styles/layout.css";
 import Home from "../../pages/Home";
 
@@ -208,7 +209,9 @@ export default function Layout() {
   // the panel can be switched off in settings; a stale open flag must not keep it
   const friendsFlag = usePlayerStore((s) => s.friendsOpen);
   const friendsOn = usePrefsStore((s) => s.showFriends);
-  const friendsOpen = friendsFlag && friendsOn;
+  const isAppleAccount = useIsApple();
+  // friend activity is Spotify's; an Apple Music account has none to show
+  const friendsOpen = friendsFlag && friendsOn && !isAppleAccount;
   const immersiveOpen = usePlayerStore((s) => s.immersiveOpen);
   // one owner for the playhead clock, whatever else is on screen
   usePositionTicker();
