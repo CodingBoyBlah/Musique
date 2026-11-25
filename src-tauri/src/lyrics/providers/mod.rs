@@ -13,6 +13,7 @@
 
 pub mod amll;
 pub mod applemusic;
+pub mod applemusic_native;
 pub mod betterlyrics;
 pub mod kugou;
 pub mod lrclib;
