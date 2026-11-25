@@ -6,6 +6,7 @@ import { errMsg } from "../lib/err";
 import { jamRole } from "../store/jam.store";
 import { jamPlay, jamSetPlaying } from "../lib/jam";
 import { remotePlayTrack } from "./connect";
+import { useWidevineStore } from "../store/widevine.store";
 
 export interface VolumeState { level: number; muted: boolean; }
 
@@ -36,7 +37,10 @@ const failPlayback = (e: unknown): never => {
   const store = usePlayerStore.getState();
   store.setPlaying(false);
   store.setTargetState("paused");
-  toast.error(errMsg(e));
+  const message = errMsg(e);
+  // an Apple Music track that needs the Widevine module: offer to install it
+  if (/widevine/i.test(message)) useWidevineStore.getState().show();
+  else toast.error(message);
   throw e;
 };
 

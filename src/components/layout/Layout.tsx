@@ -14,6 +14,7 @@ import { Immersive as ImmersiveView } from "./Immersive";
 import { AddToPlaylistModal as AddToPlaylistView } from "../ui/AddToPlaylistModal";
 import { CreditsModal as CreditsView } from "../ui/CreditsModal";
 import { YtMatchModal as YtMatchView } from "../ui/YtMatchModal";
+import { WidevineSetup } from "../ui/WidevineSetup";
 import { DevicesPopover as DevicesView } from "./DevicesPopover";
 import { usePlayerStore } from "../../store/player.store";
 import { useUIStore } from "../../store/ui.store";
@@ -829,6 +830,7 @@ export default function Layout() {
       <AddToPlaylistModal />
       <CreditsModal />
       <YtMatchModal />
+      <WidevineSetup />
       <Toaster />
       {/* always at the window's own top-right corner, in the top bar's strip,
           so the buttons sit on the OS material and the close button owns the
