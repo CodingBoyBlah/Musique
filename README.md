@@ -20,6 +20,7 @@
 ## Features
 
 - **Full playback** via a patched librespot core (Spotify Premium). Free accounts play through YouTube Music instead, with metadata and lyrics still coming from Spotify.
+- **Apple Music** instead of Spotify, with an Apple Music subscription: library, playlists, search, artist pages, radio and playback (AAC up to 256 kbps, through Google's Widevine module, which Musique offers to install on first use).
 - **Synced lyrics** from LRCLIB, Apple Music, Musixmatch, NetEase, QQ Music, Kugou, AMLL, BetterLyrics and Spotify. Line and word-by-word timing, with romanization for Japanese and Chinese.
 - **Podcasts**, including playback speed control.
 - **Spotify Connect and Jam.** Shows up as a Connect device in the official apps.
@@ -74,6 +75,7 @@ boundary to the frontend, and no credentials are committed to the repo.
 ## Acknowledgements
 
 - [librespot](https://github.com/librespot-org/librespot): the open Spotify protocol client this is built on (MIT)
+- [Sonora](https://github.com/sonorahq/sonora): showed how Apple Music's web player can be played outside a browser
 - [LRCLIB](https://lrclib.net/): synced lyrics
 - [Cider](https://cider.sh/): the inspiration
 
