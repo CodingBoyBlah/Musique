@@ -68,6 +68,35 @@ pub fn connect_probe() -> i32 {
     })
 }
 
+/// `spotify.exe --apple-playback-probe <catalog song id>` with
+/// `MUSIQUE_APPLE_MEDIA_USER_TOKEN` set (or a signed-in Apple account in the
+/// keyring): resolves, licenses, downloads, decrypts and decodes the start of the
+/// track, and prints the timings. Read-only; nothing is played aloud.
+pub fn apple_playback_probe() -> i32 {
+    let mut args = std::env::args().skip_while(|a| a != "--apple-playback-probe").skip(1);
+    let Some(track_id) = args.next().filter(|id| !id.starts_with("--")) else {
+        eprintln!("usage: --apple-playback-probe <apple music catalog song id>");
+        return 2;
+    };
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("apple probe: cannot start a runtime: {e}");
+            return 1;
+        }
+    };
+    match runtime.block_on(apple::playback::probe(&track_id)) {
+        Ok(report) => {
+            println!("{report}");
+            0
+        }
+        Err(e) => {
+            eprintln!("apple probe failed: {e}");
+            1
+        }
+    }
+}
+
 pub fn playback_probe() -> i32 {
     use librespot_core::{
         authentication::Credentials, config::SessionConfig, session::Session, SpotifyId, SpotifyUri,
