@@ -573,6 +573,9 @@ pub async fn logout(app: AppHandle) -> Result<(), AppError> {
     auth::bump_auth_epoch();
     http::cancel_pending_flows();
     let db = app.state::<AppState>().db.clone();
+    if crate::apple::is_active() {
+        crate::commands::apple::sign_out(&db).await;
+    }
     // Persist before slow cleanup, even when the OS credential store fails.
     let signed_out = auth::upsert_setting(&db, "spotify_signed_out", "1").await;
     {
@@ -616,6 +619,9 @@ pub async fn logout(app: AppHandle) -> Result<(), AppError> {
 pub async fn get_auth_status(app: AppHandle) -> Result<auth::AuthStatus, AppError> {
     let _commit = auth::session_commit().await;
     let db = app.state::<AppState>().db.clone();
+    if crate::apple::is_active() {
+        return Ok(crate::commands::apple::auth_status(&db).await);
+    }
     let auth = app.state::<AppState>().auth.clone();
     let logged_in = auth.read().await.access_token.is_some();
     auth::build_auth_status(&db, logged_in).await
@@ -625,6 +631,21 @@ pub use auth::profile::Profile;
 
 #[tauri::command]
 pub async fn get_profile(app: AppHandle) -> Result<Profile, AppError> {
+    if crate::apple::is_active() {
+        let account = crate::apple::api::profile().await?;
+        return Ok(Profile {
+            id:                      Some(account.handle.clone().unwrap_or_else(|| format!("apple-{}", account.storefront))),
+            display_name:            account.display_name.or(account.handle).or(Some("Apple Music".into())),
+            email:                   None,
+            country:                 Some(account.storefront.to_uppercase()),
+            product:                 Some("apple".into()),
+            followers:               0,
+            image_url:               account.image_url,
+            spotify_url:             Some("https://music.apple.com/".into()),
+            explicit_filter_enabled: false,
+            explicit_filter_locked:  false,
+        });
+    }
     let db = app.state::<AppState>().db.clone();
     let auth_state = app.state::<AppState>().auth.clone();
     let epoch = auth::auth_epoch();

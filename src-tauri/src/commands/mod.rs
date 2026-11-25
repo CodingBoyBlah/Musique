@@ -1,3 +1,4 @@
+pub mod apple;
 pub mod artist_extras;
 pub mod auth;
 pub mod credentials;

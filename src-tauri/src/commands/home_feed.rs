@@ -195,6 +195,9 @@ pub(crate) fn feed_from(data: &Value) -> HomeFeed {
 /// is refetched behind it and the page updated when it lands
 #[tauri::command]
 pub async fn get_home_feed(app: AppHandle, time_zone: Option<String>) -> Result<HomeFeed, AppError> {
+    if crate::apple::is_active() {
+        return crate::apple::api::home_feed().await;
+    }
     let pool = app.state::<AppState>().db.clone();
     let user = spclient::account_username(&app).await.unwrap_or_else(|_| "me".into());
     let key = format!("spotify:user:{user}");

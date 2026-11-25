@@ -12,6 +12,9 @@ pub async fn get_tracks_metadata(app: AppHandle, ids: Vec<String>) -> Result<Vec
     if ids.is_empty() {
         return Ok(Vec::new());
     }
+    if crate::apple::is_active() {
+        return crate::apple::api::tracks(&ids).await;
+    }
     crate::internal::metadata::tracks(&app, &ids).await
 }
 
@@ -180,6 +183,9 @@ pub(crate) fn credits_from(v: &serde_json::Value) -> TrackCredits {
 #[tauri::command]
 pub async fn get_track_credits(app: AppHandle, track_id: String) -> Result<TrackCredits, AppError> {
     use tauri::Manager;
+    if crate::apple::is_active() {
+        return Err(AppError::NotFound("credits come from Spotify's catalogue".into()));
+    }
     let id = crate::internal::spclient::uri_id(&track_id).to_string();
     if id.is_empty() || track_id.starts_with("spotify:episode:") {
         return Err(AppError::InvalidInput("credits are only available for tracks".into()));
@@ -508,6 +514,9 @@ async fn radio_playlist(app: &AppHandle, uri: &str) -> Option<(String, Option<St
 #[tauri::command]
 pub async fn get_track_radio(app: AppHandle, track_id: String) -> Result<RadioResult, AppError> {
     use tauri::Manager;
+    if crate::apple::is_active() {
+        return apple_station(&track_id).await;
+    }
     let uri = seed_uri(&track_id);
     let pool = app.state::<crate::state::AppState>().db.clone();
     crate::internal::cache::cached_json(&pool, &uri, "radio", 6 * crate::internal::cache::HOUR, || async {
@@ -527,6 +536,9 @@ pub async fn get_track_radio(app: AppHandle, track_id: String) -> Result<RadioRe
 #[tauri::command]
 pub async fn get_station(app: AppHandle, seed: String) -> Result<RadioResult, AppError> {
     use tauri::Manager;
+    if crate::apple::is_active() {
+        return apple_station(&seed).await;
+    }
     let uri = seed_uri(&seed);
     let pool = app.state::<crate::state::AppState>().db.clone();
     // "-v2": entries cached before the radio playlist was looked up have no
@@ -553,6 +565,13 @@ pub async fn get_autoplay_tracks(
     use librespot_protocol::autoplay_context_request::AutoplayContextRequest;
     if context_uri.contains(":show:") || context_uri.contains(":episode:") {
         return Ok(Vec::new());
+    }
+    if crate::apple::is_active() {
+        // carry on from the last song heard, or from the context when nothing was
+        let seed = recent_track_ids.last().cloned().unwrap_or_else(|| context_uri.clone());
+        let recent: std::collections::HashSet<&String> = recent_track_ids.iter().collect();
+        let station = apple_station(&seed).await?;
+        return Ok(station.tracks.into_iter().filter(|t| !recent.contains(&t.id)).collect());
     }
     let recent: Vec<String> = recent_track_ids.iter().rev().take(30).map(|i| seed_uri(i)).collect();
     let s = crate::internal::spclient::session(&app).await?;
@@ -908,4 +927,24 @@ pub async fn get_blend_info(app: AppHandle, id: String) -> Result<Option<BlendIn
     })
     .await?;
     Ok(Some(info))
+}
+
+/// An Apple Music station from any seed the interface hands over: a bare track id, or a
+/// `spotify:<kind>:<id>` context uri, which the app uses as its own context naming whatever
+/// the provider. Apple only seeds stations from a song, so an album, artist or playlist is
+/// seeded by its first one.
+async fn apple_station(seed: &str) -> Result<RadioResult, AppError> {
+    let mut parts = seed.rsplitn(3, ':');
+    let id = parts.next().unwrap_or(seed).to_string();
+    let kind = parts.next().unwrap_or("track");
+    let track_id = match kind {
+        "album" => crate::apple::api::album(&id).await?.tracks.first().map(|t| t.id.clone()),
+        "artist" => crate::apple::api::artist(&id).await?.top_tracks.first().map(|t| t.id.clone()),
+        "playlist" => crate::apple::api::playlist(&id).await?.tracks.first().map(|t| t.id.clone()),
+        _ => Some(id),
+    };
+    let Some(track_id) = track_id else {
+        return Err(AppError::NotFound("nothing to start a station from".into()));
+    };
+    crate::apple::api::track_radio(&track_id).await
 }
