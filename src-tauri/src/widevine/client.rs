@@ -15,8 +15,10 @@ use super::link::Link;
 use super::wire::{self, Reader};
 use crate::errors::AppError;
 
-/// How long an unused host is kept before it exits.
-const GRACE: Duration = Duration::from_secs(30);
+/// How long an unused host is kept before it exits. Starting one and opening the module costs
+/// about 300 ms, which a skip to a track that was not preloaded would otherwise pay again
+/// whenever the last track's license had been let go a while before.
+const GRACE: Duration = Duration::from_secs(5 * 60);
 
 /// One CENC sample for [`Cdm::decrypt_many`].
 pub struct Sample<'a> {

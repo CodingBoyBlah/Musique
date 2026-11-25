@@ -1716,6 +1716,13 @@ pub async fn warmup_playback(app: AppHandle) -> Result<(), AppError> {
         if let Err(e) = ensure_yt(&app).await {
             eprintln!("[playback] apple warmup failed: {e}");
         }
+        // the account's session and the CDM host, so the first play pays for neither
+        tokio::spawn(async {
+            let _ = crate::apple::client::current().await;
+            if crate::widevine::available() {
+                let _ = tokio::task::spawn_blocking(|| crate::widevine::Cdm::open().map(drop)).await;
+            }
+        });
         return Ok(());
     }
     if uses_youtube(&app).await {

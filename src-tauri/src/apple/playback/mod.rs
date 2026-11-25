@@ -23,7 +23,8 @@ use self::source::AppleSource;
 use self::stream::MediaStream;
 
 /// Maximum prepared tracks held in memory (active + preloaded next).
-const PREPARED_CAPACITY: usize = 2;
+// the track before, the one playing and the one after: going back is as instant as going on
+const PREPARED_CAPACITY: usize = 3;
 
 /// Apple Widevine licenses expire after ~13–15 minutes. Refresh before resuming or seeking
 /// if playback has been paused longer than 5 minutes, or if the license is older than 10 minutes.
@@ -402,6 +403,38 @@ pub async fn probe(track_id: &str) -> Result<String, AppError> {
 
 /// [`probe`] at a chosen quality, so the 64 kbps HE-AAC path can be timed too.
 pub async fn probe_at(track_id: &str, quality: AppleQuality) -> Result<String, AppError> {
+    // MUSIQUE_APPLE_PROBE_SKIP=<other song id>: time a skip the way `apple_play` does it, to a
+    // cold track and to one that was preloaded, through `load_prepared` + `open_at`
+    if let Some(other) = std::env::var("MUSIQUE_APPLE_PROBE_SKIP").ok().filter(|v| !v.is_empty()) {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_lazy("sqlite::memory:")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut report = String::new();
+        let t = Instant::now();
+        let cold = load_prepared(&pool, track_id).await?;
+        let loaded = t.elapsed();
+        let (mut src, _) = open_at(&cold, 0).await?;
+        let first = tokio::task::spawn_blocking(move || src.next().is_some()).await.unwrap_or(false);
+        report += &format!("cold skip: load {:?}, ready to sound {:?} (sample {first})
+", loaded, t.elapsed());
+        preload(&pool, &other).await;
+        let t = Instant::now();
+        let warm = load_prepared(&pool, &other).await?;
+        let loaded = t.elapsed();
+        let (mut src, _) = open_at(&warm, 0).await?;
+        let first = tokio::task::spawn_blocking(move || src.next().is_some()).await.unwrap_or(false);
+        report += &format!("preloaded skip: load {:?}, ready to sound {:?} (sample {first})", loaded, t.elapsed());
+        if let Some(third) = std::env::var("MUSIQUE_APPLE_PROBE_SKIP_COLD").ok().filter(|v| !v.is_empty()) {
+            let t = Instant::now();
+            let cold = load_prepared(&pool, &third).await?;
+            let loaded = t.elapsed();
+            let (mut src, _) = open_at(&cold, 0).await?;
+            let first = tokio::task::spawn_blocking(move || src.next().is_some()).await.unwrap_or(false);
+            report += &format!("
+cold skip, host warm: load {:?}, ready to sound {:?} (sample {first})", loaded, t.elapsed());
+        }
+        return Ok(report);
+    }
     use rodio::Source as _;
 
     let total_start = Instant::now();
@@ -451,11 +484,32 @@ pub async fn probe_at(track_id: &str, quality: AppleQuality) -> Result<String, A
 
     let duration = resolved.duration;
     let media_for_decode = media.clone();
+    let media_for_seek = media.clone();
     let (rate, channels, decoded_samples, open_ms, decode_ms) =
         tokio::task::spawn_blocking(move || -> Result<(u32, u16, usize, u128, u128), AppError> {
             let t_open = Instant::now();
             let (mut source, _) = AppleSource::open(media_for_decode, duration, Duration::ZERO)?;
             let open_ms = t_open.elapsed().as_millis();
+
+            // MUSIQUE_APPLE_PROBE_SEEKS=1: time seeks the way a lyric click or the scrubber asks
+            if std::env::var_os("MUSIQUE_APPLE_PROBE_SEEKS").is_some() {
+                use rodio::Source as _;
+                for _ in 0..44_100 * 2 { let _ = source.next(); }
+                for target in [30u64, 95, 151, 212, 268, 12, 300] {
+                    let at = Duration::from_secs(target);
+                    let entry = media_for_seek.splice_entry(at);
+                    let t = Instant::now();
+                    let ok = source.try_seek(at).is_ok();
+                    let seek_ms = t.elapsed().as_secs_f64() * 1000.0;
+                    let t2 = Instant::now();
+                    let first = source.next().is_some();
+                    eprintln!(
+                        "seek {target:>3}s: try_seek {seek_ms:.1}ms (ok {ok}), first sample {:.1}ms (got {first}), trimmed into fragment {:?}",
+                        t2.elapsed().as_secs_f64() * 1000.0,
+                        entry.map(|e| e.into)
+                    );
+                }
+            }
 
             // MUSIQUE_APPLE_PROBE_REALTIME=<seconds>: play through the app's own playout ring,
             // pulled at the speaker's pace, and count how often it ran dry
