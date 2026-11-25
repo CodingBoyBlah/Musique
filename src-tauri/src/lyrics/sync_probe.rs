@@ -10,6 +10,9 @@
 //! Needs `MUSIQUE_APPLE_MEDIA_USER_TOKEN` (or a signed-in Apple account) and the
 //! Widevine CDM. Read-only; nothing is played aloud.
 
+// reached only through main.rs's `--apple-sync-probe` dispatch
+#![allow(dead_code)]
+
 use std::time::{Duration, Instant};
 
 use rodio::Source;
