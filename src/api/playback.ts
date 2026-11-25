@@ -173,7 +173,8 @@ export const setAudioQuality = (quality: AudioQuality): Promise<void> =>
 // `active` is both the backend in use and the selected value - there's no
 // separate stored preference to disagree with it.
 
-export type PlaybackBackend = "spotify" | "soloist" | "youtube";
+// "apple" is reported (never chosen) while an Apple Music account is signed in
+export type PlaybackBackend = "spotify" | "soloist" | "youtube" | "apple";
 
 export interface BackendState {
   active:            PlaybackBackend;
