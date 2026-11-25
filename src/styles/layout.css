@@ -243,6 +243,159 @@
     }
 }
 
+.ts-art {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.06);
+}
+/* artists are round, everywhere in the app - the shape alone says "person" */
+.ts-art--round {
+    border-radius: 50%;
+}
+.ts-art--icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    color: rgba(255, 255, 255, 0.7);
+}
+.ts-row--query[data-active="true"] .ts-art--icon {
+    background: var(--color-accent);
+    color: #fff;
+}
+.ts-art-play {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.ts-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.ts-title,
+.ts-sub {
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ts-title {
+    font-size: 13.5px;
+    font-weight: 600;
+    letter-spacing: -0.008em;
+    color: rgba(255, 255, 255, 0.92);
+}
+.ts-row[data-active="true"] .ts-title {
+    color: #fff;
+}
+/* small text over glass: a touch brighter and opened up, not flat grey */
+.ts-sub {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: var(--type-caption-track);
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.ts-trail {
+    flex-shrink: 0;
+    font-size: 11.5px;
+    color: rgba(255, 255, 255, 0.42);
+}
+/* the row's way forward only shows on the row you're on */
+.ts-reveal {
+    flex-shrink: 0;
+    opacity: 0;
+}
+.ts-row[data-active="true"] .ts-reveal {
+    opacity: 1;
+}
+.ts-chev {
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.ts-sep {
+    height: 1px;
+    margin: 4px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+}
+
+.ts-empty {
+    margin: 0;
+    padding: 14px 12px 12px;
+    font-size: 12.5px;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+/* loading: the shape of the rows about to land, so nothing jumps when they do */
+.ts-row--ghost {
+    cursor: default;
+    pointer-events: none;
+}
+.ts-bar {
+    display: block;
+    height: 9px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+}
+.ts-bar--sub {
+    height: 7px;
+    margin-top: 4px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.ts-kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 5px;
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.6);
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ts-foot {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(0, 0, 0, 0.14);
+    font-size: 11px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.45);
+    user-select: none;
+}
+.ts-foot span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.ts-foot .ts-kbd + .ts-kbd {
+    margin-left: -1px;
+}
+.ts-foot .ts-kbd:last-of-type {
+    margin-right: 2px;
+}
+
 /* windows caption buttons (min / max / close) */
 .cap-btn {
     background: transparent;
@@ -321,4 +474,41 @@
     .dev-row:active {
         transform: none !important;
     }
+}
+
+/* The app card's box during a right-rail slide (Layout, "The right rail
+   slides"). The mover clips the card and slides left while the counter slides
+   the card back by as much: an edge that travels on the compositor while the
+   page under it stays put. At rest neither carries a transform and the mover
+   doesn't clip, so the card and its shadow are exactly as they always were. */
+.card-mover {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+.card-counter {
+    position: absolute;
+    inset: 0;
+    pointer-events: auto;
+}
+.card-slot[data-sliding] > .card-mover {
+    overflow: hidden;
+    border-radius: 12px;
+}
+/* the card's own right edge is clipped off mid-slide; this draws its hairline
+   and rounded corner on the travelling edge instead */
+.card-cap {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 13px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 0;
+    border-radius: 0 12px 12px 0;
+    pointer-events: none;
+    opacity: 0;
+}
+.card-slot[data-sliding] > .card-cap {
+    opacity: 1;
 }

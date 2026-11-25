@@ -1,6 +1,6 @@
 import { Activity, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate, MotionGlobalConfig } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion, MotionGlobalConfig } from "framer-motion";
 import { TitleBar as TitleBarView, WindowCaptionControls as CaptionControlsView } from "./TitleBar";
 import SidebarView from "./Sidebar";
 import { PlayerBar as PlayerBarView } from "./PlayerBar";
@@ -22,8 +22,9 @@ import { backdropScrim } from "../../lib/backdrop";
 import { isMac } from "../../lib/platform";
 import { usePrefsStore } from "../../store/prefs.store";
 import { chromePx } from "../../lib/zoom";
-import { EASE_OUT, RAIL_CLOSE, RAIL_CLOSE_S, RAIL_OPEN, RAIL_OPEN_S } from "../../lib/motion";
+import { EASE_OUT, RAIL_CLOSE_S, RAIL_EASE_CSS, RAIL_OPEN_S } from "../../lib/motion";
 import { pinRailGrids } from "../../lib/railFlip";
+import { measurePage, playPage, snapshotPage } from "../../lib/railReflow";
 import "../../styles/layout.css";
 import Home from "../../pages/Home";
 
@@ -178,6 +179,16 @@ const HomeStage = memo(function HomeStage() {
    the collapsed rail has to stay wide enough to hold all three. */
 const COLLAPSED_SIDEBAR_W = 64;
 
+/* the right rail's panels and the room each takes */
+type PanelKey = "lyrics" | "queue" | "friends";
+const PANEL_W: Record<PanelKey, number> = { lyrics: 366, queue: 272, friends: 272 };
+
+/** An element's current horizontal translation, running animations included. */
+function translateXOf(el: HTMLElement): number {
+  const t = getComputedStyle(el).transform;
+  return !t || t === "none" ? 0 : new DOMMatrixReadOnly(t).m41;
+}
+
 // what sequential focus navigation stops on
 const TABBABLE =
   'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex],[contenteditable]:not([contenteditable="false"]),audio[controls],video[controls],summary';
@@ -288,7 +299,7 @@ export default function Layout() {
       const w = window.innerWidth;
       const isCollapsed = sidebarCollapsed || w < 768;
       const sw = isCollapsed ? collapsedSidebarW : 232;
-      const rpw = lyricsOpen ? 366 : queueOpen || friendsOpen ? 272 : 0;
+      const rpw = lyricsOpen ? PANEL_W.lyrics : queueOpen || friendsOpen ? PANEL_W.queue : 0;
       const nextCrush = w - sw - rpw < 340;
       setWillCrushMain((prev) => (prev === nextCrush ? prev : nextCrush));
     };
@@ -311,55 +322,186 @@ export default function Layout() {
     };
   }, [sidebarCollapsed, collapsedSidebarW, lyricsOpen, queueOpen, friendsOpen]);
 
-  const rawPanelWidth = lyricsOpen ? 366 : queueOpen || friendsOpen ? 272 : 0;
+  const rawPanelWidth = lyricsOpen ? PANEL_W.lyrics : queueOpen || friendsOpen ? PANEL_W.queue : 0;
   const spacerWidth = willCrushMain ? 0 : rawPanelWidth;
+  // the panel the rail should be showing (none while the page would be crushed)
+  const want: PanelKey | null = spacerWidth > 0
+    ? (lyricsOpen ? "lyrics" : queueOpen ? "queue" : friendsOpen ? "friends" : null)
+    : null;
 
-  /* The right rail slides, and the page flows with it.
+  /* The right rail slides; the page changes size once.
 
-     frameRail is the rail's width, and with it the card's right edge and the
-     dock. It runs on the same curve as the panel's sheet, so the edge and the
-     panel travel as one piece, and the page - headings, text, track rows -
-     reflows with the edge as it moves instead of jumping to its new width.
+     Animating the rail's width moved the card's edge by re-laying out and
+     repainting the whole page every frame - on Home that is ~860 clipped
+     boxes, and it is what made the slide stutter. Now the layout changes in
+     exactly one frame: at the start of a close (the page widens under the
+     panel, which then slides off it) and at the end of an open (the panel has
+     slid over the page, and the page settles to the room that is left).
 
-     Tile grids are pinned to their landing width on the first frame and their
-     cards FLIPped there on the compositor, in step with the edge - see
-     lib/railFlip. Nothing in a slide renders through React after the first
-     frame: the edge is a motion value and the cards are Web Animations, which
-     is what keeps the close from stalling on the frame it lands. */
-  const frameRail = useMotionValue(spacerWidth);
-  const railW = useTransform(frameRail, (v) => Math.max(0, v));
-  const tintRight = useTransform(railW, (v) => -v);
-  const tintShift = useTransform(railW, (v) => -v / 2);
+     Everything that moves in between is a Web Animation of a transform, on
+     the compositor, started together so they share one clock:
+     - the card's right edge: `mover` clips the card and slides left while
+       `counter`, inside it, slides the card back by the same amount - a clip
+       edge that travels while the page under it stays still. `cap` draws the
+       rounded corner and hairline the clip cuts off, `shadow` is scaled to
+       the visible width;
+     - the docked player bar and the cover tint, re-centred on what is left;
+     - the panels, in from / out to the right on their wrappers.
+     Tile grids are pinned to their landing width at the start and FLIPped
+     there on the same curve (lib/railFlip).
+
+     `landed` is the rail's width at rest; React renders the resting styles
+     from it, and the slide writes over them only while it runs. */
+  const [landed, setLanded] = useState(spacerWidth);
+  const [prevWant, setPrevWant] = useState(want);
+  const [leaving, setLeaving] = useState<PanelKey[]>([]);
+  if (want !== prevWant) {
+    // adjusting state during render: the outgoing panel stays mounted (and
+    // slides out) until the slide lands
+    setPrevWant(want);
+    const next = leaving.filter((k) => k !== want);
+    if (prevWant && !next.includes(prevWant)) next.push(prevWant);
+    setLeaving(next);
+  }
+  const panelKeys: PanelKey[] = want ? [...leaving.filter((k) => k !== want), want] : leaving;
+
+  const spacerRef = useRef<HTMLDivElement>(null);
+  const slotRef = useRef<HTMLDivElement>(null);
+  const moverRef = useRef<HTMLDivElement>(null);
+  const counterRef = useRef<HTMLDivElement>(null);
+  const capRef = useRef<HTMLDivElement>(null);
+  const shadowRef = useRef<HTMLDivElement>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const tintRef = useRef<HTMLDivElement>(null);
+  const panelEls = useRef(new Map<PanelKey, HTMLDivElement>());
+  const landedRef = useRef(spacerWidth);
+  const shownRef = useRef<PanelKey | null>(want);
+  // the running slide; `edge` when it moves the card's edge (not a same-width panel swap)
+  const slideRef = useRef<{ anims: Animation[]; unpin: () => void; edge: boolean } | null>(null);
+  const slideToken = useRef(0);
+  const reduceRef = useRef(reduceMotion);
+  reduceRef.current = reduceMotion;
 
   useLayoutEffect(() => {
-    const from = frameRail.get();
-    if (from === spacerWidth) return;
-    if (reduceMotion || !mainRef.current) {
-      frameRail.jump(spacerWidth);
-      return;
-    }
-    const main = mainRef.current;
-    const opening = spacerWidth > from;
-    const seconds = opening ? RAIL_OPEN_S : RAIL_CLOSE_S;
-    let live = true;
-    let unpin = () => {};
-    // after the commit but before the frame is painted: the JS-columned grids
+    const to = spacerWidth;
+    const entering = want;
+    if (!slideRef.current && to === landedRef.current && entering === shownRef.current) return;
+    shownRef.current = entering;
+    const token = ++slideToken.current;
+
+    // after the commit, before the frame is painted: the JS-columned grids
     // re-render synchronously inside the pin, which React refuses mid-commit
     queueMicrotask(() => {
-      if (live) unpin = pinRailGrids(main, from - spacerWidth, seconds * 1000);
+      if (token !== slideToken.current) return;
+      const els = [spacerRef, slotRef, moverRef, counterRef, capRef, shadowRef, dockRef, tintRef, mainRef].map((r) => r.current);
+      if (els.some((el) => !el)) return;
+      const [spacer, slot, mover, counter, cap, shadow, dock, tint, main] = els as HTMLElement[];
+      const prev = slideRef.current;
+      const panels = [...panelEls.current];
+
+      // where everything is on screen right now (mid-slide included: computed
+      // style reads through running animations)
+      const r0 = prev?.edge ? -translateXOf(mover) : landedRef.current;
+      const x0 = new Map(panels.map(([k, el]) => [k, translateXOf(el)]));
+
+      const land = (unpin: () => void, anims: Animation[]) => {
+        spacer.style.width = `${to}px`;
+        tint.style.right = `${-to}px`;
+        tint.style.transform = `translateX(${-to / 2}px)`;
+        dock.style.right = "0px";
+        main.style.overflowAnchor = "";
+        delete slot.dataset.sliding;
+        // resting transforms written before the animations are dropped, so
+        // nothing shows its pre-slide style for a frame
+        for (const [k, el] of panelEls.current) el.style.transform = k === entering ? "" : `translateX(${PANEL_W[k]}px)`;
+        for (const a of anims) a.cancel();
+        unpin();
+        slideRef.current = null;
+        landedRef.current = to;
+        setLanded(to);
+        setLeaving([]);
+      };
+
+      if (reduceRef.current) {
+        if (prev) for (const a of prev.anims) a.cancel();
+        prev?.unpin();
+        land(() => {}, []);
+        return;
+      }
+
+      const ms = (to > r0 ? RAIL_OPEN_S : RAIL_CLOSE_S) * 1000;
+      const opts: KeyframeAnimationOptions = { duration: ms, easing: RAIL_EASE_CSS, fill: "forwards" };
+      const slideX = (el: HTMLElement, from: number, end: number) =>
+        el.animate([{ transform: `translateX(${from}px)` }, { transform: `translateX(${end}px)` }], opts);
+      const slidePanels = () =>
+        panels.map(([k, el]) => slideX(el, x0.get(k) ?? PANEL_W[k], k === entering ? 0 : PANEL_W[k]));
+
+      if (!prev?.edge && r0 === to) {
+        // one panel for another of the same width (queue <-> friends): the
+        // card's edge stays where it is, so the page is not touched at all
+        if (prev) for (const a of prev.anims) a.cancel();
+        const anims = slidePanels();
+        slideRef.current = { anims, unpin: () => {}, edge: false };
+        anims[0]?.finished.then(() => {
+          if (token === slideToken.current) land(() => {}, anims);
+        }, () => {});
+        if (!anims.length) land(() => {}, []);
+        return;
+      }
+
+      // where the page is on screen before anything changes (lib/railReflow)
+      const page = snapshotPage(main);
+      const unpin = pinRailGrids(main, -to, ms, () => {
+        // the one layout change at the start of a slide: the rail gives its
+        // room back to the card for the length of the slide (a no-op when it
+        // was already closed). The card's clip takes over the visible edge.
+        if (prev) for (const a of prev.anims) a.cancel();
+        prev?.unpin();
+        spacer.style.width = "0px";
+        tint.style.right = "0px";
+        // the player bar takes its landing width now (it is narrower than
+        // 740px only in a small window) and glides to the centre of the card
+        // that is left, rather than re-sizing when the slide lands
+        dock.style.right = `${to}px`;
+        // the page is measured in two layouts below; scroll anchoring would
+        // adjust between them differently from the real landing
+        main.style.overflowAnchor = "none";
+        slot.dataset.sliding = "";
+      });
+      measurePage(page, "wide");
+      if (to > 0) {
+        // the page as it will be once the rail lands, read and put back in
+        // the same frame
+        const top = main.scrollTop;
+        main.style.right = `${to}px`;
+        measurePage(page, "landing");
+        main.style.right = "0px";
+        main.scrollTop = top;
+      } else {
+        for (const n of page.nodes) n.landing = n.wide;
+      }
+      const w = slot.getBoundingClientRect().width || 1;
+      const anims = [
+        slideX(mover, -r0, -to),
+        slideX(counter, r0, to),
+        slideX(cap, -r0, -to),
+        shadow.animate([{ transform: `scaleX(${(w - r0) / w})` }, { transform: `scaleX(${(w - to) / w})` }], opts),
+        slideX(dock, (to - r0) / 2, 0),
+        slideX(tint, -r0 / 2, -to / 2),
+        ...slidePanels(),
+        ...playPage(page, opts),
+      ];
+      slideRef.current = { anims, unpin, edge: true };
+      anims[0].finished.then(() => {
+        if (token === slideToken.current) land(unpin, anims);
+      }, () => {});
     });
-    const ctl = animate(frameRail, spacerWidth, opening ? RAIL_OPEN : RAIL_CLOSE);
-    ctl.then(() => { if (live) unpin(); });
-    // the pins hold the landing width, so releasing them moves nothing - it
-    // only hands the grids back to the page for the next resize. An
-    // interrupted slide releases them too; the next one re-pins from where
-    // the page actually is.
-    return () => {
-      live = false;
-      ctl.stop();
-      unpin();
-    };
-  }, [spacerWidth, frameRail, reduceMotion]);
+  }, [spacerWidth, want]);
+
+  useEffect(() => () => {
+    slideToken.current++;
+    slideRef.current?.anims.forEach((a) => a.cancel());
+  }, []);
 
   /* `trim_memory` used to fire 1.5s after every navigation. That call empties
      the working set of this process and of every WebView2 child, so it landed
@@ -440,19 +582,36 @@ export default function Layout() {
           </div>
 
           <div style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>
-            {/* The Main Window Island Card */}
+            {/* The Main Window Island Card. The slot is its box in the row;
+                the mover / counter pair, the cap and the shadow are how its
+                right edge travels during a rail slide (see "The right rail
+                slides" above). At rest they carry no transform and the card
+                is exactly the card. */}
+            <div ref={slotRef} className="card-slot" style={{ flex: 1, minWidth: 0, margin: "0 4px 4px", position: "relative" }}>
+              {/* negative spread keeps the lift underneath the card instead
+                  of letting it bleed up into the top bar. Its own element so
+                  a slide can scale it to the visible card */}
+              <div
+                ref={shadowRef}
+                aria-hidden
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  borderRadius: 12,
+                  boxShadow: "0 14px 30px -8px rgba(0, 0, 0, 0.55)",
+                  transformOrigin: "left center",
+                  pointerEvents: "none",
+                }}
+              />
+              <div ref={moverRef} className="card-mover">
+                <div ref={counterRef} className="card-counter">
             <div
               style={{
-                flex: 1,
-                minWidth: 0,
-                margin: "0 4px 4px",
+                position: "absolute",
+                inset: 0,
                 borderRadius: 12,
                 border: "1px solid rgba(255, 255, 255, 0.08)",
                 background: "transparent",
-                /* negative spread keeps the lift underneath the card instead of
-                   letting it bleed up into the top bar */
-                boxShadow: "0 14px 30px -8px rgba(0, 0, 0, 0.55)",
-                position: "relative",
                 overflow: "hidden",
                 display: "flex",
                 flexDirection: "column",
@@ -477,7 +636,24 @@ export default function Layout() {
                 }}
               />
 
-              {/* Cover art bloom contained within the island card */}
+              {/* Cover art bloom contained within the island card.
+                  Blurred, so it must never be resized mid-slide - that re-runs
+                  the blur every frame. It stays the width of card + rail (a
+                  constant), overhangs the card's edge where the card clips
+                  it, and is moved back to the card's centre by a transform,
+                  which costs nothing. */}
+              <div
+                ref={tintRef}
+                aria-hidden
+                style={{
+                  position: "absolute",
+                  top: 0, left: 0, bottom: 0,
+                  right: -landed,
+                  transform: landed ? `translateX(${-landed / 2}px)` : undefined,
+                  zIndex: 0,
+                  pointerEvents: "none",
+                }}
+              >
               <AnimatePresence>
                 {pageTint && (
                   <motion.div
@@ -489,15 +665,7 @@ export default function Layout() {
                     transition={{ duration: 0.7, ease: "easeOut" }}
                     style={{
                       position: "absolute",
-                      /* Blurred, so it must never be resized mid-slide - that
-                         re-runs the blur every frame. It stays the width of
-                         card + rail (a constant), overhangs the card's edge
-                         where the card clips it, and is moved back to the
-                         card's centre by a transform, which costs nothing. */
-                      top: 0, left: 0, bottom: 0,
-                      right: tintRight,
-                      x: tintShift,
-                      zIndex: 0,
+                      inset: 0,
                       pointerEvents: "none",
                       overflow: "hidden",
                       borderRadius: 12,
@@ -540,6 +708,7 @@ export default function Layout() {
                   </motion.div>
                 )}
               </AnimatePresence>
+              </div>
 
               {/* Scrolling page view inside card */}
               <div style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden" }}>
@@ -583,30 +752,55 @@ export default function Layout() {
               {/* PlayerBar docked inside card. The immersive view floats its own
                   copy over the top, so this one stands down rather than render and
                   paint underneath an opaque overlay. */}
-              {!immersiveOpen && <PlayerBar />}
+              <div ref={dockRef} style={{ position: "absolute", inset: 0, zIndex: 40, pointerEvents: "none" }}>
+                {!immersiveOpen && <PlayerBar />}
+              </div>
+            </div>
+                </div>
+              </div>
+              {/* the rounded corner and hairline of the card's right edge
+                  while the mover's clip stands in for it */}
+              <div ref={capRef} className="card-cap" aria-hidden />
             </div>
 
-            {/* Right rail - Lyrics or Queue on base layer */}
-            <motion.div
+            {/* Right rail. The spacer is the room the panel takes in the row
+                (its width only changes at rest - see "The right rail
+                slides"); the panels themselves ride over the row's right
+                edge on wrappers the slide moves. */}
+            <div ref={spacerRef} style={{ width: landed, flexShrink: 0 }} />
+            <div
               style={{
-                width: railW,
-                flexShrink: 0,
-                position: "relative",
+                position: "absolute",
+                top: 0,
+                right: 0,
+                bottom: 0,
+                width: PANEL_W.lyrics,
                 overflow: "hidden",
-                height: "100%",
-                display: "flex",
+                pointerEvents: "none",
               }}
             >
-              <AnimatePresence initial={false}>
-                {lyricsOpen && <LyricsPanel key="lyrics" />}
-              </AnimatePresence>
-              <AnimatePresence initial={false}>
-                {queueOpen && <QueuePanel key="queue" />}
-              </AnimatePresence>
-              <AnimatePresence initial={false}>
-                {friendsOpen && <FriendsPanel key="friends" />}
-              </AnimatePresence>
-            </motion.div>
+              {panelKeys.map((k) => (
+                <div
+                  key={k}
+                  ref={(el) => {
+                    if (el) panelEls.current.set(k, el);
+                    else panelEls.current.delete(k);
+                  }}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                    width: PANEL_W[k],
+                    pointerEvents: "auto",
+                    // a panel mounts off the edge; the slide brings it in
+                    transform: k === shownRef.current ? undefined : `translateX(${PANEL_W[k]}px)`,
+                  }}
+                >
+                  {k === "lyrics" ? <LyricsPanel /> : k === "queue" ? <QueuePanel /> : <FriendsPanel />}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
