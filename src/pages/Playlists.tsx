@@ -24,6 +24,7 @@ import type { PlaylistSummary } from "../types/library";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 import { getGridItemTransition, FX_DEFAULT } from "../lib/motion";
 import { TILE_GRID, TILE_PAD } from "../lib/layout";
+import { TilePresence } from "../components/ui/TilePresence";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
 const MotionLink = motion.create(Link);
@@ -393,14 +394,16 @@ export default function Playlists() {
             layout="position"
             transition={{ layout: REFLOW }}
             data-rail-lock="flip"
-            style={TILE_GRID}
+            style={{ ...TILE_GRID, position: "relative" }}
           >
-            {folders.map((f, i) => (
-              <FolderCard key={`folder-${f.id}`} folder={f} index={i} />
-            ))}
-            {shownPlaylists.map((p: PlaylistSummary, i: number) => (
-              <PlaylistCard key={p.id} playlist={p} index={i} onCardMenu={handleCardMenu} />
-            ))}
+            <TilePresence>
+              {folders.map((f, i) => (
+                <FolderCard key={`folder-${f.id}`} folder={f} index={i} />
+              ))}
+              {shownPlaylists.map((p: PlaylistSummary, i: number) => (
+                <PlaylistCard key={p.id} playlist={p} index={i} onCardMenu={handleCardMenu} />
+              ))}
+            </TilePresence>
           </motion.div>
         </LayoutGroup>
       )}

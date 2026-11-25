@@ -42,6 +42,7 @@ import type {
   SearchResults,
 } from "../types/spotify";
 import { TILE_GRID } from "../lib/layout";
+import { TilePresence } from "../components/ui/TilePresence";
 
 const CATEGORIES = ["all", "songs", "artists", "albums", "playlists", "podcasts"] as const;
 type Category = (typeof CATEGORIES)[number];
@@ -415,9 +416,9 @@ function PlaylistGrid({ children }: { children: React.ReactNode }) {
       layout="position"
       transition={{ layout: REFLOW_SPRING }}
       data-rail-lock="flip"
-      style={TILE_GRID}
+      style={{ ...TILE_GRID, position: "relative" }}
     >
-      {children}
+      <TilePresence>{children}</TilePresence>
     </motion.div>
   );
 }

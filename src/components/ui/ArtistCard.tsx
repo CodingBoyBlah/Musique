@@ -9,6 +9,10 @@ import { gpuLayer, zTransform, REFLOW_SPRING, SPRING, EASE_OUT, getGridItemTrans
 import "../../styles/ui.css";
 import { useReflowPulse } from "../../hooks/useReflowPulse";
 import { TILE_GRID, TILE_PAD } from "../../lib/layout";
+import { TilePresence } from "./TilePresence";
+
+// TilePresence positions a leaving tile against the grid
+const GRID_STYLE: React.CSSProperties = { ...TILE_GRID, position: "relative" };
 
 interface Props {
   artist: { id: string; name: string; image_url?: string | null };
@@ -28,9 +32,9 @@ export function ArtistGrid({ children }: { children: React.ReactNode }) {
         layout="position"
         transition={{ layout: REFLOW_SPRING }}
         data-rail-lock="flip"
-        style={TILE_GRID}
+        style={GRID_STYLE}
       >
-        {children}
+        <TilePresence>{children}</TilePresence>
       </motion.div>
     </LayoutGroup>
   );
