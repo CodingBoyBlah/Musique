@@ -21,7 +21,7 @@ import { SectionTitle, ShowAllButton } from "../components/ui/SectionTitle";
 import { Shelf } from "../components/ui/Shelf";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { Tooltip } from "../components/ui/Tooltip";
-import { shareSpotifyLink, shareUniversalLink } from "../lib/share";
+import { serviceLinkLabel, shareSpotifyLink, shareUniversalLink } from "../lib/share";
 import {
   useIsArtistFollowed,
   useToggleFollow,
@@ -125,7 +125,7 @@ export default function ArtistPage() {
   const openRadio = (playlistId: string) => navigate(`/playlist/${playlistId}`);
   const shareEntries = [
     { label: "Artist radio", icon: <Radio size={14} />, onSelect: () => { playStation(`spotify:artist:${data.id}`, data.name, openRadio); } },
-    { label: "Copy Spotify link", icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("artist", data.id) },
+    { label: serviceLinkLabel(), icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("artist", data.id) },
     { label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("artist", data.id) },
   ];
 

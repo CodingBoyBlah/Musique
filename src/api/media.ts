@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { TrackItem } from "../types/spotify";
+import { isApple } from "../hooks/useProvider";
+import { appleMusicUrl } from "../lib/share";
 
 export function updateNowPlaying(track: TrackItem, positionMs = 0): void {
   invoke("update_now_playing", {
@@ -8,7 +10,9 @@ export function updateNowPlaying(track: TrackItem, positionMs = 0): void {
     album:      track.album?.name ?? "",
     coverUrl:   track.album?.image_url ?? null,
     trackUrl:   track.id
-      ? track.id.startsWith("spotify:episode:")
+      ? isApple()
+        ? appleMusicUrl("track", track.id)
+        : track.id.startsWith("spotify:episode:")
         ? `https://open.spotify.com/episode/${track.id.slice("spotify:episode:".length)}`
         : `https://open.spotify.com/track/${track.id}`
       : null,

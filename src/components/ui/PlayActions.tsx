@@ -13,7 +13,7 @@ import type { TrackItem } from "../../types/spotify";
 import { EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING, zTransform } from "../../lib/motion";
 import "../../styles/ui.css";
 import { useContextMenu } from "./ContextMenu";
-import { shareSpotifyLink, shareUniversalLink, type ShareKind } from "../../lib/share";
+import { serviceLinkLabel, shareSpotifyLink, shareUniversalLink, type ShareKind } from "../../lib/share";
 import { Tooltip } from "./Tooltip";
 import { AnimatedPlayPause } from "../playground/AnimatedIcons";
 
@@ -85,7 +85,7 @@ export function PlayActions({ tracks, contextId, pinItem, accessory, onStart, hi
 
   const shareKind = pinItem.type as ShareKind;
   const shareEntries = [
-    { label: "Copy Spotify link",   icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink(shareKind, pinItem.id) },
+    { label: serviceLinkLabel(),   icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink(shareKind, pinItem.id) },
     { label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink(shareKind, pinItem.id) },
   ];
 
