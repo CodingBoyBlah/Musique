@@ -510,6 +510,31 @@ cold skip, host warm: load {:?}, ready to sound {:?} (sample {first})", loaded, 
                         entry.map(|e| e.into)
                     );
                 }
+                // the spliced audio must be the same audio a straight decode reaches at that moment
+                for target in [95u64, 212] {
+                    let rate = source.sample_rate() as usize;
+                    let ch = source.channels() as usize;
+                    let (mut straight, _) = AppleSource::open(media_for_seek.clone(), duration, Duration::ZERO)?;
+                    for _ in 0..rate * ch * target as usize { let _ = straight.next(); }
+                    let a: Vec<f32> = (0..rate * ch).filter_map(|_| straight.next()).collect();
+                    let (mut spliced, _) = AppleSource::open(media_for_seek.clone(), duration, Duration::from_secs(target))?;
+                    let b: Vec<f32> = (0..rate * ch).filter_map(|_| spliced.next()).collect();
+                    // best alignment within +-50 ms, and how far apart the samples are there
+                    let mut best = (f64::MAX, 0i64);
+                    for lag in -(rate as i64 / 20)..=(rate as i64 / 20) {
+                        let off = lag * ch as i64;
+                        let mut err = 0f64; let mut n = 0usize;
+                        for i in (0..a.len()).step_by(7) {
+                            let j = i as i64 + off;
+                            if j < 0 || j as usize >= b.len() { continue; }
+                            err += f64::from((a[i] - b[j as usize]).abs()); n += 1;
+                        }
+                        if n > 0 && err / (n as f64) < best.0 { best = (err / n as f64, lag); }
+                    }
+                    let level: f64 = a.iter().step_by(7).map(|v| f64::from(v.abs())).sum::<f64>() / (a.len() / 7).max(1) as f64;
+                    eprintln!("splice check {target}s: offset {} frames ({:.2} ms), mean diff {:.5} vs signal {:.5}",
+                        best.1, best.1 as f64 * 1000.0 / rate as f64, best.0, level);
+                }
             }
 
             // MUSIQUE_APPLE_PROBE_REALTIME=<seconds>: play through the app's own playout ring,

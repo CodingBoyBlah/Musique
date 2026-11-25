@@ -35,6 +35,8 @@ const BACKGROUND_BATCH: usize = 24;
 /// Samples one read asks the CDM for beyond what it needs, rounding up to its fragment. Capped
 /// so a read never stalls the decoder for a whole fragment's worth of round trips.
 const READ_BATCH: usize = 96;
+/// Samples a sample-exact seek decodes before its target (see `CencState::exact_splice`).
+const PRIME_SAMPLES: usize = 3;
 const TAIL_PROBE_BYTES: u64 = 8 * 1024;
 const MAX_BATCH_SAMPLES: usize = 512;
 const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
@@ -61,19 +63,30 @@ enum LicenseState {
     Released,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug, Default)]
 struct FragmentLoc {
-    at:    usize,
-    start: Duration,
+    at:      usize,
+    start:   Duration,
+    /// Its samples, as indices into `CencState::samples`.
+    samples: Range<usize>,
+    /// Where its `mdat` ends: the next box starts here.
+    end:     usize,
 }
 
 /// Target location for splicing `[0..head]` onto `[graft..]` when seeking in a CENC fMP4.
+///
+/// With `exact`, a seek lands on the sample just before the target rather than on its
+/// fragment's start: the reader presents `[0..head] + a fragment header listing only the
+/// samples from there on + [graft..]`, and nothing earlier in the fragment is ever decrypted or
+/// decoded. Without it the whole fragment is presented and `into` decoded away.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SpliceEntry {
     pub head:              usize,
     pub graft:             usize,
     pub into:              Duration,
     pub in_first_fragment: bool,
+    /// `(fragment index, samples skipped in it)` for a sample-exact splice.
+    pub exact:             Option<(usize, usize)>,
 }
 
 #[derive(Default)]
@@ -122,14 +135,16 @@ impl CencState {
                     next,
                     decode_ticks,
                 } => {
+                    let base = self.samples.len();
+                    let end = base + samples.len();
                     if let Some(start) = self.ticks_to_duration(decode_ticks) {
                         self.fragments.push(FragmentLoc {
                             at: self.walked,
                             start,
+                            samples: base..end,
+                            end: next,
                         });
                     }
-                    let base = self.samples.len();
-                    let end = base + samples.len();
                     if base < end {
                         self.sample_batches.push(base..end);
                     }
@@ -331,18 +346,120 @@ impl CencState {
         if at > last.start && !complete {
             return None;
         }
-        let found = self.fragments.iter().rev().find(|f| f.start <= at)?;
+        let index = self.fragments.iter().rposition(|f| f.start <= at)?;
+        let found = &self.fragments[index];
+        let into = at.saturating_sub(found.start);
+        if let Some(exact) = self.exact_splice(index, into, head) {
+            return Some(exact);
+        }
         Some(SpliceEntry {
             head,
             graft: found.at,
-            into: at.saturating_sub(found.start),
+            into,
             in_first_fragment: found.at == head,
+            exact: None,
         })
+    }
+
+    /// A splice onto the sample just before `into` within fragment `index`, with the fragment
+    /// header that lists only the samples from there on. `None` when there is nothing to skip
+    /// or the fragment's sample durations cannot be told.
+    fn exact_splice(&self, index: usize, into: Duration, head: usize) -> Option<SpliceEntry> {
+        let frag = &self.fragments[index];
+        let count = frag.samples.len();
+        if count < 2 || self.timescale == 0 {
+            return None;
+        }
+        // AAC samples are a fixed number of frames, so a fragment's span over its sample count
+        // is each one's duration. The last fragment borrows its neighbour's.
+        let span = self.sample_span(index)?;
+        // a few samples early: AAC frames overlap, so the ones before the target prime the
+        // decoder. Measured against a straight decode: AAC-LC comes out bit-exact and on the
+        // same frame; HE-AAC lands on the same frame with only the band-replication noise differing
+        let skip = ((into.as_secs_f64() / span).floor() as usize).saturating_sub(PRIME_SAMPLES).min(count - 1);
+        if skip == 0 {
+            return None;
+        }
+        let first = frag.samples.start + skip;
+        let kept = self.samples.get(first..frag.samples.end)?;
+        let graft = kept.first()?.start;
+        if frag.end < graft || kept.last()?.end() > frag.end {
+            return None;
+        }
+        Some(SpliceEntry {
+            head,
+            graft,
+            into: into.saturating_sub(Duration::from_secs_f64(skip as f64 * span)),
+            in_first_fragment: false,
+            exact: Some((index, skip)),
+        })
+    }
+
+    /// Each sample's duration in fragment `index`, in seconds (see [`Self::exact_splice`]).
+    fn sample_span(&self, index: usize) -> Option<f64> {
+        let frag = self.fragments.get(index)?;
+        let count = frag.samples.len();
+        let span = match self.fragments.get(index + 1) {
+            Some(next) => next.start.checked_sub(frag.start)?.as_secs_f64() / count.max(1) as f64,
+            None => {
+                let prev = self.fragments.get(index.checked_sub(1)?)?;
+                frag.start.checked_sub(prev.start)?.as_secs_f64() / prev.samples.len().max(1) as f64
+            }
+        };
+        (span > 0.0).then_some(span)
+    }
+
+    /// The fragment header for a sample-exact splice: fragment `index` without its first
+    /// `skip` samples.
+    fn splice_header(&self, index: usize, skip: usize) -> Option<Vec<u8>> {
+        let frag = self.fragments.get(index)?;
+        let span = self.sample_span(index)?;
+        let kept = self.samples.get(frag.samples.start + skip..frag.samples.end)?;
+        let graft = kept.first()?.start;
+        let ticks = (span * f64::from(self.timescale)).round() as u32;
+        let base = ((frag.start.as_secs_f64() + skip as f64 * span) * f64::from(self.timescale)).round() as u64;
+        let track = self.tracks.first().map_or(1, |t| t.track_id);
+        let sizes: Vec<u32> = kept.iter().map(|s| s.len as u32).collect();
+        Some(fragment_header(track, base, ticks, &sizes, frag.end.checked_sub(graft)?))
     }
 
     fn all_clear(&self) -> bool {
         self.plain || matches!(self.license, LicenseState::Released)
     }
+}
+
+/// A `moof` + `mdat` header for `sizes.len()` back-to-back samples of `ticks` each, starting at
+/// decode time `base`, whose `mdat` body (`payload` bytes) follows right after it.
+fn fragment_header(track: u32, base: u64, ticks: u32, sizes: &[u32], payload: usize) -> Vec<u8> {
+    let trun_len = 20 + 8 * sizes.len();
+    let traf_len = 8 + 16 + 20 + trun_len;
+    let moof_len = 8 + 16 + traf_len;
+    let mut out = Vec::with_capacity(moof_len + 8);
+    let boxed = |out: &mut Vec<u8>, len: usize, kind: &[u8; 4]| {
+        out.extend_from_slice(&(len as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+    };
+    boxed(&mut out, moof_len, b"moof");
+    boxed(&mut out, 16, b"mfhd");
+    out.extend_from_slice(&0u32.to_be_bytes());
+    out.extend_from_slice(&1u32.to_be_bytes());
+    boxed(&mut out, traf_len, b"traf");
+    boxed(&mut out, 16, b"tfhd");
+    out.extend_from_slice(&0x0002_0000u32.to_be_bytes()); // default-base-is-moof
+    out.extend_from_slice(&track.to_be_bytes());
+    boxed(&mut out, 20, b"tfdt");
+    out.extend_from_slice(&0x0100_0000u32.to_be_bytes()); // version 1: 64-bit time
+    out.extend_from_slice(&base.to_be_bytes());
+    boxed(&mut out, trun_len, b"trun");
+    out.extend_from_slice(&0x0000_0301u32.to_be_bytes()); // data offset, durations, sizes
+    out.extend_from_slice(&(sizes.len() as u32).to_be_bytes());
+    out.extend_from_slice(&((moof_len + 8) as i32).to_be_bytes());
+    for &size in sizes {
+        out.extend_from_slice(&ticks.to_be_bytes());
+        out.extend_from_slice(&size.to_be_bytes());
+    }
+    boxed(&mut out, 8 + payload, b"mdat");
+    out
 }
 
 fn next_batch_end(samples: &[SampleEntry], pending: &[usize], start: usize) -> usize {
@@ -614,6 +731,7 @@ impl MediaStream {
             shared: Arc::clone(&self.shared),
             head:   0,
             graft:  0,
+            inject: None,
             at:     0,
         }
     }
@@ -623,6 +741,10 @@ impl MediaStream {
             shared: Arc::clone(&self.shared),
             head:   entry.head,
             graft:  entry.graft,
+            inject: entry.exact.and_then(|(index, skip)| {
+                let st = self.shared.state.lock().ok()?;
+                st.cenc.splice_header(index, skip).map(Arc::from)
+            }),
             at:     0,
         }
     }
@@ -742,20 +864,27 @@ pub struct MediaReader {
     shared: Arc<SharedStream>,
     head:   usize,
     graft:  usize,
+    /// A fragment header presented between `head` and `graft` (see [`SpliceEntry::inject`]).
+    inject: Option<Arc<[u8]>>,
     at:     u64,
 }
 
 impl MediaReader {
+    fn injected(&self) -> u64 {
+        self.inject.as_ref().map_or(0, |b| b.len() as u64)
+    }
+
     fn physical(&self, virt: u64) -> u64 {
+        let spliced = self.head as u64 + self.injected();
         if virt < self.head as u64 {
             virt
         } else {
-            self.graft as u64 + (virt - self.head as u64)
+            self.graft as u64 + virt.saturating_sub(spliced)
         }
     }
 
     fn presented(&self, phys_len: usize) -> u64 {
-        self.head as u64 + phys_len.saturating_sub(self.graft) as u64
+        self.head as u64 + self.injected() + phys_len.saturating_sub(self.graft) as u64
     }
 
     fn end(&self) -> u64 {
@@ -811,6 +940,17 @@ impl Read for MediaReader {
                 }
             };
             let virt_limit = self.presented(phys_limit);
+
+            if let Some(inject) = &self.inject {
+                let from = self.head as u64;
+                if self.at >= from && self.at < from + inject.len() as u64 {
+                    let at = (self.at - from) as usize;
+                    let n = out.len().min(inject.len() - at);
+                    out[..n].copy_from_slice(&inject[at..at + n]);
+                    self.at += n as u64;
+                    return Ok(n);
+                }
+            }
 
             if self.at < virt_limit {
                 let max_bytes = if self.at < self.head as u64 {
@@ -903,14 +1043,17 @@ mod tests {
                 FragmentLoc {
                     at:    1000,
                     start: Duration::ZERO,
+                    ..FragmentLoc::default()
                 },
                 FragmentLoc {
                     at:    5000,
                     start: Duration::from_secs(10),
+                    ..FragmentLoc::default()
                 },
                 FragmentLoc {
                     at:    9000,
                     start: Duration::from_secs(20),
+                    ..FragmentLoc::default()
                 },
             ],
             ..CencState::default()
@@ -941,6 +1084,7 @@ mod tests {
             graft:             30,
             into:              Duration::ZERO,
             in_first_fragment: false,
+            exact:             None,
         });
         let mut out = Vec::new();
         reader.read_to_end(&mut out).unwrap();

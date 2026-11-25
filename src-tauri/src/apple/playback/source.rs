@@ -130,7 +130,7 @@ impl AppleSource {
             ));
         }
 
-        let (decoder, started_ms) = open_cenc_trimmed(&media, duration, at, false)?;
+        let (decoder, started_ms) = open_cenc_trimmed(&media, duration, at, false, None)?;
         Ok((
             Self {
                 media,
@@ -149,9 +149,20 @@ fn open_cenc_trimmed(
     duration: Option<Duration>,
     at: Duration,
     strict_seek: bool,
+    known_priming: Option<Duration>,
 ) -> Result<(Trimmed<SymSource>, u32), AppError> {
+    // Fragment times run on the encode's own clock, which starts with the encoder's priming;
+    // what a listener calls `at` is that far later on it. Seeking to `at` itself lands the
+    // priming's length early (48 ms for AAC, 118 ms for HE-AAC), and lyrics run late by that.
     let entry = if !at.is_zero() {
-        let found = media.splice_entry(at);
+        let priming = match known_priming {
+            Some(priming) => priming,
+            None => {
+                let dec = SymSource::open(media.reader(), None, false, Some("audio/mp4"))?;
+                priming_duration(dec.priming_frames(), dec.sample_rate())
+            }
+        };
+        let found = media.splice_entry(at + priming);
         if found.is_none() && strict_seek {
             return Err(AppError::Playback(format!(
                 "cannot seek apple stream to {}ms (fragment unavailable)",
@@ -173,15 +184,10 @@ fn open_cenc_trimmed(
 
     match entry {
         Some(e) => {
-            let head_priming = if e.in_first_fragment {
-                default_priming
-            } else {
-                Duration::ZERO
-            };
-            let skip = e.into + head_priming;
+            // `into` already counts the priming: it was looked up at `at + priming`
             let take = duration.map(|d| d.saturating_sub(at));
             let started_ms = at.as_millis().min(u32::MAX as u128) as u32;
-            Ok((Trimmed::new(dec, skip, take), started_ms))
+            Ok((Trimmed::new(dec, e.into, take), started_ms))
         }
         None => {
             let edit = media.init_header().as_deref().and_then(parse_mp4_edit_list);
@@ -226,7 +232,13 @@ impl Source for AppleSource {
         }
 
         let started = std::time::Instant::now();
-        let (new_decoder, _) = open_cenc_trimmed(&self.media, self.duration, pos, true)
+        let (new_decoder, _) = open_cenc_trimmed(
+            &self.media,
+            self.duration,
+            pos,
+            true,
+            Some(priming_duration(self.decoder.inner.priming_frames(), self.decoder.inner.sample_rate())),
+        )
             .map_err(|e| SeekError::Other(Box::new(std::io::Error::other(e.to_string()))))?;
         self.decoder = new_decoder;
         eprintln!("[apple] decoder reopened at {}ms in {}ms", pos.as_millis(), started.elapsed().as_millis());
