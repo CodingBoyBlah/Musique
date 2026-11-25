@@ -30,6 +30,9 @@ interface Props {
   index?:        number;
   showAlbum?:    boolean;
   showCover?:    boolean;   // per-track cover art (off for album pages, shared art)
+  // zebra tint on even rows. off where a short list stands on its own (artist
+  // Popular), where alternating fills read as a stack of cards
+  striped?:      boolean;
   liked?:        boolean;
   onPlay?:       (track: TrackItem, index?: number) => void;
   onQueue?:      (track: TrackItem) => void;
@@ -75,7 +78,7 @@ function ActionBtn({
 }
 
 function TrackRowImpl({
-  track, index, showAlbum = false, showCover = true, liked, onPlay, onQueue, onToggleLike,
+  track, index, showAlbum = false, showCover = true, striped = true, liked, onPlay, onQueue, onToggleLike,
   onRemoveFromPlaylist,
 }: Props) {
   const [hover, setHover] = useState(false);
@@ -159,7 +162,7 @@ function TrackRowImpl({
     return entries;
   }
 
-  const baseBg = index != null && index % 2 === 0 ? "rgba(255,255,255,0.032)" : "transparent";
+  const baseBg = striped && index != null && index % 2 === 0 ? "rgba(255,255,255,0.032)" : "transparent";
 
   return (
     <>
@@ -429,6 +432,7 @@ export const TrackRow = memo(TrackRowImpl, (prev, next) => {
     prev.liked === next.liked &&
     prev.showCover === next.showCover &&
     prev.showAlbum === next.showAlbum &&
+    prev.striped === next.striped &&
     prev.onPlay === next.onPlay &&
     prev.onQueue === next.onQueue &&
     prev.onToggleLike === next.onToggleLike &&
