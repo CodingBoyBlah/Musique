@@ -90,6 +90,16 @@ pub fn apple_playback_probe() -> i32 {
         Some("low") => apple::playback::AppleQuality::Low64,
         _ => apple::playback::AppleQuality::High256,
     };
+    // MUSIQUE_APPLE_PROBE_ALSO=<song id>: probe a second track at the same time, the way the
+    // app preloads the next track while one plays
+    if let Some(other) = std::env::var("MUSIQUE_APPLE_PROBE_ALSO").ok().filter(|v| !v.is_empty()) {
+        let (a, b) = runtime.block_on(async {
+            tokio::join!(apple::playback::probe_at(&track_id, quality), apple::playback::probe_at(&other, quality))
+        });
+        println!("{a:?}
+{b:?}");
+        return 0;
+    }
     match runtime.block_on(apple::playback::probe_at(&track_id, quality)) {
         Ok(report) => {
             println!("{report}");

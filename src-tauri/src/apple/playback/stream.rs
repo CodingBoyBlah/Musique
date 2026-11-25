@@ -25,7 +25,16 @@ const PREROLL_BYTES: usize = 256 * 1024;
 const BOX_HEADER_MAX: usize = 16;
 const MAX_TRACK_BYTES: usize = 256 * 1024 * 1024;
 const READ_PATIENCE: Duration = Duration::from_secs(20);
-const DECRYPT_PACE: Duration = Duration::from_micros(500);
+/// The pause between two steps of the background pass. The pass only exists to let the license
+/// go once a track is fully clear, so it must never be what a playing track waits behind: the
+/// CDM host answers one request at a time, and a preloaded track's pass shares it.
+const DECRYPT_PACE: Duration = Duration::from_millis(15);
+/// Samples one background step hands the CDM. Small, so a reader waiting on the stream lock or
+/// the host waits for one short batch at most.
+const BACKGROUND_BATCH: usize = 24;
+/// Samples one read asks the CDM for beyond what it needs, rounding up to its fragment. Capped
+/// so a read never stalls the decoder for a whole fragment's worth of round trips.
+const READ_BATCH: usize = 96;
 const TAIL_PROBE_BYTES: u64 = 8 * 1024;
 const MAX_BATCH_SAMPLES: usize = 512;
 const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
@@ -287,7 +296,8 @@ impl CencState {
             return Ok(());
         }
         let batch = self.batch_range_for(first, last_excl);
-        self.decrypt_batch(spool, batch)
+        let end = batch.end.min(last_excl.max(first + READ_BATCH)).max(last_excl);
+        self.decrypt_batch(spool, first..end)
     }
 
     fn background_step(
@@ -307,7 +317,7 @@ impl CencState {
         let batch_end = self
             .batch_range_for(first, first + 1)
             .end
-            .min(first + MAX_BATCH_SAMPLES)
+            .min(first + BACKGROUND_BATCH)
             .max(first + 1)
             .min(self.samples.len());
         self.decrypt_batch(spool, first..batch_end)?;

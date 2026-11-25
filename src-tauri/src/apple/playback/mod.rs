@@ -457,17 +457,63 @@ pub async fn probe_at(track_id: &str, quality: AppleQuality) -> Result<String, A
             let (mut source, _) = AppleSource::open(media_for_decode, duration, Duration::ZERO)?;
             let open_ms = t_open.elapsed().as_millis();
 
+            // MUSIQUE_APPLE_PROBE_REALTIME=<seconds>: play through the app's own playout ring,
+            // pulled at the speaker's pace, and count how often it ran dry
+            if let Some(secs) = std::env::var("MUSIQUE_APPLE_PROBE_REALTIME").ok().and_then(|v| v.parse::<u64>().ok()) {
+                let rate = source.sample_rate();
+                let channels = source.channels();
+                let (mut ring_source, ring) = crate::playout::prebuffer(source, Duration::ZERO, false, None);
+                let per_tick = rate as usize * channels as usize / 100; // 10 ms
+                let started = Instant::now();
+                let mut ticks = 0u64;
+                while started.elapsed() < Duration::from_secs(secs) {
+                    for _ in 0..per_tick {
+                        let _ = ring_source.next();
+                    }
+                    ticks += 1;
+                    let due = started + Duration::from_millis(ticks * 10);
+                    if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                        std::thread::sleep(wait);
+                    }
+                }
+                eprintln!("realtime: {secs}s pulled, underruns {}", ring.underruns());
+                return Ok((rate, channels, 1, open_ms, 0));
+            }
+
             let rate = source.sample_rate();
             let channels = source.channels();
-            let target_samples = rate as usize * channels as usize * 2;
+            // MUSIQUE_APPLE_PROBE_FULL=1 decodes the whole track and reports the slowest stretch
+            let full = std::env::var_os("MUSIQUE_APPLE_PROBE_FULL").is_some();
+            let target_samples = if full { usize::MAX } else { rate as usize * channels as usize * 2 };
+            let chunk = rate as usize * channels as usize / 10; // 100 ms of audio
 
             let t_decode = Instant::now();
             let mut decoded = 0usize;
+            let mut chunk_started = Instant::now();
+            let mut slowest = Duration::ZERO;
+            let mut slow_chunks = 0usize;
             while decoded < target_samples {
                 if source.next().is_none() {
                     break;
                 }
                 decoded += 1;
+                if full && decoded % chunk == 0 {
+                    let took = chunk_started.elapsed();
+                    if took > Duration::from_millis(100) {
+                        slow_chunks += 1;
+                    }
+                    slowest = slowest.max(took);
+                    chunk_started = Instant::now();
+                }
+            }
+            if full {
+                let audio_s = decoded as f64 / (rate as f64 * channels as f64);
+                eprintln!(
+                    "full decode: {audio_s:.1}s of audio in {:.2}s ({:.1}x realtime), slowest 100ms chunk {:?}, {slow_chunks} chunks slower than realtime",
+                    t_decode.elapsed().as_secs_f64(),
+                    audio_s / t_decode.elapsed().as_secs_f64().max(1e-9),
+                    slowest
+                );
             }
             let decode_ms = t_decode.elapsed().as_millis();
             Ok((rate, channels, decoded, open_ms, decode_ms))
