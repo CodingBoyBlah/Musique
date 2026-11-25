@@ -1,6 +1,7 @@
 //! Apple Music playback: stream resolution, Widevine licensing, lazy CENC decryption,
 //! decoder opening, preload cache, and diagnostics probe.
 
+pub mod aac;
 pub mod fmp4;
 pub mod license;
 pub mod resolve;

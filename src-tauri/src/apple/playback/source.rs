@@ -1,9 +1,5 @@
 //! `rodio::Source` adapter for Apple Music streams: unseekable fMP4 opening, splice-based
-//! seeking, AAC priming-frame trimming, and catalog-duration tail trimming.
-//!
-//! Note: `rodio` 0.21's bundled `symphonia` AAC decoder supports AAC-LC only. When a track
-//! resolves to `32:ctrp64` (HE-AAC), Symphonia decodes the LC core at half sample rate without
-//! SBR reconstruction (acceptable for v1; `rodio` resamples to the device's native rate).
+//! seeking, AAC/HE-AAC priming-frame trimming, and catalog-duration tail trimming.
 
 use std::time::Duration;
 
@@ -12,12 +8,12 @@ use rodio::{ChannelCount, Sample, SampleRate, Source};
 
 use crate::errors::AppError;
 
-use super::stream::{MediaReader, MediaStream};
+use super::aac::SymSource;
+use super::stream::MediaStream;
 
-/// Encoder priming frames at the start of an Apple AAC encode (no `elst`/`udta` box present).
-/// Because Symphonia decodes AAC-LC (and the LC core of HE-AAC at the core sample rate),
-/// `PRIMING_FRAMES` applies at `decoder.sample_rate()`.
-const PRIMING_FRAMES: u32 = 2112;
+fn priming_duration(priming_frames: u32, sample_rate: u32) -> Duration {
+    Duration::from_secs_f64(f64::from(priming_frames) / f64::from(sample_rate.max(1)))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct EditTrim {
@@ -100,7 +96,7 @@ impl<S: Source> Source for Trimmed<S> {
 pub struct AppleSource {
     media:    MediaStream,
     duration: Option<Duration>,
-    decoder:  Trimmed<rodio::Decoder<MediaReader>>,
+    decoder:  Trimmed<SymSource>,
 }
 
 impl AppleSource {
@@ -113,15 +109,7 @@ impl AppleSource {
         at: Duration,
     ) -> Result<(Self, u32), AppError> {
         if media.is_plain() {
-            let mut builder = rodio::Decoder::builder()
-                .with_data(media.reader())
-                .with_seekable(true);
-            if let Some(total) = media.total_bytes() {
-                builder = builder.with_byte_len(total);
-            }
-            let mut dec = builder
-                .build()
-                .map_err(|e| AppError::Playback(format!("cannot decode apple upload: {e}")))?;
+            let mut dec = SymSource::open(media.reader(), media.total_bytes(), true, None)?;
             let mut started_ms = 0u32;
             if !at.is_zero() {
                 match dec.try_seek(at) {
@@ -161,7 +149,7 @@ fn open_cenc_trimmed(
     duration: Option<Duration>,
     at: Duration,
     strict_seek: bool,
-) -> Result<(Trimmed<rodio::Decoder<MediaReader>>, u32), AppError> {
+) -> Result<(Trimmed<SymSource>, u32), AppError> {
     let entry = if !at.is_zero() {
         let found = media.splice_entry(at);
         if found.is_none() && strict_seek {
@@ -180,15 +168,8 @@ fn open_cenc_trimmed(
         None => media.reader(),
     };
 
-    let dec = rodio::Decoder::builder()
-        .with_data(reader)
-        .with_mime_type("audio/mp4")
-        .with_seekable(false)
-        .build()
-        .map_err(|e| AppError::Playback(format!("cannot decode apple CENC stream: {e}")))?;
-
-    let rate = f64::from(dec.sample_rate().max(1));
-    let default_priming = Duration::from_secs_f64(f64::from(PRIMING_FRAMES) / rate);
+    let dec = SymSource::open(reader, None, false, Some("audio/mp4"))?;
+    let default_priming = priming_duration(dec.priming_frames(), dec.sample_rate());
 
     match entry {
         Some(e) => {
@@ -353,5 +334,44 @@ mod tests {
         assert_eq!(out.len(), 20);
         assert_eq!(out.first().copied(), Some(11.0));
         assert_eq!(out.last().copied(), Some(30.0));
+    }
+
+    #[test]
+    fn he_aac_priming_drops_exact_5186_output_frames() {
+        use super::super::aac::PRIMING_HE_FRAMES;
+        struct FrameCounter {
+            next: u32,
+            max:  u32,
+        }
+        impl Iterator for FrameCounter {
+            type Item = f32;
+            fn next(&mut self) -> Option<f32> {
+                (self.next < self.max).then(|| {
+                    self.next += 1;
+                    self.next as f32
+                })
+            }
+        }
+        impl Source for FrameCounter {
+            fn current_span_len(&self) -> Option<usize> { None }
+            fn channels(&self) -> ChannelCount { 2 }
+            fn sample_rate(&self) -> SampleRate { 44_100 }
+            fn total_duration(&self) -> Option<Duration> { None }
+            fn try_seek(&mut self, _: Duration) -> Result<(), SeekError> { Ok(()) }
+        }
+
+        let skip = priming_duration(PRIMING_HE_FRAMES, 44_100);
+        let mut trimmed = Trimmed::new(
+            FrameCounter {
+                next: 0,
+                max:  (PRIMING_HE_FRAMES + 4) * 2,
+            },
+            skip,
+            None,
+        );
+        // 5186 stereo frames skipped -> first sample is (5186 * 2 + 1).
+        assert_eq!(trimmed.next(), Some((PRIMING_HE_FRAMES * 2 + 1) as f32));
+        let rest: Vec<f32> = trimmed.collect();
+        assert_eq!(rest.len(), 7);
     }
 }
