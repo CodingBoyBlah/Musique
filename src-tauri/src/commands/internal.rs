@@ -919,6 +919,10 @@ mod blend_tests {
 /// playlist4 list. non-blends come back with `isBlend: false`.
 #[tauri::command]
 pub async fn get_blend_info(app: AppHandle, id: String) -> Result<Option<BlendInfo>, AppError> {
+    // Blends are Spotify playlists
+    if crate::apple::is_active() {
+        return Ok(None);
+    }
     use tauri::Manager;
     let pool = app.state::<crate::state::AppState>().db.clone();
     let uri = format!("spotify:playlist:{id}");

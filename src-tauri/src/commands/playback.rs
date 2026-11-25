@@ -2456,6 +2456,10 @@ async fn with_spirc<T>(
 /// the queue, current track and context this device last reported
 #[tauri::command]
 pub async fn get_connect_state(app: AppHandle) -> Result<Option<crate::playback::ConnectStateMsg>, AppError> {
+    // Spotify Connect state: an Apple Music account has none
+    if crate::apple::is_active() {
+        return Ok(None);
+    }
     let playback = app.state::<AppState>().playback.clone();
     let guard = playback.lock().await;
     Ok(guard.as_ref().map(|inner| inner.connect_state()))
