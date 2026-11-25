@@ -626,6 +626,21 @@ fn parse_catalog_song(
                 artists: alb_artists,
                 popularity: None,
             })
+        })
+        // no album relationship came back (stations and some shelves omit it): the song's
+        // own fields still name its album, and its artwork is the album's
+        .or_else(|| {
+            let alb_name = str_field(attrs, "albumName")?;
+            let alb_id = str_field(attrs, "url").and_then(album_id_from_url)?;
+            Some(AlbumItem {
+                id: alb_id,
+                name: alb_name.to_owned(),
+                album_type: album_type_from(attrs, alb_name),
+                image_url: artwork_url(attrs, ART_SIZE),
+                release_date: normalize_release_date(str_field(attrs, "releaseDate")),
+                artists: artists.clone(),
+                popularity: None,
+            })
         });
 
     Some(ParsedTrack {
@@ -646,6 +661,15 @@ fn parse_catalog_song(
         library_id: library_id.map(str::to_owned),
         personal_rating,
     })
+}
+
+/// The catalog album id in a song's web url: `https://music.apple.com/us/album/<slug>/<id>?i=<song>`.
+fn album_id_from_url(url: &str) -> Option<String> {
+    let path = url.split(['?', '#']).next()?;
+    let mut parts = path.split('/').filter(|p| !p.is_empty());
+    parts.position(|p| p == "album")?;
+    let id = parts.last()?;
+    id.chars().all(|c| c.is_ascii_digit()).then(|| id.to_owned())
 }
 
 pub fn parse_track_detail(res: &Value) -> Option<TrackDetail> {
@@ -1310,6 +1334,26 @@ mod tests {
             .join("testdata")
             .join(name);
         std::fs::read_to_string(path).expect("fixture must exist")
+    }
+
+    #[test]
+    fn a_song_without_an_album_relationship_keeps_its_album() {
+        let song = serde_json::json!({
+            "id": "697195787", "type": "songs",
+            "attributes": {
+                "name": "One More Time", "albumName": "Discovery", "durationInMillis": 320357,
+                "artistName": "Daft Punk",
+                "url": "https://music.apple.com/us/album/one-more-time/697194953?i=697195787",
+                "artwork": { "url": "https://is1-ssl.mzstatic.com/image/thumb/x/{w}x{h}bb.jpg" },
+                "playParams": { "id": "697195787", "kind": "song" }
+            }
+        });
+        let track = parse_track(&song, None).expect("song");
+        let album = track.item.album.expect("album from the song's own fields");
+        assert_eq!(album.id, "697194953");
+        assert_eq!(album.name, "Discovery");
+        assert!(album.image_url.is_some_and(|u| !u.contains("{w}")));
+        assert_eq!(album_id_from_url("https://music.apple.com/us/album/x"), None);
     }
 
     #[test]
