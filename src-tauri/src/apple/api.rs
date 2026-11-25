@@ -84,6 +84,47 @@ pub async fn track_isrc(id: &str) -> Result<Option<String>, AppError> {
     track_isrc_with(&c, id).await
 }
 
+/// A catalog song's integrated loudness in LUFS, from Apple's own audio analysis. `None` for a
+/// library-only song, when Apple has no analysis, or when the lookup fails.
+pub async fn track_loudness_lufs(id: &str) -> Option<f64> {
+    if wire::is_library_id(id) {
+        return None;
+    }
+    // asked again for every play of a song, and fetched ahead during preload: keep the answers
+    static KNOWN: std::sync::Mutex<Vec<(String, Option<f64>)>> = std::sync::Mutex::new(Vec::new());
+    if let Some((_, lufs)) = KNOWN.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| k == id) {
+        return *lufs;
+    }
+    let lufs = fetch_loudness_lufs(id).await;
+    let mut known = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    if known.len() >= 256 {
+        known.remove(0);
+    }
+    known.push((id.to_owned(), lufs));
+    lufs
+}
+
+async fn fetch_loudness_lufs(id: &str) -> Option<f64> {
+    let c = client::current().await.ok()?;
+    let path = c.catalog_path(&format!("/songs/{}", client::encode_segment(id)));
+    let body = c
+        .get(
+            &path,
+            &[
+                ("include[songs]", "audio-analysis"),
+                ("fields[songs]", "durationInMillis"),
+                ("omit[resource]", "autos"),
+            ],
+        )
+        .await
+        .ok()?;
+    let answer: Value = serde_json::from_str(&body).ok()?;
+    answer
+        .pointer("/data/0/relationships/audio-analysis/data/0/attributes/loudness/main/value")
+        .and_then(Value::as_f64)
+        .filter(|lufs| (-70.0..0.0).contains(lufs))
+}
+
 pub async fn tracks(ids: &[String]) -> Result<Vec<TrackItem>, AppError> {
     let c = client::current().await?;
     tracks_with(&c, ids).await

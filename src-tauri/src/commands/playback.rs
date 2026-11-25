@@ -1343,7 +1343,18 @@ async fn apple_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), A
         }
     }
 
-    let prepared = crate::apple::playback::load_prepared(&pool, id).await?;
+    // the catalog's loudness comes alongside, so a track lands near the same level as the last
+    let (prepared, lufs) = tokio::join!(
+        crate::apple::playback::load_prepared(&pool, id),
+        // never worth holding the start for: preload usually fetched it already
+        async {
+            tokio::time::timeout(std::time::Duration::from_millis(400), crate::apple::api::track_loudness_lufs(id))
+                .await
+                .ok()
+                .flatten()
+        },
+    );
+    let prepared = prepared?;
     if !crate::apple::playback::is_current(ticket) {
         eprintln!("[apple] dropping superseded load of {id}");
         return Ok(());
@@ -1357,13 +1368,22 @@ async fn apple_play(app: &AppHandle, id: &str, position_ms: u32) -> Result<(), A
         return Ok(());
     }
     if let Some(player) = guard.as_ref() {
-        player.play_source(id, source, prepared.duration_ms(), 1.0, started_at);
+        player.play_source(id, source, prepared.duration_ms(), apple_loudness_gain(lufs), started_at);
     }
     drop(guard);
 
     crate::apple::playback::set_active(prepared).await;
     crate::apple::playback::report_play_async(id);
     Ok(())
+}
+
+/// The gain that brings a track at `lufs` to the -14 LUFS the other local sources aim for, by
+/// no more than 6 dB either way, the same bounds YouTube's correction keeps.
+fn apple_loudness_gain(lufs: Option<f64>) -> f32 {
+    match lufs {
+        Some(lufs) if lufs.is_finite() => 10f64.powf((-14.0 - lufs).clamp(-6.0, 6.0) / 20.0) as f32,
+        _ => 1.0,
+    }
 }
 
 async fn apple_pause(app: &AppHandle) -> Result<(), AppError> {
@@ -2084,7 +2104,12 @@ pub async fn preload_track(app: AppHandle, id: String) -> Result<(), AppError> {
     refuse_while_probing()?;
     if crate::apple::is_active() {
         let pool = app.state::<AppState>().db.clone();
-        tokio::spawn(async move { crate::apple::playback::preload(&pool, &id).await });
+        tokio::spawn(async move {
+            tokio::join!(
+                crate::apple::playback::preload(&pool, &id),
+                crate::apple::api::track_loudness_lufs(&id),
+            );
+        });
         return Ok(());
     }
     if soloist(&app).await.is_some() {
