@@ -2,3 +2,4 @@
 * text=auto
 
 *.sql text eol=lf
+*.rgba binary

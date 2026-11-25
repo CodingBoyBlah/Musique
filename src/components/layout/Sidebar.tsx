@@ -475,7 +475,10 @@ export default function Sidebar() {
           style={{ height: px(32), display: "flex", alignItems: "center", gap: px(8), padding: `0 ${px(14)}px`, flexShrink: 0 }}
           title={!isMac ? "Mac traffic lights preview (Ctrl+Shift+M to toggle)" : undefined}
         >
-          {["#ff5f57", "#febc2e", "#28c840"].map((c) => (
+          {/* only the Windows preview paints dots. on a real Mac the native
+              buttons draw themselves; painting ours too showed a second,
+              slightly offset set peeking out around them */}
+          {!isMac && ["#ff5f57", "#febc2e", "#28c840"].map((c) => (
             <div
               key={c}
               style={{

@@ -1135,8 +1135,22 @@ pub fn run() {
                         }
                     });
 
-                if let Some(icon) = app.default_window_icon().cloned() {
-                    tray = tray.icon(icon);
+                // macOS menu bar: a monochrome template glyph (icons/tray-template.svg,
+                // rasterised to 64x64 RGBA) the OS tints for light/dark menu bars,
+                // like every native menu-bar item. the full-colour app icon looked
+                // out of place there. elsewhere the colour icon is the norm.
+                #[cfg(target_os = "macos")]
+                {
+                    const TRAY_TEMPLATE: &[u8] = include_bytes!("../icons/tray-template.rgba");
+                    tray = tray
+                        .icon(tauri::image::Image::new(TRAY_TEMPLATE, 64, 64))
+                        .icon_as_template(true);
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    if let Some(icon) = app.default_window_icon().cloned() {
+                        tray = tray.icon(icon);
+                    }
                 }
                 if let Err(e) = tray.build(app) {
                     eprintln!("[setup] tray build failed (non fatal): {e}");
@@ -1196,6 +1210,7 @@ pub fn run() {
             commands::internal::get_canvas,
             commands::internal::get_track_credits,
             commands::internal::get_playlist_folders,
+            commands::internal::get_blend_info,
             commands::internal::get_track_radio,
             commands::internal::get_station,
             commands::internal::get_autoplay_tracks,

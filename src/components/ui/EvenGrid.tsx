@@ -1,6 +1,7 @@
-import { useRef, useState, useLayoutEffect, useEffect, useMemo, useId, type ReactNode, type CSSProperties } from "react";
+import { Fragment, useRef, useState, useLayoutEffect, useEffect, useMemo, useId, type ReactNode, type CSSProperties } from "react";
 import { motion, LayoutGroup } from "framer-motion";
-import { zTransform, REFLOW_SPRING, getGridItemTransition } from "../../lib/motion";
+import { REFLOW_SPRING, getGridItemTransition } from "../../lib/motion";
+import { TilePresence } from "./TilePresence";
 import { useRailPin } from "../../lib/railFlip";
 
 interface EvenGridProps<T> {
@@ -187,26 +188,16 @@ export function EvenGrid<T>({
           gridTemplateColumns: `repeat(${effectiveCols}, minmax(0, 1fr))`,
           gap,
           width: "100%",
+          // TilePresence positions a leaving tile against this
+          position: "relative",
           ...style,
         }}
       >
-        {visibleItems.map((item, index) => {
-          const key = getKey ? getKey(item, index) : index;
-          return (
-            <motion.div
-              key={key}
-              layout="position"
-              transformTemplate={zTransform}
-              transition={getGridItemTransition(index)}
-              style={{
-                minWidth: 0,
-                width: "100%",
-              }}
-            >
-              {renderItem(item, index)}
-            </motion.div>
-          );
-        })}
+        <TilePresence layoutTransition={getGridItemTransition}>
+          {visibleItems.map((item, index) => (
+            <Fragment key={getKey ? getKey(item, index) : index}>{renderItem(item, index)}</Fragment>
+          ))}
+        </TilePresence>
       </motion.div>
     </LayoutGroup>
   );

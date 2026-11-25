@@ -14,7 +14,7 @@ import { useAmbient } from "../../hooks/useAmbient";
 import { seekPlayback } from "../../api/playback";
 import { Loader } from "../ui/Loader";
 import { Tooltip } from "../ui/Tooltip";
-import { zTransform, EASE_OUT, PRESS, RAIL_CLOSE, RAIL_OPEN } from "../../lib/motion";
+import { EASE_OUT, PRESS } from "../../lib/motion";
 import { useLyricFollow } from "../../hooks/useLyricFollow";
 import { ReturnPill } from "./LyricReturnPill";
 import "../../styles/lyrics.css";
@@ -59,13 +59,9 @@ function TranscriptPanel() {
   const { ink } = useAmbient(track?.album?.image_url);
   if (!track) return null;
   return (
-    <motion.div
-      initial={{ x: WIDTH }}
-      animate={{ x: 0 }}
-      exit={{ x: WIDTH, transition: RAIL_CLOSE }}
-      transformTemplate={zTransform}
-      transition={RAIL_OPEN}
-      style={{ position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5, width: WIDTH, maxWidth: "100vw", overflow: "hidden", contain: "paint", willChange: "transform", display: "flex", flexDirection: "column" }}
+    // slid in and out by Layout (the rail), like the song panel
+    <div
+      style={{ position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5, width: WIDTH, maxWidth: "100vw", overflow: "hidden", contain: "paint", display: "flex", flexDirection: "column" }}
     >
       <div style={{ display: "flex", alignItems: "center", padding: "4px 14px 0", height: 40, flexShrink: 0, fontSize: 14, fontWeight: 700, color: "var(--color-text-hi)" }}>
         Transcript
@@ -73,7 +69,7 @@ function TranscriptPanel() {
       <div style={{ flex: 1, minHeight: 0 }}>
         <TranscriptView episodeId={track.id} ink={ink} empty={NO_TRANSCRIPT} />
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -184,23 +180,10 @@ function SongLyricsPanel() {
   const hasLyrics = rows.length > 0;
 
   return (
-    <motion.div
-      // Absolute OVERLAY that slides in/out via a transform (x). The layout space
-      // is reserved by an in-flow spacer in Layout.tsx (which toggles instantly on
-      // open AND close), so the grid reflows in one step and the cards glide via
-      // framer `layout` both ways. This panel just slides over that region; its
-      // width never animates, so nothing reflows per-frame.
-      //
-      // Slides the full width of the rail, on the same curve Layout slides the
-      // rail's frame, so the sheet's edge stays on the card's edge the whole
-      // way in and out. (It used to move only 60px and fade, which let the
-      // frame outrun it.) Critically damped: a toggle has no momentum to
-      // overshoot with.
-      initial={{ x: WIDTH }}
-      animate={{ x: 0 }}
-      exit={{ x: WIDTH, transition: RAIL_CLOSE }}
-      transformTemplate={zTransform}
-      transition={RAIL_OPEN}
+    <div
+      // Layout's rail slides this sheet in and out with a compositor transform
+      // on its wrapper, in step with the card's edge (see Layout, "The right
+      // rail slides"). Its width never changes, so nothing in it reflows.
       style={{
         position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5,
         width: WIDTH,
@@ -210,7 +193,6 @@ function SongLyricsPanel() {
         background: "transparent",
         boxShadow: "none",
         contain: "paint",
-        willChange: "transform",
       }}
     >
       <div
@@ -477,7 +459,7 @@ function SongLyricsPanel() {
         </div>
         <ReturnPill show={synced && hasLyrics && detached} onClick={recenter} />
       </div>
-    </motion.div>
+    </div>
   );
 }
 

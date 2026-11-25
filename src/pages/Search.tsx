@@ -36,12 +36,11 @@ import { useReflowPulse } from "../hooks/useReflowPulse";
 import { EASE_OUT, PRESS, PRESS_TRANSITION, REFLOW_SPRING } from "../lib/motion";
 import type {
   PlaylistCard as PlaylistCardType,
-  ArtistItem,
-  AlbumItem,
   TrackItem,
-  SearchResults,
 } from "../types/spotify";
 import { TILE_GRID } from "../lib/layout";
+import { TilePresence } from "../components/ui/TilePresence";
+import { topResult as getTopResult, type TopResult } from "../lib/searchRank";
 
 const CATEGORIES = ["all", "songs", "artists", "albums", "playlists", "podcasts"] as const;
 type Category = (typeof CATEGORIES)[number];
@@ -62,43 +61,6 @@ const SONGS_PREVIEW = 4;
 
 
 // ─── Top Result resolution & card ───────────────────────────────────────────
-
-type TopResult =
-  | { type: "artist"; item: ArtistItem }
-  | { type: "track"; item: TrackItem }
-  | { type: "album"; item: AlbumItem };
-
-function getTopResult(data: SearchResults, query: string): TopResult | null {
-  const q = query.trim().toLowerCase();
-  if (!q) return null;
-
-  // 1. Exact matches
-  const exactArtist = data.artists.find((a) => a.name.toLowerCase() === q);
-  if (exactArtist) return { type: "artist", item: exactArtist };
-
-  const exactTrack = data.tracks.find((t) => t.name.toLowerCase() === q);
-  if (exactTrack) return { type: "track", item: exactTrack };
-
-  const exactAlbum = data.albums.find((al) => al.name.toLowerCase() === q);
-  if (exactAlbum) return { type: "album", item: exactAlbum };
-
-  // 2. Starts with query
-  const startsArtist = data.artists.find((a) => a.name.toLowerCase().startsWith(q));
-  if (startsArtist) return { type: "artist", item: startsArtist };
-
-  const startsTrack = data.tracks.find((t) => t.name.toLowerCase().startsWith(q));
-  if (startsTrack) return { type: "track", item: startsTrack };
-
-  const startsAlbum = data.albums.find((al) => al.name.toLowerCase().startsWith(q));
-  if (startsAlbum) return { type: "album", item: startsAlbum };
-
-  // 3. Fallback priority: artist -> track -> album
-  if (data.artists.length > 0) return { type: "artist", item: data.artists[0] };
-  if (data.tracks.length > 0) return { type: "track", item: data.tracks[0] };
-  if (data.albums.length > 0) return { type: "album", item: data.albums[0] };
-
-  return null;
-}
 
 function topResultImage(r: TopResult): string | null {
   if (r.type === "track") return r.item.album?.image_url ?? null;
@@ -415,9 +377,9 @@ function PlaylistGrid({ children }: { children: React.ReactNode }) {
       layout="position"
       transition={{ layout: REFLOW_SPRING }}
       data-rail-lock="flip"
-      style={TILE_GRID}
+      style={{ ...TILE_GRID, position: "relative" }}
     >
-      {children}
+      <TilePresence>{children}</TilePresence>
     </motion.div>
   );
 }

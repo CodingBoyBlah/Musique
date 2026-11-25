@@ -12,7 +12,6 @@ import { CoverArt } from "../ui/CoverArt";
 import { JamCard } from "./JamCard";
 import { Tooltip } from "../ui/Tooltip";
 import { errMsg } from "../../lib/err";
-import { RAIL_CLOSE, RAIL_OPEN } from "../../lib/motion";
 import type { TrackItem } from "../../types/spotify";
 
 const WIDTH = 272;
@@ -184,12 +183,9 @@ export function FriendsPanel() {
   const earlier = data.filter((f) => now - f.timestamp >= LIVE_MS);
 
   return (
-    <motion.div
-      initial={{ x: WIDTH }}
-      animate={{ x: 0 }}
-      exit={{ x: WIDTH, transition: RAIL_CLOSE }}
-      transition={RAIL_OPEN}
-      style={{ position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5, width: WIDTH, maxWidth: "100vw", display: "flex", flexDirection: "column", overflow: "hidden", willChange: "transform" }}
+    // slid in and out by Layout (the rail) on a wrapper
+    <div
+      style={{ position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 5, width: WIDTH, maxWidth: "100vw", display: "flex", flexDirection: "column", overflow: "hidden" }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 12px 0 14px", height: 40, flexShrink: 0 }}>
         <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: "var(--color-text-hi)" }}>Friends</span>
@@ -242,6 +238,6 @@ export function FriendsPanel() {
           </>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }

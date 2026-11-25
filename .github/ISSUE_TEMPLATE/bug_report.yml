@@ -6,7 +6,7 @@ body:
     id: version
     attributes:
       label: Musique version
-      placeholder: "1.4.1"
+      placeholder: "1.4.2"
     validations:
       required: true
   - type: dropdown

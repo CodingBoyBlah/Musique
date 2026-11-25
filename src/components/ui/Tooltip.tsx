@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type ReactNode } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { EASE_OUT } from "@/lib/motion";
@@ -52,6 +52,10 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
      trigger by the normal box tree - it has to be positioned from this. */
   const [rect, setRect] = useState<DOMRect | null>(null);
   const triggerRef = useRef<HTMLSpanElement>(null);
+  const tipRef = useRef<HTMLSpanElement>(null);
+  /* the label's left edge, measured once it's laid out and kept 8px inside
+     the window. a long label near the edge used to run straight off it */
+  const [tipLeft, setTipLeft] = useState<number | null>(null);
   const timerRef = useRef<number | undefined>(undefined);
   const off = side === "top" ? 5 : -5;
 
@@ -84,6 +88,17 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
       window.removeEventListener("keydown", onKey);
     };
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !rect || side === "right" || !tipRef.current) return;
+    const w = tipRef.current.offsetWidth; // unscaled, unlike the rect
+    const want =
+      effectiveAlign === "center" ? rect.left + rect.width / 2 - w / 2
+      : effectiveAlign === "end" ? rect.right - w
+      : rect.left;
+    const left = Math.max(8, Math.min(want, window.innerWidth - 8 - w));
+    setTipLeft((prev) => (prev === left ? prev : left));
+  }, [open, rect, side, effectiveAlign, label]);
 
   const handleMouseEnter = () => {
     if (triggerRef.current) {
@@ -148,18 +163,16 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
     : isRight
       ? { left: rect.right + 10, top: rect.top + rect.height / 2 }
       : {
-          ...(effectiveAlign === "center"
-            ? { left: rect.left + rect.width / 2 }
-            : effectiveAlign === "end"
-              ? { right: window.innerWidth - rect.right }
-              : { left: rect.left }),
+          // until measured, park it at the trigger; the layout effect moves
+          // it before the first paint
+          left: tipLeft ?? rect.left,
           ...(side === "top"
             ? { bottom: window.innerHeight - rect.top + 9 }
             : { top: rect.bottom + 9 }),
         };
-  const tx = effectiveAlign === "center" ? "-50%" : "0%";
+  const tx = "0%";
   /* grow out of the trigger, not from the label's own centre */
-  const originX = effectiveAlign === "center" ? "center" : effectiveAlign === "end" ? "right" : "left";
+  const originX = rect && tipLeft != null ? `${rect.left + rect.width / 2 - tipLeft}px` : "center";
   const transformOrigin = isRight
     ? "left center"
     : `${originX} ${side === "top" ? "bottom" : "top"}`;
@@ -189,6 +202,7 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
         <AnimatePresence onExitComplete={() => setMounted(false)}>
           {open && rect && (
           <motion.span
+            ref={tipRef}
             role="tooltip"
             initial={isRight ? { opacity: 0, x: -4, y: "-50%", scale: 0.94 } : { opacity: 0, y: off, scale: 0.94, x: tx }}
             animate={isRight ? { opacity: 1, x: 0, y: "-50%", scale: 1 } : { opacity: 1, y: 0, scale: 1, x: tx }}
@@ -199,7 +213,10 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
               transformOrigin,
               position:      "fixed",
               ...horiz,
-              whiteSpace:    "nowrap",
+              /* one line up to 320px, then wraps; never wider than the window */
+              width:         "max-content",
+              maxWidth:      "min(320px, calc(100vw - 16px))",
+              whiteSpace:    "normal",
               pointerEvents: "none",
               zIndex:        10000,
               padding:       "5px 9px",

@@ -83,6 +83,28 @@
 }
 
 
+:root {
+    --font-ui:
+        "Host Grotesk",
+        "Inter",
+        "Segoe UI Variable",
+        "Segoe UI",
+        system-ui,
+        -apple-system,
+        sans-serif;
+}
+
+/* macOS: the system face (SF Pro), like every native Mac app */
+:root[data-os="macos"] {
+    --font-ui:
+        -apple-system,
+        BlinkMacSystemFont,
+        "SF Pro Text",
+        "SF Pro",
+        "Helvetica Neue",
+        sans-serif;
+}
+
 * {
     box-sizing: border-box;
     margin: 0;
@@ -95,14 +117,7 @@ body,
     height: 100%;
     background: transparent;
     color: var(--color-text);
-    font-family:
-        "Host Grotesk",
-        "Inter",
-        "Segoe UI Variable",
-        "Segoe UI",
-        system-ui,
-        -apple-system,
-        sans-serif;
+    font-family: var(--font-ui);
     font-size: 14px;
     font-weight: 400;
     -webkit-font-smoothing: antialiased;

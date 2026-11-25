@@ -12,3 +12,6 @@ export const os: OS = detect();
 export const isMac = os === "macos";
 export const isWindows = os === "windows";
 export const isLinux = os === "linux";
+
+// lets CSS pick per-OS details (the macOS system font)
+if (typeof document !== "undefined") document.documentElement.dataset.os = os;

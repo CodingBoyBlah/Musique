@@ -473,6 +473,28 @@ fn seed_uri(seed: &str) -> String {
     }
 }
 
+/// the playlist spotify's own client opens as "<seed> Radio": the inspired-by
+/// mix for a track, the artist radio (37i9dQZF1E4...) for an artist. any seed
+/// uri works - checked live for tracks and artists. (playlist id, title, ids)
+async fn radio_playlist(app: &AppHandle, uri: &str) -> Option<(String, Option<String>, Vec<String>)> {
+    let s = crate::internal::spclient::session(app).await.ok()?;
+    let spotify_uri = librespot_core::SpotifyUri::from_uri(uri).ok()?;
+    let bytes = s.spclient().get_radio_for_track(&spotify_uri).await.ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let pl_uri = v
+        .get("mediaItems")?
+        .as_array()?
+        .first()?
+        .get("uri")?
+        .as_str()?
+        .to_string();
+    let (title, ids) = resolve_context_ids(app, &pl_uri).await.ok()?;
+    if ids.is_empty() {
+        return None;
+    }
+    Some((crate::internal::spclient::uri_id(&pl_uri).to_string(), title, ids))
+}
+
 /// spotify's own radio for a track: the "inspired by" mix first (a real,
 /// openable playlist), apollo's station as the fallback
 #[tauri::command]
@@ -481,49 +503,33 @@ pub async fn get_track_radio(app: AppHandle, track_id: String) -> Result<RadioRe
     let uri = seed_uri(&track_id);
     let pool = app.state::<crate::state::AppState>().db.clone();
     crate::internal::cache::cached_json(&pool, &uri, "radio", 6 * crate::internal::cache::HOUR, || async {
-        let s = crate::internal::spclient::session(&app).await?;
-        let spotify_uri = librespot_core::SpotifyUri::from_uri(&uri)
-            .map_err(|e| AppError::InvalidInput(e.to_string()))?;
-
-        let mut playlist_id = None;
-        let mut title = None;
-        let mut ids = Vec::new();
-        if let Ok(bytes) = s.spclient().get_radio_for_track(&spotify_uri).await {
-            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
-            let pl_uri = v
-                .get("mediaItems")
-                .and_then(|m| m.as_array())
-                .and_then(|a| a.first())
-                .and_then(|i| i.get("uri"))
-                .and_then(|u| u.as_str())
-                .map(str::to_string);
-            if let Some(pl_uri) = pl_uri {
-                if let Ok((t, found)) = resolve_context_ids(&app, &pl_uri).await {
-                    playlist_id = Some(crate::internal::spclient::uri_id(&pl_uri).to_string());
-                    title = t;
-                    ids = found;
-                }
-            }
-        }
-        if ids.is_empty() {
-            ids = apollo_ids(&app, "stations", &uri, 50, &[], false).await?;
-        }
+        let (playlist_id, title, ids) = match radio_playlist(&app, &uri).await {
+            Some((id, title, ids)) => (Some(id), title, ids),
+            None => (None, None, apollo_ids(&app, "stations", &uri, 50, &[], false).await?),
+        };
         let tracks = crate::internal::metadata::tracks(&app, &ids).await?;
         Ok(RadioResult { title, playlist_id, tracks })
     })
     .await
 }
 
-/// a station seeded from any artist / album / playlist / track uri
+/// a station seeded from any artist / album / playlist / track uri: spotify's
+/// own radio playlist for it when there is one (an artist always has one),
+/// otherwise apollo's station
 #[tauri::command]
 pub async fn get_station(app: AppHandle, seed: String) -> Result<RadioResult, AppError> {
     use tauri::Manager;
     let uri = seed_uri(&seed);
     let pool = app.state::<crate::state::AppState>().db.clone();
-    crate::internal::cache::cached_json(&pool, &uri, "station", 6 * crate::internal::cache::HOUR, || async {
-        let ids = apollo_ids(&app, "stations", &uri, 50, &[], false).await?;
+    // "-v2": entries cached before the radio playlist was looked up have no
+    // playlist id, and would keep the button on the anonymous station for 6h
+    crate::internal::cache::cached_json(&pool, &uri, "station-v2", 6 * crate::internal::cache::HOUR, || async {
+        let (playlist_id, title, ids) = match radio_playlist(&app, &uri).await {
+            Some((id, title, ids)) => (Some(id), title, ids),
+            None => (None, None, apollo_ids(&app, "stations", &uri, 50, &[], false).await?),
+        };
         let tracks = crate::internal::metadata::tracks(&app, &ids).await?;
-        Ok(RadioResult { title: None, playlist_id: None, tracks })
+        Ok(RadioResult { title, playlist_id, tracks })
     })
     .await
 }
@@ -730,4 +736,168 @@ mod color_tests {
         assert_eq!(c[0].as_ref().unwrap().raw.as_deref(), Some("#A0522D"));
         assert!(c[1].is_none());
     }
+}
+
+// ── blends ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlendMember {
+    pub username: String,
+    pub name: String,
+    pub image_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlendInfo {
+    pub is_blend: bool,
+    pub format: Option<String>,
+    pub members: Vec<BlendMember>,
+    pub taste_match: Option<u8>,
+    pub contributors: std::collections::HashMap<String, Vec<String>>,
+}
+
+/// members off the list's format attributes, in the order spotify lists them:
+/// `blend.userinfo-<user>.{username,name,profileimage}`
+fn blend_members(fattrs: &[(String, String)]) -> Vec<BlendMember> {
+    let mut out: Vec<BlendMember> = Vec::new();
+    for (k, v) in fattrs {
+        let Some(rest) = k.strip_prefix("blend.userinfo-") else { continue };
+        let Some((user, field)) = rest.rsplit_once('.') else { continue };
+        if user.is_empty() {
+            continue;
+        }
+        let i = match out.iter().position(|m| m.username == user) {
+            Some(i) => i,
+            None => {
+                out.push(BlendMember { username: user.to_string(), name: user.to_string(), image_url: None });
+                out.len() - 1
+            }
+        };
+        let v = v.trim();
+        match field {
+            "name" if !v.is_empty() => out[i].name = v.to_string(),
+            "profileimage" if !v.is_empty() => out[i].image_url = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// who a blend track was picked for: `multiUserAttributionMetadata` JSON, else
+/// the comma list in `multiUserAttributionUsernamesV2`. never `added_by` (it is
+/// always the viewer)
+fn blend_item_users(fattrs: &[(String, String)]) -> Vec<String> {
+    if let Some((_, json)) = fattrs.iter().find(|(k, _)| k == "multiUserAttributionMetadata") {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+            let users: Vec<String> = v["attributed_users"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|u| u["username"].as_str()).filter(|u| !u.is_empty()).map(str::to_string).collect())
+                .unwrap_or_default();
+            if !users.is_empty() {
+                return users;
+            }
+        }
+    }
+    fattrs
+        .iter()
+        .find(|(k, _)| k == "multiUserAttributionUsernamesV2")
+        .map(|(_, v)| v.split(',').map(str::trim).filter(|u| !u.is_empty()).map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+async fn fetch_blend_info(app: &AppHandle, id: &str) -> Result<BlendInfo, AppError> {
+    use librespot_protocol::playlist4_external::SelectedListContent;
+    use protobuf::Message;
+
+    let sid = librespot_core::SpotifyId::from_base62(id)
+        .map_err(|_| AppError::InvalidInput(format!("bad playlist id: {id}")))?;
+    let s = crate::internal::spclient::session(app).await?;
+    let bytes = s
+        .spclient()
+        .get_playlist(&sid)
+        .await
+        .map_err(|e| AppError::Network(format!("playlist v2: {e}")))?;
+    let list = SelectedListContent::parse_from_bytes(&bytes)
+        .map_err(|e| AppError::Network(format!("playlist v2: {e}")))?;
+
+    let attrs = list.attributes.as_ref();
+    let format = attrs.map(|a| a.format().to_string()).filter(|f| !f.is_empty());
+    if !format.as_deref().is_some_and(|f| f.eq_ignore_ascii_case("blend")) {
+        return Ok(BlendInfo { format, ..Default::default() });
+    }
+    let fattrs: Vec<(String, String)> = attrs
+        .map(|a| a.format_attributes.iter().map(|f| (f.key().to_string(), f.value().to_string())).collect())
+        .unwrap_or_default();
+    let members = blend_members(&fattrs);
+
+    let mut contributors: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    if let Some(c) = list.contents.as_ref() {
+        for item in &c.items {
+            if !item.uri().starts_with("spotify:track:") {
+                continue;
+            }
+            let Some(ia) = item.attributes.as_ref() else { continue };
+            let f: Vec<(String, String)> = ia.format_attributes.iter().map(|f| (f.key().to_string(), f.value().to_string())).collect();
+            let users = blend_item_users(&f);
+            if !users.is_empty() {
+                contributors.insert(crate::internal::spclient::uri_id(item.uri()).to_string(), users);
+            }
+        }
+    }
+
+    // spotify doesn't put the taste match on the list itself
+    Ok(BlendInfo { is_blend: true, format, members, taste_match: None, contributors })
+}
+
+#[cfg(test)]
+mod blend_tests {
+    use super::*;
+
+    fn kv(k: &str, v: &str) -> (String, String) {
+        (k.to_string(), v.to_string())
+    }
+
+    #[test]
+    fn reads_members_and_attribution() {
+        let list = vec![
+            kv("madeFor.username", "me"),
+            kv("blend.userinfo-me.username", "me"),
+            kv("blend.userinfo-me.name", "anshuman"),
+            kv("blend.userinfo-me.profileimage", "https://i.scdn.co/image/a"),
+            kv("blend.userinfo-31x.username", "31x"),
+            kv("blend.userinfo-31x.name", "tharun"),
+            kv("track_attributed_desc", "Listened to this song"),
+        ];
+        let m = blend_members(&list);
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0].name, "anshuman");
+        assert_eq!(m[0].image_url.as_deref(), Some("https://i.scdn.co/image/a"));
+        assert_eq!(m[1].username, "31x");
+        assert_eq!(m[1].image_url, None);
+
+        let item = vec![kv(
+            "multiUserAttributionMetadata",
+            r#"{"attributed_users":[{"username":"31x","display_name":"tharun"},{"username":"me"}]}"#,
+        )];
+        assert_eq!(blend_item_users(&item), vec!["31x", "me"]);
+        let item = vec![kv("multiUserAttributionUsernamesV2", "me, 31x")];
+        assert_eq!(blend_item_users(&item), vec!["me", "31x"]);
+        assert!(blend_item_users(&[]).is_empty());
+    }
+}
+
+/// blend members, taste match and who each track was picked for, read off the
+/// playlist4 list. non-blends come back with `isBlend: false`.
+#[tauri::command]
+pub async fn get_blend_info(app: AppHandle, id: String) -> Result<Option<BlendInfo>, AppError> {
+    use tauri::Manager;
+    let pool = app.state::<crate::state::AppState>().db.clone();
+    let uri = format!("spotify:playlist:{id}");
+    let info = crate::internal::cache::cached_json(&pool, &uri, "blend2", 10 * 60_000, || async {
+        fetch_blend_info(&app, &id).await
+    })
+    .await?;
+    Ok(Some(info))
 }
