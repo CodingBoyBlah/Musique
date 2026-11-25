@@ -246,7 +246,7 @@ export default function Library() {
       <SignInPrompt
         heading="Your library"
         title="Sign in to view your library"
-        description="Log in with Spotify to access your saved playlists, albums, and tracks."
+        description="Log in with Spotify or Apple Music to access your saved playlists, albums, and tracks."
       />
     );
   }

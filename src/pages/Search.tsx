@@ -485,8 +485,8 @@ export default function Search() {
     return (
       <SignInPrompt
         heading="Search"
-        title="Sign in to search Spotify"
-        description="Log in with your Spotify account to search for songs, albums, and artists."
+        title="Sign in to search"
+        description="Log in with Spotify or Apple Music to search for songs, albums, and artists."
       />
     );
   }

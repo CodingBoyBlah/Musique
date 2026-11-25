@@ -978,8 +978,8 @@ export default function Home() {
     return (
       <SignInPrompt
         heading="Welcome to Musique"
-        title="Sign in with Spotify"
-        description="Connect your account to listen to your music, playlists, and recommendations."
+        title="Sign in to start listening"
+        description="Connect Spotify or Apple Music to listen to your music, playlists, and recommendations."
       />
     );
   }

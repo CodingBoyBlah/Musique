@@ -235,7 +235,7 @@ export function SignInPrompt({
   return (
     <div className="sign-in-page">
       {heading && <h1 className="t-title sign-in-page-heading">{heading}</h1>}
-      <section className="sign-in-content" aria-label="Spotify sign-in">
+      <section className="sign-in-content" aria-label="Sign in">
         <MusiqueLogo size={60} className="sign-in-logo" />
         <h2 className="sign-in-title">{title}</h2>
         <p className="sign-in-description">{description}</p>

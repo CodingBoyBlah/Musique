@@ -379,7 +379,7 @@ export default function Playlists() {
       <SignInPrompt
         heading="Playlists"
         title="Sign in to view your playlists"
-        description="Log in with Spotify to access and play your saved playlists."
+        description="Log in with Spotify or Apple Music to access and play your saved playlists."
       />
     );
   }
