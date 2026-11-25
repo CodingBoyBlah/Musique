@@ -40,6 +40,7 @@ import { useReflowPulse } from "../hooks/useReflowPulse";
 import { getBlendInfo, looksLikeBlend, type BlendMember } from "../api/blend";
 import { BlendHeader, TrackFaces } from "../components/ui/BlendHeader";
 import "../styles/blend-page.css";
+import { useIsApple } from "../hooks/useProvider";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
 
@@ -62,8 +63,13 @@ export default function PlaylistPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  // owner id when we have it (live fetch), display name as the offline fallback
-  const isOwner = !!data && (data.owner_id
+  // owner id when we have it (live fetch), display name as the offline fallback.
+  // Apple Music marks the listener's own playlists with the "library" owner, and
+  // has no user pages to link a curator to
+  const isAppleAccount = useIsApple();
+  const isOwner = !!data && (isAppleAccount
+    ? data.owner_id === "library"
+    : data.owner_id
     ? data.owner_id === userId
     : !!displayName && data.owner_name === displayName);
   const { data: following = false } = useQuery({
@@ -244,7 +250,7 @@ export default function PlaylistPage() {
           <ExpandableDescription text={data.description} />
         )}
         {!isBlend && <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
-          {data.owner_name && (data.owner_id
+          {data.owner_name && (data.owner_id && !isAppleAccount
             ? <><Link
                 to={`/user/${data.owner_id}`}
                 onMouseEnter={() => scheduleHoverPrefetch(() => prefetchProfile(qc, data.owner_id!))}
