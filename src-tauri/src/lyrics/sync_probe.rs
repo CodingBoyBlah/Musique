@@ -107,15 +107,8 @@ fn measure(lc: PreparedTrack, he: Option<PreparedTrack>, duration: Option<Durati
         let app = mono(&mut seeked, ch, SETTLE + WINDOW);
         let app_lag = lag(&reference, &app, started_ms as f64 / 1000.0 * rate as f64);
 
-        let fixed_lag = entry.and_then(|e| {
-            let mut dec = SymSource::open(media.reader_at(e), None, false, Some("audio/mp4")).ok()?;
-            let skip = ((e.into.as_secs_f64() * rate as f64).round() as u64 + u64::from(priming)) as usize;
-            for _ in 0..skip * ch {
-                dec.next()?;
-            }
-            let fixed = mono(&mut dec, ch, SETTLE + WINDOW);
-            lag(&reference, &fixed, t * rate as f64)
-        });
+        let fixed_lag = corrected_splice(&media, at, ch)
+            .and_then(|fixed| lag(&reference, &fixed, t * rate as f64));
         println!(
             "seek {t:>6.1}s: reports {started_ms}ms, first fragment {:?}, into {:?} -> app lag {} | corrected lag {}",
             entry.map(|e| e.in_first_fragment),
@@ -158,9 +151,12 @@ fn measure(lc: PreparedTrack, he: Option<PreparedTrack>, duration: Option<Durati
                 let at = Duration::from_secs_f64(t);
                 if let Ok((mut s, started_ms)) = AppleSource::open(he.media.clone(), duration, at) {
                     let w = mono(&mut s, he_ch, SETTLE + WINDOW);
+                    let fixed = corrected_splice(&he.media, at, he_ch)
+                        .and_then(|f| lag(&reference, &f, t * rate as f64));
                     println!(
-                        "HE seek {t:>4.1}s: lag {}",
-                        fmt_lag(lag(&reference, &w, started_ms as f64 / 1000.0 * rate as f64), rate)
+                        "HE seek {t:>4.1}s: app lag {} | corrected lag {}",
+                        fmt_lag(lag(&reference, &w, started_ms as f64 / 1000.0 * rate as f64), rate),
+                        fmt_lag(fixed, rate)
                     );
                 }
             }
@@ -241,9 +237,8 @@ fn ring_report(
             std::thread::sleep(wait);
         }
     }
-    // +1: the first sounding frame is faded in from silence, so the first non-zero one is the second
     println!(
-        "ring seek to {target_s:.1}s: content lag {} (expect +1 frame)",
+        "ring seek to {target_s:.1}s: content lag {} (0 is exact)",
         fmt_lag(lag(reference, &out, target_s * rate as f64), rate)
     );
     let heard = ring.heard_ms() as f64;
@@ -255,6 +250,19 @@ fn ring_report(
         asked.elapsed().as_secs_f64() * 1000.0
     );
     Ok(())
+}
+
+/// The splice a seek to `at` makes, with the decoder's priming trimmed in every
+/// fragment (fragment decode times count it), as the proposed fix does.
+fn corrected_splice(media: &MediaStream, at: Duration, ch: usize) -> Option<Vec<f32>> {
+    let e = media.splice_entry(at)?;
+    let mut dec = SymSource::open(media.reader_at(e), None, false, Some("audio/mp4")).ok()?;
+    let rate = dec.sample_rate() as f64;
+    let skip = (e.into.as_secs_f64() * rate).round() as usize + dec.priming_frames() as usize;
+    for _ in 0..skip * ch {
+        dec.next()?;
+    }
+    Some(mono(&mut dec, ch, SETTLE + WINDOW))
 }
 
 /// Decodes `frames` frames as a mono mix.
