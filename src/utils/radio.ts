@@ -67,8 +67,8 @@ export async function replenishQueue(seedTrack?: TrackItem | null): Promise<void
 }
 
 // play a list as a radio: first track now, the rest queued behind it
-function playList(tracks: TrackItem[], contextId: string): boolean {
-  const start = useQueueStore.getState().playContext(tracks, 0, contextId);
+function playList(tracks: TrackItem[], contextId: string, contextUri?: string): boolean {
+  const start = useQueueStore.getState().playContext(tracks, 0, contextId, contextUri);
   if (!start) return false;
   usePlayerStore.getState().setCurrentTrack(start);
   playTrack(start.id).catch(() => {});
@@ -91,12 +91,24 @@ export async function playTrackRadio(seed: TrackItem): Promise<boolean> {
   return startRadio(seed);
 }
 
-/* a station from an artist / album / playlist uri */
-export async function playStation(uri: string, name: string): Promise<boolean> {
+/* a station from an artist / album / playlist uri. When spotify keeps a real
+radio playlist for the seed ("Weezer Radio", the one its own client opens) it
+plays as that playlist - same context id as the playlist page, so that page's
+Play reads Pause - and `onOpen` lets the toast open it. */
+export async function playStation(
+  uri: string,
+  name: string,
+  onOpen?: (playlistId: string) => void,
+): Promise<boolean> {
   try {
     const station = await getStation(uri);
-    if (station.tracks.length > 0 && playList(station.tracks, `station-${uri}`)) {
-      toast(`${name} Radio`);
+    const pl = station.playlist_id;
+    const played = pl
+      ? playList(station.tracks, pl, `spotify:playlist:${pl}`)
+      : playList(station.tracks, `station-${uri}`);
+    if (station.tracks.length > 0 && played) {
+      const title = station.title ?? `${name} Radio`;
+      toast(title, pl && onOpen ? { action: { label: "Open", onClick: () => onOpen(pl) } } : undefined);
       return true;
     }
   } catch {

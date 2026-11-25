@@ -473,6 +473,28 @@ fn seed_uri(seed: &str) -> String {
     }
 }
 
+/// the playlist spotify's own client opens as "<seed> Radio": the inspired-by
+/// mix for a track, the artist radio (37i9dQZF1E4...) for an artist. any seed
+/// uri works - checked live for tracks and artists. (playlist id, title, ids)
+async fn radio_playlist(app: &AppHandle, uri: &str) -> Option<(String, Option<String>, Vec<String>)> {
+    let s = crate::internal::spclient::session(app).await.ok()?;
+    let spotify_uri = librespot_core::SpotifyUri::from_uri(uri).ok()?;
+    let bytes = s.spclient().get_radio_for_track(&spotify_uri).await.ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let pl_uri = v
+        .get("mediaItems")?
+        .as_array()?
+        .first()?
+        .get("uri")?
+        .as_str()?
+        .to_string();
+    let (title, ids) = resolve_context_ids(app, &pl_uri).await.ok()?;
+    if ids.is_empty() {
+        return None;
+    }
+    Some((crate::internal::spclient::uri_id(&pl_uri).to_string(), title, ids))
+}
+
 /// spotify's own radio for a track: the "inspired by" mix first (a real,
 /// openable playlist), apollo's station as the fallback
 #[tauri::command]
@@ -481,49 +503,33 @@ pub async fn get_track_radio(app: AppHandle, track_id: String) -> Result<RadioRe
     let uri = seed_uri(&track_id);
     let pool = app.state::<crate::state::AppState>().db.clone();
     crate::internal::cache::cached_json(&pool, &uri, "radio", 6 * crate::internal::cache::HOUR, || async {
-        let s = crate::internal::spclient::session(&app).await?;
-        let spotify_uri = librespot_core::SpotifyUri::from_uri(&uri)
-            .map_err(|e| AppError::InvalidInput(e.to_string()))?;
-
-        let mut playlist_id = None;
-        let mut title = None;
-        let mut ids = Vec::new();
-        if let Ok(bytes) = s.spclient().get_radio_for_track(&spotify_uri).await {
-            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
-            let pl_uri = v
-                .get("mediaItems")
-                .and_then(|m| m.as_array())
-                .and_then(|a| a.first())
-                .and_then(|i| i.get("uri"))
-                .and_then(|u| u.as_str())
-                .map(str::to_string);
-            if let Some(pl_uri) = pl_uri {
-                if let Ok((t, found)) = resolve_context_ids(&app, &pl_uri).await {
-                    playlist_id = Some(crate::internal::spclient::uri_id(&pl_uri).to_string());
-                    title = t;
-                    ids = found;
-                }
-            }
-        }
-        if ids.is_empty() {
-            ids = apollo_ids(&app, "stations", &uri, 50, &[], false).await?;
-        }
+        let (playlist_id, title, ids) = match radio_playlist(&app, &uri).await {
+            Some((id, title, ids)) => (Some(id), title, ids),
+            None => (None, None, apollo_ids(&app, "stations", &uri, 50, &[], false).await?),
+        };
         let tracks = crate::internal::metadata::tracks(&app, &ids).await?;
         Ok(RadioResult { title, playlist_id, tracks })
     })
     .await
 }
 
-/// a station seeded from any artist / album / playlist / track uri
+/// a station seeded from any artist / album / playlist / track uri: spotify's
+/// own radio playlist for it when there is one (an artist always has one),
+/// otherwise apollo's station
 #[tauri::command]
 pub async fn get_station(app: AppHandle, seed: String) -> Result<RadioResult, AppError> {
     use tauri::Manager;
     let uri = seed_uri(&seed);
     let pool = app.state::<crate::state::AppState>().db.clone();
-    crate::internal::cache::cached_json(&pool, &uri, "station", 6 * crate::internal::cache::HOUR, || async {
-        let ids = apollo_ids(&app, "stations", &uri, 50, &[], false).await?;
+    // "-v2": entries cached before the radio playlist was looked up have no
+    // playlist id, and would keep the button on the anonymous station for 6h
+    crate::internal::cache::cached_json(&pool, &uri, "station-v2", 6 * crate::internal::cache::HOUR, || async {
+        let (playlist_id, title, ids) = match radio_playlist(&app, &uri).await {
+            Some((id, title, ids)) => (Some(id), title, ids),
+            None => (None, None, apollo_ids(&app, "stations", &uri, 50, &[], false).await?),
+        };
         let tracks = crate::internal::metadata::tracks(&app, &ids).await?;
-        Ok(RadioResult { title: None, playlist_id: None, tracks })
+        Ok(RadioResult { title, playlist_id, tracks })
     })
     .await
 }

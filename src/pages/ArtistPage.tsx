@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Check, UserPlus, Link2, Globe, Radio } from "@/lib/icons";
 import { playStation } from "../utils/radio";
@@ -40,6 +40,7 @@ const TOP_TRACKS_COLLAPSED = 5;
 export default function ArtistPage() {
   useReflowPulse();
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { data, isLoading, error, refetch } = useArtist(id);
   const { data: following = false } = useIsArtistFollowed(id);
   // bio / fans also like / appears on come from spotify's internal metadata,
@@ -104,8 +105,9 @@ export default function ArtistPage() {
   const shownTop = showAllTop ? topTracks : topTracks.slice(0, TOP_TRACKS_COLLAPSED);
   const genres = data.genres.slice(0, 3);
 
+  const openRadio = (playlistId: string) => navigate(`/playlist/${playlistId}`);
   const shareEntries = [
-    { label: "Artist radio", icon: <Radio size={14} />, onSelect: () => { playStation(`spotify:artist:${data.id}`, data.name); } },
+    { label: "Artist radio", icon: <Radio size={14} />, onSelect: () => { playStation(`spotify:artist:${data.id}`, data.name, openRadio); } },
     { label: "Copy Spotify link", icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("artist", data.id) },
     { label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("artist", data.id) },
   ];
@@ -196,7 +198,7 @@ export default function ArtistPage() {
                   type="button"
                   aria-label={`${data.name} radio`}
                   className="ghost-pill focus-ring"
-                  onClick={() => playStation(`spotify:artist:${data.id}`, data.name)}
+                  onClick={() => playStation(`spotify:artist:${data.id}`, data.name, openRadio)}
                   whileTap={PRESS}
                   transition={PRESS_TRANSITION}
                   style={{ height: 36, width: 36, borderRadius: 99, color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
