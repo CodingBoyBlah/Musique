@@ -7,13 +7,14 @@
 //! Widevine host process can exit.
 
 use std::io::{self, Read, Seek, SeekFrom};
+use std::ops::Range;
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
 use crate::errors::AppError;
-use crate::widevine::Cdm;
+use crate::widevine::{Cdm, Sample};
 
 use super::fmp4::{
     box_extent, read_fragment, read_init, relabel_enca_to_mp4a, EncryptedTrack, FragmentStep,
@@ -26,6 +27,8 @@ const MAX_TRACK_BYTES: usize = 256 * 1024 * 1024;
 const READ_PATIENCE: Duration = Duration::from_secs(20);
 const DECRYPT_PACE: Duration = Duration::from_micros(500);
 const TAIL_PROBE_BYTES: u64 = 8 * 1024;
+const MAX_BATCH_SAMPLES: usize = 512;
+const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum SampleSeal {
@@ -66,19 +69,20 @@ pub struct SpliceEntry {
 
 #[derive(Default)]
 struct CencState {
-    plain:        bool,
-    init_end:     Option<usize>,
-    tracks:       Vec<EncryptedTrack>,
-    timescale:    u32,
-    walked:       usize,
-    awaited:      usize,
-    fragments:    Vec<FragmentLoc>,
-    samples:      Vec<SampleEntry>,
-    seals:        Vec<SampleSeal>,
-    license:      LicenseState,
-    scratch:      Vec<u8>,
-    decrypted:    usize,
-    decrypt_time: Duration,
+    plain:          bool,
+    init_end:       Option<usize>,
+    tracks:         Vec<EncryptedTrack>,
+    timescale:      u32,
+    walked:         usize,
+    awaited:        usize,
+    fragments:      Vec<FragmentLoc>,
+    sample_batches: Vec<Range<usize>>,
+    samples:        Vec<SampleEntry>,
+    seals:          Vec<SampleSeal>,
+    license:        LicenseState,
+    scratch:        Vec<u8>,
+    decrypted:      usize,
+    decrypt_time:   Duration,
 }
 
 impl CencState {
@@ -115,8 +119,12 @@ impl CencState {
                             start,
                         });
                     }
-                    self.seals
-                        .resize(self.samples.len() + samples.len(), SampleSeal::Encrypted);
+                    let base = self.samples.len();
+                    let end = base + samples.len();
+                    if base < end {
+                        self.sample_batches.push(base..end);
+                    }
+                    self.seals.resize(end, SampleSeal::Encrypted);
                     self.samples.extend(samples);
                     self.walked = next;
                 }
@@ -178,13 +186,22 @@ impl CencState {
             .then(|| Duration::from_secs_f64(ticks as f64 / f64::from(self.timescale)))
     }
 
-    fn clear_sample(&mut self, spool: &mut [u8], index: usize) -> io::Result<()> {
-        match self.seals[index] {
-            SampleSeal::Clear => return Ok(()),
-            SampleSeal::Lost => {
-                return Err(io::Error::other("encrypted sample state was lost"));
-            }
-            SampleSeal::Encrypted => {}
+    fn batch_range_for(&self, first: usize, last_excl: usize) -> Range<usize> {
+        let b0 = self.sample_batches.partition_point(|b| b.end <= first);
+        let b1 = self.sample_batches.partition_point(|b| b.start < last_excl);
+        if b0 < b1 {
+            self.sample_batches[b0].start.min(first)..self.sample_batches[b1 - 1].end.max(last_excl)
+        } else {
+            first..last_excl
+        }
+    }
+
+    fn decrypt_batch(&mut self, spool: &mut [u8], range: Range<usize>) -> io::Result<()> {
+        let pending: Vec<usize> = range
+            .filter(|&i| self.seals[i] == SampleSeal::Encrypted)
+            .collect();
+        if pending.is_empty() {
+            return Ok(());
         }
         let keys = match &self.license {
             LicenseState::Held(keys) => keys,
@@ -197,29 +214,59 @@ impl CencState {
                 ));
             }
         };
-
-        let sample = &self.samples[index];
-        let end = sample.end();
-        if end > spool.len() {
-            return Err(io::Error::other("sample offset runs past downloaded bytes"));
+        for &idx in &pending {
+            if self.samples[idx].end() > spool.len() {
+                return Err(io::Error::other("sample offset runs past downloaded bytes"));
+            }
         }
 
-        self.scratch.clear();
-        self.scratch.extend_from_slice(&spool[sample.start..end]);
+        let mut at = 0usize;
+        while at < pending.len() {
+            let next = next_batch_end(&self.samples, &pending, at);
+            let chunk = &pending[at..next];
 
-        let started = Instant::now();
-        if let Err(err) = keys
-            .cdm
-            .decrypt(&mut self.scratch, &keys.key_id, &sample.iv, &sample.subs)
-        {
-            self.seals[index] = SampleSeal::Lost;
-            return Err(io::Error::other(format!("Widevine decrypt failed: {err}")));
+            self.scratch.clear();
+            for &idx in chunk {
+                let s = &self.samples[idx];
+                self.scratch.extend_from_slice(&spool[s.start..s.end()]);
+            }
+
+            let mut batch = Vec::with_capacity(chunk.len());
+            let mut rest = self.scratch.as_mut_slice();
+            for &idx in chunk {
+                let s = &self.samples[idx];
+                let (data, tail) = rest.split_at_mut(s.len);
+                rest = tail;
+                batch.push(Sample {
+                    data,
+                    iv: &s.iv,
+                    subsamples: &s.subs,
+                });
+            }
+
+            let started = Instant::now();
+            let res = keys.cdm.decrypt_many(&keys.key_id, &mut batch);
+            drop(batch);
+            if let Err(err) = res {
+                for &idx in chunk {
+                    self.seals[idx] = SampleSeal::Lost;
+                }
+                return Err(io::Error::other(format!("Widevine decrypt failed: {err}")));
+            }
+            self.decrypt_time += started.elapsed();
+            self.decrypted += chunk.len();
+
+            let mut offset = 0usize;
+            for &idx in chunk {
+                let s = &self.samples[idx];
+                let span_end = offset + s.len;
+                spool[s.start..s.end()].copy_from_slice(&self.scratch[offset..span_end]);
+                self.seals[idx] = SampleSeal::Clear;
+                offset = span_end;
+            }
+
+            at = next;
         }
-        self.decrypt_time += started.elapsed();
-        self.decrypted += 1;
-
-        spool[sample.start..end].copy_from_slice(&self.scratch);
-        self.seals[index] = SampleSeal::Clear;
         Ok(())
     }
 
@@ -227,14 +274,20 @@ impl CencState {
         if self.plain {
             return Ok(());
         }
-        let mut idx = self.samples.partition_point(|s| s.end() <= start);
-        while idx < self.samples.len() && self.samples[idx].start < end {
-            if self.seals[idx] != SampleSeal::Clear {
-                self.clear_sample(spool, idx)?;
-            }
-            idx += 1;
+        let first = self.samples.partition_point(|s| s.end() <= start);
+        let rel_end = self.samples[first..].partition_point(|s| s.start < end);
+        let last_excl = first + rel_end;
+        if first >= last_excl {
+            return Ok(());
         }
-        Ok(())
+        if (first..last_excl).any(|i| self.seals[i] == SampleSeal::Lost) {
+            return Err(io::Error::other("encrypted sample state was lost"));
+        }
+        if (first..last_excl).all(|i| self.seals[i] == SampleSeal::Clear) {
+            return Ok(());
+        }
+        let batch = self.batch_range_for(first, last_excl);
+        self.decrypt_batch(spool, batch)
     }
 
     fn background_step(
@@ -244,15 +297,21 @@ impl CencState {
     ) -> io::Result<Option<Option<CdmKeys>>> {
         self.index_available(spool);
         let found = (*next_idx..self.seals.len()).find(|&i| self.seals[i] == SampleSeal::Encrypted);
-        let Some(index) = found else {
+        let Some(first) = found else {
             let released = match std::mem::replace(&mut self.license, LicenseState::Released) {
                 LicenseState::Held(keys) => Some(keys),
                 LicenseState::Pending | LicenseState::Released => None,
             };
             return Ok(Some(released));
         };
-        self.clear_sample(spool, index)?;
-        *next_idx = index + 1;
+        let batch_end = self
+            .batch_range_for(first, first + 1)
+            .end
+            .min(first + MAX_BATCH_SAMPLES)
+            .max(first + 1)
+            .min(self.samples.len());
+        self.decrypt_batch(spool, first..batch_end)?;
+        *next_idx = batch_end;
         Ok(None)
     }
 
@@ -274,6 +333,21 @@ impl CencState {
     fn all_clear(&self) -> bool {
         self.plain || matches!(self.license, LicenseState::Released)
     }
+}
+
+fn next_batch_end(samples: &[SampleEntry], pending: &[usize], start: usize) -> usize {
+    let mut end = start;
+    let mut bytes = 0usize;
+    while end < pending.len() && end - start < MAX_BATCH_SAMPLES {
+        let s = &samples[pending[end]];
+        let wire = s.len.saturating_add(24).saturating_add(s.subs.len() * 8);
+        if end > start && bytes.saturating_add(wire) > MAX_BATCH_BYTES {
+            break;
+        }
+        bytes = bytes.saturating_add(wire);
+        end += 1;
+    }
+    end
 }
 
 struct StreamBuffer {
@@ -863,5 +937,55 @@ mod tests {
         assert_eq!(out.len(), 25);
         assert!(out[..10].iter().all(|&b| b == 1));
         assert!(out[10..].iter().all(|&b| b == 3));
+    }
+
+    #[test]
+    fn sample_batches_expand_per_fragment_and_respect_caps() {
+        let samples = (0..5)
+            .map(|i| SampleEntry {
+                start: i * 16,
+                len:   16,
+                iv:    [0; 16],
+                subs:  Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let mut cenc = CencState {
+            walked: 80,
+            sample_batches: vec![0..3, 3..5],
+            samples,
+            seals: vec![
+                SampleSeal::Clear,
+                SampleSeal::Encrypted,
+                SampleSeal::Lost,
+                SampleSeal::Encrypted,
+                SampleSeal::Encrypted,
+            ],
+            ..CencState::default()
+        };
+
+        assert_eq!(cenc.batch_range_for(1, 2), 0..3);
+        assert_eq!(cenc.batch_range_for(2, 4), 0..5);
+        assert_eq!(cenc.batch_range_for(3, 5), 3..5);
+
+        let mut spool = vec![0u8; 80];
+        assert!(cenc.decrypt_range(&mut spool, 0, 16).is_ok());
+        assert!(cenc.decrypt_range(&mut spool, 32, 48).is_err());
+        assert!(cenc.decrypt_range(&mut spool, 16, 32).is_err());
+        // Missing license must not mark Encrypted samples as Lost.
+        assert_eq!(cenc.seals[1], SampleSeal::Encrypted);
+        assert_eq!(cenc.seals[3], SampleSeal::Encrypted);
+        assert_eq!(cenc.seals[4], SampleSeal::Encrypted);
+
+        // Batch chunking bounds stay within MAX_BATCH_SAMPLES and MAX_BATCH_BYTES.
+        let large_samples: Vec<SampleEntry> = (0..3)
+            .map(|i| SampleEntry {
+                start: i * (3 * 1024 * 1024),
+                len:   3 * 1024 * 1024,
+                iv:    [0; 16],
+                subs:  Vec::new(),
+            })
+            .collect();
+        let pending = vec![0, 1, 2];
+        assert_eq!(next_batch_end(&large_samples, &pending, 0), 1);
     }
 }

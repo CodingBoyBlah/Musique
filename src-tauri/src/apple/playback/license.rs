@@ -10,7 +10,6 @@ use base64::{
     Engine as _,
 };
 use serde_json::Value;
-use tokio::sync::Mutex;
 
 use crate::errors::AppError;
 use crate::widevine::{self, Cdm};
@@ -19,11 +18,6 @@ use super::resolve::{apply_apple_headers, send_reconnecting, KeyInfo, SAFARI_USE
 
 const LICENSE_URL: &str =
     "https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/acquireWebPlaybackLicense";
-
-/// Serializes Widevine license exchanges across concurrent loads (e.g., preloading the next
-/// track while starting the current one) so a second `challenge` never overwrites the CDM's
-/// pending session before the first `accept`.
-static LICENSING_LOCK: Mutex<()> = Mutex::const_new(());
 
 /// Dedicated HTTP client for streaming fMP4 media bodies without `crate::http::client()`'s
 /// 20-second total request timeout, using a read timeout instead so long tracks don't drop.
@@ -45,7 +39,8 @@ pub(crate) fn media_http() -> &'static reqwest::Client {
 
 /// Acquires a Widevine license from Apple for `key` and installs it into a `Cdm` handle.
 ///
-/// All CDM calls run via `spawn_blocking` so async workers never block on CDM IPC.
+/// Runs `Cdm::exchange` on a blocking thread so `widevine`'s internal licensing mutex serializes
+/// challenge generation, license POST, and license acceptance on the same `Cdm` handle.
 pub async fn acquire_license(
     http: &reqwest::Client,
     bearer: &str,
@@ -60,21 +55,40 @@ pub async fn acquire_license(
     }
 
     let init_data = widevine::pssh(&key.id);
-    let _guard = LICENSING_LOCK.lock().await;
+    let handle = tokio::runtime::Handle::current();
+    let http = http.clone();
+    let bearer = bearer.to_owned();
+    let user_token = user_token.to_owned();
+    let uri = key.uri.clone();
+    let song_id = key.song_id.clone();
 
-    let (cdm, challenge) = tokio::task::spawn_blocking(move || -> Result<(Cdm, Vec<u8>), AppError> {
+    tokio::task::spawn_blocking(move || -> Result<Cdm, AppError> {
         let cdm = Cdm::open()?;
-        let challenge = cdm.challenge(&init_data)?;
-        Ok((cdm, challenge))
+        cdm.exchange(&init_data, |challenge| {
+            handle.block_on(post_license(
+                &http, &bearer, &user_token, &uri, &song_id, is_library, &challenge,
+            ))
+        })?;
+        Ok(cdm)
     })
     .await
-    .map_err(|e| AppError::Playback(format!("widevine challenge task failed: {e}")))??;
+    .map_err(|e| AppError::Playback(format!("widevine license exchange task failed: {e}")))?
+}
 
+async fn post_license(
+    http: &reqwest::Client,
+    bearer: &str,
+    user_token: &str,
+    uri: &str,
+    song_id: &str,
+    is_library: bool,
+    challenge: &[u8],
+) -> Result<Vec<u8>, AppError> {
     let payload = serde_json::json!({
-        "challenge": STANDARD.encode(&challenge),
+        "challenge": STANDARD.encode(challenge),
         "key-system": "com.widevine.alpha",
-        "uri": key.uri,
-        "adamId": key.song_id,
+        "uri": uri,
+        "adamId": song_id,
         "isLibrary": is_library,
         "user-initiated": true,
     });
@@ -108,19 +122,10 @@ pub async fn acquire_license(
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| AppError::Playback("apple license response carried no license".into()))?;
-    let license_bytes = STANDARD
+    STANDARD
         .decode(encoded_license)
         .or_else(|_| STANDARD_NO_PAD.decode(encoded_license))
-        .map_err(|e| AppError::Playback(format!("apple license is not valid base64: {e}")))?;
-
-    let cdm = tokio::task::spawn_blocking(move || -> Result<Cdm, AppError> {
-        cdm.accept(&license_bytes)?;
-        Ok(cdm)
-    })
-    .await
-    .map_err(|e| AppError::Playback(format!("widevine license accept task failed: {e}")))??;
-
-    Ok(cdm)
+        .map_err(|e| AppError::Playback(format!("apple license is not valid base64: {e}")))
 }
 
 /// Opens the streaming HTTP GET for an Apple Music fMP4 or plain upload asset.
