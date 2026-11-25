@@ -32,6 +32,36 @@ async fn musique_device_id(app: &AppHandle) -> String {
     crate::auth::compute_device_id(&device_name)
 }
 
+/// The name this computer's Soloist appears under in Spotify's device list.
+fn soloist_name(app: &AppHandle) -> Option<String> {
+    app.state::<AppState>().soloist.device_name(app)
+}
+
+/// Soloist is how this computer plays when it is the audio source, not
+/// another device: it is folded into this computer's own row, which takes
+/// its active state, so it never shows as somewhere else to play.
+fn fold_soloist(devices: &mut Vec<ConnectDevice>, soloist: Option<&str>, musique_id: &str, device_name: &str) {
+    let Some(soloist) = soloist else { return };
+    let Some(at) = devices.iter().position(|d| d.name == soloist) else { return };
+    let row = devices.remove(at);
+    // a stale second listing of it goes too
+    devices.retain(|d| d.name != soloist);
+    if !row.is_active {
+        return;
+    }
+    match devices.iter_mut().find(|d| d.id.as_deref() == Some(musique_id)) {
+        Some(own) => {
+            own.is_active = true;
+            own.volume_percent = row.volume_percent.or(own.volume_percent);
+        }
+        None => devices.insert(0, ConnectDevice {
+            id: Some(musique_id.to_string()),
+            name: device_name.to_string(),
+            ..row
+        }),
+    }
+}
+
 /// Sends a player command to a restricted device (a Sonos, mostly) over
 /// Spotify Connect, the only route Spotify lets those take.
 async fn connect_route(
@@ -188,6 +218,9 @@ pub async fn get_devices(app: AppHandle) -> Result<DevicesPayload, AppError> {
         .and_then(|d| d.id.clone());
 
     let musique_id = matched_id.unwrap_or_else(|| crate::auth::compute_device_id(&device_name));
+    let soloist = soloist_name(&app);
+    let mut raw = raw;
+    fold_soloist(&mut raw.devices, soloist.as_deref(), &musique_id, &device_name);
 
     // speakers on the network that are not signed in yet (or are an idle
     // sonos) are offered too; moving playback to one signs it in
@@ -196,6 +229,11 @@ pub async fn get_devices(app: AppHandle) -> Result<DevicesPayload, AppError> {
     let mut devices = raw.devices;
     let waiting = crate::commands::receivers::waiting_rows(&devices);
     devices.extend(waiting);
+    // Soloist also answers the speaker scan on the network, as a speaker
+    // waiting to be signed in; it is this computer all the same
+    if let Some(soloist) = soloist.as_deref() {
+        devices.retain(|d| d.name != soloist);
+    }
 
     Ok(DevicesPayload {
         devices,
@@ -246,10 +284,21 @@ async fn playback_state(app: &AppHandle) -> Result<Option<RemotePlaybackState>, 
     let raw: RawPlaybackResponse = serde_json::from_str(&text)
         .map_err(|e| AppError::Network(format!("decode playback state: {e}")))?;
 
-    let device = match raw.device {
+    let mut device = match raw.device {
         Some(d) => d,
         None => return Ok(None),
     };
+    // Soloist playing is this computer playing (see `fold_soloist`)
+    if soloist_name(app).is_some_and(|name| name == device.name) {
+        let db = app.state::<AppState>().db.clone();
+        let device_name = crate::auth::get_setting_value(&db, "device_name")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| crate::auth::DEFAULT_DEVICE_NAME.to_string());
+        device.id = Some(musique_device_id(app).await);
+        device.name = device_name;
+    }
 
     let track = raw.item.and_then(item_from_value);
 
@@ -632,4 +681,56 @@ pub async fn remote_play_context(
         crate::spotify::spotify_write_json(&token, reqwest::Method::PUT, url.as_str(), body).await.map(drop)
     })
     .await
+}
+
+#[cfg(test)]
+mod soloist_rows {
+    use super::*;
+
+    fn row(id: &str, name: &str, active: bool) -> ConnectDevice {
+        ConnectDevice {
+            id: Some(id.into()),
+            is_active: active,
+            is_private_session: false,
+            is_restricted: false,
+            name: name.into(),
+            device_type: "Computer".into(),
+            volume_percent: Some(40),
+            supports_volume: true,
+        }
+    }
+
+    const SOLOIST: &str = "Musique Soloist (8071de28)";
+
+    #[test]
+    fn soloist_playing_shows_as_this_computer_and_never_as_another_device() {
+        let mut devices = vec![row("m", "Musique", false), row("s", SOLOIST, true), row("p", "Phone", false)];
+        fold_soloist(&mut devices, Some(SOLOIST), "m", "Musique");
+        let names: Vec<_> = devices.iter().map(|d| (d.name.as_str(), d.is_active)).collect();
+        assert_eq!(names, [("Musique", true), ("Phone", false)]);
+    }
+
+    #[test]
+    fn an_idle_soloist_is_just_left_out() {
+        let mut devices = vec![row("m", "Musique", false), row("s", SOLOIST, false)];
+        fold_soloist(&mut devices, Some(SOLOIST), "m", "Musique");
+        assert_eq!(devices.len(), 1);
+        assert!(!devices[0].is_active);
+    }
+
+    #[test]
+    fn without_the_built_in_device_listed_soloist_stands_in_for_it() {
+        let mut devices = vec![row("p", "Phone", false), row("s", SOLOIST, true)];
+        fold_soloist(&mut devices, Some(SOLOIST), "m", "Musique");
+        assert_eq!(devices[0].id.as_deref(), Some("m"));
+        assert_eq!(devices[0].name, "Musique");
+        assert!(devices[0].is_active);
+    }
+
+    #[test]
+    fn another_computers_soloist_is_another_device() {
+        let mut devices = vec![row("m", "Musique", false), row("o", "Musique Soloist (deadbeef)", true)];
+        fold_soloist(&mut devices, Some(SOLOIST), "m", "Musique");
+        assert_eq!(devices.len(), 2);
+    }
 }

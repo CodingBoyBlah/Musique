@@ -74,7 +74,8 @@ export function JamCard() {
   const qc = useQueryClient();
   const jam = useJamStore((s) => s.session);
   const { data: backend } = usePlaybackBackend();
-  // jams stream through spotify's own player. the youtube source can't carry one
+  // jams stream through the built-in spotify player (spirc). neither youtube
+  // nor soloist, a separate program, can carry one
   const spotifyAudio = !backend || backend.active === "spotify";
 
   const [busy, setBusy] = useState(false);
@@ -238,7 +239,9 @@ export function JamCard() {
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: "var(--color-text-hi)" }}>Start a Jam</div>
           <div className="t-caption" style={{ fontSize: 11.5, color: "var(--color-text-dim)" }}>
-            {spotifyAudio ? "Listen together, everyone adds to the queue" : "Jams play through Spotify. Switch the audio source in Settings."}
+            {spotifyAudio
+              ? "Listen together, everyone adds to the queue"
+              : "Jams play through the built-in Spotify player. Switch the audio source to Spotify in Settings."}
           </div>
         </div>
       </div>

@@ -163,18 +163,21 @@ export const setAudioQuality = (quality: AudioQuality): Promise<void> =>
 //
 // Spotify only streams audio to Premium, so a free account can't use it at all
 // and always plays through YouTube Music. Premium accounts choose between the
-// two. Either way Spotify supplies all metadata, artwork and lyrics.
+// built-in Spotify player, Spotify's own Soloist player and YouTube Music.
+// Whichever plays, Spotify supplies all metadata, artwork and lyrics.
 //
 // `active` is both the backend in use and the selected value - there's no
 // separate stored preference to disagree with it.
 
-export type PlaybackBackend = "spotify" | "youtube";
+export type PlaybackBackend = "spotify" | "soloist" | "youtube";
 
 export interface BackendState {
   active:            PlaybackBackend;
   product:           string | null;
-  /** False on a free account, where the Spotify option is disabled. */
+  /** False on a free account, where the Spotify and Soloist options are disabled. */
   spotify_available: boolean;
+  /** Whether Spotify publishes Soloist for this computer. */
+  soloist_supported: boolean;
 }
 
 export const getPlaybackBackend = (): Promise<BackendState> =>

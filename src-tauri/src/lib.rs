@@ -1233,6 +1233,7 @@ pub fn run() {
             commands::soloist::soloist_enable,
             commands::soloist::soloist_disable,
             commands::soloist::soloist_forget,
+            commands::soloist::soloist_set_quality,
             commands::playback::get_yt_match,
             commands::playback::search_yt_candidates,
             commands::playback::pin_yt_match,
