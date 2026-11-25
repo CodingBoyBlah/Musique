@@ -9,6 +9,15 @@
 
 #![allow(dead_code)]
 
+pub mod api;
+pub mod auth;
+pub mod client;
+pub mod library;
+pub mod links;
+pub mod wire;
+
+pub mod playback;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The `settings` row naming which service the signed-in account belongs to: `"apple"` for
