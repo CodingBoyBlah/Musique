@@ -106,6 +106,35 @@ pub fn apple_playback_probe() -> i32 {
 /// signed-in Apple account): runs every read the app makes against Apple Music —
 /// account, library, search, pages, home and radio — and prints what each found and
 /// how long it took. Read-only.
+/// `spotify.exe --apple-signin-probe` with `MUSIQUE_APPLE_SIGNIN_COOKIES` holding a Cookie
+/// header (or a bare media-user-token): runs the sign-in the app's window ends in — parse the
+/// cookie, connect, check the subscription, store the token, read the account — then signs out
+/// again so nothing is left behind.
+pub fn apple_signin_probe() -> i32 {
+    let Some(cookies) = std::env::var("MUSIQUE_APPLE_SIGNIN_COOKIES").ok().filter(|c| !c.is_empty()) else {
+        eprintln!("set MUSIQUE_APPLE_SIGNIN_COOKIES to a Cookie header holding media-user-token");
+        return 2;
+    };
+    let Ok(runtime) = tokio::runtime::Runtime::new() else { return 1 };
+    runtime.block_on(async {
+        let result = apple::client::sign_in(&cookies).await;
+        let stored = apple::auth::load_user_token().is_some();
+        let code = match result {
+            Ok(account) => {
+                println!("signed in: storefront {}, name {:?}, token stored: {stored}", account.storefront, account.display_name);
+                0
+            }
+            Err(e) => {
+                eprintln!("sign-in failed: {e}");
+                1
+            }
+        };
+        apple::client::reset();
+        println!("signed out, token still stored: {}", apple::auth::load_user_token().is_some());
+        code
+    })
+}
+
 pub fn apple_api_probe() -> i32 {
     use std::time::Instant;
     let runtime = match tokio::runtime::Runtime::new() {
