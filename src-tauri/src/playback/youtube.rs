@@ -217,23 +217,18 @@ impl YtPlayback {
         // just from the start (the prebuffer logs it).
         let at = Duration::from_millis(position_ms as u64);
         let (source, ring) = playout::prebuffer(decoder, at, position_ms > 0, None);
-        *self.clock.lock().unwrap() = Some(ring);
-        self.sink.append(source);
-
-        *self.gain.lock().unwrap() = loudness_gain(stream.format.loudness_db);
-        self.apply_volume();
-
-        *self.current.lock().unwrap() = Some(track_id.to_string());
-        self.duration_ms.store(stream.duration_ms.unwrap_or(0), Ordering::Relaxed);
-        self.is_ended.store(false, Ordering::Relaxed);
-        self.is_playing.store(true, Ordering::Relaxed);
-        self.sink.play();
-
         eprintln!(
             "[youtube] playing {track_id} via {} (itag {}) from {position_ms}ms",
             stream.video_id, stream.format.itag
         );
-        self.announce_playing(position_ms);
+        self.finish_load(
+            track_id,
+            stream.duration_ms.unwrap_or(0),
+            loudness_gain(stream.format.loudness_db),
+            position_ms,
+            source,
+            ring,
+        );
         Ok(())
     }
 
@@ -251,21 +246,56 @@ impl YtPlayback {
         self.sink.clear();
         let at = Duration::from_millis(position_ms as u64);
         let (source, ring) = playout::prebuffer(source, at, false, Some(clock));
-        *self.clock.lock().unwrap() = Some(ring);
-        self.duration_ms.store(stream.duration_ms, Ordering::Relaxed);
+        let duration_ms = stream.duration_ms;
         *self.episode.lock().unwrap() = Some(stream);
-
-        self.sink.append(source);
+        eprintln!("[youtube] playing episode {track_id} from {position_ms}ms");
         // no loudness figure for a publisher's file; play it as mastered
-        *self.gain.lock().unwrap() = 1.0;
+        self.finish_load(track_id, duration_ms, 1.0, position_ms, source, ring);
+    }
+
+    /// Play a pre-opened `rodio::Source` through the local prebuffer and sink
+    /// (used by Apple Music playback; `gain` is linear amplitude).
+    pub fn play_source(
+        &self,
+        track_id: &str,
+        source: impl rodio::Source + Send + 'static,
+        duration_ms: u64,
+        gain: f32,
+        position_ms: u32,
+    ) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.sink.clear();
+        *self.episode.lock().unwrap() = None;
+        let at = Duration::from_millis(position_ms as u64);
+        let (source, ring) = playout::prebuffer(source, at, false, None);
+        let clamped_gain = if gain.is_finite() && gain > 0.0 {
+            gain.clamp(0.1, 4.0)
+        } else {
+            1.0
+        };
+        eprintln!("[apple] playing {track_id} from {position_ms}ms");
+        self.finish_load(track_id, duration_ms, clamped_gain, position_ms, source, ring);
+    }
+
+    fn finish_load(
+        &self,
+        track_id: &str,
+        duration_ms: u64,
+        gain: f32,
+        position_ms: u32,
+        source: playout::RingSource,
+        ring: Arc<Ring>,
+    ) {
+        *self.clock.lock().unwrap() = Some(ring);
+        self.sink.append(source);
+        *self.gain.lock().unwrap() = gain;
         self.apply_volume();
 
         *self.current.lock().unwrap() = Some(track_id.to_string());
+        self.duration_ms.store(duration_ms, Ordering::Relaxed);
         self.is_ended.store(false, Ordering::Relaxed);
         self.is_playing.store(true, Ordering::Relaxed);
         self.sink.play();
-
-        eprintln!("[youtube] playing episode {track_id} from {position_ms}ms");
         self.announce_playing(position_ms);
     }
 
