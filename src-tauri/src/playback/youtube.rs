@@ -485,6 +485,11 @@ fn position_of(sink: &rodio::Sink, clock: &Mutex<Option<Arc<Ring>>>) -> u32 {
 }
 
 fn emit(app: &AppHandle, msg: PlayerMsg) {
+    // while Soloist plays, this player is not what is heard (it may still be
+    // handing a song over to Soloist, see `soloist::Soloist::handover`)
+    if crate::soloist::owns_output() {
+        return;
+    }
     if let Err(e) = app.emit("player:event", msg) {
         eprintln!("[youtube] emit failed: {e}");
     }

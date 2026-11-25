@@ -31,14 +31,15 @@ export function useContextMenu() {
   const [menu, setMenu] = useState<MenuState | null>(null);
 
   const open = useCallback(
-    (entries: MenuEntry[]) => (e: React.MouseEvent) => {
+    (entries: MenuEntry[] | (() => MenuEntry[])) => (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
       const target = e.currentTarget as HTMLElement | null;
+      const resolved = typeof entries === "function" ? entries() : entries;
       if (e.type !== "contextmenu" && target?.getBoundingClientRect) {
-        setMenu({ anchor: { kind: "trigger", rect: target.getBoundingClientRect() }, entries });
+        setMenu({ anchor: { kind: "trigger", rect: target.getBoundingClientRect() }, entries: resolved });
       } else {
-        setMenu({ anchor: { kind: "point", x: e.clientX, y: e.clientY }, entries });
+        setMenu({ anchor: { kind: "point", x: e.clientX, y: e.clientY }, entries: resolved });
       }
     },
     [],

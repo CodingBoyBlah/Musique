@@ -18,10 +18,11 @@ import { Shelf } from "../components/ui/Shelf";
 import { MediaTile } from "../components/ui/MediaTile";
 import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
 import { SectionTitle } from "../components/ui/SectionTitle";
-import { TrackRow } from "../components/ui/TrackRow";
+import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
 import { Tooltip } from "../components/ui/Tooltip";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { useTopArtists, useTopTracks, useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
+import { useStagedList } from "../hooks/useStagedList";
 import { useAuthStore } from "../store/auth.store";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
@@ -35,9 +36,10 @@ import { useReflowPulse } from "../hooks/useReflowPulse";
 type Tab = "overview" | "followers" | "following";
 
 function PeopleGrid({ people }: { people: ProfileCard[] }) {
+  const shown = useStagedList(people, 36);
   return (
     <ArtistGrid>
-      {people.map((p, i) => (
+      {shown.map((p, i) => (
         <MediaTile
           key={`${p.kind}-${p.id}`}
           to={p.kind === "artist" ? `/artist/${p.id}` : `/user/${p.id}`}
@@ -88,16 +90,26 @@ export default function ProfilePage() {
   });
 
   // your own page gets your listening too
-  const { data: topArtists = [] } = useTopArtists("short_term");
-  const { data: topTracks = [] } = useTopTracks("short_term");
+  const { data: topArtists = [] } = useTopArtists("short_term", isMe);
+  const { data: topTracks = [] } = useTopTracks("short_term", isMe);
   const shownTop = useMemo(() => (isMe ? topTracks.slice(0, 5) : []), [isMe, topTracks]);
   const shownTrackIds = useMemo(() => shownTop.map((t) => t.id), [shownTop]);
   const { data: savedIds = [] } = useSavedTrackIds(shownTrackIds);
   const liked = useMemo(() => new Set(savedIds), [savedIds]);
   const toggleLike = useToggleLike();
+  const trackActions = useTrackRowActions(liked, toggleLike);
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext = useQueueStore((s) => s.playContext);
   const enqueue = useQueueStore((s) => s.enqueue);
+
+  const playTopAt = (i: number) => {
+    const start = playContext(topTracks, i, "profile-top");
+    if (start) {
+      setCurrentTrack(start);
+      playTrack(start.id).catch(() => {});
+    }
+  };
+  trackActions.setHandlers(playTopAt);
 
   if (isLoading) return <Loader label="Loading profile" />;
   if (error || !data) {
@@ -115,7 +127,7 @@ export default function ProfilePage() {
     qc.setQueryData(key, !following);
     try {
       await setUserFollowed(profileId!, !following);
-      qc.invalidateQueries({ queryKey: ["profile", "view"] });
+      qc.invalidateQueries({ queryKey: ["profile", "view", profileId ?? "me"] });
     } catch (e) {
       qc.setQueryData(key, following);
       toast.error(`Couldn't update follow: ${errMsg(e)}`);
@@ -218,15 +230,9 @@ export default function ProfilePage() {
                     index={i}
                     showAlbum
                     liked={liked.has(t.id)}
-                    onPlay={() => {
-                      const start = playContext(topTracks, i, "profile-top");
-                      if (start) {
-                        setCurrentTrack(start);
-                        playTrack(start.id).catch(() => {});
-                      }
-                    }}
-                    onQueue={(track) => enqueue(track)}
-                    onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: liked.has(track.id) })}
+                    onPlay={trackActions.onPlay}
+                    onQueue={enqueue}
+                    onToggleLike={trackActions.onToggleLike}
                   />
                 ))}
               </section>

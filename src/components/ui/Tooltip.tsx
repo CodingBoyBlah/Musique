@@ -30,14 +30,17 @@ verticalAlign:middle + lineHeight:0 keep the wrapped button on the text
 baseline so its scale animation doesnt make it jump. */
 export function Tooltip({ label, children, side = "top", align = "center" }: Props) {
   const [open, setOpenState] = useState(false);
+  const [mounted, setMounted] = useState(false);
   // opened from the warm state: skip the animation too, not just the delay
   const [instant, setInstant] = useState(false);
   const openRef = useRef(false);
   const setOpen = (v: boolean) => {
     if (v === openRef.current) return;
     openRef.current = v;
-    if (v) openCount++;
-    else {
+    if (v) {
+      openCount++;
+      setMounted(true);
+    } else {
       openCount = Math.max(0, openCount - 1);
       lastClosedAt = performance.now();
     }
@@ -182,8 +185,8 @@ export function Tooltip({ label, children, side = "top", align = "center" }: Pro
           The segmented control scrolls horizontally on narrow widths, which was
           quietly cutting off the tooltip on its first option. A portal escapes
           every such ancestor instead of special-casing each one. */}
-      {createPortal(
-        <AnimatePresence>
+      {mounted && createPortal(
+        <AnimatePresence onExitComplete={() => setMounted(false)}>
           {open && rect && (
           <motion.span
             role="tooltip"

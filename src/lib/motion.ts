@@ -47,6 +47,14 @@ export const RAIL_CLOSE = { duration: RAIL_CLOSE_S, ease: EASE_DRAWER };
 export const PRESS = { scale: 0.96 };
 export const PRESS_TRANSITION: Transition = { duration: 0.12, ease: EASE_OUT };
 
+// The CSS lift / press on .fx-lift cards (index.css), for an element's inline
+// `transition` (which replaces the class one): framer's card spring...
+export const FX_CARD = "translate var(--spring-card-dur) var(--spring-card), scale var(--spring-card-dur) var(--spring-card)";
+// ...the artist cards' stiffer one...
+export const FX_ARTIST = "translate var(--spring-artist-dur) var(--spring-artist), scale var(--spring-artist-dur) var(--spring-artist)";
+// ...and framer's default transform spring, for cards that never set their own
+export const FX_DEFAULT = "translate var(--spring-default-dur) var(--spring-default), scale var(--spring-default-dur) var(--spring-default)";
+
 // Universal spring physics for responsive grid reflow and layout morphing.
 // damping = 2*sqrt(stiffness) -> critically damped (zeta = 1.0), so a reflow
 // glides into place without the small overshoot the old 32 had.

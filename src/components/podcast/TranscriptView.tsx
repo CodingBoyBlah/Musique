@@ -234,7 +234,7 @@ export function TranscriptView({
     <div style={{ position: "relative", height: "100%" }}>
       <div
         ref={scroller}
-        className="ovs-hide"
+        className="ovs-hide lyr-dock-sink"
         onWheel={() => setUserScrolledAt(Date.now())}
         onTouchMove={() => setUserScrolledAt(Date.now())}
         style={{

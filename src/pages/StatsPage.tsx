@@ -1,9 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { useEvenColumns } from "../hooks/useEvenColumns";
 import { Link, Navigate } from "react-router-dom";
 import { usePrefsStore } from "../store/prefs.store";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stats } from "@/lib/icons";
+import { cancelHoverPrefetch, prefetchProfile, scheduleHoverPrefetch } from "../lib/prefetch";
 import { getListeningStats, type ListeningStats, type Ranked, type StatsRange } from "../api/stats";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { SectionTitle } from "../components/ui/SectionTitle";
@@ -44,10 +45,47 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
 
 /* when you listen: weekday rows x hour columns, one accent hue light -> dark.
 each cell names its own value on hover (and to screen readers). */
+const HeatCell = memo(function HeatCell({
+  day,
+  hour,
+  plays,
+  level,
+  active,
+  onEnter,
+  onLeave,
+}: {
+  day: number;
+  hour: number;
+  plays: number;
+  level: number;
+  active: boolean;
+  onEnter: (day: number, hour: number) => void;
+  onLeave: () => void;
+}) {
+  return (
+    <div
+      role="gridcell"
+      aria-label={`${DAYS[day]} ${hourLabel(hour)}: ${plays} ${plays === 1 ? "play" : "plays"}`}
+      title={`${DAYS[day]} ${hourLabel(hour)} · ${plays} ${plays === 1 ? "play" : "plays"}`}
+      onMouseEnter={() => onEnter(day, hour)}
+      onMouseLeave={onLeave}
+      style={{
+        aspectRatio: "1 / 1",
+        borderRadius: 4,
+        background: level > 0 ? `color-mix(in srgb, var(--color-accent) ${Math.round(level * 100)}%, transparent)` : "rgba(255,255,255,0.05)",
+        outline: active ? "2px solid var(--color-text-hi)" : "none",
+        outlineOffset: 1,
+      }}
+    />
+  );
+});
+
 function Heatmap({ grid }: { grid: number[][] }) {
   const max = useMemo(() => heatMax(grid), [grid]);
   const [hover, setHover] = useState<{ day: number; hour: number } | null>(null);
   const peak = useMemo(() => peakSlot(grid), [grid]);
+  const handleEnter = useCallback((day: number, hour: number) => setHover({ day, hour }), []);
+  const handleLeave = useCallback(() => setHover(null), []);
   return (
     <section aria-labelledby="stats-when">
       <SectionTitle id="stats-when">When you listen</SectionTitle>
@@ -62,27 +100,18 @@ function Heatmap({ grid }: { grid: number[][] }) {
           {ROW_ORDER.map((day) => (
             <div key={day} role="row" style={{ display: "contents" }}>
               <span className="t-caption" style={{ fontSize: 11, color: "var(--color-text-dim)", alignSelf: "center" }}>{DAYS[day]}</span>
-              {grid[day].map((plays, hour) => {
-                const level = heatLevel(plays, max);
-                const on = hover?.day === day && hover?.hour === hour;
-                return (
-                  <div
-                    key={hour}
-                    role="gridcell"
-                    aria-label={`${DAYS[day]} ${hourLabel(hour)}: ${plays} ${plays === 1 ? "play" : "plays"}`}
-                    title={`${DAYS[day]} ${hourLabel(hour)} · ${plays} ${plays === 1 ? "play" : "plays"}`}
-                    onMouseEnter={() => setHover({ day, hour })}
-                    onMouseLeave={() => setHover(null)}
-                    style={{
-                      aspectRatio: "1 / 1",
-                      borderRadius: 4,
-                      background: level > 0 ? `color-mix(in srgb, var(--color-accent) ${Math.round(level * 100)}%, transparent)` : "rgba(255,255,255,0.05)",
-                      outline: on ? "2px solid var(--color-text-hi)" : "none",
-                      outlineOffset: 1,
-                    }}
-                  />
-                );
-              })}
+              {grid[day].map((plays, hour) => (
+                <HeatCell
+                  key={hour}
+                  day={day}
+                  hour={hour}
+                  plays={plays}
+                  level={heatLevel(plays, max)}
+                  active={hover?.day === day && hover?.hour === hour}
+                  onEnter={handleEnter}
+                  onLeave={handleLeave}
+                />
+              ))}
             </div>
           ))}
         </div>
@@ -196,6 +225,7 @@ function StatTiles({ data }: { data: ListeningStats }) {
 
 export default function StatsPage() {
   useReflowPulse();
+  const qc = useQueryClient();
   const [range, setRange] = useState<StatsRange>("month");
   const enabled = usePrefsStore((s) => s.showStats);
   const { data, isLoading, error, refetch } = useQuery({
@@ -259,7 +289,17 @@ export default function StatsPage() {
           <RankedTracks id="stats-discoveries" title="New discoveries" caption="Songs you played for the first time in this period." rows={data.discoveries} contextId={`stats-new-${range}`} />
           <RankedTracks id="stats-forgotten" title="Forgotten favourites" caption="Songs you used to finish every time, not played in two months." rows={data.forgotten} contextId="stats-forgotten" />
           <p className="t-caption" style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
-            Worked out on this device from what you play in Musique. See also your <Link to="/profile" style={{ color: "var(--color-text)" }}>profile</Link>.
+            Worked out on this device from what you play in Musique. See also your{" "}
+            <Link
+              to="/profile"
+              onMouseEnter={() => scheduleHoverPrefetch(() => prefetchProfile(qc, null))}
+              onMouseLeave={cancelHoverPrefetch}
+              onFocus={() => prefetchProfile(qc, null)}
+              onPointerDown={() => { cancelHoverPrefetch(); prefetchProfile(qc, null); }}
+              style={{ color: "var(--color-text)" }}
+            >
+              profile
+            </Link>.
           </p>
         </>
       )}

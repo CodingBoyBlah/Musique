@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useQueryClient } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -11,7 +12,6 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useAuthStore } from "../../store/auth.store";
 import { useCredentialsStore, type ConnectionStatus } from "../../store/credentials.store";
-import { useDevices } from "../../hooks/useDevices";
 import { Tooltip } from "../ui/Tooltip";
 import { isMac } from "../../lib/platform";
 import { usePlayerStore } from "../../store/player.store";
@@ -19,6 +19,7 @@ import { usePrefsStore } from "../../store/prefs.store";
 import { useUIStore } from "../../store/ui.store";
 import { TopSearch } from "./TopSearch";
 import { EASE_OUT } from "../../lib/motion";
+import { prefetchProfile, preloadRoute } from "../../lib/prefetch";
 
 /* size of the windows caption cluster, measured from the window's top-right
    corner. the top bar is exactly this tall, so the buttons and the bar share
@@ -147,15 +148,18 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
 };
 
 function AccountMenuItem({
-  icon, label, onClick, danger, disabled,
+  icon, label, onClick, onPrefetch, danger, disabled,
 }: {
-  icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean; disabled?: boolean;
+  icon: React.ReactNode; label: string; onClick: () => void; onPrefetch?: () => void; danger?: boolean; disabled?: boolean;
 }) {
   return (
     <button
       role="menuitem"
       disabled={disabled}
       onClick={onClick}
+      onPointerEnter={onPrefetch}
+      onPointerDown={onPrefetch}
+      onFocus={onPrefetch}
       className="row-btn acct-item"
       data-danger={danger || undefined}
       style={{
@@ -174,6 +178,7 @@ function AccountMenuItem({
 function AccountMenu() {
   const [open, setOpen] = useState(false);
   const navigate    = useNavigate();
+  const qc          = useQueryClient();
   const ref         = useRef<HTMLDivElement>(null);
   const menuRef     = useRef<HTMLDivElement>(null);
   // opened from the keyboard -> move focus into the menu so arrows work
@@ -324,8 +329,8 @@ function AccountMenu() {
 
             <div style={{ height: 1, background: "var(--color-divider)", margin: "0 2px 6px" }} />
 
-            {loggedIn && <AccountMenuItem icon={<User size={16} strokeWidth={2} />} label="Profile" onClick={() => go("/profile")} />}
-            <AccountMenuItem icon={<Settings size={16} strokeWidth={2} />} label="Settings" onClick={() => go("/settings")} />
+            {loggedIn && <AccountMenuItem icon={<User size={16} strokeWidth={2} />} label="Profile" onClick={() => go("/profile")} onPrefetch={() => prefetchProfile(qc, null)} />}
+            <AccountMenuItem icon={<Settings size={16} strokeWidth={2} />} label="Settings" onClick={() => go("/settings")} onPrefetch={() => preloadRoute("settings")} />
 
             <div style={{ height: 1, background: "var(--color-divider)", margin: "6px 2px" }} />
 
@@ -440,7 +445,10 @@ export function TitleBar() {
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const macSimulated = useUIStore((s) => s.macSimulated);
-  const { activeDevice, isRemotePlayback, devicesOpen, toggleDevices } = useDevices();
+  const activeDevice = usePlayerStore((s) => s.activeDevice);
+  const isRemotePlayback = usePlayerStore((s) => s.isRemotePlayback);
+  const devicesOpen = usePlayerStore((s) => s.devicesOpen);
+  const toggleDevices = usePlayerStore((s) => s.toggleDevices);
   const { back: canGoBack, forward: canGoForward } = useHistoryEdges();
 
   const macChrome = isMac || macSimulated;

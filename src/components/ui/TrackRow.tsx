@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import { coverUrl } from "../../lib/coverUrl";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, Plus, Heart, Music, Disc3, User, Link2, Globe, ListPlus, Trash2, Check, Info, Radio } from "@/lib/icons";
@@ -8,13 +8,13 @@ import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TrackItem } from "../../types/spotify";
 import { fmtMs } from "../../utils/fmt";
-import { EASE_OUT, PRESS, PRESS_TRANSITION, gpuLayer, zTransform } from "../../lib/motion";
-import { prefetchArtist, prefetchAlbum } from "../../lib/prefetch";
+import { EASE_OUT, gpuLayer } from "../../lib/motion";
+import { cancelHoverPrefetch, prefetchArtist, prefetchArtistDetails, prefetchAlbum, scheduleHoverPrefetch } from "../../lib/prefetch";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
 import { shareSpotifyLink, shareUniversalLink } from "../../lib/share";
 import { useAddToPlaylistStore } from "../../store/addToPlaylist.store";
 import { useYtMatchStore } from "../../store/ytMatch.store";
-import { usePlaybackBackend } from "../../hooks/usePlaybackBackend";
+import { getPlaybackBackend } from "../../api/playback";
 import { usePlayerStore } from "../../store/player.store";
 import { useQueueStore } from "../../store/queue.store";
 import { toast } from "../../store/toast.store";
@@ -31,7 +31,7 @@ interface Props {
   showAlbum?:    boolean;
   showCover?:    boolean;   // per-track cover art (off for album pages, shared art)
   liked?:        boolean;
-  onPlay?:       (track: TrackItem) => void;
+  onPlay?:       (track: TrackItem, index?: number) => void;
   onQueue?:      (track: TrackItem) => void;
   onToggleLike?: (track: TrackItem) => void;
   // when set, the context menu shows "Remove from this playlist"
@@ -54,7 +54,7 @@ function ActionBtn({
   accent?:  boolean;
 }) {
   return (
-    <motion.button
+    <button
       onClick={onClick}
       // the label comes from the wrapping <Tooltip>; a native title would
       // pop a second, unstyled tooltip on top of it
@@ -62,9 +62,6 @@ function ActionBtn({
       aria-pressed={active}
       className={`row-action ${className ?? ""}`}
       data-active={Boolean(active || accent)}
-      whileTap={PRESS}
-      transition={PRESS_TRANSITION}
-      transformTemplate={zTransform}
       style={{
         ...gpuLayer,
         display: "flex", alignItems: "center", justifyContent: "center",
@@ -73,7 +70,7 @@ function ActionBtn({
       }}
     >
       {children}
-    </motion.button>
+    </button>
   );
 }
 
@@ -87,9 +84,6 @@ function TrackRowImpl({
   const navigate = useNavigate();
   const openAddToPlaylist = useAddToPlaylistStore((s) => s.open);
   const openYtMatch = useYtMatchStore((s) => s.open);
-  // Cached hard and shared across every row, so this is one query for the
-  // whole list rather than per-row work.
-  const { data: backend } = usePlaybackBackend();
   const { open: openMenu, element: menuEl } = useContextMenu();
 
   const isThisCurrent = usePlayerStore((s) => s.currentTrack?.id === track.id);
@@ -104,7 +98,7 @@ function TrackRowImpl({
     } else if (isThisCurrent && !isThisPlaying) {
       transportPlay();
     } else if (onPlay) {
-      onPlay(track);
+      onPlay(track, index);
     }
   }
 
@@ -120,46 +114,50 @@ function TrackRowImpl({
     toast(`Added "${track.name}" to queue`);
   }
 
-  /* right-click menu -- every action that fits a track, built from the handlers
-  this row got plus navigation + share (always available) */
-  const menuEntries: MenuEntry[] = [];
-  if (onPlay)  menuEntries.push({ label: isThisPlaying ? "Pause" : "Play", icon: <Play size={14} />, onSelect: () => handlePlayToggle() });
-  if (onQueue) menuEntries.push({
-    label: isQueued ? "In queue (add again)" : "Add to queue",
-    icon: isQueued ? <Check size={14} style={{ color: "var(--color-accent)" }} /> : <Plus size={14} />,
-    onSelect: () => handleEnqueue(),
-  });
-  if (onToggleLike) menuEntries.push({
-    label: liked ? "Remove from Liked Songs" : "Save to Liked Songs",
-    icon: <Heart size={14} active={Boolean(liked)} />,
-    onSelect: () => onToggleLike(track),
-  });
-  menuEntries.push({ label: "Add to playlist…", icon: <ListPlus size={14} />, onSelect: () => openAddToPlaylist(track) });
-  if (onRemoveFromPlaylist) menuEntries.push({
-    label: "Remove from this playlist",
-    icon: <Trash2 size={14} />,
-    danger: true,
-    onSelect: () => onRemoveFromPlaylist(track),
-  });
-  if (!track.id.startsWith("spotify:")) {
-    menuEntries.push({ label: "Start radio", icon: <Radio size={14} />, onSelect: () => { playTrackRadio(track); } });
-    menuEntries.push({ label: "Show credits", icon: <Info size={14} />, onSelect: () => useCreditsStore.getState().open(track) });
-  }
-  if (track.artists[0]) menuEntries.push({ label: "Go to artist", icon: <User size={14} />, onSelect: () => navigate(`/artist/${track.artists[0].id}`) });
-  if (track.album) menuEntries.push({ label: "Go to album", icon: <Disc3 size={14} />, onSelect: () => navigate(`/album/${track.album!.id}`) });
-  // Only meaningful while audio actually comes from YouTube. This is the
-  // escape hatch for a bad automatic match - matching refuses rather than
-  // guessing, so a track that won't play needs somewhere to be corrected.
-  // episodes aren't matched on youtube - they come from the show's feed
-  if (backend?.active === "youtube" && !isEpisodeId(track.id)) {
-    menuEntries.push({
-      label: "Change YouTube source…",
-      icon: <Music size={14} />,
-      onSelect: () => openYtMatch(track.id, track.name),
+  /* right-click menu -- built lazily on open so long lists don't allocate
+  dozens of JSX icons and handlers per row during initial render */
+  function getMenuEntries(): MenuEntry[] {
+    const entries: MenuEntry[] = [];
+    if (onPlay)  entries.push({ label: isThisPlaying ? "Pause" : "Play", icon: <Play size={14} />, onSelect: () => handlePlayToggle() });
+    if (onQueue) entries.push({
+      label: isQueued ? "In queue (add again)" : "Add to queue",
+      icon: isQueued ? <Check size={14} style={{ color: "var(--color-accent)" }} /> : <Plus size={14} />,
+      onSelect: () => handleEnqueue(),
     });
+    if (onToggleLike) entries.push({
+      label: liked ? "Remove from Liked Songs" : "Save to Liked Songs",
+      icon: <Heart size={14} active={Boolean(liked)} />,
+      onSelect: () => onToggleLike(track),
+    });
+    entries.push({ label: "Add to playlist…", icon: <ListPlus size={14} />, onSelect: () => openAddToPlaylist(track) });
+    if (onRemoveFromPlaylist) entries.push({
+      label: "Remove from this playlist",
+      icon: <Trash2 size={14} />,
+      danger: true,
+      onSelect: () => onRemoveFromPlaylist(track),
+    });
+    if (!track.id.startsWith("spotify:")) {
+      entries.push({ label: "Start radio", icon: <Radio size={14} />, onSelect: () => { playTrackRadio(track); } });
+      entries.push({ label: "Show credits", icon: <Info size={14} />, onSelect: () => useCreditsStore.getState().open(track) });
+    }
+    if (track.artists[0]) entries.push({ label: "Go to artist", icon: <User size={14} />, onSelect: () => navigate(`/artist/${track.artists[0].id}`) });
+    if (track.album) entries.push({ label: "Go to album", icon: <Disc3 size={14} />, onSelect: () => navigate(`/album/${track.album!.id}`) });
+    // Read shared playback-backend cache synchronously without per-row QueryObserver.
+    const backend = qc.getQueryData<Awaited<ReturnType<typeof getPlaybackBackend>>>(["playback-backend"]);
+    if (!backend) {
+      void qc.prefetchQuery({ queryKey: ["playback-backend"], queryFn: getPlaybackBackend, staleTime: 300_000 });
+    }
+    if (backend?.active === "youtube" && !isEpisodeId(track.id)) {
+      entries.push({
+        label: "Change YouTube source…",
+        icon: <Music size={14} />,
+        onSelect: () => openYtMatch(track.id, track.name),
+      });
+    }
+    entries.push({ label: "Copy Spotify link",   icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("track", track.id) });
+    entries.push({ label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("track", track.id) });
+    return entries;
   }
-  menuEntries.push({ label: "Copy Spotify link",   icon: <Link2 size={14} />, onSelect: () => shareSpotifyLink("track", track.id) });
-  menuEntries.push({ label: "Copy universal link", icon: <Globe size={14} />, onSelect: () => shareUniversalLink("track", track.id) });
 
   const baseBg = index != null && index % 2 === 0 ? "rgba(255,255,255,0.032)" : "transparent";
 
@@ -177,7 +175,7 @@ function TrackRowImpl({
         }}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
-        onContextMenu={openMenu(menuEntries)}
+        onContextMenu={openMenu(getMenuEntries)}
         className="group track-row"
         style={{
           position: "relative",
@@ -198,10 +196,8 @@ function TrackRowImpl({
         {(index != null || onPlay) && (
           <div style={{ position: "relative", width: 28, height: 28, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             {hover || isThisPlaying ? (
-              <motion.button
-                whileTap={PRESS}
-                transition={PRESS_TRANSITION}
-                className="focus-ring"
+              <button
+                className="focus-ring fx-press"
                 onClick={(e) => {
                   stop(e);
                   handlePlayToggle();
@@ -227,7 +223,7 @@ function TrackRowImpl({
                   strokeWidth={2.4}
                   fill={isThisPlaying ? "var(--color-accent)" : "#ffffff"}
                 />
-              </motion.button>
+              </button>
             ) : (
               <span
                 className="tnum"
@@ -244,7 +240,7 @@ function TrackRowImpl({
 
         {showCover && (
           cover ? (
-            <img src={coverUrl(cover, 38) ?? cover} alt="" loading="lazy" decoding="async" style={{ width: 38, height: 38, borderRadius: 6, objectFit: "cover", flexShrink: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.25)" }} />
+            <img src={coverUrl(cover, 38) ?? cover} width={38} height={38} alt="" loading="lazy" decoding="async" style={{ width: 38, height: 38, borderRadius: 6, objectFit: "cover", flexShrink: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.25)" }} />
           ) : (
             <div style={{ width: 38, height: 38, borderRadius: 6, background: "var(--color-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <Music size={16} style={{ color: "var(--color-text-dim)" }} />
@@ -301,7 +297,10 @@ function TrackRowImpl({
                   to={`/artist/${a.id}`}
                   onClick={stop}
                   className="link-inline"
-                  onMouseEnter={() => prefetchArtist(qc, a.id)}
+                  onMouseEnter={() => scheduleHoverPrefetch(() => prefetchArtist(qc, a.id))}
+                  onMouseLeave={cancelHoverPrefetch}
+                  onFocus={() => prefetchArtist(qc, a.id)}
+                  onPointerDown={() => { cancelHoverPrefetch(); prefetchArtistDetails(qc, a.id); }}
                 >
                   {a.name}
                 </Link>
@@ -314,7 +313,10 @@ function TrackRowImpl({
                   to={`/album/${track.album.id}`}
                   onClick={stop}
                   className="link-inline"
-                  onMouseEnter={() => prefetchAlbum(qc, track.album!.id)}
+                  onMouseEnter={() => scheduleHoverPrefetch(() => prefetchAlbum(qc, track.album!.id))}
+                  onMouseLeave={cancelHoverPrefetch}
+                  onFocus={() => prefetchAlbum(qc, track.album!.id)}
+                  onPointerDown={() => { cancelHoverPrefetch(); prefetchAlbum(qc, track.album!.id); }}
                 >
                   {track.album.name}
                 </Link>
@@ -389,12 +391,47 @@ function TrackRowImpl({
 
 /* memoised: rows only re-render when their own track, index, liked or display props change,
 avoiding cascade re-renders from inline function props or unrelated store changes */
+/* Shared stable callbacks for lists of memoized <TrackRow> items. Keeps callback
+references constant across renders so filtering, sorting, or toggling a single
+liked track never re-renders unaffected rows or captures stale closures. */
+export function useTrackRowActions(
+  likedSet: Set<string>,
+  toggleLike: { mutate: (vars: { id: string; liked: boolean }) => void },
+) {
+  const likedRef = useRef(likedSet);
+  likedRef.current = likedSet;
+  const mutateRef = useRef(toggleLike.mutate);
+  mutateRef.current = toggleLike.mutate;
+  const playRef = useRef<(index: number) => void>(() => {});
+  const removeRef = useRef<((track: TrackItem) => void) | undefined>(undefined);
+
+  const onPlay = useCallback((_track: TrackItem, index = 0) => {
+    playRef.current(index);
+  }, []);
+  const onToggleLike = useCallback((track: TrackItem) => {
+    mutateRef.current({ id: track.id, liked: likedRef.current.has(track.id) });
+  }, []);
+  const onRemove = useCallback((track: TrackItem) => {
+    removeRef.current?.(track);
+  }, []);
+  const setHandlers = (playAt: (index: number) => void, remove?: (track: TrackItem) => void) => {
+    playRef.current = playAt;
+    removeRef.current = remove;
+  };
+
+  return { onPlay, onToggleLike, onRemove, setHandlers };
+}
+
 export const TrackRow = memo(TrackRowImpl, (prev, next) => {
   return (
-    prev.track.id === next.track.id &&
+    prev.track === next.track &&
     prev.index === next.index &&
     prev.liked === next.liked &&
     prev.showCover === next.showCover &&
-    prev.showAlbum === next.showAlbum
+    prev.showAlbum === next.showAlbum &&
+    prev.onPlay === next.onPlay &&
+    prev.onQueue === next.onQueue &&
+    prev.onToggleLike === next.onToggleLike &&
+    prev.onRemoveFromPlaylist === next.onRemoveFromPlaylist
   );
 });

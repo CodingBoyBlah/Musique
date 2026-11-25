@@ -23,6 +23,8 @@ const withRecent = [recentOption, ...baseOptions];
    saved-albums queries order by added_at DESC). "Recently added" sorts on that
    arrival order, so no timestamp has to ride along on every item. Followed
    artists leave it off: spotify gives no follow date to sort by. */
+const textCollator = new Intl.Collator();
+
 export function useSortTools<T extends NamedPop>(
   items: T[],
   placeholder = "Find",
@@ -42,26 +44,35 @@ export function useSortTools<T extends NamedPop>(
     else if (sort === "recent") setDir("asc");
   };
 
-  const view = useMemo(() => {
-    let arr = items;
-    const q = query.trim().toLowerCase();
-    if (q) arr = arr.filter((i) => i.name.toLowerCase().includes(q));
+  const prepared = useMemo(
+    () => items.map((item) => ({ item, nameLower: item.name.toLowerCase() })),
+    [items],
+  );
 
-    let cmp: (a: T, b: T) => number;
+  const sorted = useMemo(() => {
     if (sort === "recent") {
-      // ascending = oldest first, so descending reads newest first
-      const rank = new Map<T, number>();
-      items.forEach((it, i) => rank.set(it, i));
-      cmp = (a, b) => (rank.get(b) ?? 0) - (rank.get(a) ?? 0);
-    } else if (sort === "name") {
-      cmp = (a, b) => a.name.localeCompare(b.name);
-    } else {
-      cmp = (a, b) => (a.popularity ?? 0) - (b.popularity ?? 0);
+      // items arrive newest-first: descending keeps arrival order, ascending reverses it
+      return dir === "desc" ? prepared : [...prepared].reverse();
     }
-    arr = [...arr].sort(cmp);
+    const cmp = sort === "name"
+      ? (a: { item: T }, b: { item: T }) => textCollator.compare(a.item.name, b.item.name)
+      : (a: { item: T }, b: { item: T }) => (a.item.popularity ?? 0) - (b.item.popularity ?? 0);
+    const arr = [...prepared].sort(cmp);
     if (dir === "desc") arr.reverse();
     return arr;
-  }, [items, query, sort, dir]);
+  }, [prepared, sort, dir]);
+
+  const sortedItems = useMemo(() => sorted.map((p) => p.item), [sorted]);
+
+  const view = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return sortedItems;
+    const out: T[] = [];
+    for (let i = 0; i < sorted.length; i++) {
+      if (sorted[i].nameLower.includes(q)) out.push(sorted[i].item);
+    }
+    return out;
+  }, [sorted, sortedItems, query]);
 
   const toolbar = useMemo(() => (
     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, width: "100%", boxSizing: "border-box", padding: "0 2px 14px" }}>

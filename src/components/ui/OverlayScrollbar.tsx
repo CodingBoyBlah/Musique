@@ -52,12 +52,23 @@ export function OverlayScrollbar({ target, edge = 0 }: { target: RefObject<HTMLE
 
     update();
     el.addEventListener("scroll", onScroll, { passive: true });
-    // the box resizing (window, zoom) and the content changing height (rows
-    // added, a section folding) both move the thumb
+    // Observe direct child size changes and subtree node additions/removals
+    // without watching subtree style attributes (which fires on every
+    // transform/opacity animation frame in Framer Motion).
     const ro = new ResizeObserver(schedule);
-    ro.observe(el);
-    const mo = new MutationObserver(schedule);
-    mo.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
+    const observeAll = () => {
+      ro.disconnect();
+      ro.observe(el);
+      for (let i = 0; i < el.children.length; i++) {
+        ro.observe(el.children[i]);
+      }
+    };
+    observeAll();
+    const mo = new MutationObserver(() => {
+      observeAll();
+      schedule();
+    });
+    mo.observe(el, { childList: true, subtree: true });
     return () => {
       el.removeEventListener("scroll", onScroll);
       ro.disconnect();

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useId, memo } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, memo } from "react";
 import { coverUrl } from "../lib/coverUrl";
 import { Link, useSearchParams } from "react-router-dom";
 import { motion, LayoutGroup } from "framer-motion";
@@ -10,64 +10,57 @@ import { Shelf } from "../components/ui/Shelf";
 import { MediaTile } from "../components/ui/MediaTile";
 import { SectionTitle } from "../components/ui/SectionTitle";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getPlaylist } from "../api/spotify";
-import { useAuth } from "../hooks/useAuth";
+import { cancelHoverPrefetch, prefetchPlaylist, prefetchPlaylistsIndex, scheduleHoverPrefetch } from "../lib/prefetch";
+import { useAuthStore } from "../store/auth.store";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SignInPrompt } from "../components/ui/SignInPrompt";
 import { SyncButton } from "../components/ui/SyncButton";
 import { CardGridSkeleton } from "../components/ui/Skeletons";
 import { useMyPlaylists, useSyncLibrary } from "../hooks/useLibrary";
+import { useStagedList } from "../hooks/useStagedList";
 import { usePinsStore } from "../store/pins.store";
-import { useContextMenu, type MenuEntry } from "../components/ui/ContextMenu";
+import { useContextMenu } from "../components/ui/ContextMenu";
 import type { PlaylistSummary } from "../types/library";
 import { useReflowPulse } from "../hooks/useReflowPulse";
-import { getGridItemTransition } from "../lib/motion";
+import { getGridItemTransition, FX_DEFAULT } from "../lib/motion";
 import { TILE_GRID, TILE_PAD } from "../lib/layout";
 
 const REFLOW = { type: "spring" as const, stiffness: 340, damping: 37 };
 const MotionLink = motion.create(Link);
 
 const PlaylistCard = memo(function PlaylistCard({
-  playlist, onContextMenu, index = 0,
+  playlist, onCardMenu, index = 0,
 }: {
   playlist: PlaylistSummary;
-  onContextMenu: (e: React.MouseEvent) => void;
+  onCardMenu: (playlist: PlaylistSummary, e: React.MouseEvent) => void;
   index?: number;
 }) {
   useReflowPulse();
   const [hover, setHover] = useState(false);
   const qc = useQueryClient();
-  const prefetchTimer = useRef<number | null>(null);
 
   const handleMouseEnter = () => {
     setHover(true);
-    prefetchTimer.current = window.setTimeout(() => {
-      qc.prefetchQuery({
-        queryKey: ["playlist", playlist.id],
-        queryFn: () => getPlaylist(playlist.id),
-        staleTime: 120_000,
-      });
-    }, 40);
+    scheduleHoverPrefetch(() => prefetchPlaylist(qc, playlist.id), 40);
   };
 
   const handleMouseLeave = () => {
     setHover(false);
-    if (prefetchTimer.current) {
-      window.clearTimeout(prefetchTimer.current);
-      prefetchTimer.current = null;
-    }
+    cancelHoverPrefetch();
   };
 
   return (
     <MotionLink
       to={`/playlist/${playlist.id}`}
+      className="fx-lift"
       layout="position"
       transition={getGridItemTransition(index)}
-      onContextMenu={onContextMenu}
+      onContextMenu={(e) => onCardMenu(playlist, e)}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      whileHover={{ y: -3 }}
-      whileTap={{ scale: 0.98 }}
+      onFocus={() => { setHover(true); prefetchPlaylist(qc, playlist.id); }}
+      onBlur={() => setHover(false)}
+      onPointerDown={() => { cancelHoverPrefetch(); prefetchPlaylist(qc, playlist.id); }}
       style={{
         display:        "flex",
         flexDirection:  "column",
@@ -79,7 +72,7 @@ const PlaylistCard = memo(function PlaylistCard({
         textDecoration: "none",
         color:          "inherit",
         background:     hover ? "var(--color-surface-hover)" : "transparent",
-        transition:     "background 0.18s ease",
+        transition:     `background 0.18s ease, ${FX_DEFAULT}`,
         position:       "relative",
         cursor:         "pointer",
         minWidth:       0,
@@ -177,8 +170,8 @@ little stack: a mosaic of what's inside on top of two sheets peeking out
 behind, so it reads as "a collection" next to single playlists. */
 const FolderCard = memo(function FolderCard({ folder, index = 0 }: { folder: FolderItem; index?: number }) {
   const [hover, setHover] = useState(false);
-  const n = countPlaylists(folder.children);
-  const covers = folderCovers(folder.children);
+  const n = useMemo(() => countPlaylists(folder.children), [folder.children]);
+  const covers = useMemo(() => folderCovers(folder.children), [folder.children]);
   const sheet = (inset: number, top: number, alpha: number): React.CSSProperties => ({
     position: "absolute", left: inset, right: inset, top, height: 12, borderRadius: 8,
     background: `rgba(255,255,255,${alpha})`,
@@ -186,16 +179,15 @@ const FolderCard = memo(function FolderCard({ folder, index = 0 }: { folder: Fol
   return (
     <MotionLink
       to={`/playlists?folder=${encodeURIComponent(folder.id)}`}
+      className="fx-lift"
       layout="position"
       transition={getGridItemTransition(index)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      whileHover={{ y: -3 }}
-      whileTap={{ scale: 0.98 }}
       style={{
         display: "flex", flexDirection: "column", gap: 10, padding: TILE_PAD, borderRadius: 12,
         width: "100%", boxSizing: "border-box", textDecoration: "none", color: "inherit",
-        background: hover ? "var(--color-surface-hover)" : "transparent", transition: "background 0.18s ease", minWidth: 0,
+        background: hover ? "var(--color-surface-hover)" : "transparent", transition: `background 0.18s ease, ${FX_DEFAULT}`, minWidth: 0,
       }}
     >
       <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
@@ -242,8 +234,9 @@ const FolderCard = memo(function FolderCard({ folder, index = 0 }: { folder: Fol
 
 export default function Playlists() {
   useReflowPulse();
+  const qc = useQueryClient();
   const layoutGroupId = useId();
-  const { loggedIn } = useAuth();
+  const loggedIn = useAuthStore((s) => s.loggedIn);
   const { data: synced = [], isLoading } = useMyPlaylists();
   const { data: tree } = usePlaylistFolders();
   /* spotify-made playlists (daily mixes, discover weekly, daylist, radars)
@@ -255,36 +248,51 @@ export default function Playlists() {
     staleTime: 30 * 60_000,
     retry: false,
   });
-  const madeForYou: HomeItem[] = [];
-  for (const sec of feed?.sections ?? []) {
-    for (const it of sec.items) {
-      if (it.kind === "playlist" && it.id.startsWith("37i9dQZ") && !madeForYou.some((m) => m.id === it.id)) madeForYou.push(it);
+  const madeForYou = useMemo(() => {
+    const out: HomeItem[] = [];
+    const seen = new Set<string>();
+    for (const sec of feed?.sections ?? []) {
+      for (const it of sec.items) {
+        if (it.kind === "playlist" && it.id.startsWith("37i9dQZ") && !seen.has(it.id)) {
+          seen.add(it.id);
+          out.push(it);
+        }
+      }
     }
-  }
+    return out;
+  }, [feed]);
   const [params] = useSearchParams();
   const folderId = params.get("folder");
 
   /* with the rootlist we show your library the way spotify arranges it:
   folders first-class, order kept, and only playlists you actually have (the
   local table also holds ones you merely opened). without it, the flat list */
-  const openFolder = tree && folderId ? findFolder(tree, folderId) : null;
+  const openFolder = useMemo(() => (tree && folderId ? findFolder(tree, folderId) : null), [tree, folderId]);
   const level = tree ? (openFolder ? openFolder.folder.children : tree) : null;
-  const folders = (level ?? []).filter((it): it is FolderItem => it.kind === "folder");
-  const byId = new Map(synced.map((p) => [p.id, p]));
-  const playlists: PlaylistSummary[] = level
-    ? level.flatMap((it) => {
-        if (it.kind !== "playlist") return [];
-        const known = byId.get(it.id);
-        return [known ?? {
-          id: it.id,
-          name: it.name ?? "Playlist",
-          description: null,
-          image_url: it.image_url,
-          total_tracks: it.length ?? 0,
-          snapshot_id: null,
-        }];
-      })
-    : synced;
+  const folders = useMemo(
+    () => (level ?? []).filter((it): it is FolderItem => it.kind === "folder"),
+    [level],
+  );
+  const byId = useMemo(() => new Map(synced.map((p) => [p.id, p])), [synced]);
+  const playlists: PlaylistSummary[] = useMemo(
+    () =>
+      level
+        ? level.flatMap((it) => {
+            if (it.kind !== "playlist") return [];
+            const known = byId.get(it.id);
+            return [known ?? {
+              id: it.id,
+              name: it.name ?? "Playlist",
+              description: null,
+              image_url: it.image_url,
+              total_tracks: it.length ?? 0,
+              snapshot_id: null,
+            }];
+          })
+        : synced,
+    [level, byId, synced],
+  );
+  const shownPlaylists = useStagedList(playlists, 36);
   const { mutate: sync, isPending } = useSyncLibrary();
   const isPinned  = usePinsStore((s) => s.isPinned);
   const togglePin = usePinsStore((s) => s.togglePin);
@@ -299,14 +307,19 @@ export default function Playlists() {
     }
   }, [loggedIn, isLoading, synced.length, isPending, sync]);
 
-  function cardMenu(p: PlaylistSummary): MenuEntry[] {
-    const pinned = isPinned(p.id);
-    return [{
-      label:  pinned ? "Unpin from sidebar" : "Pin to sidebar",
-      icon:   pinned ? <PinOff size={14} /> : <Pin size={14} />,
-      onSelect: () => togglePin({ id: p.id, name: p.name, image_url: p.image_url, type: "playlist" }),
-    }];
-  }
+  const handleCardMenu = useCallback(
+    (p: PlaylistSummary, e: React.MouseEvent) => {
+      openMenu(() => {
+        const pinned = isPinned(p.id);
+        return [{
+          label:  pinned ? "Unpin from sidebar" : "Pin to sidebar",
+          icon:   pinned ? <PinOff size={14} /> : <Pin size={14} />,
+          onSelect: () => togglePin({ id: p.id, name: p.name, image_url: p.image_url, type: "playlist" }),
+        }];
+      })(e);
+    },
+    [openMenu, isPinned, togglePin],
+  );
 
   if (!loggedIn) {
     return (
@@ -324,7 +337,7 @@ export default function Playlists() {
         <h1 className="t-title" style={{ margin: 0, color: "var(--color-text-hi)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
           {openFolder ? (
             <>
-              <Link to="/playlists" style={{ color: "var(--color-text-dim)", textDecoration: "none" }}>Playlists</Link>
+              <Link to="/playlists" onPointerDown={() => prefetchPlaylistsIndex(qc)} style={{ color: "var(--color-text-dim)", textDecoration: "none" }}>Playlists</Link>
               {openFolder.trail.map((f) => (
                 <span key={f.id} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                   <ChevronRight size={18} style={{ color: "var(--color-text-dim)" }} />
@@ -385,8 +398,8 @@ export default function Playlists() {
             {folders.map((f, i) => (
               <FolderCard key={`folder-${f.id}`} folder={f} index={i} />
             ))}
-            {playlists.map((p: PlaylistSummary, i: number) => (
-              <PlaylistCard key={p.id} playlist={p} index={i} onContextMenu={openMenu(cardMenu(p))} />
+            {shownPlaylists.map((p: PlaylistSummary, i: number) => (
+              <PlaylistCard key={p.id} playlist={p} index={i} onCardMenu={handleCardMenu} />
             ))}
           </motion.div>
         </LayoutGroup>

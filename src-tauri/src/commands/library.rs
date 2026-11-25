@@ -569,8 +569,20 @@ pub async fn update_playlist_details(
     .bind(&id)
     .execute(&pool)
     .await;
+    forget_stored_playlist(&pool, &id).await;
 
     Ok(())
+}
+
+/// an edit makes the stored copy of a list only spclient serves (see
+/// `get_cached_playlist`) wrong; it goes, so the page never paints the list
+/// as it was before the edit
+async fn forget_stored_playlist(pool: &SqlitePool, id: &str) {
+    let _ = sqlx::query("DELETE FROM extension_cache WHERE entity_uri = ? AND kind = ?")
+        .bind(format!("spotify:playlist:{id}"))
+        .bind(crate::commands::spotify::INTERNAL_PLAYLIST_KIND)
+        .execute(pool)
+        .await;
 }
 
 /// follow someone else's playlist (adds it to your library)
@@ -662,6 +674,7 @@ pub async fn add_track_to_playlist(
         body,
     )
     .await?;
+    forget_stored_playlist(&pool, &playlist_id).await;
     Ok(())
 }
 
@@ -692,6 +705,7 @@ pub async fn remove_track_from_playlist(
         .bind(&track_id)
         .execute(&pool)
         .await;
+    forget_stored_playlist(&pool, &playlist_id).await;
 
     Ok(())
 }
@@ -1069,7 +1083,16 @@ pub async fn get_cached_playlist(
     id: String,
 ) -> Result<Option<PlaylistDetail>, AppError> {
     let pool = app.state::<AppState>().db.clone();
-    load_cached_playlist(&pool, &id).await
+    if let Some(detail) = load_cached_playlist(&pool, &id).await? {
+        return Ok(Some(detail));
+    }
+    // a list only spclient serves is kept whole, not in the library tables
+    Ok(crate::internal::cache::get_json_stale(
+        &pool,
+        &format!("spotify:playlist:{id}"),
+        crate::commands::spotify::INTERNAL_PLAYLIST_KIND,
+    )
+    .await)
 }
 
 #[derive(sqlx::FromRow)]

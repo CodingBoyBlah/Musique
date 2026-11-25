@@ -16,6 +16,9 @@ use discord_rich_presence::{
 // DISCORD_CLIENT_ID at it to show a custom name + ur own asset art
 const DEFAULT_CLIENT_ID: &str = "1108588077900898414";
 
+/// How long an unchanged activity goes before it is sent again anyway.
+const RESEND_AFTER: std::time::Duration = std::time::Duration::from_secs(15);
+
 struct Meta {
     title:       String,
     artist:      String,
@@ -39,6 +42,11 @@ pub struct DiscordPresence {
     // bring back the right timeline without waiting for the next player event
     last_pos:     u64,
     last_playing: bool,
+    /// The timeline start and playing state of the activity last sent for the
+    /// current track, and when. The YouTube backend reports where it is every
+    /// second; an activity that would come out exactly the same is only sent
+    /// again now and then, which is also what notices Discord has restarted.
+    sent:         Option<(i64, bool, std::time::Instant)>,
 }
 
 impl DiscordPresence {
@@ -55,6 +63,7 @@ impl DiscordPresence {
             meta: None,
             last_pos: 0,
             last_playing: false,
+            sent: None,
         }
     }
 
@@ -74,6 +83,7 @@ impl DiscordPresence {
     /// flip presence on/off (user setting). off just wipes whatever activity is showing
     pub fn set_enabled(&mut self, enabled: bool, position_ms: u64, playing: bool) {
         self.enabled = enabled;
+        self.sent = None;
         if enabled {
             self.apply(position_ms, playing);
         } else {
@@ -94,6 +104,7 @@ impl DiscordPresence {
         playing:     bool,
     ) {
         self.meta = Some(Meta { title, artist, album, cover_url, track_url, duration_ms });
+        self.sent = None;
         self.apply(position_ms, playing);
     }
 
@@ -111,6 +122,7 @@ impl DiscordPresence {
     }
 
     pub fn clear(&mut self) {
+        self.sent = None;
         if self.connected {
             if let Some(c) = self.client.as_mut() {
                 let _ = c.clear_activity();
@@ -147,6 +159,9 @@ impl DiscordPresence {
             .unwrap_or(0);
         let start = now - (position_ms / 1000) as i64;
         let end   = start + (duration_ms / 1000) as i64;
+        if self.sent.is_some_and(|(s, p, at)| s == start && p == playing && at.elapsed() < RESEND_AFTER) {
+            return;
+        }
 
         let mut assets = Assets::new();
         if let Some(url) = cover.as_deref() {
@@ -184,6 +199,9 @@ impl DiscordPresence {
             if c.set_activity(activity).is_err() {
                 // drop the connection so the next call just reconnects on its own
                 self.connected = false;
+                self.sent = None;
+            } else {
+                self.sent = Some((start, playing, std::time::Instant::now()));
             }
         }
     }

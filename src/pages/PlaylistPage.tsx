@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { Pin, Pencil, Trash2, Heart, Radio } from "@/lib/icons";
 import { playStation } from "../utils/radio";
 import { usePlaylist } from "../hooks/usePlaylist";
-import { TrackRow } from "../components/ui/TrackRow";
+import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ExpandableDescription } from "../components/ui/ExpandableDescription";
@@ -19,6 +19,7 @@ import { useSpeedDialStore } from "../store/speedDial.store";
 import { useAuthStore } from "../store/auth.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
 import { useStagedList } from "../hooks/useStagedList";
+import { cancelHoverPrefetch, prefetchProfile, scheduleHoverPrefetch } from "../lib/prefetch";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -105,6 +106,7 @@ export default function PlaylistPage() {
 
   const { view, keys, toolbar } = useTrackTools(tracks, "Playlist order");
   const shown = useStagedList(view);
+  const trackActions = useTrackRowActions(likedSet, toggleLike);
 
   if (isLoading) {
     return <Loader label="Loading playlist" />;
@@ -175,6 +177,7 @@ export default function PlaylistPage() {
       }
     }
   }
+  trackActions.setHandlers(startAt, canEdit ? removeFromPlaylist : undefined);
 
   return (
     <div
@@ -202,7 +205,14 @@ export default function PlaylistPage() {
         )}
         <p className="text-sm" style={{ color: "var(--color-text-dim)" }}>
           {data.owner_name && (data.owner_id
-            ? <><Link to={`/user/${data.owner_id}`} style={{ color: "var(--color-text-hi)", fontWeight: 600, textDecoration: "none" }}>{data.owner_name}</Link> · </>
+            ? <><Link
+                to={`/user/${data.owner_id}`}
+                onMouseEnter={() => scheduleHoverPrefetch(() => prefetchProfile(qc, data.owner_id!))}
+                onMouseLeave={cancelHoverPrefetch}
+                onFocus={() => prefetchProfile(qc, data.owner_id!)}
+                onPointerDown={() => { cancelHoverPrefetch(); prefetchProfile(qc, data.owner_id!); }}
+                style={{ color: "var(--color-text-hi)", fontWeight: 600, textDecoration: "none" }}
+              >{data.owner_name}</Link> · </>
             : <>{data.owner_name} · </>)}
           {data.collaborative && <>Collaborative · </>}
           {data.public === false && !data.collaborative && isOwner && <>Private · </>}
@@ -270,17 +280,17 @@ export default function PlaylistPage() {
           className="flex flex-col"
         >
           {shown.map((t, i) => (
-            <TrackRow
-              key={keys[i]}
-              track={t}
-              index={i}
-              showAlbum
-              liked={likedSet.has(t.id)}
-              onPlay={() => startAt(i)}
-              onQueue={(track) => enqueue(track)}
-              onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
-              onRemoveFromPlaylist={canEdit ? removeFromPlaylist : undefined}
-            />
+              <TrackRow
+                key={keys[i]}
+                track={t}
+                index={i}
+                showAlbum
+                liked={likedSet.has(t.id)}
+                onPlay={trackActions.onPlay}
+                onQueue={enqueue}
+                onToggleLike={trackActions.onToggleLike}
+                onRemoveFromPlaylist={canEdit ? trackActions.onRemove : undefined}
+              />
           ))}
           {view.length === 0 && (
             <p className="text-sm" style={{ color: "var(--color-text-dim)", padding: "8px 2px" }}>

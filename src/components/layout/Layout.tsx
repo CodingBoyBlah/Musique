@@ -1,6 +1,6 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Activity, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate, MotionGlobalConfig } from "framer-motion";
 import { TitleBar as TitleBarView, WindowCaptionControls as CaptionControlsView } from "./TitleBar";
 import SidebarView from "./Sidebar";
 import { PlayerBar as PlayerBarView } from "./PlayerBar";
@@ -25,6 +25,7 @@ import { chromePx } from "../../lib/zoom";
 import { EASE_OUT, RAIL_CLOSE, RAIL_CLOSE_S, RAIL_OPEN, RAIL_OPEN_S } from "../../lib/motion";
 import { pinRailGrids } from "../../lib/railFlip";
 import "../../styles/layout.css";
+import Home from "../../pages/Home";
 
 /* The shell's fixed pieces take no props from Layout - each reads the stores
    it needs itself - so Layout re-rendering (every panel toggle, every resize
@@ -53,10 +54,133 @@ const PageOutlet = memo(function PageOutlet() {
   return <Outlet />;
 });
 
+/* Home, kept alive.
+
+   Home is the screen people come back to most, and it is the heaviest one to
+   build: every shelf, tile and carousel. Mounted fresh on each return it was a
+   70-90ms task (React building ~2000 elements, framer registering every tile,
+   each carousel measuring itself) and then a full paint - six or seven dropped
+   frames every time you came back to it.
+
+   So it is never unmounted. Away from it, <Activity mode="hidden"> hides it
+   and unmounts its effects (no store or query subscriptions, no resize
+   pulses), keeping its React state and DOM. Coming back re-runs the effects -
+   query subscriptions included, so stale data refetches exactly as it did on
+   a fresh mount - and skips rebuilding the tree. The entrance is the same one
+   every routed page plays (opacity and a 6px rise, 180ms), run here as a Web
+   Animation each time Home is shown. */
+/* Whatever the pointer is over when Home is hidden never gets its leave
+   events - it simply stops being displayed - so a tile clicked to open its
+   page would come back still hovered (lifted, highlighted). A fresh mount
+   never had that problem, so the hovered element is sent the leave events it
+   is about to miss, at the moment the app navigates away from Home: before
+   React hides it (React ignores events during a commit, and framer has taken
+   its hover listeners down by then), in the same task as the navigation, so
+   nothing un-hovers on screen. React synthesises enter/leave from mouseout;
+   framer's whileHover listens for pointerleave on each element. */
+let homeHover: Element | null = null;
+function releaseHomeHover() {
+  const t = homeHover;
+  homeHover = null;
+  if (!t || !t.isConnected) return;
+  const out = { bubbles: true, relatedTarget: document.body };
+  // the lift settles at once: Home is hidden before a spring back could run,
+  // and a cut-off spring would leave the tile raised for the next visit
+  const instant = MotionGlobalConfig.instantAnimations;
+  MotionGlobalConfig.instantAnimations = true;
+  try {
+    t.dispatchEvent(new MouseEvent("mouseout", out));
+    t.dispatchEvent(new PointerEvent("pointerout", out));
+    for (let el: Element | null = t; el && !el.matches("main"); el = el.parentElement) {
+      el.dispatchEvent(new PointerEvent("pointerleave", { relatedTarget: document.body }));
+    }
+  } finally {
+    MotionGlobalConfig.instantAnimations = instant;
+  }
+  /* framer settles the value only on its next frame, by which time the tile
+     is hidden and unbound, so its cached value keeps the lift. The tile is
+     settled again once Home is back (settleHomeHover) - framer is bound then. */
+  staleCard = t.closest<HTMLElement>(".card-link");
+}
+let staleCard: HTMLElement | null = null;
+// runs as Home is shown again, before its first frame (still at opacity 0)
+function settleHomeHover() {
+  const card = staleCard;
+  staleCard = null;
+  if (!card || !card.isConnected) return;
+  const instant = MotionGlobalConfig.instantAnimations;
+  MotionGlobalConfig.instantAnimations = true;
+  try {
+    card.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+    card.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse", relatedTarget: document.body }));
+  } finally {
+    MotionGlobalConfig.instantAnimations = instant;
+  }
+}
+if (typeof window !== "undefined") {
+  const leavingHome = (url: unknown) => {
+    if (location.pathname !== "/" || url == null) return;
+    try {
+      if (new URL(String(url), location.href).pathname !== "/") releaseHomeHover();
+    } catch { /* not a URL we navigate to */ }
+  };
+  for (const k of ["pushState", "replaceState"] as const) {
+    const orig = history[k];
+    history[k] = function (this: History, data: unknown, unused: string, url?: string | URL | null) {
+      leavingHome(url);
+      return orig.call(this, data, unused, url);
+    };
+  }
+  // back / forward: runs before the router's own listener (registered later)
+  let lastPath = location.pathname;
+  window.addEventListener("popstate", () => {
+    if (lastPath === "/" && location.pathname !== "/") releaseHomeHover();
+    lastPath = location.pathname;
+  }, true);
+  const track = () => { lastPath = location.pathname; };
+  window.addEventListener("popstate", track);
+  for (const k of ["pushState", "replaceState"] as const) {
+    const orig = history[k];
+    history[k] = function (this: History, data: unknown, unused: string, url?: string | URL | null) {
+      const r = orig.call(this, data, unused, url);
+      track();
+      return r;
+    };
+  }
+}
+
+const HomeStage = memo(function HomeStage() {
+  const ref = useRef<HTMLDivElement>(null);
+  const reduceMotion = useReducedMotion();
+
+  // layout effects re-run every time the Activity is shown again
+  useLayoutEffect(() => {
+    const el = ref.current;
+    // shelves open at their start, as they did when Home was built fresh
+    el?.querySelectorAll<HTMLElement>(".edge-fade-x").forEach((c) => { if (c.scrollLeft) c.scrollLeft = 0; });
+    settleHomeHover();
+    if (!el || reduceMotion || typeof el.animate !== "function") return;
+    const anim = el.animate(
+      [{ opacity: 0, transform: "translateY(6px) scale(0.995)" }, { opacity: 1, transform: "none" }],
+      { duration: 180, easing: `cubic-bezier(${EASE_OUT.join(", ")})` },
+    );
+    return () => anim.cancel();
+  }, [reduceMotion]);
+  return (
+    <div ref={ref} onPointerOver={(e) => { homeHover = e.target as Element; }}>
+      <Home />
+    </div>
+  );
+});
+
 /* collapsed sidebar. on mac the native traffic lights live in this column at
    their fixed OS positions (12px dots, 20px pitch, first centre at x=20), so
    the collapsed rail has to stay wide enough to hold all three. */
 const COLLAPSED_SIDEBAR_W = 64;
+
+// what sequential focus navigation stops on
+const TABBABLE =
+  'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex],[contenteditable]:not([contenteditable="false"]),audio[controls],video[controls],summary';
 const MAC_COLLAPSED_SIDEBAR_W = 72;
 
 /* the page's cover-art wash: concentrated behind the header (cover, title,
@@ -83,6 +207,8 @@ export default function Layout() {
   const backdropActive = useUIStore((s) => s.backdropActive);
   const setBackdropActive = useUIStore((s) => s.setBackdropActive);
   const location = useLocation();
+  // Home lives outside the routed outlet (HomeStage)
+  const isHome = location.pathname === "/";
   const reduceMotion = useReducedMotion();
   const mainRef = useRef<HTMLElement>(null);
 
@@ -94,28 +220,67 @@ export default function Layout() {
     ? Math.max(COLLAPSED_SIDEBAR_W, chromePx(MAC_COLLAPSED_SIDEBAR_W, uiZoom))
     : COLLAPSED_SIDEBAR_W;
   const [willCrushMain, setWillCrushMain] = useState(false);
-  const [shellHidden, setShellHidden] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+
   const immersiveCovered = useUIStore((s) => s.immersiveCovered);
   const setImmersiveCovered = useUIStore((s) => s.setImmersiveCovered);
 
-  /* Hide (and inert) the shell once the immersive overlay fully covers it.
-     The signal is the overlay's own animation completing (Immersive sets
-     immersiveCovered), so the two can never drift apart. The timer is only a
-     backstop in case that signal never arrives - it is well past the 260ms
-     fade, so it never races the real one. */
+  /* The shell under the immersive overlay.
+
+     Once the overlay has fully faded in, the shell stops rendering
+     (content-visibility: hidden). It matters: the lyric sweep repaints a line
+     every frame, and every repaint re-layerizes the whole document - with the
+     shell still painted underneath that doubled the renderer's CPU for as
+     long as the view stayed up.
+
+     It used to be hidden with visibility (and inerted). Both are inherited,
+     so each flip restyled all ~1500 elements of the shell, and inert changes
+     the hit-test data recorded in paint, so it repainted it too: a 20-26ms
+     frame on the way in and another on the frame the exit fade started.
+     content-visibility is not inherited (one element restyles), keeps the
+     shell's style, layout and scroll positions, and takes its contents out of
+     focus order. It comes back in the same commit the exit fade starts in;
+     the overlay is still opaque there, and its tiles raster under the fade.
+
+     The timer is only a backstop in case the overlay's signal never arrives -
+     it is well past the 260ms fade, so it never races the real one. */
+  const shellHidden = immersiveOpen && immersiveCovered;
   useEffect(() => {
     if (!immersiveOpen) {
-      setShellHidden(false);
       if (immersiveCovered) setImmersiveCovered(false);
       return;
     }
-    if (immersiveCovered) {
-      setShellHidden(true);
-      return;
-    }
-    const t = setTimeout(() => setShellHidden(true), 700);
+    if (immersiveCovered) return;
+    const t = setTimeout(() => setImmersiveCovered(true), 700);
     return () => clearTimeout(t);
   }, [immersiveOpen, immersiveCovered, setImmersiveCovered]);
+
+  /* Tab, before the shell is hidden (the fade in) - content-visibility takes
+     care of it after. Focus moves through the focusable elements outside the
+     shell in document order, wrapping at either end: the order the browser
+     gives once the shell is out of it. On document, in the capture phase, so a
+     modal's own trap (on window) runs first; whatever it has already handled
+     is left alone. Steering Tab costs nothing; inerting the shell for this
+     restyled and repainted all of it. */
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!immersiveOpen || !shell) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+      const order = Array.from(document.querySelectorAll<HTMLElement>(TABBABLE)).filter(
+        (el) => el.tabIndex >= 0 && !shell.contains(el) && !el.closest("[inert]") && el.getClientRects().length > 0,
+      );
+      e.preventDefault();
+      if (!order.length) return;
+      const at = order.indexOf(document.activeElement as HTMLElement);
+      const next = at === -1
+        ? (e.shiftKey ? order[order.length - 1] : order[0])
+        : order[(at + (e.shiftKey ? -1 : 1) + order.length) % order.length];
+      next.focus();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [immersiveOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -260,9 +425,9 @@ export default function Layout() {
           minHeight: 0,
           overflow: "hidden",
           position: "relative",
-          visibility: shellHidden ? "hidden" : "visible",
+          contentVisibility: shellHidden ? "hidden" : undefined,
         }}
-        inert={shellHidden ? true : undefined}
+        ref={shellRef}
       >
         {/* the sidebar runs the full height of the window */}
         <Sidebar />
@@ -391,14 +556,27 @@ export default function Layout() {
                     paddingBottom: "90px",
                   }}
                 >
-                  <motion.div
-                    key={location.pathname}
-                    initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.995 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{ duration: 0.18, ease: EASE_OUT }}
-                  >
-                    <PageOutlet />
-                  </motion.div>
+                  {/* `transform` as one string, not framer's y/scale: those
+                      are composed in JS and written every frame on the main
+                      thread - right while the new page mounts - where a
+                      whole transform runs as a Web Animation on the
+                      compositor. Same values, same curve. Back to "none" at
+                      rest (transitionEnd) - framer reads a "none" target as
+                      scale(0), and any leftover transform would make this the
+                      containing block for the pages' unportalled modals. */}
+                  <Activity mode={isHome ? "visible" : "hidden"}>
+                    <HomeStage />
+                  </Activity>
+                  {!isHome && (
+                    <motion.div
+                      key={location.pathname}
+                      initial={reduceMotion ? false : { opacity: 0, transform: "translateY(6px) scale(0.995)" }}
+                      animate={{ opacity: 1, transform: "translateY(0px) scale(1)", transitionEnd: { transform: "none" } }}
+                      transition={{ duration: 0.18, ease: EASE_OUT }}
+                    >
+                      <PageOutlet />
+                    </motion.div>
+                  )}
                 </main>
               </div>
 

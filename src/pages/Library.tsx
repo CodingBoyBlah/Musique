@@ -5,7 +5,7 @@ import { Heart, Users, Disc3, Mic } from "@/lib/icons";
 import { useQuery } from "@tanstack/react-query";
 import { getSavedShows } from "../api/podcasts";
 import { MediaTile } from "../components/ui/MediaTile";
-import { useAuth } from "../hooks/useAuth";
+import { useAuthStore } from "../store/auth.store";
 import { EmptyState } from "../components/ui/EmptyState";
 import { SignInPrompt } from "../components/ui/SignInPrompt";
 import { TrackRowsSkeleton, CardGridSkeleton } from "../components/ui/Skeletons";
@@ -20,7 +20,7 @@ import {
 } from "../hooks/useLibrary";
 import { AlbumCard, AlbumGrid } from "../components/ui/AlbumCard";
 import { ArtistCard, ArtistGrid } from "../components/ui/ArtistCard";
-import { TrackRow } from "../components/ui/TrackRow";
+import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
 import { useSortTools } from "../components/ui/SortToolbar";
 import { usePlayerStore } from "../store/player.store";
 import { LIKED_SONGS_URI, useQueueStore } from "../store/queue.store";
@@ -37,7 +37,9 @@ type TabKey = (typeof TAB_KEYS)[number];
 // liked songs
 
 function LikedSongsTab() {
-  const { data: tracks = [], isLoading } = useLikedSongs(200, 0);
+  // every liked song (sqlite reads LIMIT -1 as no limit). a fixed 200 here
+  // cut the list off while the header still counted them all
+  const { data: tracks = [], isLoading } = useLikedSongs(-1, 0);
   const { data: count = 0 } = useLikedSongsCount();
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const enqueue     = useQueueStore((s) => s.enqueue);
@@ -49,6 +51,7 @@ function LikedSongsTab() {
   const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
   const { data: savedIds = [] } = useSavedTrackIds(trackIds);
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
+  const trackActions = useTrackRowActions(likedSet, toggleLike);
 
   if (isLoading) {
     return <div role="status" aria-label="Loading liked songs"><TrackRowsSkeleton count={10} /></div>;
@@ -73,6 +76,7 @@ function LikedSongsTab() {
       useSpeedDialStore.getState().recordLikedSongs();
     }
   };
+  trackActions.setHandlers(handlePlay);
 
   return (
     <motion.div layout="position" transition={{ layout: REFLOW }}>
@@ -95,9 +99,9 @@ function LikedSongsTab() {
             index={i}
             showAlbum
             liked={likedSet.has(t.id)}
-            onPlay={() => handlePlay(i)}
-            onQueue={(track) => enqueue(track)}
-            onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
+            onPlay={trackActions.onPlay}
+            onQueue={enqueue}
+            onToggleLike={trackActions.onToggleLike}
           />
         ))}
       </div>
@@ -228,7 +232,7 @@ function PodcastsTab() {
 
 export default function Library() {
   useReflowPulse();
-  const { loggedIn } = useAuth();
+  const loggedIn = useAuthStore((s) => s.loggedIn);
   const [params] = useSearchParams();
   const rawTab = params.get("tab");
   const tab: TabKey = (TAB_KEYS as readonly string[]).includes(rawTab ?? "") ? (rawTab as TabKey) : "songs";

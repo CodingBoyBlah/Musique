@@ -16,7 +16,7 @@
 //! Which of those is happening is read off the player's own events, which
 //! arrive in step with the audio.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -359,7 +359,7 @@ struct StreamKeeper {
 }
 
 impl StreamKeeper {
-    fn keep(stream: rodio::OutputStream) -> Self {
+    fn keep(stream: Stream) -> Self {
         let (close, closed) = std::sync::mpsc::channel::<()>();
         let idle = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&idle);
@@ -403,7 +403,7 @@ impl Drop for StreamKeeper {
 }
 
 struct Output {
-    sink: rodio::Sink,
+    volume: Volume,
     _stream: StreamKeeper,
     /// The name of the device the stream was opened on.
     device_name: Option<String>,
@@ -582,7 +582,7 @@ impl RodioSink {
         if let Some(output) = &self.output {
             if (factor - self.applied_volume).abs() > 0.001 {
                 let next = volume_step(self.applied_volume, factor);
-                output.sink.set_volume(next);
+                output.volume.set(next);
                 self.applied_volume = next;
             }
         }
@@ -624,6 +624,9 @@ impl Sink for RodioSink {
         playout::boost_current_thread();
         self.catch_up();
         self.follow_default(true);
+        if let Some(watch) = &self.watch {
+            watch.set_active(true);
+        }
         self.ensure_open()?;
         self.apply_volume();
         self.playout.ring.set_held(false);
@@ -632,6 +635,9 @@ impl Sink for RodioSink {
 
     fn stop(&mut self) -> SinkResult<()> {
         self.catch_up();
+        if let Some(watch) = &self.watch {
+            watch.set_active(false);
+        }
         // Spotify Connect stops the player the moment the last track finishes
         // decoding, seconds before it finishes playing. Holding then would cut
         // off the end of the song.
@@ -748,15 +754,112 @@ pub fn open_default_output(buffer_ms: u32) -> Result<rodio::OutputStream, rodio:
     rodio::OutputStreamBuilder::open_default_stream()
 }
 
+/// What holds an output's device open. Dropping it closes the stream.
+#[allow(dead_code)] // held, never read
+enum Stream {
+    /// Played by `play_direct` straight from the ring.
+    Direct(cpal::Stream),
+    /// Played through rodio's mixer: an output that takes samples in some
+    /// other format than 32-bit float.
+    Rodio(rodio::OutputStream),
+}
+
+/// Where the player's volume is applied to an output.
+enum Volume {
+    /// The level the direct callback multiplies by, as `f32` bits.
+    Direct(Arc<AtomicU32>),
+    Rodio(rodio::Sink),
+}
+
+impl Volume {
+    fn set(&self, level: f32) {
+        match self {
+            Volume::Direct(shared) => shared.store(level.to_bits(), Ordering::Relaxed),
+            Volume::Rodio(sink) => sink.set_volume(level),
+        }
+    }
+}
+
+/// An output playing `ring`, and how it was opened.
+struct OpenStream {
+    stream: Stream,
+    volume: Volume,
+    sample_rate: u32,
+    buffer_size: cpal::BufferSize,
+}
+
+/// Opens `device` at `sample_rate` with a callback of our own that copies the
+/// ring to it, for an output that takes 32-bit float (WASAPI and CoreAudio
+/// always do). rodio would hand every sample through its mixer and its sink's
+/// chain of adapters (speed, position, pause, volume, skip, stop), which do
+/// nothing here but cost the device thread several times what the ring itself
+/// does. What comes out is the same: the ring's samples times the volume, the
+/// way rodio's sink applied it.
+///
+/// Until `ready` is set the device gets silence, as rodio's mixer gave it
+/// before the ring was attached: the queue is first converted to the rate the
+/// stream ended up at (`Ring::retime`).
+fn play_direct<E>(
+    device: &cpal::Device,
+    sample_rate: u32,
+    buffer_size: cpal::BufferSize,
+    on_error: E,
+    ring: &Arc<Ring>,
+) -> Option<(cpal::Stream, Arc<AtomicU32>, Arc<AtomicBool>)>
+where
+    E: FnMut(cpal::StreamError) + Send + 'static,
+{
+    use cpal::traits::StreamTrait;
+    let config = cpal::StreamConfig {
+        channels: NUM_CHANNELS as cpal::ChannelCount,
+        sample_rate: cpal::SampleRate(sample_rate),
+        buffer_size,
+    };
+    let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    let ready = Arc::new(AtomicBool::new(false));
+    let level = Arc::clone(&volume);
+    let started = Arc::clone(&ready);
+    let mut source =
+        RingSource::endless(Arc::clone(ring), NUM_CHANNELS as rodio::ChannelCount, sample_rate);
+    let stream = device
+        .build_output_stream::<f32, _, _>(
+            &config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                if !started.load(Ordering::Acquire) {
+                    data.fill(0.0);
+                    return;
+                }
+                let level = f32::from_bits(level.load(Ordering::Relaxed));
+                for sample in data.iter_mut() {
+                    *sample = source.next().unwrap_or(0.0) * level;
+                }
+            },
+            on_error,
+            None,
+        )
+        .ok()?;
+    stream.play().ok()?;
+    Some((stream, volume, ready))
+}
+
+/// Opens `device` playing `ring`: at Spotify's rate if it will take it, else
+/// at its own, with a device buffer of about `buffer_ms`; failing both,
+/// whatever rodio can get.
 fn open_stream(
     device: &cpal::Device,
     on_error: impl FnMut(cpal::StreamError) + Send + Clone + 'static,
     buffer_ms: u32,
-) -> Result<rodio::OutputStream, rodio::StreamError> {
-    let supported = device
-        .default_output_config()
+    ring: &Arc<Ring>,
+) -> Result<OpenStream, rodio::StreamError> {
+    let default = device.default_output_config();
+    let supported = default
+        .as_ref()
         .map(|config| *config.buffer_size())
         .unwrap_or(cpal::SupportedBufferSize::Unknown);
+    // the format rodio opens a stream in: the device's default
+    let direct = default
+        .as_ref()
+        .is_ok_and(|config| config.sample_format() == cpal::SampleFormat::F32);
     let builder = |sample_rate: u32, buffer: bool| -> Result<_, rodio::StreamError> {
         let builder = rodio::OutputStreamBuilder::from_device(device.clone())?
             .with_channels(NUM_CHANNELS as rodio::ChannelCount)
@@ -768,27 +871,78 @@ fn open_stream(
             builder
         })
     };
-    if let Ok(stream) = builder(SAMPLE_RATE, true)?.open_stream() {
-        return Ok(stream);
+    let attempt = |sample_rate: u32| -> Result<Option<OpenStream>, rodio::StreamError> {
+        if !direct {
+            return Ok(builder(sample_rate, true)?
+                .open_stream()
+                .ok()
+                .map(|stream| rodio_stream(stream, ring)));
+        }
+        let buffer_size = engine_buffer(sample_rate, buffer_ms, supported);
+        let opened = play_direct(device, sample_rate, buffer_size, on_error.clone(), ring);
+        Ok(opened.map(|(stream, volume, ready)| {
+            // what was queued for the output this one replaces carries on
+            // here, at this one's rate, rather than being skipped over
+            ring.retime(sample_rate);
+            ready.store(true, Ordering::Release);
+            OpenStream {
+                stream: Stream::Direct(stream),
+                volume: Volume::Direct(volume),
+                sample_rate,
+                buffer_size,
+            }
+        }))
+    };
+    if let Some(opened) = attempt(SAMPLE_RATE)? {
+        return Ok(opened);
     }
     if let Ok(config) = device.default_output_config() {
-        if let Ok(stream) = builder(config.sample_rate().0, true)?.open_stream() {
-            return Ok(stream);
+        if let Some(opened) = attempt(config.sample_rate().0)? {
+            return Ok(opened);
         }
     }
-    builder(SAMPLE_RATE, false)?.open_stream_or_fallback()
+    let stream = builder(SAMPLE_RATE, false)?.open_stream_or_fallback()?;
+    Ok(rodio_stream(stream, ring))
 }
 
-struct DefaultWatch(Arc<DefaultName>);
+/// A stream rodio opened, playing `ring` through a sink on its mixer.
+fn rodio_stream(mut stream: rodio::OutputStream, ring: &Arc<Ring>) -> OpenStream {
+    stream.log_on_drop(false);
+    let sample_rate = stream.config().sample_rate();
+    let buffer_size = *stream.config().buffer_size();
+    // what was queued for the output this one replaces carries on here, at
+    // this one's rate, rather than being skipped over
+    ring.retime(sample_rate);
+    let sink = rodio::Sink::connect_new(stream.mixer());
+    sink.append(RingSource::endless(
+        Arc::clone(ring),
+        NUM_CHANNELS as rodio::ChannelCount,
+        sample_rate,
+    ));
+    sink.play();
+    OpenStream { stream: Stream::Rodio(stream), volume: Volume::Rodio(sink), sample_rate, buffer_size }
+}
+
+/// Keeps asking which output the system calls its default, every
+/// `DEFAULT_CHECK_INTERVAL` while the sink is running. Stopped (paused,
+/// ended, another device playing) nothing reads the answer: no audio is
+/// written, and `start` asks for itself before any is. So the thread sleeps
+/// until the sink starts again instead of querying the audio system every two
+/// seconds for as long as the app is open.
+struct DefaultWatch {
+    shared:   Option<Arc<DefaultName>>,
+    watching: Option<thread::Thread>,
+}
 
 struct DefaultName {
     state: Mutex<(u64, Option<String>)>,
     version: AtomicU64,
+    active: AtomicBool,
 }
 
 impl DefaultName {
     fn new() -> Self {
-        Self { state: Mutex::new((1, None)), version: AtomicU64::new(1) }
+        Self { state: Mutex::new((1, None)), version: AtomicU64::new(1), active: AtomicBool::new(true) }
     }
 
     fn update(&self, name: Option<String>) -> (u64, Option<String>) {
@@ -815,28 +969,63 @@ impl DefaultWatch {
             .name("audio-default-watch".into())
             .spawn(move || {
                 while let Some(shared) = weak.upgrade() {
-                    shared.update(default_output_name());
+                    let active = shared.active.load(Ordering::Acquire);
+                    if active {
+                        shared.update(default_output_name());
+                    }
                     // The watcher must not keep the sink alive while sleeping.
                     drop(shared);
-                    thread::sleep(DEFAULT_CHECK_INTERVAL);
+                    if active {
+                        thread::sleep(DEFAULT_CHECK_INTERVAL);
+                    } else {
+                        // woken by `set_active` or by the watch being dropped
+                        thread::park();
+                    }
                 }
             });
-        if let Err(error) = watching {
-            log::warn!("cannot watch the default audio output: {error}");
+        let watching = match watching {
+            Ok(handle) => Some(handle.thread().clone()),
+            Err(error) => {
+                log::warn!("cannot watch the default audio output: {error}");
+                None
+            }
+        };
+        Self { shared: Some(shared), watching }
+    }
+
+    fn shared(&self) -> &DefaultName {
+        self.shared.as_deref().expect("only taken when dropped")
+    }
+
+    /// Whether the sink is running, and so whether to keep asking.
+    fn set_active(&self, active: bool) {
+        if self.shared().active.swap(active, Ordering::AcqRel) != active && active {
+            if let Some(thread) = &self.watching {
+                thread.unpark();
+            }
         }
-        Self(shared)
     }
 
     fn version(&self) -> u64 {
-        self.0.version.load(Ordering::Acquire)
+        self.shared().version.load(Ordering::Acquire)
     }
 
     fn name(&self) -> (u64, Option<String>) {
-        self.0.snapshot()
+        self.shared().snapshot()
     }
 
     fn ask(&self) -> (u64, Option<String>) {
-        self.0.update(default_output_name())
+        self.shared().update(default_output_name())
+    }
+}
+
+impl Drop for DefaultWatch {
+    fn drop(&mut self) {
+        // let go first, so a parked watcher that wakes finds nothing to watch
+        drop(self.shared.take());
+        if let Some(thread) = &self.watching {
+            thread.unpark();
+        }
     }
 }
 
@@ -891,9 +1080,8 @@ fn open_output(
         log::error!("audio stream error: {error}");
         flag.store(true, Ordering::Relaxed);
     };
-    let mut stream = open_stream(&device, on_error, buffer_ms)?;
-    stream.log_on_drop(false);
-    let sample_rate = stream.config().sample_rate();
+    let OpenStream { stream, volume, sample_rate, buffer_size } =
+        open_stream(&device, on_error, buffer_ms, ring)?;
 
     // read the actual negotiated buffer size from the output stream.
     // cpal clamped the requested buffer_ms against the device's hardware
@@ -903,9 +1091,9 @@ fn open_output(
     // (e.g. on fallback or backends that do not expose buffer size), we
     // cannot query the driver's true buffer size from cpal once running,
     // so fall back to the configured buffer_ms.
-    let device_buffer_ms = match stream.config().buffer_size() {
+    let device_buffer_ms = match buffer_size {
         cpal::BufferSize::Fixed(frames) if sample_rate > 0 => {
-            ((u64::from(*frames) * 1000 + u64::from(sample_rate) / 2) / u64::from(sample_rate)) as u32
+            ((u64::from(frames) * 1000 + u64::from(sample_rate) / 2) / u64::from(sample_rate)) as u32
         }
         _ => buffer_ms,
     };
@@ -916,18 +1104,8 @@ fn open_output(
             "the output runs at {sample_rate} Hz; the music is converted from {SAMPLE_RATE} Hz"
         );
     }
-    // what was queued for the output this one replaces carries on here, at
-    // this one's rate, rather than being skipped over
-    ring.retime(sample_rate);
-    let sink = rodio::Sink::connect_new(stream.mixer());
-    sink.append(RingSource::endless(
-        Arc::clone(ring),
-        NUM_CHANNELS as rodio::ChannelCount,
-        sample_rate,
-    ));
-    sink.play();
     let output = Output {
-        sink,
+        volume,
         _stream: StreamKeeper::keep(stream),
         device_name,
         failed,
@@ -954,6 +1132,7 @@ mod tests {
         fn assert_send<T: Send>() {}
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send::<rodio::OutputStream>();
+        assert_send::<Stream>();
         assert_send::<RodioSink>();
         assert_send_sync::<crate::state::AppState>();
     }
@@ -1137,15 +1316,15 @@ mod tests {
 
     #[test]
     fn unchanged_output_does_not_require_another_name_snapshot() {
-        let watch = DefaultWatch(Arc::new(DefaultName::new()));
+        let watch = DefaultWatch { shared: Some(Arc::new(DefaultName::new())), watching: None };
         assert_eq!(watch.version(), 1);
-        watch.0.update(Some("Speakers".into()));
+        watch.shared().update(Some("Speakers".into()));
         assert_eq!(watch.version(), 2);
-        watch.0.update(Some("Speakers".into()));
+        watch.shared().update(Some("Speakers".into()));
         assert_eq!(watch.version(), 2);
-        watch.0.update(Some("Headphones".into()));
+        watch.shared().update(Some("Headphones".into()));
         assert_eq!(watch.name(), (3, Some("Headphones".into())));
-        watch.0.update(None);
+        watch.shared().update(None);
         assert_eq!(watch.name(), (4, None));
     }
 

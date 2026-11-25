@@ -422,8 +422,26 @@ pub async fn search_probe(app: AppHandle) -> i32 {
     0
 }
 
+/// a stored page older than this is refetched behind the copy it answers with.
+/// the page's own react-query cache covers repeat opens within a session, so
+/// this only stops one open from fetching the same page twice
+const PAGE_REVALIDATE_MS: i64 = 60_000;
+
+/// the artist page. a stored copy answers at once (a first open after a cold
+/// start no longer waits on three web api calls) and is refetched behind it
 #[tauri::command]
 pub async fn get_artist(app: AppHandle, id: String) -> Result<ArtistDetail, AppError> {
+    let pool = app.state::<AppState>().db.clone();
+    let uri = format!("spotify:artist:{id}");
+    let key = serde_json::json!(["artist", id]);
+    let handle = app.clone();
+    crate::internal::cache::swr_json(&app, &pool, &uri, "artist-page", PAGE_REVALIDATE_MS, key, move || {
+        fetch_artist(handle, id)
+    })
+    .await
+}
+
+async fn fetch_artist(app: AppHandle, id: String) -> Result<ArtistDetail, AppError> {
     let token = tok(&app).await?;
 
     let mut alb_url = url::Url::parse(&format!("{BASE}/artists/{id}/albums")).unwrap();
@@ -473,8 +491,20 @@ pub async fn get_artist(app: AppHandle, id: String) -> Result<ArtistDetail, AppE
     Ok(detail)
 }
 
+/// the album page, answered from its stored copy like `get_artist`
 #[tauri::command]
 pub async fn get_album(app: AppHandle, id: String) -> Result<AlbumDetail, AppError> {
+    let pool = app.state::<AppState>().db.clone();
+    let uri = format!("spotify:album:{id}");
+    let key = serde_json::json!(["album", id]);
+    let handle = app.clone();
+    crate::internal::cache::swr_json(&app, &pool, &uri, "album-page", PAGE_REVALIDATE_MS, key, move || {
+        fetch_album(handle, id)
+    })
+    .await
+}
+
+async fn fetch_album(app: AppHandle, id: String) -> Result<AlbumDetail, AppError> {
     let token = tok(&app).await?;
 
     let mut url = url::Url::parse(&format!("{BASE}/albums/{id}")).unwrap();
@@ -634,6 +664,7 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
             // a real network outage falls through to whatever we cached
             if let Ok(detail) = crate::commands::internal::internal_playlist(&app, &id).await {
                 if !detail.tracks.is_empty() {
+                    remember_internal_playlist(&pool, &detail);
                     return Ok(detail);
                 }
             }
@@ -669,6 +700,7 @@ pub async fn get_playlist(app: AppHandle, id: String) -> Result<PlaylistDetail, 
                 detail.public        = pl.public;
                 detail.collaborative = pl.collaborative;
                 detail.followers     = pl.followers.as_ref().and_then(|f| f.total);
+                remember_internal_playlist(&pool, &detail);
                 return Ok(detail);
             }
         }
@@ -823,6 +855,23 @@ fn with_offset(base: &url::Url, offset: i64) -> String {
     let mut url = base.clone();
     url.query_pairs_mut().clear().extend_pairs(pairs).append_pair("offset", &offset.to_string());
     url.into()
+}
+
+/// what a playlist only spclient serves (spotify-made mixes, radios, other
+/// people's lists) is kept as one page, since those lists never land in the
+/// library tables. `get_cached_playlist` paints the next open from it, a cold
+/// start included, while the live fetch revalidates behind it
+pub(crate) const INTERNAL_PLAYLIST_KIND: &str = "playlist-page";
+
+fn remember_internal_playlist(pool: &sqlx::SqlitePool, detail: &PlaylistDetail) {
+    let (pool, detail) = (pool.clone(), detail.clone());
+    let epoch = crate::auth::auth_epoch();
+    tokio::spawn(async move {
+        if crate::auth::epoch_is_current(epoch) {
+            let uri = format!("spotify:playlist:{}", detail.id);
+            crate::internal::cache::put_json(&pool, &uri, INTERNAL_PLAYLIST_KIND, &detail).await;
+        }
+    });
 }
 
 /// Cache what a command fetched without making its caller wait. The writes go

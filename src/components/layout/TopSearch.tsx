@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Play, X, ArrowRight } from "@/lib/icons";
 import { useSearch } from "../../hooks/useSearch";
+import { cancelHoverPrefetch, prefetchAlbum, prefetchArtist, prefetchShow, preloadRoute, scheduleHoverPrefetch } from "../../lib/prefetch";
 import { usePlayerStore } from "../../store/player.store";
 import { playTrack, resumeOrPlay } from "../../api/playback";
 import { CoverArt } from "../ui/CoverArt";
@@ -74,6 +76,7 @@ export function TopSearch() {
   /* the last ?q= this field wrote itself. when the url changes to that value
      it is our own echo and must not overwrite what is still being typed. */
   const pushedRef = useRef<string | null>(null);
+  const qc = useQueryClient();
   /* Ctrl+K is a shortcut people hit many times a day: when it brings back a
      dropdown that already has a query in it, the results appear at once, with
      no entrance. Only a dropdown opened by typing gets the short fade. */
@@ -218,7 +221,7 @@ export function TopSearch() {
           // a synthesised Ctrl+K can land its \x0B in the field on WebView2;
           // an invisible control char would still count as "has text"
           onChange={(e) => { setQuery(e.target.value.replace(/[\x00-\x1f\x7f]/g, "")); setSelectedIndex(0); }}
-          onFocus={() => { setFocused(true); setSelectedIndex(0); }}
+          onFocus={() => { setFocused(true); setSelectedIndex(0); preloadRoute("search"); }}
           onBlur={() => { setFocused(false); instantOpenRef.current = false; }}
           onKeyDown={handleKeyDown}
           placeholder="What do you want to play?"
@@ -352,7 +355,11 @@ export function TopSearch() {
                 const sel = selectedIndex === idx;
                 return (
                   <div key={a.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
-                    onClick={() => handleSelect(idx)} onMouseEnter={() => setSelectedIndex(idx)} style={rowStyle(sel)}>
+                    onClick={() => handleSelect(idx)}
+                    onMouseEnter={() => { setSelectedIndex(idx); scheduleHoverPrefetch(() => prefetchAlbum(qc, a.id), 50); }}
+                    onMouseLeave={cancelHoverPrefetch}
+                    onPointerDown={() => { cancelHoverPrefetch(); prefetchAlbum(qc, a.id); }}
+                    style={rowStyle(sel)}>
                     <div style={{ width: 34, height: 34, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
                       <CoverArt url={a.image_url} alt={a.name} size={34} />
                     </div>
@@ -371,7 +378,11 @@ export function TopSearch() {
                 const sel = selectedIndex === idx;
                 return (
                   <div key={ar.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
-                    onClick={() => handleSelect(idx)} onMouseEnter={() => setSelectedIndex(idx)} style={rowStyle(sel)}>
+                    onClick={() => handleSelect(idx)}
+                    onMouseEnter={() => { setSelectedIndex(idx); scheduleHoverPrefetch(() => prefetchArtist(qc, ar.id), 50); }}
+                    onMouseLeave={cancelHoverPrefetch}
+                    onPointerDown={() => { cancelHoverPrefetch(); prefetchArtist(qc, ar.id); }}
+                    style={rowStyle(sel)}>
                     <div style={{ width: 34, height: 34, borderRadius: "50%", overflow: "hidden", flexShrink: 0 }}>
                       <CoverArt url={ar.image_url} alt={ar.name} size={34} />
                     </div>
@@ -389,7 +400,11 @@ export function TopSearch() {
                 const sel = selectedIndex === idx;
                 return (
                   <div key={sh.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
-                    onClick={() => handleSelect(idx)} onMouseEnter={() => setSelectedIndex(idx)} style={rowStyle(sel)}>
+                    onClick={() => handleSelect(idx)}
+                    onMouseEnter={() => { setSelectedIndex(idx); scheduleHoverPrefetch(() => prefetchShow(qc, sh.id), 50); }}
+                    onMouseLeave={cancelHoverPrefetch}
+                    onPointerDown={() => { cancelHoverPrefetch(); prefetchShow(qc, sh.id); }}
+                    style={rowStyle(sel)}>
                     <div style={{ width: 34, height: 34, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
                       <CoverArt url={sh.image_url} alt={sh.name} size={34} />
                     </div>

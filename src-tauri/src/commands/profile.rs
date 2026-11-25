@@ -183,14 +183,20 @@ fn clean_id(id: &str) -> Result<String, AppError> {
 /// the profile page. `id` is a spotify username / user id; omitted means you
 #[tauri::command]
 pub async fn get_user_profile(app: AppHandle, id: Option<String>) -> Result<UserProfile, AppError> {
+    // the page's react-query key, which uses the id exactly as it asked
+    let key = serde_json::json!(["profile", "view", id.as_deref().unwrap_or("me")]);
     let id = match id {
         Some(id) => clean_id(&id)?,
-        None => spclient::username(&app).await?,
+        None => spclient::account_username(&app).await?,
     };
     let pool = app.state::<AppState>().db.clone();
     let uri = format!("spotify:user:{id}");
 
-    cache::cached_json(&pool, &uri, "profile", cache::HOUR, || async {
+    // the stored copy answers at once; one older than an hour is refetched
+    // behind it
+    let handle = app.clone();
+    cache::swr_json(&app, &pool, &uri, "profile", cache::HOUR, key, move || async move {
+        let app = handle;
         let endpoint = format!("/user-profile-view/v3/profile/{id}?playlist_limit=50&artist_limit=20&market=from_token");
         match spclient::get_json_value(&app, &endpoint).await {
             Ok(v) if v.is_object() => {
@@ -214,7 +220,7 @@ pub async fn get_user_profile(app: AppHandle, id: Option<String>) -> Result<User
 async fn follow_list(app: &AppHandle, id: Option<String>, which: &str) -> Result<Vec<ProfileCard>, AppError> {
     let id = match id {
         Some(id) => clean_id(&id)?,
-        None => spclient::username(app).await?,
+        None => spclient::account_username(app).await?,
     };
     let pool = app.state::<AppState>().db.clone();
     let uri = format!("spotify:user:{id}");

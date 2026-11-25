@@ -1,22 +1,31 @@
-import { useState, useRef, useLayoutEffect, useEffect, useMemo, memo } from "react";
+import { useState, useRef, useLayoutEffect, useEffect, useMemo, useCallback, memo } from "react";
 import { coverUrl } from "../lib/coverUrl";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Heart, Music2, ListMusic, Disc3, Users } from "@/lib/icons";
 import { useAuth } from "../hooks/useAuth";
 import { getRecommendations, getAlbum, getArtist, getPlaylist, getTrack } from "../api/spotify";
 import { getLikedSongs } from "../api/library";
 import {
+  cancelHoverPrefetch,
+  prefetchAlbum,
+  prefetchArtist,
+  prefetchForPath,
+  prefetchLibrary,
+  prefetchPlaylist,
+  prefetchTrack,
+  scheduleHoverPrefetch,
+} from "../lib/prefetch";
+import {
+  LIBRARY_KEYS,
   useRecentlyPlayed,
   useTopTracks,
   useTopArtists,
   useNewReleases,
-  useMyPlaylists,
 } from "../hooks/useLibrary";
 import { usePlayerStore } from "../store/player.store";
 import { LIKED_SONGS_URI, useQueueStore } from "../store/queue.store";
-import { useSpeedDialStore, type SpeedDialEntry } from "../store/speedDial.store";
 import { playTrack } from "../api/playback";
 import { transportPlay, transportPause } from "../hooks/usePlayerControls";
 import { Loader } from "../components/ui/Loader";
@@ -29,11 +38,12 @@ import { EvenGrid, EvenGridSkeleton } from "../components/ui/EvenGrid";
 import { CirclePlayButton } from "../components/ui/CirclePlayButton";
 import { SegmentedControl } from "../components/playground/PlaygroundControls";
 import { meshGradient } from "../lib/mesh";
-import { gpuLayer, zTransform, EASE_OUT, PRESS } from "../lib/motion";
+import { gpuLayer, zTransform, EASE_OUT } from "../lib/motion";
 import { useReflowPulse } from "../hooks/useReflowPulse";
 import type { TrackItem, ArtistItem } from "../types/spotify";
 import type { TimeRange } from "../types/library";
 import { HomeFeedShelves, useHomeFeed } from "../components/ui/HomeFeedShelves";
+import type { HomeItem } from "../api/internal";
 import { TILE_PAD, TILE_BLEED } from "../lib/layout";
 import { flipChildren, useRailPin } from "../lib/railFlip";
 import { flushSync } from "react-dom";
@@ -56,7 +66,7 @@ interface QuickItem {
   title: string;
   imageUrl?: string | null;
   to: string;
-  type?: "liked-songs" | "playlist" | "album" | "artist" | "track";
+  type?: "liked-songs" | "playlist" | "album" | "artist" | "track" | "show";
   track?: TrackItem;
   albumId?: string;
   playlistId?: string;
@@ -80,18 +90,17 @@ const QuickActionCard = memo(function QuickActionCard({
   // the click was heard; playback's context is being fetched
   const [pending, setPending] = useState(false);
   const navigate = useNavigate();
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const qc = useQueryClient();
   const isCurrentTrackMatch = usePlayerStore((s) => Boolean(item.track && s.currentTrack?.id === item.track.id));
-  const contextId = useQueueStore((s) => s.contextId);
-
-  const isContextMatch = Boolean(
-    (item.isLikedSongs && (contextId === "liked-songs" || contextId === "liked")) ||
-    (item.playlistId && contextId === item.playlistId) ||
-    (item.albumId && contextId === item.albumId) ||
-    (item.artistId && (contextId === item.artistId || contextId === `artist-top-${item.artistId}`))
+  const isContextMatch = useQueueStore((s) => Boolean(
+    (item.isLikedSongs && (s.contextId === "liked-songs" || s.contextId === "liked")) ||
+    (item.playlistId && s.contextId === item.playlistId) ||
+    (item.albumId && s.contextId === item.albumId) ||
+    (item.artistId && (s.contextId === item.artistId || s.contextId === `artist-top-${item.artistId}`))
+  ));
+  const isThisPlaying = usePlayerStore((s) =>
+    s.isPlaying ? (isContextMatch || Boolean(item.track && s.currentTrack?.id === item.track.id)) : false,
   );
-
-  const isThisPlaying = Boolean(isPlaying && (isContextMatch || isCurrentTrackMatch));
 
   async function handlePlay(e?: React.MouseEvent) {
     if (e) {
@@ -105,7 +114,7 @@ const QuickActionCard = memo(function QuickActionCard({
       return;
     }
 
-    if (isCurrentTrackMatch && !isPlaying) {
+    if (isCurrentTrackMatch && !usePlayerStore.getState().isPlaying) {
       transportPlay();
       return;
     }
@@ -125,7 +134,14 @@ const QuickActionCard = memo(function QuickActionCard({
     // 1. Liked Songs
     if (item.isLikedSongs || item.id === "liked-songs") {
       try {
-        const tracks = await getLikedSongs(100, 0);
+        const cachedFull = qc.getQueryData<TrackItem[]>(LIBRARY_KEYS.liked(-1, 0));
+        const tracks = cachedFull && cachedFull.length > 0
+          ? cachedFull
+          : await qc.ensureQueryData({
+              queryKey: LIBRARY_KEYS.liked(-1, 0),
+              queryFn: () => getLikedSongs(-1, 0),
+              staleTime: 5 * 60_000,
+            });
         if (tracks && tracks.length > 0) {
           const start = playContext(tracks, 0, "liked-songs", LIKED_SONGS_URI);
           if (start) {
@@ -147,7 +163,11 @@ const QuickActionCard = memo(function QuickActionCard({
       let target = item.track;
       if (!target && trackId) {
         try {
-          const detail = await getTrack(trackId);
+          const detail = await qc.ensureQueryData({
+            queryKey: ["track", trackId],
+            queryFn: () => getTrack(trackId),
+            staleTime: 300_000,
+          });
           if (detail) {
             target = {
               id: detail.id,
@@ -177,7 +197,11 @@ const QuickActionCard = memo(function QuickActionCard({
     // 3. Playlist
     if (item.playlistId) {
       try {
-        const pl = await getPlaylist(item.playlistId);
+        const pl = await qc.ensureQueryData({
+          queryKey: ["playlist", item.playlistId],
+          queryFn: () => getPlaylist(item.playlistId!),
+          staleTime: 120_000,
+        });
         const tracks = pl?.tracks ?? [];
         if (tracks.length > 0) {
           const start = playContext(tracks, 0, item.playlistId, `spotify:playlist:${item.playlistId}`);
@@ -197,7 +221,11 @@ const QuickActionCard = memo(function QuickActionCard({
     // 4. Album
     if (item.albumId) {
       try {
-        const full = await getAlbum(item.albumId);
+        const full = await qc.ensureQueryData({
+          queryKey: ["album", item.albumId],
+          queryFn: () => getAlbum(item.albumId!),
+          staleTime: 300_000,
+        });
         const tracks = full?.tracks ?? [];
         if (tracks.length > 0) {
           const start = playContext(tracks, 0, item.albumId, `spotify:album:${item.albumId}`);
@@ -217,7 +245,11 @@ const QuickActionCard = memo(function QuickActionCard({
     // 5. Artist
     if (item.artistId) {
       try {
-        const artist = await getArtist(item.artistId);
+        const artist = await qc.ensureQueryData({
+          queryKey: ["artist", item.artistId],
+          queryFn: () => getArtist(item.artistId!),
+          staleTime: 300_000,
+        });
         const tracks = artist?.top_tracks ?? [];
         if (tracks.length > 0) {
           const start = playContext(tracks, 0, item.artistId, `spotify:artist:${item.artistId}`);
@@ -242,24 +274,33 @@ const QuickActionCard = memo(function QuickActionCard({
   tab straight to the play button, and focusing it lights the card up the same
   way hovering does. */
   const lit = hover || focused;
+  function warmTarget() {
+    if (item.playlistId) prefetchPlaylist(qc, item.playlistId);
+    else if (item.albumId) prefetchAlbum(qc, item.albumId);
+    else if (item.artistId) prefetchArtist(qc, item.artistId);
+    else if (item.isLikedSongs || item.id === "liked-songs") prefetchLibrary(qc, "songs");
+    else if (item.track) prefetchTrack(qc, item.track.id);
+    else prefetchForPath(qc, item.to);
+  }
+
   return (
     <motion.div
       layout="position"
       transformTemplate={zTransform}
       initial={animateIn ? { opacity: 0, y: 10 } : false}
       animate={{ opacity: 1, y: 0 }}
-      whileTap={PRESS}
+      className="fx-press"
       transition={{
         opacity: { duration: 0.28, delay: index * 0.035, ease: EASE_OUT },
         y: { duration: 0.28, delay: index * 0.035, ease: EASE_OUT },
-        scale: { duration: 0.12, ease: EASE_OUT },
         layout: REFLOW,
       }}
       onClick={() => handlePlay()}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onFocus={() => setFocused(true)}
+      onMouseEnter={() => { setHover(true); scheduleHoverPrefetch(warmTarget); }}
+      onMouseLeave={() => { setHover(false); cancelHoverPrefetch(); }}
+      onFocus={() => { setFocused(true); warmTarget(); }}
       onBlur={() => setFocused(false)}
+      onPointerDown={() => { cancelHoverPrefetch(); warmTarget(); }}
       aria-busy={pending || undefined}
       style={{
         display: "flex",
@@ -273,7 +314,7 @@ const QuickActionCard = memo(function QuickActionCard({
           ? "rgba(255, 255, 255, 0.09)"
           : "rgba(255, 255, 255, 0.045)",
         border: "1px solid rgba(255, 255, 255, 0.07)",
-        transition: "background 0.16s ease, box-shadow 0.16s ease",
+        transition: "background 0.16s ease, box-shadow 0.16s ease, scale var(--press-dur) var(--ease-out)",
         boxShadow: lit ? "0 10px 24px rgba(0,0,0,0.42)" : "0 2px 6px rgba(0,0,0,0.18)",
         userSelect: "none",
         minWidth: 0,
@@ -389,23 +430,36 @@ const QuickActionCard = memo(function QuickActionCard({
 });
 
 // speed dial geometry: a card stays at least this wide before the grid drops a
-// column, and the grid shows whole rows of at least 8 cards
+// column. 4 columns at most, like spotify's own grid
 const QUICK_MIN_CARD = 250;
 const QUICK_GAP = 12;
-const QUICK_MAX_COLS = 5;
+const QUICK_MAX_COLS = 4;
 const colsFor = (w: number) =>
   Math.max(1, Math.min(QUICK_MAX_COLS, Math.floor((w + QUICK_GAP) / (QUICK_MIN_CARD + QUICK_GAP))));
-// 5 cols -> 10, 4 -> 8, 3 -> 9, 2 -> 8, 1 -> 6
-const countFor = (cols: number) => (cols === 1 ? 6 : cols * Math.ceil(8 / cols));
 
-// diminishing returns: a context played 30 times shouldn't drown out everything
-const playWeight = (plays: number) => 8 * Math.log2(1 + plays);
-const DAY = 86_400_000;
-const recencyBonus = (at: number) => {
-  if (!at) return 0;
-  const age = Date.now() - at;
-  return age < DAY ? 10 : age < 7 * DAY ? 5 : age < 30 * DAY ? 2 : 0;
-};
+// one of spotify's shortcuts as a card. kinds without a page open the nearest one
+function shortcutItem(it: HomeItem): QuickItem | null {
+  switch (it.kind) {
+    case "collection":
+      return { id: "liked-songs", type: "liked-songs", title: it.name, to: "/library?tab=songs", isLikedSongs: true };
+    case "playlist":
+      return { id: `playlist-${it.id}`, type: "playlist", title: it.name, imageUrl: it.image_url, to: `/playlist/${it.id}`, playlistId: it.id };
+    case "album":
+      return { id: `album-${it.id}`, type: "album", title: it.name, imageUrl: it.image_url, to: `/album/${it.id}`, albumId: it.id };
+    case "artist":
+      return { id: `artist-${it.id}`, type: "artist", title: it.name, imageUrl: it.image_url, to: `/artist/${it.id}`, artistId: it.id };
+    case "track":
+      return { id: `track-${it.id}`, type: "track", title: it.name, imageUrl: it.image_url, to: "/library?tab=songs" };
+    case "show":
+      return { id: `show-${it.id}`, type: "show", title: it.name, imageUrl: it.image_url, to: `/show/${it.id}` };
+    case "episode":
+      return { id: `episode-${it.id}`, type: "show", title: it.name, imageUrl: it.image_url, to: it.show_id ? `/show/${it.show_id}` : "/library?tab=podcasts" };
+    case "your-episodes":
+      return { id: "your-episodes", type: "show", title: it.name, imageUrl: it.image_url, to: "/library?tab=podcasts" };
+    default:
+      return null;
+  }
+}
 
 function QuickActionsShelf() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -458,130 +512,21 @@ function QuickActionsShelf() {
     quickShelfHasEntered = true;
   }, []);
 
-  const speedDialEntries = useSpeedDialStore((s) => s.entries);
-  const { data: playlists = [] } = useMyPlaylists();
   const { data: recentTracks = [] } = useRecentlyPlayed();
-  const { data: topTracks = [] } = useTopTracks("short_term");
-  const { data: topArtists = [] } = useTopArtists("short_term");
   const { data: homeFeed } = useHomeFeed();
-  const count = countFor(cols);
 
-  /* the dial is for places to go back to - playlists, albums, artists, liked
-  songs - not loose songs. sources, strongest first:
-    - spotify's own shortcuts (its server-side speed dial)
-    - what was played in this app, weighted by plays and recency
-    - the user's playlists, made-for-you mixes, top artists, and albums that
-      hold several of their top tracks
-  single tracks only fill in when there aren't enough contexts. */
-  const ranked = useMemo<QuickItem[]>(() => {
-    const inApp = new Map<string, SpeedDialEntry>();
-    for (const e of speedDialEntries) inApp.set(e.id, e);
-
-    const scores = new Map<string, { item: QuickItem; score: number; at: number }>();
-    function add(item: QuickItem, base: number) {
-      const e = inApp.get(item.id);
-      const at = e?.lastPlayedAt || e?.timestamp || 0;
-      const score = base + (e ? playWeight(e.playCount || 0) + recencyBonus(at) : 0);
-      const prev = scores.get(item.id);
-      if (!prev) {
-        scores.set(item.id, { item: { ...item, imageUrl: item.imageUrl || e?.imageUrl }, score, at });
-      } else {
-        // several sources agreeing is itself a signal
-        prev.score = Math.max(prev.score, score) + 2;
-        if (!prev.item.imageUrl && item.imageUrl) prev.item = { ...prev.item, imageUrl: item.imageUrl };
-      }
-    }
-    const playlistItem = (id: string, title: string, imageUrl?: string | null): QuickItem => ({
-      id: `playlist-${id}`, type: "playlist", title, imageUrl, to: `/playlist/${id}`, playlistId: id,
-    });
-    const albumItem = (id: string, title: string, imageUrl?: string | null): QuickItem => ({
-      id: `album-${id}`, type: "album", title, imageUrl, to: `/album/${id}`, albumId: id,
-    });
-    const artistItem = (id: string, title: string, imageUrl?: string | null): QuickItem => ({
-      id: `artist-${id}`, type: "artist", title, imageUrl, to: `/artist/${id}`, artistId: id,
-    });
-    const liked: QuickItem = {
-      id: "liked-songs", title: "Liked Songs", to: "/library?tab=songs", isLikedSongs: true, type: "liked-songs",
-    };
-
-    // liked songs is always a strong pick
-    add(liked, 22);
-
-    // spotify's shortcuts, in its order
-    (homeFeed?.shortcuts ?? []).forEach((it, i) => {
-      const base = 40 - i * 2;
-      if (it.kind === "collection") add(liked, base);
-      else if (it.kind === "playlist") add(playlistItem(it.id, it.name, it.image_url), base);
-      else if (it.kind === "album") add(albumItem(it.id, it.name, it.image_url), base);
-      else if (it.kind === "artist") add(artistItem(it.id, it.name, it.image_url), base);
-    });
-
-    // contexts played in-app. loose tracks roll up into their album, which
-    // only shows when two or more of its songs were played
-    const albumRollup = new Map<string, { title: string; imageUrl?: string | null; tracks: Set<string>; weight: number }>();
-    const rollup = (t: TrackItem, weight: number) => {
-      const a = t.album;
-      if (!a?.id) return;
-      const r = albumRollup.get(a.id) ?? { title: a.name, imageUrl: a.image_url, tracks: new Set<string>(), weight: 0 };
-      r.tracks.add(t.id);
-      r.weight += weight;
-      albumRollup.set(a.id, r);
-    };
-    for (const e of speedDialEntries) {
-      if (e.type === "track") {
-        if (e.track) rollup(e.track, playWeight(e.playCount || 0) / 2);
-        continue;
-      }
-      if (e.id === "liked-songs") continue;
-      add({ id: e.id, type: e.type, title: e.title, imageUrl: e.imageUrl, to: e.to,
-        albumId: e.albumId, playlistId: e.playlistId, artistId: e.artistId }, 0);
-    }
-    topTracks.slice(0, 30).forEach((t, i) => rollup(t, Math.max(2, 10 - i / 2)));
-    for (const [id, r] of albumRollup) {
-      if (r.tracks.size >= 2) add(albumItem(id, r.title, r.imageUrl), Math.min(30, r.weight * 0.8));
-    }
-
-    // the user's playlists (library order: most recently touched first)
-    playlists.slice(0, 10).forEach((pl, i) => add(playlistItem(pl.id, pl.name, pl.image_url), 16 - i));
-
-    // made-for-you mixes from spotify's home shelves (daylist, daily mixes...)
-    (homeFeed?.sections ?? []).slice(0, 4).forEach((sec, si) => {
-      sec.items.filter((it) => it.kind === "playlist").slice(0, 2)
-        .forEach((it, i) => add(playlistItem(it.id, it.name, it.image_url), 13 - si * 2 - i));
-    });
-
-    // top artists
-    topArtists.slice(0, 5).forEach((a, i) => add(artistItem(a.id, a.name, a.image_url), 14 - i * 2));
-
-    // filler only: single top tracks
-    topTracks.slice(0, 10).forEach((t, i) =>
-      add({ id: `track-${t.id}`, type: "track", title: t.name, imageUrl: t.album?.image_url,
-        to: t.album?.id ? `/album/${t.album.id}` : "/library?tab=songs", track: t, albumId: t.album?.id }, 1 - i * 0.05));
-
-    const sorted = [...scores.values()].sort((a, b) => b.score - a.score || b.at - a.at);
-
-    // never a track card next to the album card it belongs to
-    const result: QuickItem[] = [];
-    const albumCards = new Set<string>();
-    for (const { item } of sorted) {
-      if (result.length >= QUICK_MAX_COLS * 2) break;
-      const albumOf = item.type === "track" ? item.track?.album?.id || item.albumId : undefined;
-      if (albumOf && albumCards.has(albumOf)) continue;
-      if (item.type === "album" && item.albumId) {
-        if (result.some((r) => r.type === "track" && (r.track?.album?.id || r.albumId) === item.albumId)) continue;
-        albumCards.add(item.albumId);
-      }
-      result.push(item);
-    }
-    return result;
-  }, [speedDialEntries, playlists, topTracks, topArtists, homeFeed]);
-
-  // whole rows only, once there are enough to fill one
+  /* only spotify's shortcuts, in spotify's order. nothing of our own is ever
+  added; if spotify sends none, the grid stays empty. when they don't fit the
+  width, the tail is cut: at most 3 rows at any width, and only whole rows,
+  so a short last row is dropped rather than padded. */
+  const all = useMemo(
+    () => (homeFeed?.shortcuts ?? []).map(shortcutItem).filter((it): it is QuickItem => it !== null),
+    [homeFeed],
+  );
   const items = useMemo(() => {
-    const n = Math.min(count, ranked.length);
-    const whole = n >= cols ? n - (n % cols) : n;
-    return ranked.slice(0, whole);
-  }, [ranked, count, cols]);
+    const n = Math.min(all.length, cols * 3);
+    return all.slice(0, n >= cols ? n - (n % cols) : n);
+  }, [all, cols]);
 
   return (
     <motion.section
@@ -621,11 +566,17 @@ function TileSkeleton() {
 
 // --- recommendation / track tile ---
 
-function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
+const RecTile = memo(function RecTile({
+  track,
+  index,
+  onPlayIndex,
+}: {
+  track: TrackItem;
+  index: number;
+  onPlayIndex: (index: number) => void;
+}) {
   const [hover, setHover] = useState(false);
-  const currentTrack = usePlayerStore((s) => s.currentTrack);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const isThisTrackPlaying = Boolean(currentTrack?.id === track.id && isPlaying);
+  const isThisTrackPlaying = usePlayerStore((s) => Boolean(s.isPlaying && s.currentTrack?.id === track.id));
   const art = track.album?.image_url;
 
   return (
@@ -633,10 +584,10 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
       layout="position"
       transformTemplate={zTransform}
       transition={{ layout: REFLOW }}
-      onClick={onPlay}
+      onClick={() => onPlayIndex(index)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      whileTap={{ scale: 0.97 }}
+      className="fx-press-97"
       style={{
         width: "100%",
         overflow: "hidden",
@@ -651,7 +602,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
         background: hover ? "var(--color-surface-hover, rgba(255,255,255,0.06))" : "transparent",
         cursor: "pointer",
         textAlign: "left",
-        transition: "background 0.18s ease",
+        transition: "background 0.18s ease, scale var(--press-dur) var(--ease-out)",
         boxSizing: "border-box",
         ...gpuLayer,
       }}
@@ -687,7 +638,7 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
             if (isThisTrackPlaying) {
               transportPause();
             } else {
-              onPlay();
+              onPlayIndex(index);
             }
           }}
           size={40}
@@ -737,17 +688,17 @@ function RecTile({ track, onPlay }: { track: TrackItem; onPlay: () => void }) {
       </span>
     </motion.button>
   );
-}
+});
 
 // row of play-on-click track tiles that all share one playback context
 function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string }) {
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext     = useQueueStore((s) => s.playContext);
 
-  function play(i: number) {
+  const play = useCallback((i: number) => {
     const start = playContext(tracks, i, context);
     if (start) { setCurrentTrack(start); playTrack(start.id).catch(() => {}); }
-  }
+  }, [tracks, context, playContext, setCurrentTrack]);
 
   return (
     <EvenGrid
@@ -758,7 +709,7 @@ function TrackTiles({ tracks, context }: { tracks: TrackItem[]; context: string 
       maxRows={2}
       getKey={(t) => t.id}
       renderItem={(t, i) => (
-        <RecTile track={t} onPlay={() => play(i)} />
+        <RecTile track={t} index={i} onPlayIndex={play} />
       )}
     />
   );
@@ -779,10 +730,10 @@ function MadeForYou() {
   });
   const carousel = useCarousel([recs.length]);
 
-  function play(i: number) {
+  const play = useCallback((i: number) => {
     const start = playContext(recs, i, "made-for-you");
     if (start) { setCurrentTrack(start); playTrack(start.id).catch(() => {}); }
-  }
+  }, [recs, playContext, setCurrentTrack]);
 
   return (
     <motion.section layout="position" transformTemplate={zTransform} transition={{ layout: REFLOW }} aria-labelledby="home-top-picks">
@@ -801,7 +752,7 @@ function MadeForYou() {
           getKey={tileKey}
           itemWidth={TILE_COVER}
           itemHeight={TILE_H}
-          renderItem={(t, i) => <RecTile track={t} onPlay={() => play(i)} />}
+          renderItem={(t, i) => <RecTile track={t} index={i} onPlayIndex={play} />}
         />
       )}
     </motion.section>
@@ -812,13 +763,13 @@ function RecentlyPlayed() {
   const { data = [], isLoading } = useRecentlyPlayed();
   const setCurrentTrack = usePlayerStore((s) => s.setCurrentTrack);
   const playContext = useQueueStore((s) => s.playContext);
-  const shown = data.slice(0, 18);
+  const shown = useMemo(() => data.slice(0, 18), [data]);
   const carousel = useCarousel([shown.length]);
 
-  function play(i: number) {
+  const play = useCallback((i: number) => {
     const start = playContext(data, i, "recently-played");
     if (start) { setCurrentTrack(start); playTrack(start.id).catch(() => {}); }
-  }
+  }, [data, playContext, setCurrentTrack]);
 
   if (!isLoading && data.length === 0) return null;
   return (
@@ -836,7 +787,7 @@ function RecentlyPlayed() {
           getKey={tileKey}
           itemWidth={TILE_COVER}
           itemHeight={TILE_H}
-          renderItem={(t, i) => <RecTile track={t} onPlay={() => play(i)} />}
+          renderItem={(t, i) => <RecTile track={t} index={i} onPlayIndex={play} />}
         />
       )}
     </motion.section>
@@ -911,6 +862,9 @@ function ArtistTiles({ artists }: { artists: ArtistItem[] }) {
 
 function TopTracks() {
   const [range, setRange] = useState<TimeRange>("medium_term");
+  // Home is kept alive between visits (Layout's HomeStage); each visit still
+  // opens on the default range, as it did when Home was mounted fresh
+  useEffect(() => () => setRange("medium_term"), []);
   const { data = [], isLoading, isPlaceholderData, isError, refetch } = useTopTracks(range);
   const probe = useTopTracks("medium_term");
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;
@@ -939,6 +893,9 @@ function TopTracks() {
 
 function TopArtists() {
   const [range, setRange] = useState<TimeRange>("medium_term");
+  // Home is kept alive between visits (Layout's HomeStage); each visit still
+  // opens on the default range, as it did when Home was mounted fresh
+  useEffect(() => () => setRange("medium_term"), []);
   const { data = [], isLoading, isPlaceholderData, isError, refetch } = useTopArtists(range);
   const probe = useTopArtists("medium_term");
   if (!probe.isLoading && (probe.data?.length ?? 0) === 0) return null;

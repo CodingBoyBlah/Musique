@@ -1,7 +1,8 @@
 import { memo } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { cancelHoverPrefetch, prefetchForPath, prefetchProfile, scheduleHoverPrefetch } from "../../lib/prefetch";
 import { X, Users, RefreshCw, ListMusic, Disc3, User, Play } from "@/lib/icons";
 import { getFriendActivity, type FriendActivity } from "../../api/social";
 import { usePlayerStore } from "../../store/player.store";
@@ -70,6 +71,7 @@ const Label = ({ children }: { children: React.ReactNode }) => (
 const FriendRow = memo(function FriendRow({ f, now, live }: { f: FriendActivity; now: number; live: boolean }) {
   const track = asTrack(f);
   const ctx = contextOf(f);
+  const qc = useQueryClient();
 
   function play() {
     if (!track) return;
@@ -82,7 +84,15 @@ const FriendRow = memo(function FriendRow({ f, now, live }: { f: FriendActivity;
 
   return (
     <div className="q-row fr-row" style={{ display: "flex", gap: 10, padding: "8px 10px", margin: "0 4px", alignItems: "center", borderRadius: 10 }}>
-      <Link to={`/user/${f.user_id}`} aria-label={`${f.name}'s profile`} style={{ position: "relative", flexShrink: 0, lineHeight: 0 }}>
+      <Link
+        to={`/user/${f.user_id}`}
+        aria-label={`${f.name}'s profile`}
+        onMouseEnter={() => scheduleHoverPrefetch(() => prefetchProfile(qc, f.user_id))}
+        onMouseLeave={cancelHoverPrefetch}
+        onFocus={() => prefetchProfile(qc, f.user_id)}
+        onPointerDown={() => { cancelHoverPrefetch(); prefetchProfile(qc, f.user_id); }}
+        style={{ position: "relative", flexShrink: 0, lineHeight: 0 }}
+      >
         {f.image_url ? (
           <CoverArt url={f.image_url} alt="" size={40} rounded style={{ width: 40, height: 40 }} />
         ) : (
@@ -99,7 +109,14 @@ const FriendRow = memo(function FriendRow({ f, now, live }: { f: FriendActivity;
 
       <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-          <Link to={`/user/${f.user_id}`} style={{ fontSize: 13, fontWeight: 650, color: "var(--color-text-hi)", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <Link
+            to={`/user/${f.user_id}`}
+            onMouseEnter={() => scheduleHoverPrefetch(() => prefetchProfile(qc, f.user_id))}
+            onMouseLeave={cancelHoverPrefetch}
+            onFocus={() => prefetchProfile(qc, f.user_id)}
+            onPointerDown={() => { cancelHoverPrefetch(); prefetchProfile(qc, f.user_id); }}
+            style={{ fontSize: 13, fontWeight: 650, color: "var(--color-text-hi)", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          >
             {f.name}
           </Link>
           {live ? <Bars /> : (
@@ -114,7 +131,15 @@ const FriendRow = memo(function FriendRow({ f, now, live }: { f: FriendActivity;
         )}
         {f.context_name && (
           ctx ? (
-            <Link to={ctx.to} className="fr-ctx" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, color: "var(--color-text-dim)", textDecoration: "none", minWidth: 0 }}>
+            <Link
+              to={ctx.to}
+              onMouseEnter={() => scheduleHoverPrefetch(() => prefetchForPath(qc, ctx.to))}
+              onMouseLeave={cancelHoverPrefetch}
+              onFocus={() => prefetchForPath(qc, ctx.to)}
+              onPointerDown={() => { cancelHoverPrefetch(); prefetchForPath(qc, ctx.to); }}
+              className="fr-ctx"
+              style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, color: "var(--color-text-dim)", textDecoration: "none", minWidth: 0 }}
+            >
               <ctx.Icon size={11} style={{ flexShrink: 0 }} />
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.context_name}</span>
             </Link>

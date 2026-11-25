@@ -68,28 +68,19 @@ impl Resampler {
         let frames = self.input.len() / self.channels;
         let expected = samples.len() * self.up / self.down + self.channels;
         let mut out = Vec::with_capacity(expected);
+        if self.channels == 2 {
+            self.stereo(frames, &mut out);
+        }
         while self.next + half < frames {
             let taps = &self.taps[self.phase * TAPS..(self.phase + 1) * TAPS];
             let start = (self.next + 1 - half) * self.channels;
-            if self.channels == 2 {
-                // Stereo is the playback path. Read each coefficient and frame
-                // once, retaining the same addition order for each channel.
-                let input = &self.input[start..start + TAPS * 2];
-                let (mut left, mut right) = (-0.0f32, -0.0f32);
-                for (frame, &tap) in input.chunks_exact(2).zip(taps) {
-                    left += frame[0] * tap;
-                    right += frame[1] * tap;
-                }
-                out.extend_from_slice(&[left, right]);
-            } else {
-                for channel in 0..self.channels {
-                    let sum: f32 = taps
-                        .iter()
-                        .enumerate()
-                        .map(|(k, tap)| self.input[start + k * self.channels + channel] * tap)
-                        .sum();
-                    out.push(sum);
-                }
+            for channel in 0..self.channels {
+                let sum: f32 = taps
+                    .iter()
+                    .enumerate()
+                    .map(|(k, tap)| self.input[start + k * self.channels + channel] * tap)
+                    .sum();
+                out.push(sum);
             }
             let position = self.phase + self.down;
             self.next += position / self.up;
@@ -100,6 +91,62 @@ impl Resampler {
         self.input.drain(..keep_from * self.channels);
         self.next -= keep_from;
         out
+    }
+
+    /// The stereo path: the one music plays through. Four output frames are
+    /// worked on at once, so the CPU has eight independent sums in flight
+    /// instead of two waiting on each other. Each sum still adds its terms
+    /// one by one in the same order, so every sample comes out bit for bit
+    /// as it did when frames were made one at a time.
+    fn stereo(&mut self, frames: usize, out: &mut Vec<f32>) {
+        const LANES: usize = 4;
+        let half = TAPS / 2;
+        loop {
+            // where each of the next four outputs sits, while there is input for it
+            let mut at = [(0usize, 0usize); LANES];
+            let (mut next, mut phase) = (self.next, self.phase);
+            let mut lanes = 0;
+            while lanes < LANES && next + half < frames {
+                at[lanes] = ((next + 1 - half) * 2, phase * TAPS);
+                let position = phase + self.down;
+                next += position / self.up;
+                phase = position % self.up;
+                lanes += 1;
+            }
+            if lanes < LANES {
+                // fewer than four left: one at a time, as before
+                for &(start, tap) in &at[..lanes] {
+                    let input: &[f32; TAPS * 2] = self.input[start..start + TAPS * 2].try_into().unwrap();
+                    let taps: &[f32; TAPS] = self.taps[tap..tap + TAPS].try_into().unwrap();
+                    let (mut left, mut right) = (-0.0f32, -0.0f32);
+                    for k in 0..TAPS {
+                        left += input[2 * k] * taps[k];
+                        right += input[2 * k + 1] * taps[k];
+                    }
+                    out.extend_from_slice(&[left, right]);
+                }
+                self.next = next;
+                self.phase = phase;
+                return;
+            }
+            let input = at.map(|(start, _)| -> &[f32; TAPS * 2] {
+                self.input[start..start + TAPS * 2].try_into().unwrap()
+            });
+            let taps = at.map(|(_, tap)| -> &[f32; TAPS] { self.taps[tap..tap + TAPS].try_into().unwrap() });
+            let mut left = [-0.0f32; LANES];
+            let mut right = [-0.0f32; LANES];
+            for k in 0..TAPS {
+                for lane in 0..LANES {
+                    left[lane] += input[lane][2 * k] * taps[lane][k];
+                    right[lane] += input[lane][2 * k + 1] * taps[lane][k];
+                }
+            }
+            for lane in 0..LANES {
+                out.extend_from_slice(&[left[lane], right[lane]]);
+            }
+            self.next = next;
+            self.phase = phase;
+        }
     }
 }
 

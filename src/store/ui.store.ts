@@ -26,8 +26,8 @@ interface UIState {
   setMacSimulated: (v: boolean) => void;
 
   // the immersive overlay has finished fading in and fully covers the shell.
-  // set by Immersive from its own onAnimationComplete; Layout hides (and
-  // inerts) the shell underneath on it, instead of guessing with a timer.
+  // set by Immersive from its own onAnimationComplete; Layout takes the shell
+  // out of rendering on it, instead of guessing with a timer.
   immersiveCovered: boolean;
   setImmersiveCovered: (v: boolean) => void;
 }

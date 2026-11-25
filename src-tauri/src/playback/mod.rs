@@ -1427,15 +1427,15 @@ pub async fn create_inner(
                 PlayerEvent::Playing { .. } => {
                     is_playing_atomic_clone.store(true, Ordering::Relaxed);
                     is_ended_clone.store(false, Ordering::Relaxed);
-                    let _ = media_tx.try_send(
+                    let _ = (!crate::soloist::owns_output()).then(|| media_tx.try_send(
                         crate::media_controls::MediaMsg::Playing { position_ms: position.unwrap_or(0) as u64 }
-                    );
+                    ));
                 }
                 PlayerEvent::Paused { .. } => {
                     is_playing_atomic_clone.store(false, Ordering::Relaxed);
-                    let _ = media_tx.try_send(
+                    let _ = (!crate::soloist::owns_output()).then(|| media_tx.try_send(
                         crate::media_controls::MediaMsg::Paused { position_ms: position.unwrap_or(0) as u64 }
-                    );
+                    ));
                 }
                 PlayerEvent::Stopped { .. }
                 | PlayerEvent::EndOfTrack { .. }
@@ -1443,7 +1443,7 @@ pub async fn create_inner(
                 | PlayerEvent::Unavailable { .. } => {
                     is_playing_atomic_clone.store(false, Ordering::Relaxed);
                     is_ended_clone.store(true, Ordering::Relaxed);
-                    let _ = media_tx.try_send(crate::media_controls::MediaMsg::Stopped);
+                    let _ = (!crate::soloist::owns_output()).then(|| media_tx.try_send(crate::media_controls::MediaMsg::Stopped));
                 }
                 _ => {}
             }
@@ -1491,6 +1491,12 @@ pub async fn create_inner(
                 _ => None,
             };
 
+            // while Soloist plays, this player is not what is heard: a
+            // Spotify Connect hand-over to Soloist stops it, and that must
+            // not stop the interface
+            if crate::soloist::owns_output() {
+                continue;
+            }
             if let Some(payload) = msg {
                 if let Err(e) = event_app.emit("player:event", payload) {
                     eprintln!("[playback] emit failed: {e}");

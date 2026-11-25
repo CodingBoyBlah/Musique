@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, lazy, Suspense } from "react";
+import { useCallback, useEffect, useRef, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { MotionConfig } from "framer-motion";
 import Layout from "./components/layout/Layout";
@@ -10,18 +10,45 @@ import { UpdatePrompt } from "./components/UpdatePrompt";
 and keeps the heavy stuff (kuromoji/romanize via lyrics, charts, etc) off the
 critical path. Home stays eager since it's the landing rou lazying it
 ntoe to self: dont just add a flash */
-import Home from "./pages/Home";
-const Settings = lazy(() => import("./pages/Settings"));
-const Search = lazy(() => import("./pages/Search"));
-const Library = lazy(() => import("./pages/Library"));
-const Playlists = lazy(() => import("./pages/Playlists"));
-const PlaylistPage = lazy(() => import("./pages/PlaylistPage"));
-const ArtistPage = lazy(() => import("./pages/ArtistPage"));
-const AlbumPage = lazy(() => import("./pages/AlbumPage"));
-const Playground = lazy(() => import("./pages/Playground"));
-const ProfilePage = lazy(() => import("./pages/ProfilePage"));
-const ShowPage = lazy(() => import("./pages/ShowPage"));
-const StatsPage = lazy(() => import("./pages/StatsPage"));
+import { registerRoutePreloaders, lazyRoute } from "./lib/prefetch";
+
+const loadSettings = () => import("./pages/Settings");
+const loadSearch = () => import("./pages/Search");
+const loadLibrary = () => import("./pages/Library");
+const loadPlaylists = () => import("./pages/Playlists");
+const loadPlaylistPage = () => import("./pages/PlaylistPage");
+const loadArtistPage = () => import("./pages/ArtistPage");
+const loadAlbumPage = () => import("./pages/AlbumPage");
+const loadPlayground = () => import("./pages/Playground");
+const loadProfilePage = () => import("./pages/ProfilePage");
+const loadShowPage = () => import("./pages/ShowPage");
+const loadStatsPage = () => import("./pages/StatsPage");
+
+registerRoutePreloaders({
+  settings: loadSettings,
+  search: loadSearch,
+  library: loadLibrary,
+  playlists: loadPlaylists,
+  playlist: loadPlaylistPage,
+  artist: loadArtistPage,
+  album: loadAlbumPage,
+  playground: loadPlayground,
+  profile: loadProfilePage,
+  show: loadShowPage,
+  stats: loadStatsPage,
+});
+
+const Settings = lazyRoute("settings", loadSettings);
+const Search = lazyRoute("search", loadSearch);
+const Library = lazyRoute("library", loadLibrary);
+const Playlists = lazyRoute("playlists", loadPlaylists);
+const PlaylistPage = lazyRoute("playlist", loadPlaylistPage);
+const ArtistPage = lazyRoute("artist", loadArtistPage);
+const AlbumPage = lazyRoute("album", loadAlbumPage);
+const Playground = lazyRoute("playground", loadPlayground);
+const ProfilePage = lazyRoute("profile", loadProfilePage);
+const ShowPage = lazyRoute("show", loadShowPage);
+const StatsPage = lazyRoute("stats", loadStatsPage);
 import { getCredentials, validateCredentials } from "./api/credentials";
 import { useAuth } from "./hooks/useAuth";
 import { useOwnKeysNudge } from "./hooks/useOwnKeysNudge";
@@ -415,6 +442,16 @@ Home recs so they're cached before the user gets there
     ]);
   }, [invalidateLibrary]);
 
+  // a page the backend answered from its stored copy (home feed, album,
+  // artist, show, profile) gets the refetched copy here, under the page's own
+  // query key, when it comes back different
+  useEffect(() => {
+    return cleanupAsyncListeners([
+      listen<{ key: unknown[]; data: unknown }>("query:fresh", (e) =>
+        queryClient.setQueryData(e.payload.key, e.payload.data)),
+    ]);
+  }, [queryClient]);
+
   // os media control events (tray menu for now)
   useEffect(() => {
     return cleanupAsyncListeners([
@@ -435,13 +472,14 @@ export default function App() {
     // reducedMotion="user": every framer transform animation in the app honours
     // the OS "reduce motion" setting, keeping only opacity/colour changes.
     <MotionConfig reducedMotion="user">
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true }}>
       <AppInit />
       <ThemeEngine />
       <UpdatePrompt />
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<Home />} />
+          {/* Home renders in Layout, kept alive between visits (HomeStage) */}
+          <Route index element={null} />
           {/* suspense fallback covers the quick lazy chunk fetch on first
               visit to a route --- later visits are instant (chunks cached) */}
           <Route

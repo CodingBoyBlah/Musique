@@ -7,7 +7,7 @@ import { useAlbum } from "../hooks/useAlbum";
 import { useArtist, useArtists } from "../hooks/useArtist";
 import { ArtistAvatarStack } from "../components/ui/ArtistAvatarStack";
 import { AlbumCard } from "../components/ui/AlbumCard";
-import { TrackRow } from "../components/ui/TrackRow";
+import { TrackRow, useTrackRowActions } from "../components/ui/TrackRow";
 import { PlayActions } from "../components/ui/PlayActions";
 import { SaveAlbumButton } from "../components/ui/SaveAlbumButton";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -24,6 +24,7 @@ import { useQueueStore } from "../store/queue.store";
 import { usePinsStore } from "../store/pins.store";
 import { useSpeedDialStore } from "../store/speedDial.store";
 import { useSavedTrackIds, useToggleLike } from "../hooks/useLibrary";
+import { useStagedList } from "../hooks/useStagedList";
 import { useContextMenu } from "../components/ui/ContextMenu";
 import { errMsg } from "../lib/err";
 import { useReflowPulse } from "../hooks/useReflowPulse";
@@ -53,22 +54,32 @@ export default function AlbumPage() {
   // shared through the cache, so it isn't fetched twice)
   const artistIds = useMemo(() => (data?.artists ?? []).map((a) => a.id).filter(Boolean), [data?.artists]);
   const artistQueries = useArtists(artistIds);
-  const avatarArtists = (data?.artists ?? []).filter((a) => a.id).map((a, i) => {
-    const q = artistQueries[i];
-    return {
-      id: a.id,
-      name: a.name,
-      // a failed lookup counts as "no portrait" so it shows the initial, not a blank disc forever
-      image_url: q?.data ? q.data.image_url ?? null : q?.isError ? null : undefined,
-    };
-  });
+  const avatarArtists = useMemo(
+    () =>
+      (data?.artists ?? []).filter((a) => a.id).map((a, i) => {
+        const q = artistQueries[i];
+        return {
+          id: a.id,
+          name: a.name,
+          // a failed lookup counts as "no portrait" so it shows the initial, not a blank disc forever
+          image_url: q?.data ? q.data.image_url ?? null : q?.isError ? null : undefined,
+        };
+      }),
+    [data?.artists, artistQueries],
+  );
 
   const tracks = data?.tracks ?? [];
+  const totalMin = useMemo(
+    () => Math.round(tracks.reduce((sum, t) => sum + (t.duration_ms || 0), 0) / 60000),
+    [tracks],
+  );
   const trackIds = useMemo(() => tracks.map((t) => t.id), [tracks]);
   const { data: savedIds = [] } = useSavedTrackIds(trackIds);
   const likedSet = useMemo(() => new Set(savedIds), [savedIds]);
 
   const { view, keys, toolbar } = useTrackTools(tracks, "Album order");
+  const shown = useStagedList(view);
+  const trackActions = useTrackRowActions(likedSet, toggleLike);
 
   if (isLoading) {
     return <Loader label="Loading album" />;
@@ -100,6 +111,7 @@ export default function AlbumPage() {
       }
     }
   }
+  trackActions.setHandlers(startAt);
 
   return (
     <div
@@ -146,7 +158,7 @@ export default function AlbumPage() {
           transition={{ layout: REFLOW }}
           className="flex flex-col"
         >
-          {view.map((t, i) => (
+          {shown.map((t, i) => (
             <motion.div
               key={keys[i]}
               layout="position"
@@ -159,9 +171,9 @@ export default function AlbumPage() {
                 index={i}
                 showCover={false}
                 liked={likedSet.has(t.id)}
-                onPlay={() => startAt(i)}
-                onQueue={(track) => enqueue(track)}
-                onToggleLike={(track) => toggleLike.mutate({ id: track.id, liked: likedSet.has(track.id) })}
+                onPlay={trackActions.onPlay}
+                onQueue={enqueue}
+                onToggleLike={trackActions.onToggleLike}
               />
             </motion.div>
           ))}
@@ -177,10 +189,7 @@ export default function AlbumPage() {
       <div className="t-caption tnum" style={{ padding: "28px 4px 16px", display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--color-text-dim)" }}>
         <p style={{ margin: 0, fontWeight: 500 }}>
           {data.release_date} • {data.total_tracks} {data.total_tracks === 1 ? "track" : "tracks"}
-          {tracks.length > 0 && (() => {
-            const totalMin = Math.round(tracks.reduce((sum, t) => sum + (t.duration_ms || 0), 0) / 60000);
-            return `, ${totalMin} minutes`;
-          })()}
+          {tracks.length > 0 && `, ${totalMin} minutes`}
         </p>
         <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>
           ℗ {releaseYear(data.release_date)} {data.artists.map((a) => a.name).join(", ")}

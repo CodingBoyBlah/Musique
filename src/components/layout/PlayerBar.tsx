@@ -460,16 +460,24 @@ const PlayerScrubber = memo(function PlayerScrubber({
      compositor plays at the display's refresh rate with no main-thread work.
      Every tick or report restarts it from the clock, so it can't drift; a
      pause, a drag or a track change cancels it and the inline transform
-     below takes over again. */
+     below takes over again.
+
+     It moves a device pixel at a time (steps), not continuously. The edge
+     only crosses a few pixels a second, so a linear glide asked the
+     compositor for a fresh frame 60 times a second to move it a twentieth of
+     a pixel: ~9% of a core, the whole time music played, for movement no one
+     can see. One step per pixel lands on exactly the positions the linear
+     glide passes through, and the frames in between are never drawn. */
   useLayoutEffect(() => {
     const el = fillRef.current;
     if (!el || !gliding || typeof el.animate !== "function") return;
     const at = Math.max(0, Math.min(playheadMs(), durationMs));
     const left = (durationMs - at) / (playbackRate > 0 ? playbackRate : 1);
     if (left <= 0) return;
+    const px = (el.parentElement?.offsetWidth ?? 0) * (window.devicePixelRatio || 1) * (1 - at / durationMs);
     const anim = el.animate(
       [{ transform: `scaleX(${at / durationMs})` }, { transform: "scaleX(1)" }],
-      { duration: left, easing: "linear", fill: "forwards" },
+      { duration: left, easing: px >= 1 ? `steps(${Math.ceil(px)}, jump-end)` : "linear", fill: "forwards" },
     );
     return () => {
       // leave the line where it was drawn: positionMs can be up to a tick
