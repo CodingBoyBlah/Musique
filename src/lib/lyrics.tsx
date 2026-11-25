@@ -63,6 +63,14 @@ export function useLyricClock() {
   return { getClock, resync };
 }
 
+/* Where to seek for a clicked line. The clock shows `position + offset` (the
+user's lyric offset; the measured output latency is already in both sides), so
+the line's start is heard at position `startMs - offset`. Seeking straight to
+`startMs` landed off the line by the offset whenever one was set. */
+export function lyricSeekTarget(lineStartMs: number, offsetMs = usePlayerStore.getState().lyricsOffsetMs): number {
+  return Math.max(0, Math.round(lineStartMs - (offsetMs || 0)));
+}
+
 // active row
 
 /* Wake exactly when the next line starts, not sixty times a second.
