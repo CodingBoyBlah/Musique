@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { startLogin, logout as apiLogout } from "../api/auth";
+import { appleSignIn } from "../api/apple";
 import { syncLibrary } from "../api/library";
 import { useAuthStore } from "../store/auth.store";
 import { usePlayerStore } from "../store/player.store";
@@ -33,14 +34,23 @@ function clearLocalAccountState() {
 }
 
 export async function loginSession(qc: QueryClient, openBrowser = true) {
+  return signIn(qc, (generation) => startLogin((links) => {
+    useAuthStore.getState().setLoginLinks(generation, links);
+  }, openBrowser));
+}
+
+/** Signs in to Apple Music through its own login page, in a private window of the app. */
+export async function appleLoginSession(qc: QueryClient) {
+  return signIn(qc, () => appleSignIn());
+}
+
+async function signIn(qc: QueryClient, start: (generation: number) => Promise<AuthStatus>) {
   const generation = useAuthStore.getState().begin("login");
   if (generation === null) return;
   const previousId = useAuthStore.getState().userId;
   try {
     await qc.cancelQueries();
-    const data = await startLogin((links) => {
-      useAuthStore.getState().setLoginLinks(generation, links);
-    }, openBrowser);
+    const data = await start(generation);
     if (useAuthStore.getState().generation !== generation) return;
     if (previousId !== data.user_id) clearLocalAccountState();
     qc.clear();

@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import { getAuthStatus, getProfile } from "../api/auth";
-import { currentAuthRequest, loginSession, logoutSession } from "../lib/authSession";
+import { appleLoginSession, currentAuthRequest, loginSession, logoutSession } from "../lib/authSession";
+import { appleCancelSignIn } from "../api/apple";
 import { errMsg } from "../lib/err";
 import { toast } from "../store/toast.store";
 import { useAuthStore } from "../store/auth.store";
@@ -9,7 +10,7 @@ import type { AuthStatus } from "../types/ipc";
 
 function statusMatchesStore(
   status: AuthStatus,
-  state: Pick<ReturnType<typeof useAuthStore.getState>, "loggedIn" | "userId" | "displayName" | "email" | "product" | "imageUrl">,
+  state: Pick<ReturnType<typeof useAuthStore.getState>, "loggedIn" | "userId" | "displayName" | "email" | "product" | "imageUrl" | "provider">,
 ) {
   return (
     status.logged_in === state.loggedIn &&
@@ -17,7 +18,8 @@ function statusMatchesStore(
     status.display_name === state.displayName &&
     status.email === state.email &&
     status.product === state.product &&
-    status.image_url === state.imageUrl
+    status.image_url === state.imageUrl &&
+    (status.provider === undefined || status.provider === state.provider)
   );
 }
 
@@ -30,6 +32,7 @@ export function useAuth() {
       email: s.email,
       product: s.product,
       imageUrl: s.imageUrl,
+      provider: s.provider,
       phase: s.phase,
       generation: s.generation,
       loginLinks: s.loginLinks,
@@ -87,6 +90,15 @@ export function useAuth() {
     mutationFn: (openBrowser: boolean) => loginSession(qc, openBrowser),
     onError: (err) => { console.error("[auth] login failed:", err); toast.error(errMsg(err)); },
   });
+  const { mutate: loginApple } = useMutation({
+    mutationFn: () => appleLoginSession(qc),
+    onError: (err) => {
+      const message = errMsg(err);
+      console.error("[auth] apple login failed:", err);
+      // closing the window is a choice, not a failure
+      if (!/cancelled/i.test(message)) toast.error(message);
+    },
+  });
   const { mutate: logout } = useMutation({
     mutationFn: () => logoutSession(qc),
     onError: (err) => {
@@ -97,6 +109,8 @@ export function useAuth() {
   return {
     ...store, isLoading,
     login: (openBrowser = true) => login(openBrowser), logout: () => logout(),
+    loginApple: () => loginApple(),
+    cancelAppleLogin: () => { void appleCancelSignIn(); },
     loggingIn: store.phase === "login", loggingOut: store.phase === "logout",
   };
 }

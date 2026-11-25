@@ -158,6 +158,15 @@ function LoginLinksPanel({
   );
 }
 
+/** Apple Music's note, drawn in the current colour. */
+function AppleMusicGlyph({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M17.5 2.6c.4-.1.8.2.8.6v11.6a3.3 3.3 0 1 1-1.8-2.9V7.1L9.9 8.6v8.6a3.3 3.3 0 1 1-1.8-2.9V5.4c0-.4.3-.7.6-.8l8.8-2Z" />
+    </svg>
+  );
+}
+
 export function SignInPrompt({
   heading,
   title,
@@ -167,7 +176,11 @@ export function SignInPrompt({
   title: string;
   description: string;
 }) {
-  const { login, loggingIn, loginLinks, generation } = useAuth();
+  const { login, loginApple, cancelAppleLogin, loggingIn, loginLinks, generation } = useAuth();
+  // which button started the sign-in that is waiting, so only that one says so
+  const [pending, setPending] = useState<"spotify" | "apple">("spotify");
+  const waitingSpotify = loggingIn && pending === "spotify";
+  const waitingApple = loggingIn && pending === "apple";
   const [helpOpen, setHelpOpen] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
   const copyRef = useRef<HTMLDivElement>(null);
@@ -213,7 +226,10 @@ export function SignInPrompt({
   function showLinks(keyboard = false) {
     focusDropdown.current = keyboard;
     setLinksOpen(true);
-    if (!loginLinks && !loggingIn) login(false);
+    if (!loginLinks && !loggingIn) {
+      setPending("spotify");
+      login(false);
+    }
   }
 
   return (
@@ -229,13 +245,14 @@ export function SignInPrompt({
               type="button"
               className="btn-primary sign-in-login"
               disabled={loggingIn}
-              aria-busy={loggingIn || undefined}
+              aria-busy={waitingSpotify || undefined}
               onClick={() => {
                 setLinksOpen(false);
+                setPending("spotify");
                 login();
               }}
             >
-              {loggingIn ? (
+              {waitingSpotify ? (
                 <>
                   <Loader2 size={16} aria-hidden="true" /> Waiting for
                   sign-in...
@@ -286,16 +303,53 @@ export function SignInPrompt({
                   <LoginLinksPanel
                     key={`${generation}:${loginLinks ? "ready" : "waiting"}`}
                     links={loginLinks}
-                    preparing={loggingIn}
-                    prepare={() => login(false)}
+                    preparing={waitingSpotify}
+                    prepare={() => {
+                      setPending("spotify");
+                      login(false);
+                    }}
                   />
                 </div>
               )}
             </div>
           </div>
+          <div className="sign-in-apple">
+            <span className="sign-in-or" aria-hidden="true">or</span>
+            {waitingApple ? (
+              <div className="sign-in-apple-row">
+                <span className="sign-in-apple-waiting" role="status">
+                  <Loader2 size={15} aria-hidden="true" /> Finish signing in to
+                  Apple Music in the window that opened
+                </span>
+                <button
+                  type="button"
+                  className="btn-pill sign-in-apple-cancel"
+                  onClick={cancelAppleLogin}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="btn-pill sign-in-apple-login"
+                disabled={loggingIn}
+                onClick={() => {
+                  setLinksOpen(false);
+                  setHelpOpen(false);
+                  setPending("apple");
+                  loginApple();
+                }}
+              >
+                <AppleMusicGlyph size={16} /> Sign in with Apple Music
+              </button>
+            )}
+          </div>
           <div className="sign-in-caption">
             <p>
-              {loggingIn
+              {waitingApple
+                ? "An Apple Music subscription is required."
+                : loggingIn
                 ? "Approve ncspot, then Spotify desktop, to continue."
                 : "Two sign-in steps will open in order. Premium is not required."}
             </p>
