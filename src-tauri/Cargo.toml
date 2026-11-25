@@ -11,6 +11,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# Compiles the Widevine CDM host shim (src/widevine/shim/host.cc). Already in the tree.
+cc = "1"
 
 [dependencies]
 # macos-private-api: REQUIRED for `transparent: true` to work on macOS.
