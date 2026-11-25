@@ -207,6 +207,17 @@ async fn with_recording_isrc(app: &AppHandle, pool: &SqlitePool, track: &TrackRe
     if track.isrc.as_deref().is_some_and(|id| !id.trim().is_empty()) {
         return enriched;
     }
+    // an Apple Music song carries its isrc in the catalog; Spotify's metadata
+    // service has never heard of its id
+    if crate::apple::is_active() {
+        let lookup = crate::apple::api::track_isrc(&track.id);
+        if let Ok(Ok(Some(isrc))) = tokio::time::timeout(std::time::Duration::from_secs(3), lookup).await {
+            let _ = sqlx::query("UPDATE tracks SET isrc = ? WHERE id = ? AND (isrc IS NULL OR TRIM(isrc) = '')")
+                .bind(&isrc).bind(&track.id).execute(pool).await;
+            enriched.isrc = Some(isrc);
+        }
+        return enriched;
+    }
     let lookup = crate::internal::metadata::track_protos(app, std::slice::from_ref(&track.id));
     if let Ok(Ok(metadata)) = tokio::time::timeout(std::time::Duration::from_secs(3), lookup).await {
         let uri = crate::internal::metadata::to_uri("track", &track.id);
