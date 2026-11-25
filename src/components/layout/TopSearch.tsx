@@ -1,63 +1,61 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Play, X, ArrowRight } from "@/lib/icons";
+import { Search, Play, X, ChevronRight } from "@/lib/icons";
 import { useSearch } from "../../hooks/useSearch";
-import { cancelHoverPrefetch, prefetchAlbum, prefetchArtist, prefetchShow, preloadRoute, scheduleHoverPrefetch } from "../../lib/prefetch";
+import { cancelHoverPrefetch, prefetchAlbum, prefetchArtist, prefetchPlaylist, prefetchShow, preloadRoute, scheduleHoverPrefetch } from "../../lib/prefetch";
 import { usePlayerStore } from "../../store/player.store";
 import { playTrack, resumeOrPlay } from "../../api/playback";
 import { CoverArt } from "../ui/CoverArt";
 import { fmtMs } from "../../utils/fmt";
 import { isMac } from "../../lib/platform";
 import { EASE_OUT } from "../../lib/motion";
+import { rankSearch, type RankedResult } from "../../lib/searchRank";
 import { episodeToTrack } from "../../utils/episode";
 
 /* the search field in the middle of the top bar.
 
-   off the search page it behaves like the old Ctrl+K palette, folded into a
-   dropdown under the field: quick songs / albums / artists, arrow keys to
-   move, Enter to open full results. ON the search page there is no dropdown -
+   off the search page it opens a dropdown under the field: one list, best
+   match first whatever its type - "radiohead" puts the artist on top,
+   "creep" the song - instead of fixed Songs / Albums / Artists sections that
+   made you scroll past four songs to reach the artist you typed. arrow keys
+   move, Enter opens full results. ON the search page there is no dropdown -
    the page itself is the result list, so typing just rewrites ?q= in place
    and the page follows along. */
 
-const SECTION_HEAD: React.CSSProperties = {
-  fontSize: 10.5,
-  fontWeight: 700,
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
-  color: "rgba(255, 255, 255, 0.42)",
-  // 10px in, like the rows, so a label starts on the same edge as the art under it
-  padding: "10px 10px 4px",
-};
+// at most this many of a type, and this many rows in all
+const CAPS = { track: 4, album: 3, artist: 3, playlist: 2, show: 2, episode: 2 } as const;
+const MAX_ROWS = 8;
 
-const ROW_TITLE: React.CSSProperties = {
-  margin: 0, fontSize: 13, fontWeight: 600,
-  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-};
+function joinNames(list: { name: string }[] | undefined): string {
+  return (list ?? []).map((a) => a.name).join(", ");
+}
 
-// small type opens its tracking back up a touch (see --type-caption-track)
-const ROW_SUB: React.CSSProperties = {
-  margin: "2px 0 0", fontSize: 11.5, color: "rgba(255, 255, 255, 0.5)",
-  letterSpacing: "var(--type-caption-track)",
-  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-};
+function albumKind(t: string | undefined): string {
+  if (t === "single") return "Single";
+  if (t === "compilation") return "Compilation";
+  return "Album";
+}
 
-const KIND_TAG: React.CSSProperties = {
-  fontSize: 10, fontWeight: 650, color: "rgba(255, 255, 255, 0.45)",
-  letterSpacing: "0.01em",
-  background: "rgba(255, 255, 255, 0.06)", padding: "2px 6px", borderRadius: 4,
-};
+type RowMeta = { image: string | null; title: string; sub: string; round: boolean; playable: boolean };
 
-/* No transition on the selection fill. Arrow keys move it, fast and
-   repeatedly, and a fade trailing behind each keypress reads as lag - a
-   keyboard action should land on the frame the key goes down. */
-function rowStyle(selected: boolean): React.CSSProperties {
-  return {
-    display: "flex", alignItems: "center", gap: 12,
-    padding: "7px 10px", borderRadius: 8, cursor: "pointer",
-    background: selected ? "rgba(255, 255, 255, 0.08)" : "transparent",
-  };
+// what a row says under its title: the kind of thing it is, then who made it
+function rowMeta(r: RankedResult): RowMeta {
+  switch (r.type) {
+    case "artist":
+      return { image: r.item.image_url, title: r.item.name, sub: "Artist", round: true, playable: false };
+    case "track":
+      return { image: r.item.album?.image_url ?? null, title: r.item.name, sub: `Song · ${joinNames(r.item.artists)}`, round: false, playable: true };
+    case "album":
+      return { image: r.item.image_url, title: r.item.name, sub: `${albumKind(r.item.album_type)} · ${joinNames(r.item.artists)}`, round: false, playable: false };
+    case "playlist":
+      return { image: r.item.image_url, title: r.item.name, sub: r.item.owner_name ? `Playlist · ${r.item.owner_name}` : "Playlist", round: false, playable: false };
+    case "show":
+      return { image: r.item.image_url, title: r.item.name, sub: `Podcast · ${r.item.publisher}`, round: false, playable: false };
+    case "episode":
+      return { image: r.item.image_url, title: r.item.name, sub: r.item.show_name ? `Episode · ${r.item.show_name}` : "Episode", round: false, playable: true };
+  }
 }
 
 export function TopSearch() {
@@ -125,32 +123,19 @@ export function TopSearch() {
   const hasQuery = query.trim().length > 0;
   const open = focused && hasQuery && !onSearchPage;
   const { data, isLoading, isPlaceholderData } = useSearch(onSearchPage ? "" : debouncedQuery);
-  const resultCount = (data?.tracks?.length ?? 0) + (data?.albums?.length ?? 0) + (data?.artists?.length ?? 0)
-    + (data?.shows?.length ?? 0) + (data?.episodes?.length ?? 0);
   const settled = debouncedQuery === query.trim() && !isLoading && !isPlaceholderData;
 
-  const tracks = data?.tracks?.slice(0, 4) ?? [];
-  const albums = data?.albums?.slice(0, 3) ?? [];
-  const artists = data?.artists?.slice(0, 2) ?? [];
-  const shows = data?.shows?.slice(0, 2) ?? [];
-  const episodes = data?.episodes?.slice(0, 2) ?? [];
+  // rows re-render on every arrow key; the merge only needs to rerun on new results
+  const ranked = useMemo(() => rankSearch(data, debouncedQuery, CAPS, MAX_ROWS), [data, debouncedQuery]);
+  type FlatItem = { type: "query" } | RankedResult;
+  const items: FlatItem[] = [{ type: "query" }, ...ranked];
 
-  type FlatItem =
-    | { type: "query" }
-    | { type: "track"; data: typeof tracks[0] }
-    | { type: "album"; data: typeof albums[0] }
-    | { type: "artist"; data: typeof artists[0] }
-    | { type: "show"; data: typeof shows[0] }
-    | { type: "episode"; data: typeof episodes[0] };
-
-  const items: FlatItem[] = [
-    { type: "query" },
-    ...tracks.map((t) => ({ type: "track" as const, data: t })),
-    ...albums.map((a) => ({ type: "album" as const, data: a })),
-    ...artists.map((ar) => ({ type: "artist" as const, data: ar })),
-    ...shows.map((sh) => ({ type: "show" as const, data: sh })),
-    ...episodes.map((ep) => ({ type: "episode" as const, data: ep })),
-  ];
+  function prefetchFor(r: RankedResult) {
+    if (r.type === "album") prefetchAlbum(qc, r.item.id);
+    else if (r.type === "artist") prefetchArtist(qc, r.item.id);
+    else if (r.type === "playlist") prefetchPlaylist(qc, r.item.id);
+    else if (r.type === "show") prefetchShow(qc, r.item.id);
+  }
 
   function openResults() {
     const q = query.trim();
@@ -168,20 +153,22 @@ export function TopSearch() {
       return;
     }
     if (item.type === "track") {
-      setCurrentTrack(item.data);
-      playTrack(item.data.id).catch(() => {});
+      setCurrentTrack(item.item);
+      playTrack(item.item.id).catch(() => {});
     } else if (item.type === "album") {
-      navigate(`/album/${item.data.id}`);
+      navigate(`/album/${item.item.id}`);
+    } else if (item.type === "playlist") {
+      navigate(`/playlist/${item.item.id}`);
     } else if (item.type === "show") {
-      navigate(`/show/${item.data.id}`);
+      navigate(`/show/${item.item.id}`);
     } else if (item.type === "episode") {
-      const ep = item.data;
+      const ep = item.item;
       const track = episodeToTrack(ep);
       setCurrentTrack(track);
       const pos = !ep.fully_played && ep.resume_position_ms ? ep.resume_position_ms : 0;
       (pos > 0 ? resumeOrPlay(track.id, pos) : playTrack(track.id)).catch(() => {});
     } else {
-      navigate(`/artist/${item.data.id}`);
+      navigate(`/artist/${item.item.id}`);
     }
     inputRef.current?.blur();
   }
@@ -253,191 +240,99 @@ export function TopSearch() {
             id="top-search-results"
             role="listbox"
             aria-label="Search suggestions"
-            className="glass-solid-fallback"
-            initial={instantOpenRef.current ? false : { opacity: 0, y: -4, scale: 0.98 }}
+            className="ts-pop glass-solid-fallback"
+            // grows out of the field it belongs to, and goes back into it
+            initial={instantOpenRef.current ? false : { opacity: 0, y: -6, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.98, transition: { duration: 0.1, ease: EASE_OUT } }}
-            transition={{ duration: 0.14, ease: EASE_OUT }}
+            exit={{ opacity: 0, y: -4, scale: 0.98, transition: { duration: 0.12, ease: EASE_OUT } }}
+            transition={{ type: "spring", bounce: 0, duration: 0.28 }}
             // keep focus in the field while picking a result
             onMouseDown={(e) => e.preventDefault()}
-            style={{
-              position: "absolute",
-              top: "calc(100% + 8px)",
-              left: "50%",
-              x: "-50%",
-              width: "max(100%, min(440px, 92vw))",
-              transformOrigin: "top center",
-              borderRadius: 12,
-              background: "var(--color-popover)",
-              backdropFilter: "blur(40px) saturate(1.4)",
-              WebkitBackdropFilter: "blur(40px) saturate(1.4)",
-              border: "1px solid var(--color-border)",
-              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.5)",
-              overflow: "hidden",
-              zIndex: 100,
-            }}
+            style={{ x: "-50%" }}
           >
-            <div
-              ref={listRef}
-              className="scroll-y"
-              style={{
-                maxHeight: "min(60vh, 480px)",
-                overflowY: "auto",
-                padding: 6,
-                display: "flex",
-                flexDirection: "column",
-                gap: 2,
-                opacity: isPlaceholderData ? 0.55 : 1,
-                transition: "opacity 0.12s",
-              }}
-            >
+            <div ref={listRef} className="ts-list scroll-y" data-stale={isPlaceholderData ? "true" : undefined}>
               <div
                 data-index="0"
                 id="ts-opt-0"
-                className="ts-row"
+                className="ts-row ts-row--query"
                 role="option"
                 aria-selected={selectedIndex === 0}
+                data-active={selectedIndex === 0 ? "true" : undefined}
                 onClick={() => handleSelect(0)}
                 onMouseEnter={() => setSelectedIndex(0)}
-                style={{ ...rowStyle(selectedIndex === 0), color: selectedIndex === 0 ? "#fff" : "rgba(255, 255, 255, 0.75)" }}
               >
-                <div style={{
-                  // the same 34px square as the result covers, so every row's
-                  // text column starts on one line
-                  width: 34, height: 34, borderRadius: 6, flexShrink: 0,
-                  background: selectedIndex === 0 ? "var(--color-accent)" : "rgba(255, 255, 255, 0.06)",
-                  display: "flex", alignItems: "center", justifyContent: "center", color: "#fff",
-                }}>
-                  <Search size={14} strokeWidth={2.4} />
+                <div className="ts-art ts-art--icon">
+                  <Search size={16} strokeWidth={2.2} />
                 </div>
-                <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13.5, fontWeight: 600 }}>
-                  Search for “{query.trim()}”
+                <div className="ts-text">
+                  <p className="ts-title">{query.trim()}</p>
+                  <p className="ts-sub">See all results</p>
                 </div>
-                <ArrowRight size={14} style={{ color: "rgba(255, 255, 255, 0.3)", flexShrink: 0 }} />
+                <kbd className="ts-kbd ts-reveal" aria-hidden>↵</kbd>
               </div>
 
-              {!settled && resultCount === 0 && (
-                <div className="t-caption" style={{ padding: "10px 12px", fontSize: 12, color: "rgba(255, 255, 255, 0.5)" }}>Searching…</div>
-              )}
-              {settled && resultCount === 0 && (
-                <div className="t-caption" style={{ padding: "10px 12px", fontSize: 12, color: "rgba(255, 255, 255, 0.5)" }}>No matches for “{query.trim()}”</div>
+              {(ranked.length > 0 || !settled) && <div className="ts-sep" role="presentation" />}
+
+              {!settled && ranked.length === 0 && [0, 1, 2].map((i) => (
+                <div key={i} className="ts-row ts-row--ghost" aria-hidden>
+                  <div className="ts-art" />
+                  <div className="ts-text">
+                    <span className="ts-bar" style={{ width: `${62 - i * 14}%` }} />
+                    <span className="ts-bar ts-bar--sub" style={{ width: `${38 - i * 6}%` }} />
+                  </div>
+                </div>
+              ))}
+              {settled && ranked.length === 0 && (
+                <p className="ts-empty">No matches for “{query.trim()}”</p>
               )}
 
-              {tracks.length > 0 && <div style={SECTION_HEAD}>Songs</div>}
-              {tracks.map((t, i) => {
+              {ranked.map((r, i) => {
                 const idx = 1 + i;
                 const sel = selectedIndex === idx;
+                const m = rowMeta(r);
+                const prefetchable = r.type !== "track" && r.type !== "episode";
                 return (
-                  <div key={t.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
-                    onClick={() => handleSelect(idx)} onMouseEnter={() => setSelectedIndex(idx)} style={rowStyle(sel)}>
-                    <div style={{ position: "relative", width: 34, height: 34, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
-                      <CoverArt url={t.album?.image_url} alt={t.name} size={34} />
-                      {sel && (
-                        <div style={{ position: "absolute", inset: 0, background: "rgba(0, 0, 0, 0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <Play size={14} fill="#fff" strokeWidth={0} />
-                        </div>
+                  <div
+                    key={`${r.type}:${r.item.id}`}
+                    data-index={idx}
+                    id={`ts-opt-${idx}`}
+                    className="ts-row"
+                    role="option"
+                    aria-selected={sel}
+                    aria-label={`${m.title}, ${m.sub}`}
+                    data-active={sel ? "true" : undefined}
+                    onClick={() => handleSelect(idx)}
+                    onMouseEnter={() => {
+                      setSelectedIndex(idx);
+                      if (prefetchable) scheduleHoverPrefetch(() => prefetchFor(r), 50);
+                    }}
+                    onMouseLeave={prefetchable ? cancelHoverPrefetch : undefined}
+                    onPointerDown={prefetchable ? () => { cancelHoverPrefetch(); prefetchFor(r); } : undefined}
+                  >
+                    <div className={m.round ? "ts-art ts-art--round" : "ts-art"}>
+                      <CoverArt url={m.image} alt="" size={40} />
+                      {m.playable && sel && (
+                        <div className="ts-art-play"><Play size={14} fill="#fff" strokeWidth={0} /></div>
                       )}
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ ...ROW_TITLE, color: sel ? "#fff" : "rgba(255, 255, 255, 0.9)" }}>{t.name}</p>
-                      <p style={ROW_SUB}>{t.artists.map((a) => a.name).join(", ")}</p>
+                    <div className="ts-text">
+                      <p className="ts-title">{m.title}</p>
+                      <p className="ts-sub">{m.sub}</p>
                     </div>
-                    <span className="tnum t-caption" style={{ fontSize: 11, color: "rgba(255, 255, 255, 0.4)" }}>
-                      {fmtMs(t.duration_ms)}
-                    </span>
+                    {r.type === "track" ? (
+                      <span className="ts-trail tnum">{fmtMs(r.item.duration_ms)}</span>
+                    ) : (
+                      <ChevronRight size={15} strokeWidth={2.2} className="ts-reveal ts-chev" aria-hidden />
+                    )}
                   </div>
                 );
               })}
+            </div>
 
-              {albums.length > 0 && <div style={SECTION_HEAD}>Albums</div>}
-              {albums.map((a, i) => {
-                const idx = 1 + tracks.length + i;
-                const sel = selectedIndex === idx;
-                return (
-                  <div key={a.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
-                    onClick={() => handleSelect(idx)}
-                    onMouseEnter={() => { setSelectedIndex(idx); scheduleHoverPrefetch(() => prefetchAlbum(qc, a.id), 50); }}
-                    onMouseLeave={cancelHoverPrefetch}
-                    onPointerDown={() => { cancelHoverPrefetch(); prefetchAlbum(qc, a.id); }}
-                    style={rowStyle(sel)}>
-                    <div style={{ width: 34, height: 34, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
-                      <CoverArt url={a.image_url} alt={a.name} size={34} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ ...ROW_TITLE, color: sel ? "#fff" : "rgba(255, 255, 255, 0.9)" }}>{a.name}</p>
-                      <p style={ROW_SUB}>{a.artists.map((ar) => ar.name).join(", ")}</p>
-                    </div>
-                    <span style={KIND_TAG}>Album</span>
-                  </div>
-                );
-              })}
-
-              {artists.length > 0 && <div style={SECTION_HEAD}>Artists</div>}
-              {artists.map((ar, i) => {
-                const idx = 1 + tracks.length + albums.length + i;
-                const sel = selectedIndex === idx;
-                return (
-                  <div key={ar.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
-                    onClick={() => handleSelect(idx)}
-                    onMouseEnter={() => { setSelectedIndex(idx); scheduleHoverPrefetch(() => prefetchArtist(qc, ar.id), 50); }}
-                    onMouseLeave={cancelHoverPrefetch}
-                    onPointerDown={() => { cancelHoverPrefetch(); prefetchArtist(qc, ar.id); }}
-                    style={rowStyle(sel)}>
-                    <div style={{ width: 34, height: 34, borderRadius: "50%", overflow: "hidden", flexShrink: 0 }}>
-                      <CoverArt url={ar.image_url} alt={ar.name} size={34} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ ...ROW_TITLE, color: sel ? "#fff" : "rgba(255, 255, 255, 0.9)" }}>{ar.name}</p>
-                    </div>
-                    <span style={KIND_TAG}>Artist</span>
-                  </div>
-                );
-              })}
-
-              {shows.length + episodes.length > 0 && <div style={SECTION_HEAD}>Podcasts</div>}
-              {shows.map((sh, i) => {
-                const idx = 1 + tracks.length + albums.length + artists.length + i;
-                const sel = selectedIndex === idx;
-                return (
-                  <div key={sh.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
-                    onClick={() => handleSelect(idx)}
-                    onMouseEnter={() => { setSelectedIndex(idx); scheduleHoverPrefetch(() => prefetchShow(qc, sh.id), 50); }}
-                    onMouseLeave={cancelHoverPrefetch}
-                    onPointerDown={() => { cancelHoverPrefetch(); prefetchShow(qc, sh.id); }}
-                    style={rowStyle(sel)}>
-                    <div style={{ width: 34, height: 34, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
-                      <CoverArt url={sh.image_url} alt={sh.name} size={34} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ ...ROW_TITLE, color: sel ? "#fff" : "rgba(255, 255, 255, 0.9)" }}>{sh.name}</p>
-                      <p style={ROW_SUB}>{sh.publisher}</p>
-                    </div>
-                    <span style={KIND_TAG}>Podcast</span>
-                  </div>
-                );
-              })}
-              {episodes.map((ep, i) => {
-                const idx = 1 + tracks.length + albums.length + artists.length + shows.length + i;
-                const sel = selectedIndex === idx;
-                return (
-                  <div key={ep.id} data-index={idx} id={`ts-opt-${idx}`} className="ts-row" role="option" aria-selected={sel}
-                    onClick={() => handleSelect(idx)} onMouseEnter={() => setSelectedIndex(idx)} style={rowStyle(sel)}>
-                    <div style={{ position: "relative", width: 34, height: 34, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
-                      <CoverArt url={ep.image_url} alt={ep.name} size={34} />
-                      {sel && (
-                        <div style={{ position: "absolute", inset: 0, background: "rgba(0, 0, 0, 0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <Play size={14} fill="#fff" strokeWidth={0} />
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ ...ROW_TITLE, color: sel ? "#fff" : "rgba(255, 255, 255, 0.9)" }}>{ep.name}</p>
-                      <p style={ROW_SUB}>{ep.show_name ?? "Episode"}</p>
-                    </div>
-                    <span style={KIND_TAG}>Episode</span>
-                  </div>
-                );
-              })}
+            <div className="ts-foot" aria-hidden>
+              <span><kbd className="ts-kbd">↑</kbd><kbd className="ts-kbd">↓</kbd>Navigate</span>
+              <span><kbd className="ts-kbd">↵</kbd>Open</span>
+              <span><kbd className="ts-kbd">esc</kbd>Close</span>
             </div>
           </motion.div>
         )}
