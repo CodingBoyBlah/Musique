@@ -40,7 +40,7 @@ pub async fn is_saved(pool: &SqlitePool, track_id: &str) -> Result<bool, AppErro
 pub async fn list(pool: &SqlitePool, limit: i64, offset: i64) -> Result<Vec<SavedTrack>, AppError> {
     Ok(
         sqlx::query_as::<_, SavedTrack>(
-            "SELECT * FROM saved_tracks ORDER BY added_at DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM saved_tracks ORDER BY added_at DESC, rowid DESC LIMIT ? OFFSET ?",
         )
         .bind(limit)
         .bind(offset)

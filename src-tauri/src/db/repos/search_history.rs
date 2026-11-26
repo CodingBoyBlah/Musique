@@ -34,7 +34,7 @@ pub async fn push<'e>(
 pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchEntry>, AppError> {
     Ok(
         sqlx::query_as::<_, SearchEntry>(
-            "SELECT * FROM search_history ORDER BY searched_at DESC LIMIT ?",
+            "SELECT * FROM search_history ORDER BY searched_at DESC, id DESC LIMIT ?",
         )
         .bind(limit)
         .fetch_all(pool)

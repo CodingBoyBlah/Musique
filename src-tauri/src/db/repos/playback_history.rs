@@ -38,7 +38,7 @@ pub async fn push(
 pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<PlaybackEntry>, AppError> {
     Ok(
         sqlx::query_as::<_, PlaybackEntry>(
-            "SELECT * FROM playback_history ORDER BY played_at DESC LIMIT ?",
+            "SELECT * FROM playback_history ORDER BY played_at DESC, id DESC LIMIT ?",
         )
         .bind(limit)
         .fetch_all(pool)
@@ -53,7 +53,7 @@ pub async fn for_track(
 ) -> Result<Vec<PlaybackEntry>, AppError> {
     Ok(
         sqlx::query_as::<_, PlaybackEntry>(
-            "SELECT * FROM playback_history WHERE track_id = ? ORDER BY played_at DESC LIMIT ?",
+            "SELECT * FROM playback_history WHERE track_id = ? ORDER BY played_at DESC, id DESC LIMIT ?",
         )
         .bind(track_id)
         .bind(limit)
