@@ -34,3 +34,51 @@ jobs:
         with:
           name: windows-verified-binary
           path: src-tauri/target/release/spotify.exe
+
+  # the same compile the release does on macOS and Linux, so a platform-only
+  # break shows up here instead of in a half-built release
+  macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: cargo build --manifest-path src-tauri/Cargo.toml --release --locked --target ${{ matrix.target }}
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux deps
+        run: |
+          sudo apt update
+          sudo apt install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - name: Run the regression tests the release runs
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --release --locked -- --test-threads=1
+      - run: cargo build --manifest-path src-tauri/Cargo.toml --release --locked
