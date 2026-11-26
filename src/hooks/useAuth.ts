@@ -1,12 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
-import { getAuthStatus, getProfile } from "../api/auth";
-import { appleLoginSession, currentAuthRequest, loginSession, logoutSession } from "../lib/authSession";
+import { getAccounts, getAuthStatus, getProfile } from "../api/auth";
+import {
+  ACCOUNTS_KEY, adoptProvider, appleLoginSession, currentAuthRequest, loginSession, logoutSession,
+  switchProviderSession,
+} from "../lib/authSession";
 import { appleCancelSignIn } from "../api/apple";
 import { errMsg } from "../lib/err";
 import { toast } from "../store/toast.store";
 import { useAuthStore } from "../store/auth.store";
-import type { AuthStatus } from "../types/ipc";
+import type { AuthStatus, Provider } from "../types/ipc";
 
 function statusMatchesStore(
   status: AuthStatus,
@@ -45,7 +48,13 @@ export function useAuth() {
       const generation = useAuthStore.getState().generation;
       const status = await getAuthStatus();
       const state = useAuthStore.getState();
-      if (currentAuthRequest(generation) && !statusMatchesStore(status, state)) {
+      if (
+        currentAuthRequest(generation) && state.loggedIn && status.logged_in &&
+        status.provider && status.provider !== state.provider
+      ) {
+        // the shown service lost its sign-in and the backend moved to the other one
+        adoptProvider(qc, status);
+      } else if (currentAuthRequest(generation) && !statusMatchesStore(status, state)) {
         state.setFromStatus(status);
       }
       return status;
@@ -100,17 +109,35 @@ export function useAuth() {
     },
   });
   const { mutate: logout } = useMutation({
-    mutationFn: () => logoutSession(qc),
+    mutationFn: (provider?: Provider) => logoutSession(qc, provider),
     onError: (err) => {
       console.error("[auth] logout failed:", err);
       toast.error(`Could not finish signing out: ${errMsg(err)}`);
     },
   });
+  const { mutate: switchTo } = useMutation({
+    mutationFn: (provider: Provider) => switchProviderSession(qc, provider),
+    onError: (err) => { console.error("[auth] switch failed:", err); toast.error(errMsg(err)); },
+  });
   return {
     ...store, isLoading,
-    login: (openBrowser = true) => login(openBrowser), logout: () => logout(),
+    login: (openBrowser = true) => login(openBrowser),
+    logout: (provider?: Provider) => logout(provider),
+    switchTo: (provider: Provider) => switchTo(provider),
     loginApple: () => loginApple(),
     cancelAppleLogin: () => { void appleCancelSignIn(); },
     loggingIn: store.phase === "login", loggingOut: store.phase === "logout",
   };
+}
+
+/** Both services' sign-ins and which one is shown, for the account switcher. */
+export function useAccounts() {
+  const loggedIn = useAuthStore((s) => s.loggedIn);
+  const provider = useAuthStore((s) => s.provider);
+  const phase = useAuthStore((s) => s.phase);
+  return useQuery({
+    queryKey: [...ACCOUNTS_KEY, loggedIn, provider, phase],
+    queryFn: getAccounts,
+    staleTime: 30_000,
+  });
 }

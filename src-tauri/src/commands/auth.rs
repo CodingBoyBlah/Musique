@@ -256,7 +256,15 @@ pub async fn start_login(
     let _cleanup = auth::account_cleanup().await;
     auth::require_epoch(epoch)?;
     let mut status = auth::complete_login(&client_id, &code, &verifier, &redirect, &db, &auth, epoch).await?;
-    let signed_in_epoch = epoch.wrapping_add(1);
+    let mut signed_in_epoch = epoch.wrapping_add(1);
+
+    // Signed in from Apple Music: Apple stays signed in, its library is set aside, and the app
+    // shows Spotify. The switch moves the epoch on again.
+    if crate::apple::is_active() {
+        crate::accounts::switch(&app, crate::accounts::Provider::Spotify).await?;
+        signed_in_epoch = auth::auth_epoch();
+        status.provider = "spotify".into();
+    }
 
     // A different account (or one we could not identify) signed in: everything
     // cached for the previous one has to go, even if the last logout only got
@@ -383,7 +391,7 @@ enum Purge {
 /// Both halves matter. The YouTube backend (used for free accounts) was never
 /// touched by logout at all, so the music simply kept playing; and the librespot
 /// session was only dropped, which detaches its tasks instead of ending them.
-async fn tear_down_playback(app: &AppHandle) {
+pub(crate) async fn tear_down_playback(app: &AppHandle) {
     // Any browser authorization still waiting for a redirect belongs to the
     // account we are getting rid of.
     http::cancel_pending_flows();
@@ -563,8 +571,78 @@ async fn purge_account_data(app: &AppHandle, scope: Purge) {
     }
 }
 
+/// Signs out of one service, or the one shown when `provider` is left out. When the other
+/// service is signed in too, the app switches to it and stays signed in; only signing out of
+/// the last one leaves the app signed out. Answers the auth status that follows.
 #[tauri::command]
-pub async fn logout(app: AppHandle) -> Result<(), AppError> {
+pub async fn logout(app: AppHandle, provider: Option<String>) -> Result<auth::AuthStatus, AppError> {
+    use crate::accounts::{self, Provider};
+    let active = Provider::active();
+    let target = provider.as_deref().and_then(Provider::parse).unwrap_or(active);
+    if target != active || accounts::signed_in(&app, target.other()).await {
+        if target == active {
+            // show the other service first, which sets this one's library aside
+            accounts::switch(&app, target.other()).await?;
+        }
+        sign_out_hidden(&app, target).await;
+        return get_auth_status(app).await;
+    }
+    sign_out_everything(&app).await?;
+    accounts::delete_stash(&app, Provider::Spotify);
+    accounts::delete_stash(&app, Provider::Apple);
+    auth::build_auth_status(&app.state::<AppState>().db.clone(), false).await
+}
+
+/// Signs out of a service the app is not showing. Its library is only the copy set aside for
+/// it, and the shown service plays on undisturbed.
+async fn sign_out_hidden(app: &AppHandle, provider: crate::accounts::Provider) {
+    use crate::accounts::Provider;
+    let db = app.state::<AppState>().db.clone();
+    match provider {
+        Provider::Apple => crate::commands::apple::sign_out(&db).await,
+        Provider::Spotify => {
+            {
+                // a token refresh still in flight must not write the tokens back
+                let _commit = auth::session_commit().await;
+                auth::bump_auth_epoch();
+            }
+            http::cancel_pending_flows();
+            let _cleanup = auth::account_cleanup().await;
+            if let Err(e) = auth::upsert_setting(&db, "spotify_signed_out", "1").await {
+                eprintln!("[logout] could not record the Spotify sign-out: {e}");
+            }
+            let auth_state = app.state::<AppState>().auth.clone();
+            *auth_state.write().await = crate::state::AuthState::default();
+            if let Err(e) = token::clear_tokens() {
+                eprintln!("[logout] could not clear stored tokens: {e}");
+            }
+            crate::commands::soloist::forget(app).await;
+            // Soloist goes with the account, so the next Spotify sign-in starts on the built-in player
+            if auth::get_setting_value(&db, "playback_backend").await.ok().flatten().as_deref() == Some("soloist") {
+                let _ = auth::upsert_setting(&db, "playback_backend", "spotify").await;
+            }
+            crate::commands::receivers::LAN.clear();
+            for key in auth::ACCOUNT_SETTING_KEYS {
+                // the shown service's library owns these
+                if crate::accounts::LIBRARY_SETTING_KEYS.contains(key) {
+                    continue;
+                }
+                let _ = sqlx::query("DELETE FROM settings WHERE key = ?").bind(key).execute(&db).await;
+            }
+            // librespot only runs while Spotify is shown, so nothing holds these files
+            if let Ok(app_data) = app.path().app_data_dir() {
+                wipe_dir(app_data.join("credentials")).await;
+                wipe_dir(app_data.join("audio_cache")).await;
+            }
+        }
+    }
+    crate::accounts::delete_stash(app, provider);
+    eprintln!("[logout] signed out of {}; {} stays", provider.as_str(), provider.other().as_str());
+}
+
+/// Signs out of the last signed-in service: nothing about either account survives.
+async fn sign_out_everything(app: &AppHandle) -> Result<(), AppError> {
+    let app = app.clone();
     // Invalidate the identity FIRST. Everything else in the app checks either
     // the auth epoch or the (now empty) auth state, so background work - a
     // library sync in particular - stops before the purge instead of writing
@@ -617,6 +695,17 @@ pub async fn logout(app: AppHandle) -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn get_auth_status(app: AppHandle) -> Result<auth::AuthStatus, AppError> {
+    {
+        // The shown service lost its sign-in (Spotify revoked the session, say) while the
+        // other is still signed in: show that one rather than a sign-in screen.
+        use crate::accounts::{self, Provider};
+        let active = Provider::active();
+        if !accounts::signed_in(&app, active).await && accounts::signed_in(&app, active.other()).await {
+            if let Err(e) = accounts::switch(&app, active.other()).await {
+                eprintln!("[auth] could not switch to {}: {e}", active.other().as_str());
+            }
+        }
+    }
     let _commit = auth::session_commit().await;
     let db = app.state::<AppState>().db.clone();
     if crate::apple::is_active() {
@@ -713,4 +802,33 @@ pub async fn get_profile(app: AppHandle) -> Result<Profile, AppError> {
     }
     auth::profile::cache_profile(&db, &profile).await?;
     auth::profile::cached_profile(&db).await
+}
+
+/// Both services' sign-ins, and which one the app is showing.
+#[derive(serde::Serialize)]
+pub struct Accounts {
+    pub active:  String,
+    pub spotify: auth::AuthStatus,
+    pub apple:   auth::AuthStatus,
+}
+
+#[tauri::command]
+pub async fn get_accounts(app: AppHandle) -> Result<Accounts, AppError> {
+    let db = app.state::<AppState>().db.clone();
+    let spotify_in = crate::accounts::spotify_signed_in(&app).await;
+    Ok(Accounts {
+        active:  crate::accounts::Provider::active().as_str().into(),
+        spotify: auth::build_auth_status(&db, spotify_in).await?,
+        apple:   crate::commands::apple::auth_status(&db).await,
+    })
+}
+
+/// Shows the other signed-in service: its library, recommendations and player. Both stay
+/// signed in. Answers the auth status of the service now shown.
+#[tauri::command]
+pub async fn switch_provider(app: AppHandle, provider: String) -> Result<auth::AuthStatus, AppError> {
+    let target = crate::accounts::Provider::parse(&provider)
+        .ok_or_else(|| AppError::InvalidInput(format!("unknown service {provider:?}")))?;
+    crate::accounts::switch(&app, target).await?;
+    get_auth_status(app).await
 }

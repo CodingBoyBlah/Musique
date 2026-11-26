@@ -139,7 +139,8 @@ pub async fn start_if_enabled(app: AppHandle) {
     let pool = state.db.clone();
     let player = state.soloist.clone();
     drop(state);
-    if !soloist_chosen(&pool).await {
+    // it would hide Apple Music's player from the interface; it starts when Spotify is shown
+    if crate::apple::is_active() || !soloist_chosen(&pool).await {
         return;
     }
     // turned on the old way: it is a source of its own now
