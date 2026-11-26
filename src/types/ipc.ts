@@ -17,3 +17,10 @@ export interface AuthStatus {
 }
 
 export type Provider = "spotify" | "apple";
+
+/** Both services' sign-ins, and which one the app is showing. */
+export interface Accounts {
+  active:  Provider;
+  spotify: AuthStatus;
+  apple:   AuthStatus;
+}

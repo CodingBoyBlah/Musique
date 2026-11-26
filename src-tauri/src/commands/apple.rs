@@ -127,10 +127,13 @@ async fn finish_sign_in(app: &AppHandle, cookies: &str) -> Result<auth::AuthStat
     };
     let body = serde_json::to_string(&stored).map_err(|e| AppError::InvalidInput(e.to_string()))?;
     auth::upsert_setting(&db, ACCOUNT_SETTING, &body).await?;
-    crate::apple::set_active(&db, true).await?;
-    let _ = sqlx::query("DELETE FROM settings WHERE key = 'spotify_signed_out'")
-        .execute(&db)
-        .await;
+    {
+        // A Spotify account stays signed in: its library is set aside while Apple Music is
+        // shown, and comes back when the app switches to it.
+        if !crate::apple::is_active() {
+            crate::accounts::switch(app, crate::accounts::Provider::Apple).await?;
+        }
+    }
     log::info!("apple: signed in, storefront {}", account.storefront);
     Ok(status_from(Some(stored)))
 }
@@ -178,7 +181,7 @@ fn status_from(account: Option<StoredAccount>) -> auth::AuthStatus {
 }
 
 /// Signs the Apple account out: forgets its token and session, and hands the app back to
-/// Spotify. The caller purges the local library afterwards, as for any sign-out.
+/// Spotify. When Apple Music was shown, the caller purges the local library afterwards.
 pub async fn sign_out(db: &sqlx::SqlitePool) {
     crate::apple::auth::clear_user_token();
     crate::apple::client::reset();

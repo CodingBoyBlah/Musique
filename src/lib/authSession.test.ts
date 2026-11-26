@@ -1,13 +1,13 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
-import { startLogin, logout } from "../api/auth";
+import { startLogin, logout, switchProvider } from "../api/auth";
 import { syncLibrary } from "../api/library";
-import { currentAuthRequest, loginSession, logoutSession, LOGGED_OUT } from "./authSession";
+import { ACCOUNTS_KEY, currentAuthRequest, loginSession, logoutSession, switchProviderSession, LOGGED_OUT } from "./authSession";
 import { useAuthStore } from "../store/auth.store";
 import { usePlayerStore } from "../store/player.store";
 import { useQueueStore } from "../store/queue.store";
 import { useJamStore } from "../store/jam.store";
-import type { AuthStatus } from "../types/ipc";
+import type { Accounts, AuthStatus } from "../types/ipc";
 import type { SyncResult } from "../types/library";
 import type { TrackItem } from "../types/spotify";
 
@@ -19,7 +19,8 @@ vi.hoisted(() => {
     removeItem: (key: string) => storage.delete(key), clear: () => storage.clear(),
   } });
 });
-vi.mock("../api/auth", () => ({ startLogin: vi.fn(), logout: vi.fn() }));
+vi.mock("../api/auth", () => ({ startLogin: vi.fn(), logout: vi.fn(), switchProvider: vi.fn() }));
+vi.mock("../api/playback", () => ({ warmupPlayback: vi.fn(() => Promise.resolve()) }));
 vi.mock("../api/library", () => ({ syncLibrary: vi.fn() }));
 
 const ACCOUNT: AuthStatus = {
@@ -48,7 +49,7 @@ beforeEach(() => {
 });
 
 it("clears the visible account and player before a slow backend logout finishes", async () => {
-  const pending = deferred<void>();
+  const pending = deferred<AuthStatus>();
   vi.mocked(logout).mockReturnValue(pending.promise);
   usePlayerStore.setState({ currentId: "old-song", isPlaying: true });
   useJamStore.setState({ meta: { stale: {} as never } });
@@ -62,7 +63,7 @@ it("clears the visible account and player before a slow backend logout finishes"
   expect(qc.getQueryData(["auth-status"])).toEqual(LOGGED_OUT);
   expect(localStorage.getItem("spotify-player")).toBeNull();
   expect(localStorage.getItem("theme")).toBe("dark");
-  pending.resolve();
+  pending.resolve(LOGGED_OUT);
   await task;
   expect(useAuthStore.getState().phase).toBe("idle");
 });
@@ -70,7 +71,7 @@ it("clears the visible account and player before a slow backend logout finishes"
 it("ignores a login response arriving after logout", async () => {
   const pending = deferred<AuthStatus>();
   vi.mocked(startLogin).mockReturnValue(pending.promise);
-  vi.mocked(logout).mockResolvedValue(undefined);
+  vi.mocked(logout).mockResolvedValue(LOGGED_OUT);
   const loginTask = loginSession(qc);
   await vi.waitFor(() => expect(startLogin).toHaveBeenCalledOnce());
   await logoutSession(qc);
@@ -84,7 +85,7 @@ it("ignores a login response arriving after logout", async () => {
 it.each([true, false])("publishes login links with automatic opening=%s and discards signed-out callbacks", async (automatic) => {
   const pending = deferred<AuthStatus>();
   vi.mocked(startLogin).mockReturnValue(pending.promise);
-  vi.mocked(logout).mockResolvedValue(undefined);
+  vi.mocked(logout).mockResolvedValue(LOGGED_OUT);
   const task = loginSession(qc, automatic);
   await vi.waitFor(() => expect(startLogin).toHaveBeenCalledOnce());
   const [onLinks, openBrowser] = vi.mocked(startLogin).mock.calls[0];
@@ -109,7 +110,7 @@ it("clears expired login links so a retry cannot reuse them", async () => {
 });
 
 it("guards operations across different hook callers and rejects stale profile requests", async () => {
-  const pending = deferred<void>();
+  const pending = deferred<AuthStatus>();
   vi.mocked(logout).mockReturnValue(pending.promise);
   const generation = useAuthStore.getState().generation;
   const task = logoutSession(qc);
@@ -117,7 +118,7 @@ it("guards operations across different hook callers and rejects stale profile re
   expect(logout).toHaveBeenCalledOnce();
   expect(startLogin).not.toHaveBeenCalled();
   expect(currentAuthRequest(generation)).toBe(false);
-  pending.resolve();
+  pending.resolve(LOGGED_OUT);
   await task;
   expect(currentAuthRequest(generation)).toBe(false);
 });
@@ -145,7 +146,7 @@ it("does not let a library sync finishing after logout invalidate the new sessio
   const sync = deferred<SyncResult>();
   vi.mocked(syncLibrary).mockReturnValue(sync.promise);
   vi.mocked(startLogin).mockResolvedValue(ACCOUNT);
-  vi.mocked(logout).mockResolvedValue(undefined);
+  vi.mocked(logout).mockResolvedValue(LOGGED_OUT);
   await loginSession(qc);
   await logoutSession(qc);
   const invalidate = vi.spyOn(qc, "invalidateQueries");
@@ -154,4 +155,52 @@ it("does not let a library sync finishing after logout invalidate the new sessio
   await Promise.resolve();
   await Promise.resolve();
   expect(invalidate).not.toHaveBeenCalled();
+});
+
+const APPLE: AuthStatus = {
+  logged_in: true, user_id: "apple-us", display_name: "Alice (Apple)", email: null,
+  product: "apple", image_url: null, provider: "apple",
+};
+const APPLE_TRACK: TrackItem = { ...TRACK, id: "apple-song" };
+
+it("switching services keeps each one's queue and player bar for when it comes back", async () => {
+  useAuthStore.getState().setFromStatus({ ...ACCOUNT, provider: "spotify" });
+  usePlayerStore.setState({ currentId: TRACK.id, currentTrack: TRACK, durationMs: 1000, isPlaying: true });
+  useQueueStore.setState({ queue: [TRACK] });
+  qc.setQueryData(["library", "playlists"], ["spotify playlist"]);
+
+  vi.mocked(switchProvider).mockResolvedValueOnce(APPLE);
+  await switchProviderSession(qc, "apple");
+  expect(useAuthStore.getState()).toMatchObject({ provider: "apple", loggedIn: true, phase: "idle" });
+  expect(usePlayerStore.getState()).toMatchObject({ currentId: null, isPlaying: false });
+  expect(useQueueStore.getState().queue).toEqual([]);
+  expect(qc.getQueryData(["library", "playlists"])).toBeUndefined();
+
+  usePlayerStore.setState({ currentId: APPLE_TRACK.id, currentTrack: APPLE_TRACK, durationMs: 1000 });
+  useQueueStore.setState({ queue: [APPLE_TRACK] });
+
+  vi.mocked(switchProvider).mockResolvedValueOnce({ ...ACCOUNT, provider: "spotify" });
+  await switchProviderSession(qc, "spotify");
+  expect(useAuthStore.getState().provider).toBe("spotify");
+  expect(usePlayerStore.getState()).toMatchObject({ currentId: TRACK.id, isPlaying: false });
+  expect(useQueueStore.getState().queue.map((t) => t.id)).toEqual([TRACK.id]);
+
+  vi.mocked(switchProvider).mockResolvedValueOnce(APPLE);
+  await switchProviderSession(qc, "apple");
+  expect(usePlayerStore.getState().currentId).toBe(APPLE_TRACK.id);
+  expect(useQueueStore.getState().queue.map((t) => t.id)).toEqual([APPLE_TRACK.id]);
+});
+
+it("signing out of the shown service hands over to the other without a signed-out screen", async () => {
+  useAuthStore.getState().setFromStatus({ ...ACCOUNT, provider: "spotify" });
+  const accounts: Accounts = { active: "spotify", spotify: ACCOUNT, apple: APPLE };
+  qc.setQueryData([...ACCOUNTS_KEY, true, "spotify", "idle"], accounts);
+  const pending = deferred<AuthStatus>();
+  vi.mocked(logout).mockReturnValue(pending.promise);
+  const task = logoutSession(qc);
+  expect(useAuthStore.getState()).toMatchObject({ loggedIn: true, phase: "logout" });
+  pending.resolve(APPLE);
+  await task;
+  expect(logout).toHaveBeenCalledWith("spotify");
+  expect(useAuthStore.getState()).toMatchObject({ loggedIn: true, provider: "apple", phase: "idle" });
 });

@@ -5,11 +5,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   ChevronLeft, ChevronRight,
-  User, Users, Settings, LogOut, LogIn,
+  User, Users, Settings, LogOut, LogIn, RefreshCw,
   Queue, Captions, Devices,
   PanelLeft, PanelLeftClose,
 } from "@/lib/icons";
-import { useAuth } from "../../hooks/useAuth";
+import { useAccounts, useAuth } from "../../hooks/useAuth";
 import { useAuthStore } from "../../store/auth.store";
 import { useCredentialsStore, type ConnectionStatus } from "../../store/credentials.store";
 import { Tooltip } from "../ui/Tooltip";
@@ -189,7 +189,12 @@ function AccountMenu() {
   const loggedIn    = useAuthStore((s) => s.loggedIn);
   const product     = useAuthStore((s) => s.product);
   const status      = useCredentialsStore((s) => s.status);
-  const { login, logout, loggingIn, loggingOut } = useAuth();
+  const provider    = useAuthStore((s) => s.provider);
+  const { login, logout, switchTo, loggingIn, loggingOut } = useAuth();
+  const { data: accounts } = useAccounts();
+  const other = provider === "apple" ? "spotify" : "apple";
+  const otherSignedIn = !!accounts?.[other].logged_in;
+  const serviceName = (p: "spotify" | "apple") => (p === "apple" ? "Apple Music" : "Spotify");
 
   const trigger = () => ref.current?.querySelector<HTMLButtonElement>(".tb-btn") ?? null;
 
@@ -322,7 +327,7 @@ function AccountMenu() {
                 <span style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: loggedIn ? STATUS_DOT[status] : "var(--color-text-dim)", flexShrink: 0 }} />
                   <span className="t-caption" style={{ fontSize: 11.5, color: "var(--color-text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {!loggedIn ? "Signed out" : status === "valid" && product === "premium" ? "Spotify Premium" : STATUS_LABEL[status]}
+                    {!loggedIn ? "Signed out" : provider === "apple" ? "Apple Music" : status === "valid" && product === "premium" ? "Spotify Premium" : STATUS_LABEL[status]}
                   </span>
                 </span>
               </div>
@@ -335,8 +340,21 @@ function AccountMenu() {
 
             <div style={{ height: 1, background: "var(--color-divider)", margin: "6px 2px" }} />
 
+            {loggedIn && otherSignedIn && (
+              <AccountMenuItem
+                icon={<RefreshCw size={16} strokeWidth={2} />}
+                label={`Switch to ${serviceName(other)}`}
+                disabled={loggingIn || loggingOut}
+                onClick={() => { setOpen(false); navigate("/"); switchTo(other); }}
+              />
+            )}
             {loggedIn ? (
-              <AccountMenuItem icon={<LogOut size={16} strokeWidth={2} />} label="Log out" danger onClick={() => { setOpen(false); logout(); }} />
+              <AccountMenuItem
+                icon={<LogOut size={16} strokeWidth={2} />}
+                label={otherSignedIn ? `Log out of ${serviceName(provider)}` : "Log out"}
+                danger
+                onClick={() => { setOpen(false); logout(); }}
+              />
             ) : (
               <AccountMenuItem icon={<LogIn size={16} strokeWidth={2} />} label={loggingOut ? "Signing out..." : loggingIn ? "Signing in..." : "Log in"} disabled={loggingIn || loggingOut} onClick={() => { setOpen(false); login(); }} />
             )}

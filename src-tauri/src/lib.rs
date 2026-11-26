@@ -6,6 +6,7 @@ use tauri::{
 };
 use tokio::sync::RwLock;
 
+mod accounts;
 mod auth;
 mod commands;
 mod diagnostics;
@@ -1331,6 +1332,8 @@ pub fn run() {
             commands::auth::authorize_playback,
             commands::auth::logout,
             commands::auth::get_auth_status,
+            commands::auth::get_accounts,
+            commands::auth::switch_provider,
             commands::auth::get_profile,
             commands::apple::apple_sign_in,
             commands::apple::apple_sign_in_with_token,

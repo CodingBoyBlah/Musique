@@ -23,9 +23,9 @@ mod live_tests;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// The `settings` row naming which service the signed-in account belongs to: `"apple"` for
-/// Apple Music, anything else (or no row) for Spotify. One provider is signed in at a time;
-/// switching signs the other out and clears the local library.
+/// The `settings` row naming which service the app is showing: `"apple"` for Apple Music,
+/// anything else (or no row) for Spotify. Both can be signed in at once; `crate::accounts`
+/// switches between them and keeps each one's library aside while the other is shown.
 pub const PROVIDER_KEY: &str = "provider";
 
 /// The provider as last read or set, so hot paths need no database round trip.
@@ -50,7 +50,12 @@ pub async fn load(pool: &sqlx::SqlitePool) -> bool {
     apple
 }
 
-/// Records which provider is signed in, in the database and the in-memory flag.
+/// Sets the in-memory flag alone, for a caller that wrote the provider row itself.
+pub(crate) fn set_flag(apple: bool) {
+    ACTIVE.store(apple, Ordering::Relaxed);
+}
+
+/// Records which provider is shown, in the database and the in-memory flag.
 pub async fn set_active(pool: &sqlx::SqlitePool, apple: bool) -> Result<(), crate::errors::AppError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

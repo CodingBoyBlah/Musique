@@ -61,6 +61,9 @@ import { EASE_OUT, PRESS_TRANSITION, REFLOW_SPRING } from "../lib/motion";
 import "../styles/ui.css";
 import { Switch } from "../components/ui/Switch";
 import { useIsApple } from "../hooks/useProvider";
+import { useAccounts, useAuth } from "../hooks/useAuth";
+import { useAuthStore } from "../store/auth.store";
+import type { Accounts, Provider } from "../types/ipc";
 import { widevineStatus, widevineUninstall } from "../api/widevine";
 import { WIDEVINE_STATUS_KEY } from "../components/ui/WidevineSetup";
 import { useWidevineStore } from "../store/widevine.store";
@@ -531,31 +534,39 @@ function infoIcon(label: string) {
   );
 }
 
-/* The "Requires Premium" marker on the Spotify option. Rendered even when that
-   option is selectable, so the constraint is discoverable before someone loses
-   Premium rather than only after. */
-const PREMIUM_INFO = infoIcon("Requires Premium");
 const SOLOIST_INFO = infoIcon("Spotify's own player, run by Musique. Requires Premium and a personal key");
-/* Podcasts on YouTube Music play from the show's own public feed (or its
-   YouTube uploads), so the few that exist only on Spotify can't. */
-const PODCAST_INFO = infoIcon("Podcasts play from each show's public feed. Spotify exclusives won't play");
+const LIBRESPOT_INFO = infoIcon("Musique's built-in player. Requires Premium");
 
-function backendOptions(
+/* The service the app shows. Both can be signed in at once; picking one that
+   isn't signed in yet opens its sign-in. */
+function serviceOptions(accounts: Accounts | undefined): { value: Provider; label: string; info?: React.ReactNode }[] {
+  const signedOut = (p: Provider) => accounts !== undefined && !accounts[p].logged_in;
+  return [
+    {
+      value: "spotify",
+      label: "Spotify",
+      info: signedOut("spotify") ? infoIcon("Not signed in. Choosing it opens Spotify's sign-in in your browser") : undefined,
+    },
+    {
+      value: "apple",
+      label: "Apple Music",
+      info: signedOut("apple") ? infoIcon("Not signed in. Choosing it opens Apple Music's sign-in") : undefined,
+    },
+  ];
+}
+
+/* Which player streams Spotify. YouTube Music stays a backend for free
+   accounts, but isn't offered here for now. */
+function spotifyPlayerOptions(
   spotifyAvailable: boolean,
   soloistSupported: boolean,
-): {
-  value: PlaybackBackend;
-  label: string;
-  disabled?: boolean;
-  info?: React.ReactNode;
-}[] {
+): { value: PlaybackBackend; label: string; disabled?: boolean; info?: React.ReactNode }[] {
   return [
-    // Spotify only streams audio to Premium, so a free account can't pick it.
-    { value: "spotify", label: "Spotify", disabled: !spotifyAvailable, info: PREMIUM_INFO },
+    // Spotify only streams audio to Premium, so a free account can't pick either.
+    { value: "spotify", label: "librespot", disabled: !spotifyAvailable, info: LIBRESPOT_INFO },
     ...(soloistSupported
       ? [{ value: "soloist" as const, label: "Soloist", disabled: !spotifyAvailable, info: SOLOIST_INFO }]
       : []),
-    { value: "youtube", label: "YouTube Music", info: PODCAST_INFO },
   ];
 }
 
@@ -949,8 +960,45 @@ function AppleMusicCard() {
   );
 }
 
+/* Waiting on the other service's sign-in, started from the service picker. */
+function ServiceSignInLine({ service, onCancel }: { service: Provider; onCancel: () => void }) {
+  return (
+    <div style={PANEL_STYLE}>
+      <SoloistLine
+        dot="var(--color-warning)"
+        pulse
+        title={service === "apple" ? "Signing in to Apple Music…" : "Signing in to Spotify…"}
+        detail={
+          service === "apple"
+            ? "Finish in the window that opened. An Apple Music subscription is required. Spotify stays signed in."
+            : "Finish in your browser: approve ncspot, then Spotify desktop. Apple Music stays signed in."
+        }
+        actions={service === "apple" ? <SmallBtn onClick={onCancel}>Cancel</SmallBtn> : undefined}
+      />
+    </div>
+  );
+}
+
 function PlaybackCard() {
   const isAppleAccount = useIsApple();
+  const provider = useAuthStore((s) => s.provider);
+  const { data: accounts } = useAccounts();
+  const { switchTo: switchService, login, loginApple, cancelAppleLogin, loggingIn } = useAuth();
+  // the service just picked: the pill moves to it while the switch or sign-in runs
+  const [pickedService, setPickedService] = useState<Provider | null>(null);
+  const shownService = loggingIn && pickedService ? pickedService : provider;
+  const signingInTo =
+    loggingIn && pickedService && pickedService !== provider && accounts && !accounts[pickedService].logged_in
+      ? pickedService
+      : null;
+
+  const changeService = (next: Provider) => {
+    if (next === provider || loggingIn) return;
+    setPickedService(next);
+    if (accounts?.[next].logged_in) switchService(next);
+    else if (next === "apple") loginApple();
+    else login();
+  };
   const audioQuality = usePrefsStore((s) => s.audioQuality);
   const setAudioQuality = usePrefsStore((s) => s.setAudioQuality);
   const audioCacheLimitMb = usePrefsStore((s) => s.audioCacheLimitMb);
@@ -1063,26 +1111,73 @@ function PlaybackCard() {
 
   return (
     <Card title="Playback">
-      {!isAppleAccount && <SettingRow
-        label="Audio source"
+      <SettingRow
+        label="Music service"
         hint={
-          backend && !backend.spotify_available
-            ? "Your Spotify plan can't stream audio, so playback uses YouTube Music. Metadata, artwork and lyrics still come from Spotify."
-            : backend && !backend.product
-            ? "Spotify hasn't reported your plan. You can try Spotify playback if you have Premium, or choose YouTube Music."
-            : onSoloist
-            ? "Spotify's own player, run by Musique on this computer. Metadata, artwork and lyrics always come from Spotify."
-            : "Where audio is streamed from. Metadata, artwork and lyrics always come from Spotify."
+          accounts?.spotify.logged_in && accounts?.apple.logged_in
+            ? "Both stay signed in. Switching swaps your library, home, queue and recommendations in place."
+            : "Where your library, home and music come from. Sign in to both to switch between them without signing out."
         }
         control={
           <Segmented
-            value={active}
-            options={backendOptions(backend?.spotify_available ?? false, backend?.soloist_supported ?? false)}
-            onChange={changeBackend}
-            layoutId="settings-playback-backend"
+            value={shownService}
+            options={serviceOptions(accounts)}
+            onChange={changeService}
+            layoutId="settings-music-service"
           />
         }
-      />}
+      />
+      <AnimatePresence initial={false}>
+        {signingInTo && (
+          <motion.div
+            key="service-sign-in"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ height: REFLOW, opacity: { duration: 0.18, ease: EASE_OUT } }}
+            style={{ overflow: "hidden", margin: "-4px 0" }}
+          >
+            <div style={{ padding: "4px 0" }}>
+              <ServiceSignInLine service={signingInTo} onCancel={cancelAppleLogin} />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence initial={false}>
+        {!isAppleAccount && (
+          <motion.div
+            key="spotify-player"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ height: REFLOW, opacity: { duration: 0.18, ease: EASE_OUT } }}
+            style={{ overflow: "hidden" }}
+          >
+            <SettingRow
+              label="Spotify player"
+              hint={
+                backend && !backend.spotify_available
+                  ? "Spotify only streams audio to Premium, so this account plays through YouTube Music for now. Metadata, artwork and lyrics still come from Spotify."
+                  : backend && !backend.product
+                  ? "Spotify hasn't reported your plan yet. Either player needs Premium."
+                  : active === "youtube"
+                  ? "Playing through YouTube Music. Pick a player to stream from Spotify instead."
+                  : onSoloist
+                  ? "Spotify's own player, run by Musique on this computer. Metadata, artwork and lyrics always come from Spotify."
+                  : "Musique's built-in player streams straight from Spotify. Soloist runs Spotify's own player instead."
+              }
+              control={
+                <Segmented
+                  value={active}
+                  options={spotifyPlayerOptions(backend?.spotify_available ?? false, backend?.soloist_supported ?? false)}
+                  onChange={changeBackend}
+                  layoutId="settings-playback-backend"
+                />
+              }
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
       <AnimatePresence initial={false}>
         {showPanel && soloist && !isAppleAccount && (
           <motion.div
