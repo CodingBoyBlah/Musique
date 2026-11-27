@@ -30,6 +30,9 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib --release --locked -- --test-threads=1 --nocapture
       - name: Build diagnostic binary without publishing a release
         run: cargo build --manifest-path src-tauri/Cargo.toml --release --locked
+      - name: Load the Widevine module
+        shell: bash
+        run: src-tauri/target/release/spotify.exe --widevine-probe
       - uses: actions/upload-artifact@v4
         with:
           name: windows-verified-binary
@@ -56,8 +59,40 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: cargo build --manifest-path src-tauri/Cargo.toml --release --locked --target ${{ matrix.target }}
+      # the signed .app the release ships, not a bare cargo build: signing (hardened
+      # runtime + Entitlements.plist) decides whether the Widevine module may load
+      - name: Build and sign the app bundle
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}' -- --locked
+      - name: Check the bundle's signature and entitlements
+        run: |
+          app="src-tauri/target/${{ matrix.target }}/release/bundle/macos/Musique.app"
+          codesign --verify --strict --verbose=2 "$app"
+          codesign -d --entitlements - "$app" > entitlements.txt 2>&1 || true
+          cat entitlements.txt
+          grep -q com.apple.security.cs.disable-library-validation entitlements.txt
+      - name: Load the Widevine module in the signed app
+        # the runners are Apple Silicon; the Intel build is checked for its entitlements above
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          app="src-tauri/target/${{ matrix.target }}/release/bundle/macos/Musique.app"
+          exe="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist")"
+          "$app/Contents/MacOS/$exe" --widevine-probe
+          # control: the same app signed without the entitlements must be refused, or the
+          # probe above is not exercising library validation. GitHub's runners ship with SIP
+          # off, which turns library validation off too, so the control only means
+          # something where SIP is on.
+          csrutil status || true
+          if ! csrutil status 2>/dev/null | grep -q enabled; then
+            echo "::notice::SIP is off on this runner, so library validation is not enforced; the entitlements are checked above, the refusal control is skipped"
+            exit 0
+          fi
+          cp -R "$app" "$RUNNER_TEMP/control.app"
+          codesign --force --sign - --options runtime "$RUNNER_TEMP/control.app"
+          if "$RUNNER_TEMP/control.app/Contents/MacOS/$exe" --widevine-probe > control.txt 2>&1; then
+            cat control.txt; echo "control loaded the module without the entitlements"; exit 1
+          fi
+          cat control.txt
+          grep -q "Team ID" control.txt
 
   linux:
     runs-on: ubuntu-22.04
@@ -82,3 +117,5 @@ jobs:
       - name: Run the regression tests the release runs
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib --release --locked -- --test-threads=1
       - run: cargo build --manifest-path src-tauri/Cargo.toml --release --locked
+      - name: Load the Widevine module
+        run: src-tauri/target/release/spotify --widevine-probe
